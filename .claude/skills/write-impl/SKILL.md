@@ -30,7 +30,7 @@ From the board the gate was asked (the prompt says so); at a terminal ask
    whole suite is CI's: a red CI sends the work back.
 2. Commit. Each claim in `impl.md` names a commit.
 3. A file `main` changed that contradicts the plan: stop before editing it, record it under
-   `## What is still open`, `Status: draft`, leave `plan.md` alone. Otherwise note what you
+   `## What is still open`, submit `not-ready`, leave `plan.md` alone. Otherwise note what you
    adjusted under `## Where the plan was departed from`.
 4. When a review or red CI sent the work back: fix what it named, commit and **push** in the
    one form the prompt names, `git push origin <branch>` (`next` offers `impl` until a commit
@@ -53,7 +53,7 @@ On a unit that changes a screen, the UI standard rule's part for this stage appl
 
 ```markdown
 # Impl: <title>
-Intent: intent.md. Plan: plan.md. Author: <name>. Status: accepted.
+Intent: intent.md. Plan: plan.md. Author: <name>.
 
 ## What was built
 
@@ -74,8 +74,7 @@ Intent: intent.md. Plan: plan.md. Author: <name>. Status: accepted.
 
 `## Screens` only on a UI unit; `## Needs a person` only on a run a review sent back.
 `## What was measured` holds commands with the count they printed, not adjectives; name a
-figure's source or mark it unverifiable; say when a proof was not run. `Status`: `draft`,
-`accepted`, `rejected`, `done`.
+figure's source or mark it unverifiable; say when a proof was not run.
 
 ## Done when
 

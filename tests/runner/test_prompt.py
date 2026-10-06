@@ -229,33 +229,37 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
     so the step meant to fix the findings was given nothing that named them."""
 
     REVIEW = (
-        "# Review: x\nPR: pr.md. Concluded by: agent. Status: {status}.\n\n"
+        "# Review: x\nPR: pr.md. Concluded by: agent.\n\n"
         "## Findings\n\n- F1 [open] a.py:3 — high — FINDING-ONE-MARKER\n"
     )
 
-    def prompt(self, d, status):
+    def prompt(self, d, status, review=None):
         make_unit(
             Path(d),
-            intent_md="Status: accepted.\nI",
-            plan_md="Status: accepted.\nP",
-            review_md=self.REVIEW.format(status=status),
+            intent_md="I",
+            plan_md="P",
+            review_md=review or self.REVIEW,
         )
+        meta = {"artifacts": {"review.md": {"status": status}}}
         return build_prompt(
-            d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", writes_own=True
+            d,
+            Path(d) / ".cos" / UNIT,
+            UNIT,
+            "impl",
+            STAGES,
+            "impl.md",
+            writes_own=True,
+            unit_meta=meta,
         )
 
     def test_impl_sees_the_findings_when_changes_were_requested(self):
         # The open findings are carried, the whole file only named.
         with tempfile.TemporaryDirectory() as d:
             prompt, included = self.prompt(d, "changes-requested")
-            _, _, pointed = compose_prompt(
-                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", writes_own=True
-            )
             self.assertIn("FINDING-ONE-MARKER", prompt)
-            self.assertIn("Status: changes-requested", prompt)
             self.assertIn("review-findings", included)
             self.assertNotIn("review.md", included)
-            self.assertIn("review.md", pointed)
+            self.assertIn(str(Path(d).resolve() / ".cos" / UNIT / "review.md"), prompt)
 
     def test_impl_is_told_to_push_the_fix(self):
         """`coscc.loop next` offers `review` only once a fix reaches the pull request, so a fix
@@ -288,24 +292,40 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
             self.assertNotIn("FINDING-ONE-MARKER", prompt)
             self.assertNotIn("review-findings", included)
 
-    def test_a_passed_review_quoting_the_status_further_down_is_not_sent_back(self):
-        # Only the first `Status:` counts.
+
+class TheSentBackBlockReadsTheSnapshot(unittest.TestCase):
+    """The block follows the snapshot's status of `review.md`, never the file's own header."""
+
+    REVIEW = AFixRoundCarriesTheFindings.REVIEW
+    prompt = AFixRoundCarriesTheFindings.prompt
+
+    def test_a_header_saying_changes_requested_does_not_make_the_block(self):
+        review = (
+            "# Review: x\nStatus: changes-requested.\n\n"
+            "## Round 1\n\n- F1 [open] a.py:3 — high — FINDING-ONE-MARKER\n"
+        )
         with tempfile.TemporaryDirectory() as d:
-            make_unit(
-                Path(d),
-                intent_md="Status: accepted.\nI",
-                plan_md="Status: accepted.\nP",
-                review_md=(
-                    "# Review: x\nPR: pr.md. Concluded by: agent. Status: accepted.\n\n"
-                    "## Round 1\n\nThe header read\nStatus: changes-requested.\n\n"
-                    "- F1 [fixed abc1234] a.py:3 — high — FINDING-ONE-MARKER\n"
-                ),
-            )
+            prompt, included = self.prompt(d, "accepted", review)
+            self.assertNotIn("FINDING-ONE-MARKER", prompt)
+            self.assertNotIn("review-findings", included)
+
+    def test_a_header_saying_accepted_does_not_hold_the_block_back(self):
+        review = (
+            "# Review: x\nStatus: accepted.\n\n"
+            "## Round 1\n\n- F1 [open] a.py:3 — high — FINDING-ONE-MARKER\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            prompt, included = self.prompt(d, "changes-requested", review)
+            self.assertIn("FINDING-ONE-MARKER", prompt)
+            self.assertIn("review-findings", included)
+
+    def test_no_snapshot_no_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="I", plan_md="P", review_md=self.REVIEW)
             prompt, included = build_prompt(
                 d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", writes_own=True
             )
-            self.assertNotIn("FINDING-ONE-MARKER", prompt)
-            self.assertNotIn("review.md", included)
+            self.assertNotIn("review-findings", included)
 
 
 class ShipIsNotToldItIsInARepository(unittest.TestCase):
@@ -348,7 +368,6 @@ class ImplAndShipKeepTheirTaskByteForByte(unittest.TestCase):
                     f"Do the work this unit's plan authorises, in the repository at "
                     f"`{Path(d).expanduser().resolve()}`, then write `{directory / 'impl.md'}` "
                     "recording what you did.\n\n"
-                    "That file must carry the `Status:` line the rules above describe. "
                     f"{_LANGUAGE} Write it yourself with your "
                     "tools — do not paste it into your reply."
                 ),
@@ -675,3 +694,18 @@ class EveryStageIsToldTheUnitsItsUnitNames(unittest.TestCase):
                 self.prompt(d, "plan", "plan.md", mentions_note=""),
                 self.prompt(d, "plan", "plan.md"),
             )
+
+
+class NoPromptAsksForAStatusLine(unittest.TestCase):
+    """The object `submit` takes is the only judgement: nothing the app sends names `Status:`."""
+
+    def test_no_stage_prompt_carries_it_whoever_writes_the_file(self):
+        for stage in SESSION_STAGES:
+            for writes_own in (False, True):
+                with self.subTest(stage=stage, writes_own=writes_own):
+                    with tempfile.TemporaryDirectory() as d:
+                        directory = make_unit(Path(d), intent_md="I", spec_md="S", plan_md="P")
+                        prompt, _, _ = compose_prompt(
+                            d, directory, UNIT, stage, STAGES, f"{stage}.md", writes_own=writes_own
+                        )
+                        self.assertNotIn("Status:", prompt)

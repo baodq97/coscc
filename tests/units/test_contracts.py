@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any, get_args
+from unittest import mock
 
 import jsonschema
 
@@ -234,6 +235,64 @@ class TheBlockNamesEveryDeclaredField(unittest.TestCase):
         block = prompt.submit_block("intent", "intent.md", writes_own=False)
         listed = ", ".join(f"`{t}`" for t in get_args(contracts.BranchType))
         self.assertIn(listed, block)
+
+
+class TheBlockIsTheDeclaration(unittest.TestCase):
+    """The `submit` block is written from `contracts.output`: a declaration changes, the block
+    follows, and `prompt.py` is not touched."""
+
+    def block(self, agent="spec"):
+        from coscc.runner import prompt
+
+        return prompt.submit_block(agent, f"{agent}.md", writes_own=False)
+
+    def test_a_field_added_to_a_declaration_is_taught_in_the_declared_order(self):
+        out = copy.deepcopy(contracts.output("spec"))
+        out["fields"]["extra?"] = "text"
+        with mock.patch.object(contracts, "output", return_value=out):
+            block = self.block()
+        self.assertIn("`extra`", block)
+        line = next(x for x in block.splitlines() if x.startswith("- `extra`"))
+        self.assertIn("may be left out", line)
+        order = [block.index(f"- `{n.rstrip('?')}`") for n in out["fields"]]
+        self.assertEqual(order, sorted(order))
+
+    def test_each_type_is_written_from_its_declaration(self):
+        from coscc.runner.prompt import _describe
+
+        self.assertEqual(_describe("text"), "text")
+        self.assertEqual(_describe("number"), "a whole number")
+        self.assertIn("`holds`", _describe({"enum": ["holds", "fails"]}))
+        self.assertIn("`fails`", _describe({"enum": ["holds", "fails"]}))
+        self.assertTrue(_describe({"list": "U[0-9]+"}).startswith("a list of"))
+        self.assertIn("U[0-9]+", _describe({"list": "U[0-9]+"}))
+        got = _describe({"list": {"n": "number", "text": "text"}})
+        self.assertIn("{n: a whole number, text: text}", got)
+        self.assertIn("may be left out", _describe({"a?": "text"}))
+
+    def test_a_field_the_kind_requires_has_the_engines_sentence(self):
+        for agent, out in contracts.load(DEFAULT_PATH).items():
+            if out["kind"] != "artifact":
+                continue
+            block = self.block(agent)
+            self.assertIn("`not-ready`", block, agent)
+            self.assertIn("stays at this stage", block, agent)
+            self.assertIn("`{n, text}`", block, agent)
+
+    def test_a_review_round_block_says_what_goes_in_each_required_field(self):
+        from coscc.runner import prompt
+
+        block = prompt.round_block()
+        for part in ("`verdict`", "`findings`", "`screens`", "`fixed_in`", "`claim-rejected`"):
+            self.assertIn(part, block)
+
+    def test_no_block_names_a_status_line(self):
+        from coscc.runner import prompt
+
+        for agent, out in contracts.load(DEFAULT_PATH).items():
+            if out["kind"] == "artifact":
+                self.assertNotIn("Status:", self.block(agent), agent)
+        self.assertNotIn("Status:", prompt.round_block())
 
 
 class TheSchemasAreGenerated(unittest.TestCase):

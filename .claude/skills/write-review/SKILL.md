@@ -26,9 +26,8 @@ non-zero. Read the changed files, not the whole tree.
    standard rule `S<n>`, and a finding naming `S<n>` always blocks. Wording, docstrings,
    comments, citations and style are `low` nits: at most 5, the rest as a count, never
    blocking. Lowering an earlier round's `high`/`medium` is not a fix.
-4. Verdict: any blocking finding not closed, `changes-requested` (header `Status:
-   changes-requested`); otherwise `pass` (`Status: accepted`), which opens `ship`. An `[open]`
-   `low` does not block. If every blocking one is `[needs-person]`, `needs-person`.
+4. Verdict: any blocking finding not closed, `changes-requested`; otherwise `pass`, which opens
+   `ship`. An `[open]` `low` does not block. If every blocking one is `[needs-person]`, `needs-person`.
 5. Never write `Verdict: incomplete` (only the app's closing turn does) and never merge. After
    an `incomplete` round, read its *What was not reviewed* first, then write a full round for
    this head, carrying every finding forward.
@@ -47,7 +46,7 @@ On a unit that changes a screen, the UI standard rule's part for this stage appl
 
 ```markdown
 # Review: <title>
-PR: pr.md. Author: <name>. Concluded by: <agent session, which one>. Status: changes-requested.
+PR: pr.md. Author: <name>. Concluded by: <agent session, which one>.
 
 ## Round 1
 
@@ -67,8 +66,7 @@ Line shapes code parses: `Reviewed: <sha>. Verdict: <pass|changes-requested|need
 rounds numbered without a gap; a finding `- F<k> [label] path:line — <high|medium|low> — text`
 with em dashes, label one of `[open]`, `[fixed <sha>]`, `[needs-person]`, `[claim-rejected]`,
 `[answered]`; no severity blocks; no location is an opinion. `### What was not reviewed` is
-required. `Status`: `draft`, `changes-requested`, `accepted`, `rejected`; the header is
-rewritten each round, the rest appended.
+required.
 
 ## Done when
 

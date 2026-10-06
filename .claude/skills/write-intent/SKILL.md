@@ -41,7 +41,7 @@ in `type` of `submit`, never in the file.
 
 ````markdown
 # Intent: <title>
-Author: <name>. Status: accepted.
+Author: <name>.
 
 ## Problem
 <what cannot be done today, the evidence, and why it matters now>
@@ -62,7 +62,8 @@ Author: <name>. Status: accepted.
 - Under `## Open questions` a real question is an item `N. ` at column 0 whose first
   paragraph holds a `?`; from the board the same go into `questions` of `submit`. Anything
   else is a plain sentence, never an item. Keep the heading when none is left.
-- `Status: accepted` records your judgement, not approval; `draft` if something is missing.
+- The file carries no status. `judgement` of `submit` records yours, not approval: `ready`, or
+  `not-ready` if something is missing.
 
 **A fix the originator showed you.** Only for a `fix`, and only when they gave all three, add these
 after `## Problem`, copying their command, log and words as they wrote them, and hand the same three

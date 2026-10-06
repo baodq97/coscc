@@ -32,7 +32,7 @@ Gate: from the board it was asked (the prompt says so); at a terminal ask
 
 ````markdown
 # Spec: <title>
-Intent: intent.md. Author: <name>. Status: accepted.
+Intent: intent.md. Author: <name>.
 
 ## Requirements
 
@@ -51,19 +51,20 @@ Intent: intent.md. Author: <name>. Status: accepted.
 - `- [unmeasured] U1. <question>` at column 0 under `## Concerns`, and its id in `unmeasured`
   of `submit`: a non-empty `unmeasured` sends the unit to `spike`, the line alone does not.
   The id is the question's identity: keep it across rewrites, never reuse or duplicate one.
-  After a spike `fails`, drop that id and every requirement resting on it; if no direction holds, write `Status: draft` with the question.
+  After a spike `fails`, drop that id and every requirement resting on it; if no direction holds, submit `not-ready` with the question.
 - `## Open questions`: a real question is an item `N. ` at column 0 whose first paragraph holds
   a `?`, and the same go into `questions` of `submit`. Anything else is a plain sentence. Keep
   the heading even when empty.
-- `Status: accepted` is your judgement, not approval; `draft` stops the loop.
+- The file carries no status. `judgement` of `submit` is yours, not approval; `not-ready`
+  stops the loop.
 
 ## Skip
 
 Only when proposing a skip: report each of five criteria: (1) at most two existing files
 touched, (2) no public interface, schema or stored data changes, (3) no dependency added,
 (4) no behaviour beyond the intent, (5) nothing in auth, PII or security. All pass means the
-spec *may* be skipped; the decision is a person's. Write `spec.md` with `Status: skipped`,
-`## Why skipped` and the assessment, and submit `not-ready`.
+spec *may* be skipped; the decision is a person's. Write the assessment under
+`## Why skipped`, submit `not-ready` with one question asking a person to skip (`coscc skip`).
 
 ## Done when
 

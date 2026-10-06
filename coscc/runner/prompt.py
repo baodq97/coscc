@@ -7,16 +7,14 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 from coscc.agent import agents, harness
-from coscc.units import submit
-from coscc.units.contracts import BranchType
+from coscc.units import contracts, submit
 from coscc.agent.policy import is_prose_stage
 from coscc.runner.review import (
     INCOMPLETE_SECTIONS,
     _ROUND_RE,
-    _header_status,
     _round_meta,
     _round_number,
     _rounds,
@@ -463,8 +461,8 @@ def _second_artifact(
 ) -> list[str]:
     """The stage before is one artifact, and three stages need a second. `plan` follows `spike`
     when one ran, but the requirements it orders are still in `spec.md`. A `spec` re-run after
-    a spike must be rewritten on that measurement. A `spike` re-run needs the one before it to
-    set `Round:`.
+    a spike must be rewritten on that measurement. A `spike` re-run is given the one before it, to
+    go on from it.
     """
     blocks: list[str] = []
     spike = _read(directory / "spike.md") if stage in ("spec", "spike") else ""
@@ -519,7 +517,7 @@ def _where_you_work(
         + "\n\n"
         f"Your progress file is `{scratch / PROGRESS_FILE}` (the rules' *The progress "
         f"file*). {within}If this step ends without a usable final reply — a turn or "
-        "budget ceiling, a reply with no `Status:` line, a session that broke — the app "
+        "budget ceiling, a reply with no usable end, a session that broke — the app "
         "writes `spike.md` from this file."
     ]
 
@@ -619,22 +617,29 @@ def _answers(
     return blocks
 
 
-def _sent_back(stage: str, directory: Path, review: str, included: list[str]) -> list[str]:
+def _sent_back(
+    stage: str,
+    directory: Path,
+    review: str,
+    included: list[str],
+    unit_meta: dict[str, Any] | None,
+) -> list[str]:
     """`impl` only: the findings the last review left open.
 
     A review that asked for changes sends the unit back to `impl`, and the point of going back
     is the findings; without this block the step is built from `intent.md` and `plan.md` only
     and cannot see one.
 
-    Only while the review is `changes-requested`: a pass has nothing to act on, and a reject
-    closed the unit. It carries the header and the findings still open in the last round; the
-    whole file is named by path in *The unit's files*.
+    Only while the snapshot has `review.md` `changes-requested`: a pass has nothing to act on,
+    and a reject closed the unit. The file's own header is not read. It carries the findings
+    still open in the last round; the whole file is named by path in *The unit's files*.
     """
-    if stage != "impl":
+    if stage != "impl" or not review or "review-findings" in included:
         return []
-    if not review or _header_status(review) != "changes-requested" or "review-findings" in included:
+    status = (((unit_meta or {}).get("artifacts") or {}).get("review.md") or {}).get("status")
+    if status != "changes-requested":
         return []
-    header, number, findings = open_findings(review)
+    number, findings = open_findings(review)
     included.append("review-findings")
     return [
         "# The review that sent this back\n\n"
@@ -643,10 +648,10 @@ def _sent_back(stage: str, directory: Path, review: str, included: list[str]) ->
         "the branch, then record in impl.md which commit fixed which finding. The "
         "next review is offered only once a fix is on the pull request, so a fix "
         "left unpushed keeps this unit on impl.\n\n"
-        "Below are the review's header line and the findings its last round"
+        "Below are the findings the review's last round"
         + (f" (Round {number})" if number is not None else "")
         + f" left open. The whole review, every round, is `{directory.resolve() / 'review.md'}`.\n\n"
-        f"{header}\n\n{findings or '(no finding is left open)'}"
+        f"{findings or '(no finding is left open)'}"
     ]
 
 
@@ -667,7 +672,7 @@ def _rounds_so_far(stage: str, directory: Path, review: str, included: list[str]
     """
     if stage != "review" or not _rounds(review):
         return []
-    _, number, findings = open_findings(review)
+    number, findings = open_findings(review)
     included.append("review-findings")
     return [
         "# The rounds so far\n\n"
@@ -724,7 +729,7 @@ def _incomplete_round(stage: str, review: str, included: list[str]) -> list[str]
     before = review[: found[-1].start()]
     carried = ""
     if any((_round_meta(r) or ("", ""))[1] != "incomplete" for r in _rounds(before)):
-        _, full, left = open_findings(before)
+        full, left = open_findings(before)
         carried = (
             f"\n\nThe findings Round {full}, the last full round, left open:\n\n"
             f"{left or '(no finding is left open)'}"
@@ -864,15 +869,13 @@ def _task(
             f"Do the work this unit's plan authorises, in the repository at "
             f"`{Path(workspace).expanduser().resolve()}`, then write `{directory / artifact}` "
             "recording what you did.\n\n"
-            "That file must carry the `Status:` line the rules above describe. "
             f"{_LANGUAGE} Write it yourself with your tools — do not paste it into your reply."
         )
     return (
         f"# Your task\n\n"
         f"Write `{artifact}` for the work unit `{unit}`.\n\n"
         "Reply with the file's complete contents and nothing else — no preamble, no "
-        "code fence, no commentary. The first lines must carry the `Status:` line the "
-        f"rules above describe. {_LANGUAGE}"
+        f"code fence, no commentary. {_LANGUAGE}"
     )
 
 
@@ -953,7 +956,7 @@ def compose_prompt(
         *_tools(stage, directory, plan_map, commands, runs_commands, state_file, included),
         *_lane(stage, lane, unit_meta, included),
         *_answers(stage, directory, artifact, writes_own, unit_meta),
-        *_sent_back(stage, directory, review, included),
+        *_sent_back(stage, directory, review, included, unit_meta),
         *_push(stage, branch),
         *_rounds_so_far(stage, directory, review, included),
         *_unfinished_round(stage, unfinished_round, included),
@@ -977,50 +980,62 @@ def compose_prompt(
     return "\n\n---\n\n".join(parts), included, pointed
 
 
+# What the engine says of a field its kind requires; every other field is the agent's, and its
+# skill says what goes in it.
+_KIND_SAYS = {
+    "judgement": "`ready` when the file is finished, `not-ready` when it is not; a `not-ready` "
+    "unit stays at this stage.",
+    "questions": "Every item under `## Open questions` still waiting on a person, as `{n, text}` "
+    "with the number the file gives it; `[]` when there is none.",
+    "verdict": "`pass` when nothing blocks the merge, `changes-requested` when a finding must be "
+    "fixed first, `needs-person` when only a person can settle one.",
+    "findings": "Every finding of this round, those an earlier round raised carried forward with "
+    "their id. `state` is `open`, `fixed`, `needs-person`, `claim-rejected` or `answered`; "
+    '`fixed_in` is the commit of a `fixed` one and `""` otherwise; `rule` is the `S<n>` of the '
+    'UI standard it names, or `""`; `text` is what the finding says, without its id, label, '
+    "place or severity.",
+    "screens": "One entry per screenshot you opened, `size` as `1440x900`; `[]` when you opened "
+    "none.",
+}
+
+
+def _describe(t: contracts.FieldType) -> str:
+    """A declared type in words: what `submit` takes for it."""
+    if isinstance(t, str):
+        return t if t == "text" else "a whole number" if t == "number" else f"text matching `{t}`"
+    shape = contracts._shape(t)
+    if shape == "enum":
+        return "one of " + ", ".join(f"`{w}`" for w in t["enum"])  # ty: ignore[invalid-argument-type]
+    if shape == "list":
+        return f"a list of {_describe(t['list'])}"  # ty: ignore[invalid-argument-type]
+    inner = ", ".join(
+        f"{n.rstrip('?')}: {_describe(sub)}" + (" (may be left out)" if n.endswith("?") else "")
+        for n, sub in t.items()
+    )
+    return "{" + inner + "}"
+
+
+def _fields(agent: str) -> list[str]:
+    """One line for each field `agent` declares, in the declared order."""
+    out = contracts.output(agent)
+    says = {f: _KIND_SAYS[f] for f in contracts.READS.get(out["kind"], {}) if f in _KIND_SAYS}
+    lines = []
+    for name, t in out["fields"].items():
+        bare = name.rstrip("?")
+        line = f"- `{bare}`: {_describe(t)}" + (" (may be left out)" if name != bare else "")
+        lines.append(line + (f". {says[bare]}" if bare in says else "."))
+    return lines
+
+
 def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
-    """How a stage hands back its judgement: the object, never the `Status:` line, is what the app
-    reads. `""` for a stage that hands back no stage result. English: an instruction to the
-    model.
+    """How a stage hands back its judgement, written from its declaration
+    (`contracts.output`): the object is all the app reads of it. `""` for a stage that hands back
+    no stage result. English: an instruction to the model.
     """
     if stage == submit.ROUND:
         return round_block()
     if stage not in submit.STAGE_RESULT:
         return ""
-    fields = [
-        f"- `stage`: `{stage}`.",
-        "- `judgement`: `ready` when the file is finished (its header says `Status: accepted`), "
-        "`not-ready` when it is not (`Status: draft`).",
-        "- `questions`: every item under `## Open questions` still waiting on a person, as "
-        "`{n, text}` with the number the file gives it; `[]` when there is none.",
-    ]
-    if stage == "intent":
-        types = ", ".join(f"`{t}`" for t in get_args(BranchType))
-        fields.append(f"- `type`: the branch type of the unit, one of {types}.")
-        fields.append(
-            "- `fix`: only for a clear fix: `{reproduction, expected: {source, text}, actual}`, "
-            "the command that shows it, what the code in `source` (`path` or `path:L1-L2`, in "
-            "the repository) says should happen, and what happens instead. Leave it out when "
-            "any of the three is unknown; the unit then takes the full flow."
-        )
-    if stage == "spec":
-        fields.append(
-            "- `unmeasured`: every `U<n>` id a `## Concerns` item opens with `[unmeasured]`; `[]` for none."
-        )
-    if stage == "spike":
-        fields.append(
-            "- `verdicts`: one `{id, verdict}` per `## U<n>` section, `verdict` being `holds` or `fails`."
-        )
-    if stage == "impl":
-        fields.append(
-            "- `left_lane`: only when this fix needs the full flow after all: why. The unit "
-            "then leaves the fast lane."
-        )
-    if stage == "impl":
-        fields.append(
-            "- `needs_person`: the `F<k>` of every open finding of the last review round that this "
-            "stage cannot close and lists under `## Needs a person`; `[]` for none. Only an open "
-            "finding of the last round may be named."
-        )
     when = (
         f"Call it once `{artifact}` is written and final. Writing the file again after that "
         "makes the object stale, and the app refuses it."
@@ -1029,9 +1044,10 @@ def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
     )
     return (
         "# Hand back your judgement\n\n"
-        f"The app does not read `Status:` or `## Open questions` out of `{artifact}`: it takes "
-        f"them from the object you hand it through the `submit` tool (`{submit.NAME}`). "
-        f"{when} The object:\n\n" + "\n".join(fields) + "\n\n"
+        f"The app takes your judgement of `{artifact}` from the object you hand it through the "
+        f"`submit` tool (`{submit.NAME}`), not from the file. {when} The object:\n\n"
+        + "\n".join([f"- `stage`: `{stage}`.", *_fields(stage)])
+        + "\n\n"
         "If `submit` returns an error, the app has checked your object against the unit: "
         f"{submit.AGAIN} Keep calling it until it is accepted. A step that hands back no object "
         "ends failed, whatever its file says."
@@ -1039,22 +1055,18 @@ def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
 
 
 def round_block() -> str:
-    """How a review hands back its round. English: an instruction to the model."""
+    """How a review hands back its round, written from its declaration. English: an
+    instruction to the model.
+    """
     return (
         "# Hand back your round\n\n"
-        "The app does not read the verdict, the findings or the screenshots out of `review.md`: "
-        f"it takes them from the object you hand it through the `submit` tool (`{submit.NAME}`), "
-        "and writes the round's `Reviewed:` line, its `### Findings` and its `### Screens` from "
-        "it, with the head this step ran on and the round's number. Call it before you reply; "
-        "once it answers, reply with `review.md` and nothing after it. The object:\n\n"
-        "- `verdict`: `pass`, `changes-requested` or `needs-person`.\n"
-        "- `findings`: every finding of this round, those an earlier round raised carried forward "
-        "with their id, as `{id, state, fixed_in, severity, rule, path, lines, text}`. `state` is "
-        "`open`, `fixed`, `needs-person`, `claim-rejected` or `answered`; `fixed_in` is the commit "
-        'of a `fixed` one and `""` otherwise; `rule` is the `S<n>` of the UI standard it names, '
-        'or `""`; `text` is what the finding says, without its id, label, place or severity.\n'
-        "- `screens`: one `{path, size, address, result}` per screenshot you opened, `size` as "
-        "`1440x900`; `[]` when you opened none.\n\n"
+        "The app takes the verdict, the findings and the screenshots of your round from the "
+        f"object you hand it through the `submit` tool (`{submit.NAME}`), and writes the round's "
+        "`Reviewed:` line, its `### Findings` and its `### Screens` from it, with the head this "
+        "step ran on and the round's number. Call it before you reply; once it answers, reply "
+        "with `review.md` and nothing after it. The object:\n\n"
+        + "\n".join(_fields("review"))
+        + "\n\n"
         "If `submit` returns an error, the app has checked your object against the unit: "
         f"{submit.AGAIN} Keep calling it until it is accepted. A review that hands back no round "
         "ends failed, whatever its file says."

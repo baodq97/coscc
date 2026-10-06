@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from coscc.runner.reply import HEADER_STATUS_RE, RunError, check_reply
+from coscc.runner.reply import RunError, unfence
 
 
 # # One `## Round N` section of review.md: from its heading to the next `## ` heading.
@@ -113,18 +113,10 @@ def render_round(
     return "\n".join(out).rstrip()
 
 
-def replace_new_rounds(
-    text: str, before: set[int], rendered: str, status: str | None = None
-) -> str:
+def replace_new_rounds(text: str, before: set[int], rendered: str) -> str:
     """`review.md` with every round not numbered in `before` taken out and `rendered` put where
-    the first of them stood. Earlier rounds and the header stay byte for byte, except the value
-    of the header's first `Status:` when `status` is given.
+    the first of them stood. Earlier rounds and the header stay byte for byte.
     """
-    if status is not None:
-        first = re.search(r"^## Round \d+\b", text, re.MULTILINE)
-        m = HEADER_STATUS_RE.search(text, 0, first.start() if first else len(text))
-        if m is not None:
-            text = text[: m.start(1)] + status + text[m.end(1) :]
     kept: list[str] = []
     placed = False
     last = 0
@@ -143,12 +135,6 @@ def replace_new_rounds(
     return out.rstrip() + "\n"
 
 
-def _header_status(text: str) -> str | None:
-    """The artifact's own status, read the way the loop reads it."""
-    m = HEADER_STATUS_RE.search(text or "")
-    return m.group(1).lower() if m else None
-
-
 # # A finding line as the loop's `FINDING` reads it, and the one label it counts closed: `fixed`
 # # with a sha. An `[answered]` is closed only by a validated block under `## Answers`, which
 # # is left to the loop, so it is kept here.
@@ -156,28 +142,22 @@ _FINDING_RE = re.compile(r"^- (F\d+)\s+\[([^\]]*)\]")
 _FIXED_RE = re.compile(r"^fixed\s+[0-9a-f]{7,40}$", re.IGNORECASE)
 
 
-def open_findings(text: str) -> tuple[str, int | None, str]:
-    """`review.md`'s header line, its last round's number, and that round's findings still open,
-    each with the indented lines under it.
+def open_findings(text: str) -> tuple[int | None, str]:
+    """`review.md`'s last round's number, and that round's findings still open, each with the
+    indented lines under it.
 
     Only cuts text out to embed in a prompt; the loop is the one reader of findings that opens
     anything. "Open" is every label but `fixed <sha>` (a `fixed` with no sha and unreadable
     labels included), so nothing the loop may count open is dropped from the prompt.
 
-    The header is the line holding the first `Status:`. A file with no `## Round` is read whole
-    below that line, as a single round with no number.
+    A file with no `## Round` is read whole, as a single round with no number.
     """
     text = text or ""
-    m = HEADER_STATUS_RE.search(text)
-    start = text.rfind("\n", 0, m.start()) + 1 if m else 0
-    end = text.find("\n", m.end()) if m else -1
-    header = text[start : end if end != -1 else len(text)].strip() if m else ""
     rounds = _rounds(text)
     if rounds:
         body, number = rounds[-1], _round_number(rounds[-1])
     else:
-        body, number = (text[end:] if m and end != -1 else ""), None
-        body = re.split(r"^## Answers\s*$", body, maxsplit=1, flags=re.MULTILINE)[0]
+        body, number = re.split(r"^## Answers\s*$", text, maxsplit=1, flags=re.MULTILINE)[0], None
     kept: list[str] = []
     keeping = False
     for line in body.splitlines():
@@ -189,7 +169,7 @@ def open_findings(text: str) -> tuple[str, int | None, str]:
             continue
         if keeping:
             kept.append(line)
-    return header, number, "\n".join(kept)
+    return number, "\n".join(kept)
 
 
 # # The three sections of a round the closing turn writes, in this order.
@@ -232,7 +212,6 @@ def closing_prompt(head: str, number: int) -> str:
         "Reply with the title, the header line and one new round only, and nothing else — "
         "no preamble, no code fence. The earlier rounds of `review.md` are the app's to "
         "keep; do not copy them. Exactly this shape:\n\n"
-        "- The header line carries `Status: draft.`\n"
         f"- Then `## Round {number}`.\n"
         f"- Its first line is exactly `Reviewed: {head}. Verdict: incomplete.`\n"
         "- Then three sections, in this order: `### Reviewed so far` (every file you "
@@ -248,16 +227,14 @@ def closing_prompt(head: str, number: int) -> str:
 def closing_round_problem(existing: str, reply: str, head: str) -> str | None:
     """`None` when `reply` is a closing turn's round the app may write, else why not.
 
-    Only an incomplete round, under a `draft` header, which the loop reads as "review again".
-    A full round is refused: it would open or close `ship` on a review that did not finish.
-    `merge_review` decides the rest when the round is written.
+    Only an incomplete round, which the loop reads as "review again". A full round is refused:
+    it would open or close `ship` on a review that did not finish. `merge_review` decides the
+    rest when the round is written.
     """
     try:
-        body = check_reply(reply)
+        body = unfence(reply)
     except RunError as e:
         return str(e)
-    if _header_status(body) != "draft":
-        return f"its header is {_header_status(body) or 'unreadable'}, not draft"
     on_disk = {_round_number(r) for r in _rounds(existing)}
     new = [r for r in _rounds(body) if _round_number(r) not in on_disk]
     if len(new) != 1:

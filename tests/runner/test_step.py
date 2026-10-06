@@ -798,27 +798,12 @@ class RerunningKeepsTheAnswers(unittest.TestCase):
             self.assertEqual(done["outcome"], "done", done)
             self.assertNotIn("## Answers", after)
 
-    def test_e_a_reply_with_no_status_line_leaves_the_file_untouched(self):
+    def test_e_a_reply_with_no_title_leaves_the_file_untouched(self):
         with tempfile.TemporaryDirectory() as d:
             self.unit_dir(d, spec_md=self.ANSWERED.format(mark="UNTOUCHED-MARK-0025"))
             path = Path(d) / ".cos" / UNIT / "spec.md"
             before = path.read_bytes()
-            done = self.run_once(d, "spec", "spec.md", "# Spec: x\n\nNo Status line at all.\n")
-            self.assertNotEqual(done["outcome"], "done")
-            self.assertEqual(path.read_bytes(), before)
-
-    def test_e2_a_status_line_only_under_the_replys_own_answers_is_refused(self):
-        # `check_reply` saw the whole reply, so a `Status:` living only under the reply's `##
-        # Answers` passed it, and `strip_answers` then cut the one line the gate reads.
-        with tempfile.TemporaryDirectory() as d:
-            self.unit_dir(d, spec_md=self.ANSWERED.format(mark="F1-MARK-0025"))
-            path = Path(d) / ".cos" / UNIT / "spec.md"
-            before = path.read_bytes()
-            reply = (
-                "# Spec: x\n\n## Requirements\n\nbody\n\n"
-                "## Answers\n\n### Câu 1\nStatus: accepted.\n"
-            )
-            done = self.run_once(d, "spec", "spec.md", reply)
+            done = self.run_once(d, "spec", "spec.md", "## Requirements\n\nNo title at all.\n")
             self.assertNotEqual(done["outcome"], "done")
             self.assertEqual(path.read_bytes(), before)
 
@@ -1680,12 +1665,11 @@ def incomplete_reply(
     head: str,
     number: int = 2,
     verdict: str = "incomplete",
-    status: str = "draft",
     sections=("Reviewed so far", "Findings", "What was not reviewed"),
 ) -> str:
     body = "".join(f"### {s}\n\n- {s.lower()}\n\n" for s in sections)
     return (
-        f"# Review: x\nSpec: spec.md. Author: t. Status: {status}.\n\n"
+        f"# Review: x\nSpec: spec.md. Author: t.\n\n"
         f"## Round {number}\n\nReviewed: {head}. Verdict: {verdict}.\n\n{body}"
     )
 
