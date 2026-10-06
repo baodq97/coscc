@@ -2022,6 +2022,12 @@ class Runner:
         cost_fields = _cost_fields(
             cost, recorder is not None and not shutting_down, outcome, stored, stored_from
         )
+        if resume is not None and resume.get("raised") and cost_fields.get("cost_usd") is not None:
+            # The CLI's total on a raised session holds the part before it: this `end` keeps its own
+            # share, so a sum over ends counts each dollar once, and the session's total beside it.
+            total = float(cost_fields["cost_usd"])
+            cost_fields["session_cost_usd"] = total
+            cost_fields["cost_usd"] = round(total - float(resume.get("spent_usd") or 0.0), 6)
         segment_fields = _segment_fields(owner, resume, segment_done)
         dropped = turn_kind == "opening" and not turn_taken and not shutting_down
         detail = _noted(

@@ -18,7 +18,7 @@ from coscc.kernel import Invalid
 from coscc.runner import run as run_mod
 from coscc.runner.queue import Refused
 from coscc.runner.steps import _raised
-from coscc.store.journal import paused_stage
+from coscc.store.journal import Journal, paused_of, paused_stage
 from coscc.units import board as board_reader
 from tests.http.test_app import create_sync
 
@@ -119,6 +119,11 @@ class ARaiseGoesOnInTheSameSession(unittest.TestCase):
         for ceilings in ({}, {"usd": 4}, {"usd": 2}, {"turns": 500}):
             with self.assertRaises(Invalid, msg=str(ceilings)):
                 _raised(END, ceilings)
+
+    def test_a_dollar_raise_not_above_what_was_spent_is_refused(self):
+        with self.assertRaises(Invalid) as caught:
+            _raised({**END, "cost_usd": 4.2, "max_budget_usd": 4.0}, {"usd": 4.2})
+        self.assertIn("$4.2", str(caught.exception))
 
     def test_a_ceiling_out_of_bounds_is_refused(self):
         with self.assertRaises(Invalid):
@@ -236,3 +241,68 @@ class ARaiseIsAPersonsAndOnlyOfAPausedStage(unittest.TestCase):
             with self.assertRaises((Refused, Invalid)) as caught:
                 asyncio.run(go())
         self.assertIn("budget-reached", getattr(caught.exception, "reasons", ()))
+
+    def test_a_held_unit_is_not_raised(self):
+        self.pause()
+
+        async def read(*a, **kw):
+            return {
+                "stages": ["impl"],
+                "units": [
+                    {
+                        "name": self.unit,
+                        "hold": {"state": "dropped", "reason": "dropped"},
+                        "stages": [{"stage": "impl"}],
+                    }
+                ],
+            }
+
+        with mock.patch.object(board_reader, "read", read), self.assertRaises(Refused) as caught:
+            self.raise_({"usd": 8})
+        self.assertEqual(caught.exception.reasons, ("held",))
+
+    def test_a_rerun_of_a_paused_stage_is_still_a_persons_and_its_note_is_capped(self):
+        self.pause()
+
+        async def go(**kw):
+            async for _ in self.core.steps.run_step(str(self.repo), self.unit, "impl", **kw):
+                pass
+
+        with self.assertRaises(Refused) as caught:
+            asyncio.run(go(rerun=True, started_by="autopilot"))
+        self.assertEqual(caught.exception.reasons, ("rerun-by-person",))
+        with self.assertRaises(Invalid):
+            asyncio.run(go(rerun=True, note="x" * 5000))
+
+
+class ARaisedSessionCountsEachDollarOnce(unittest.TestCase):
+    def test_pause_at_8_raise_finish_at_14_counts_14_in_the_card_insights_and_the_cap(self):
+        from coscc.leif import decide, spend
+
+        with tempfile.TemporaryDirectory() as d:
+            journal = Journal(d, d)
+            journal.started("k", "u", "impl", "manual", run="r1")
+            journal.finished(
+                "k", "u", "impl", "paused-budget", run="r1", cost_usd=8.0, max_budget_usd=8.0,
+                ceiling="usd",
+            )  # fmt: skip
+            journal.raised("k", "u", "impl", run="r2", by="owner")
+            journal.finished(
+                "k", "u", "impl", "done", run="r2", cost_usd=6.0, session_cost_usd=14.0
+            )
+            [row] = journal.timeline("k", "u")
+            self.assertEqual(row["cost"]["cost_usd"], 14.0)
+            ends = journal.records("k", "u", kinds=("end",))
+            self.assertEqual(sum(r["cost_usd"] for r in ends), 14.0)
+            day = spend.local_day(ends[-1]["at"])
+            self.assertEqual(decide.spent_on(ends, day)["known"], 14.0)
+            acc = spend._zero()
+            for r in ends:
+                spend._add(acc, r)
+            self.assertEqual(acc["usd"], 14.0)
+
+    def test_a_second_pause_names_the_session_total_and_a_second_raise_checks_it(self):
+        end = {**END, "cost_usd": 6.0, "session_cost_usd": 14.0, "max_budget_usd": 14.0}
+        self.assertEqual(paused_of(end)["usd"], 14.0)
+        with self.assertRaises(Invalid):
+            _raised(end, {"usd": 12})

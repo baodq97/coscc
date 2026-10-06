@@ -287,7 +287,9 @@ def _raised(end: dict[str, Any], ceilings: Any) -> tuple[dict[str, Any], dict[st
         raise Invalid("its session cannot be taken up: its transcript holds no point to go on from")
     if hit == "turns" and int(new["turns"] or 0) <= found["api_calls"]:
         raise Invalid(f"raise the turn ceiling above the {found['api_calls']} turns it used")
-    spent = end.get("cost_usd")
+    spent = end.get("session_cost_usd", end.get("cost_usd"))
+    if hit == "usd" and spent is not None and float(new["usd"] or 0) <= float(spent):
+        raise Invalid(f"raise the $ ceiling above the ${float(spent):g} it spent")
     sources = {
         f"max_{name}_source": "raise"
         for name, field in (("budget", "usd"), ("turns", "turns"))
@@ -316,6 +318,7 @@ def _raised(end: dict[str, Any], ceilings: Any) -> tuple[dict[str, Any], dict[st
         "api_calls": found["api_calls"],
         "pieces": found["pieces"],
         "message": RAISED.format(ceiling=said),
+        "raised": True,
         **({"spent_usd": float(spent)} if spent is not None else {"cost_unknown": True}),
     }
     return record, {
@@ -627,6 +630,7 @@ class Steps:
                 "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR",
                 ("no-run-log",),
             )
+        await self._find_stage(cwd, unit, stage)  # refuses a held unit
         key = self.ws.key(cwd)
         rows = await asyncio.to_thread(journal.records, key, unit, kinds=("start", "end", "raise"))
         last = next((r for r in reversed(rows) if r.get("stage") == stage), None)
@@ -814,7 +818,11 @@ class Steps:
                     ("budget-reached",),
                 )
             asked_rerun = rerun and paused is None
-            stale = await self._ask_rerun(cwd, unit, stage, started_by, note) if asked_rerun else {}
+            stale = (
+                await self._ask_rerun(cwd, unit, stage, started_by, note, paused is None)
+                if rerun
+                else {}
+            )
             tree, work = await self._open_tree(cwd, unit, stage)
             base = await self._tree_base(cwd, unit, tree)
             answer = await self._ask_gate(cwd, unit, stage, work)
@@ -969,12 +977,9 @@ class Steps:
             )
         return data, found, row
 
-    async def _ask_rerun(
-        self, cwd: str, unit: str, stage: str, started_by: str, note: str
-    ) -> dict[str, int]:
-        """`{file: record}` running `stage` again makes stale, asked before a worktree is opened
-        or the gate asked. Whether `stage` may run again, and what it makes stale, are the
-        loop's; its refusal is passed on."""
+    @staticmethod
+    def _check_rerun(started_by: str, note: str) -> None:
+        """A rerun is a person's, and its note is short."""
         if started_by != "person":
             raise Refused(
                 "a stage is run again only by a person, from the board, never by the autopilot",
@@ -984,6 +989,17 @@ class Steps:
             raise Invalid(
                 f"the note is {len(note)} characters, over the {RERUN_NOTE_MAX} a rerun takes"
             )
+
+    async def _ask_rerun(
+        self, cwd: str, unit: str, stage: str, started_by: str, note: str, ask: bool = True
+    ) -> dict[str, int]:
+        """`{file: record}` running `stage` again makes stale, asked before a worktree is opened
+        or the gate asked. Whether `stage` may run again, and what it makes stale, are the
+        loop's; its refusal is passed on. A stage held at a ceiling has no accepted artifact to make
+        stale, so with `ask` false only the person and the note are checked."""
+        self._check_rerun(started_by, note)
+        if not ask:
+            return {}
         try:
             asked = await board_reader.rerun(
                 self.ws.units_root(cwd), unit, stage, state=self.ws.snapshot(cwd, [unit])

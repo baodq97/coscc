@@ -781,6 +781,10 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 row["session_id"] = item.get("session_id")
             cost = zero_cost()
             add_cost(cost, item)
+            # A raised session's earlier parts are the same row's money.
+            parts: Any = row.get("parts") or []
+            for part in parts:
+                add_cost(cost, part["cost"])
             row["cost"] = cost
             # Whether this `end` actually carried a cost, as opposed to one `add_cost` filled in as zero
             # because the session died before reporting any. Without it a step that failed before its first
@@ -831,7 +835,7 @@ def paused_of(end: Mapping[str, Any]) -> PausedAt | None:
         "ceiling": end.get("ceiling"),
         "max_usd": end.get("max_budget_usd"),
         "max_turns": end.get("max_turns"),
-        "usd": end.get("cost_usd"),
+        "usd": end.get("session_cost_usd", end.get("cost_usd")),
         "turns": end.get("turns"),
     }
 

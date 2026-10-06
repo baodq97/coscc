@@ -1699,6 +1699,14 @@ class AStepAnUpdatePaused(unittest.TestCase):
                 (call["text"], call["session_id"], call["resume_at"]), ("MSG", "s-1", "u9")
             )
 
+    def test_a_raised_part_ends_with_its_own_share_and_the_session_total_beside_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            sessions = self.GoesOn(rest=self.PLAN, cost=1.2)
+            out, journal, _ = self.run_plan(d, sessions, self.resume(raised=True, spent_usd=0.5))
+            self.assertEqual(out[-1][1]["outcome"], "done")
+            [end] = journal.records(kind="end")
+            self.assertEqual((end["cost_usd"], end["session_cost_usd"]), (0.7, 1.2))
+
     def test_remaining_ceilings_are_the_grant_less_what_was_used(self):
         grant = grant_for("plan")
         with tempfile.TemporaryDirectory() as d:
