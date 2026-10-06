@@ -277,6 +277,11 @@ class ExecutingACommand(Bed):
             self.assertTrue(got["reason"], line)
         self.assertFalse(marker.exists())
 
+    async def test_a_refused_line_goes_back_as_an_error_and_a_run_does_not(self):
+        run = self.tools(self.facts())["vault_exec"].handler
+        self.assertIs((await run({"command": "git push origin main"})).get("is_error"), True)
+        self.assertNotIn("is_error", await run({"command": "true"}))
+
     async def test_a_command_no_list_names_is_run(self):
         got = await self.call(self.facts(), "vault_exec", {"command": "id -u"})
         self.assertEqual(got["exit_code"], 0)

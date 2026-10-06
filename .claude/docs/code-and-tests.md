@@ -103,7 +103,7 @@ class TheGuardOnlyDenies(unittest.TestCase):
 
 Rules: a feature imports only `coscc.kernel` and its own folder, never another feature, and owns the tables it creates; at most 3 files; `## What the agent sees` in its doc when it
 has agent parts; a blocking tool handler awaits `asyncio.to_thread`; a handler that runs a
-command reads its line with `kernel.bash_refused` and its own `Places`; a guard only denies or
+line an agent wrote reads it with `kernel.bash_refused` and its own `Places`; a guard only denies or
 abstains.
 
 ## Tests

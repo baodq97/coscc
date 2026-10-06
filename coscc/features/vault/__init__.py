@@ -151,7 +151,7 @@ class Handlers:
             got = await asyncio.to_thread(self._run, command, uses, timeout, capture)
         except vault.BadSecret as e:
             return _no(str(e))
-        return _text(_shown(got, bool(capture)), bool(got.refusals))
+        return _text(_shown(got, bool(capture)), bool(got.refusals or got.refused))
 
     async def _generate(self, args: dict[str, Any]) -> dict[str, Any]:
         raw, said = args.get("name"), args.get("description", "")

@@ -1376,10 +1376,9 @@ class Runner:
     def _configured(
         self, grant: Grant, stage: str, label: str | None, was: Mapping[str, Any]
     ) -> tuple[Grant, models.Ceilings]:
-        """`grant` with its two ceilings as `with_ceilings` resolves them (an override of
-        `turns:<row>` and `budget:<row>` from `cos.db`, else the grant's own) for every stage; this
-        and the ceilings with their sources. A stand-in `Sessions` with no config (a test's) has no
-        overrides."""
+        """`grant` and its two ceilings with their sources, as `with_ceilings` resolves them from
+        a `turns:<row>` or `budget:<row>` override in `cos.db`, else the grant's own, and with no
+        override for a stand-in `Sessions` with no config (a test's)."""
         config = getattr(self.sessions, "config", None)
         turns, budget = _ceiling_overrides(config) if config is not None else ({}, {})
         return with_ceilings(grant, stage, label, turns, budget, was)

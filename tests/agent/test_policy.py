@@ -1596,6 +1596,15 @@ class NoCommandListIsLeft(unittest.TestCase):
         self.assertTrue(Grant(tools=("Read",)).opens_anything)
 
 
+class ProgramsOfNamesWhatEachCommandRuns(unittest.TestCase):
+    def test_it_names_each_program_past_assignments_and_directories(self):
+        line = "A=1 /usr/bin/psql -c 'x; y' | grep z && echo ok"
+        self.assertEqual(policy.programs_of(line), ("psql", "grep", "echo"))
+
+    def test_a_line_it_cannot_read_names_none(self):
+        self.assertEqual(policy.programs_of("echo 'unclosed"), ())
+
+
 class TheStrictCheckRefusesAnySubstitution(_Unit):
     """`strict` is the vault's: its line runs with secrets in it, so what the line spells must be
     what runs."""
