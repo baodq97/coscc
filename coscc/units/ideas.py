@@ -1,29 +1,23 @@
 """An idea several units share, each unit in its own repository's workspace.
 
 `.cos/ideas/NNNN_<slug>.md` in the store of the workspace it was started in. The loop's
-`new-idea` allocates the number; this module writes the file and appends one line under
-`## Units` per unit opened from it. Nothing above `## Units` is ever rewritten. `Ideas` is what
-the app asks of them: making one, linking a unit to it, and what the `/idea` page and a step's
-prompt show.
+`new-idea` allocates the number; this module writes the file, once. An idea's units are the rows of
+`unit_links` that name it (`UnitMeta.link`, written when a unit is opened from it). `Ideas` is what
+the app asks of them: making one, checking a unit may link to it, and what a step's prompt shows.
 """
 
 from __future__ import annotations
 
 import os
 import re
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 from coscc.config import Config
 from coscc.git import gitops
 from coscc.git.gitops import GitError
-from coscc.store.db import Busy
 from coscc.store.workspaces import valid_name
 from coscc.units import COS_DIR, CannotCreate, Invalid, _cos, root
-from coscc.units import board as board_reader
-from coscc.units.board import Unavailable, unit_state
-from coscc.units.meta import MetaError
 from coscc.units.workspaces import Workspaces
 
 IDEAS_DIR = "ideas"
@@ -36,9 +30,6 @@ IDEA_ID_RE = re.compile(_ID)
 IDEA_REF_RE = re.compile(rf"({_WS})/{IDEAS_DIR}/({_ID})\.md")
 UNIT_REF_RE = re.compile(rf"({_WS})/(\d{{4}}_[a-z0-9]+(?:-[a-z0-9]+)*)")
 _OWN_WORDS = "## In their own words"
-_UNITS = "## Units"
-# The line `append_unit` writes, read back by `read_units` and by the loop's `parseIdea`.
-_UNIT_LINE = re.compile(r"- (\S+?)(?:\. Depends on: (.+?))?\.?")
 
 
 def _named(ref: str, pattern: re.Pattern[str]) -> tuple[str, str] | None:
@@ -77,7 +68,7 @@ def create_idea(
     brief: str,
     data_dir: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
-    """Allocate the number with the loop's `new-idea`, then write the file with an empty `## Units`.
+    """Allocate the number with the loop's `new-idea`, then write the file.
 
     The printed path is checked the way `units.create` checks `new-path`'s: joined to the
     store, it must stay inside `ideas/`, and name a file that does not exist yet.
@@ -85,11 +76,6 @@ def create_idea(
     text = str(brief or "").strip()
     if not text:
         raise CannotCreate("an idea needs a brief: the originator's own words are the idea")
-    if any(line.rstrip() == _UNITS for line in text.splitlines()):
-        # The loop and `read_units` take the first such line for the app's own section.
-        raise CannotCreate(
-            f"a brief may not hold the line {_UNITS!r}: the idea's units are listed under it"
-        )
     store = root(workspace, data_dir)
     (store / COS_DIR).mkdir(parents=True, exist_ok=True)
     printed = _cos(store, "new-idea", str(slug or "").strip())
@@ -111,71 +97,13 @@ def create_idea(
         f.write(
             f"# Idea: {title}\n"
             f"Author: the originator. Status: accepted.\n\n"
-            f"{_OWN_WORDS}\n\n{text}\n\n"
-            f"{_UNITS}\n\n"
+            f"{_OWN_WORDS}\n\n{text}\n"
         )
     return {"id": idea_id, "path": str(path)}
 
 
-def unit_line(workspace_name: str, unit: str, depends_on: str = "") -> str:
-    """The line under `## Units` for one unit."""
-    tail = f". Depends on: {depends_on}" if depends_on else ""
-    return f"- {workspace_name}/{unit}{tail}.\n"
-
-
-def append_unit(
-    path: str | os.PathLike[str], workspace_name: str, unit: str, depends_on: str = ""
-) -> None:
-    """Append one line to the end of the idea; `## Units` is the last section.
-
-    A file that does not end in a newline gets one first.
-    """
-    target = Path(path)
-    needs_newline = False
-    with target.open("rb") as f:
-        if f.seek(0, os.SEEK_END) > 0:
-            f.seek(-1, os.SEEK_END)
-            needs_newline = f.read(1) != b"\n"
-    with target.open("a", encoding="utf-8") as f:
-        f.write(("\n" if needs_newline else "") + unit_line(workspace_name, unit, depends_on))
-
-
 def read_text(path: str | os.PathLike[str]) -> str:
     return Path(path).read_text(encoding="utf-8")
-
-
-def read_units(text: str) -> list[dict[str, Any]]:
-    """The units listed under `## Units`, `{ref, depends_on: [...]}`, in the file's order.
-
-    A line it cannot read is left out; the loop's `status` reports it.
-    """
-    out: list[dict[str, Any]] = []
-    inside = False
-    for line in text.splitlines():
-        if line.startswith("## "):
-            inside = line.rstrip() == _UNITS
-            continue
-        if not inside or not line.strip():
-            continue
-        m = _UNIT_LINE.fullmatch(line.rstrip())
-        if m and parse_unit_ref(m.group(1)):
-            deps = [d.strip() for d in (m.group(2) or "").split(",") if d.strip()]
-            out.append({"ref": m.group(1), "depends_on": deps})
-    return out
-
-
-def brief_of(text: str) -> str:
-    """The originator's words: the idea's `## In their own words`, without its heading.
-
-    They run to `## Units`, not the next `## `: a pasted brief may have headings of its own.
-    """
-    lines = text.splitlines()
-    try:
-        start = lines.index(_OWN_WORDS) + 1
-    except ValueError:
-        return ""
-    end = next((i for i in range(start, len(lines)) if lines[i].rstrip() == _UNITS), len(lines))
-    return "\n".join(lines[start:end]).strip()
 
 
 class Ideas:
@@ -198,14 +126,21 @@ class Ideas:
             made = create_idea(cwd, slug, brief, self.config.data_dir)
         except CannotCreate as e:
             raise Invalid(str(e)) from e
-        self.refresh_ideas(cwd)
         return {
             "cwd": cwd,
             "id": made["id"],
             "ref": idea_ref(name, made["id"]) if name else "",
         }
 
-    def idea_link(self, cwd: str, idea: str, brief: str, depends_on: str) -> dict[str, Any]:
+    def _units_of(self, idea: str) -> list[tuple[str, str, list[str]]]:
+        """`(workspace name, unit, depends_on)` of every unit opened from `idea`: the rows that
+        name it, in every workspace the app names."""
+        names = {self.ws.key(path): name for name, path in self.ws.peer_table()[0]}
+        return [
+            (names[w], u, deps) for w, u, deps in self.ws.unit_meta().idea_units(idea) if w in names
+        ]
+
+    def idea_link(self, cwd: str, idea: str, brief: str, depends_on: str) -> None:
         """Every check a unit opened from `idea` needs, before anything is made."""
         ref = parse_idea_ref(idea)
         if ref is None:
@@ -224,87 +159,51 @@ class Ideas:
         name = self.ws.name(cwd)
         if not name or not valid_name(name) or name not in dict(self.ws.peers()):
             raise Invalid("This workspace has no name of its own that another unit could refer to.")
-        if depends_on and depends_on not in [u["ref"] for u in read_units(read_text(path))]:
-            raise Invalid(f"{depends_on} is not listed under {idea}.")
-        return {"path": path, "ws": name, "home": home}
-
-    def _ideas_everywhere(self) -> list[dict[str, Any]]:
-        """Every idea file in every workspace's store, `{ws, id, path, text, units}`."""
-        out: list[dict[str, Any]] = []
-        for name, store in self.ws.peers():
-            folder = store / ".cos" / IDEAS_DIR
-            if not folder.is_dir():
-                continue
-            for f in sorted(folder.glob("*.md")):
-                if not IDEA_ID_RE.fullmatch(f.name[:-3]):
-                    continue
-                try:
-                    text = f.read_text(encoding="utf-8")
-                except OSError:
-                    continue
-                out.append(
-                    {
-                        "ws": name,
-                        "id": f.name[:-3],
-                        "path": f,
-                        "text": text,
-                        "units": read_units(text),
-                    }
-                )
-        return out
+        if depends_on and depends_on not in [f"{w}/{u}" for w, u, _ in self._units_of(idea)]:
+            raise Invalid(f"{depends_on} is not a unit of {idea}.")
 
     def _idea_of(self, cwd: str, unit: str) -> dict[str, Any] | None:
-        """The idea that lists `<cwd's name>/<unit>` under `## Units`, with that line, or None.
-
-        Read off the files in each store, never the loop: which idea a unit was opened from is the
-        app's own record, and asking the script would read every workspace's board.
-        """
-        name = self.ws.name(cwd)
-        if not name:
+        """The idea `unit` was opened from, with its text, its units and what this unit depends
+        on, or None. The unit's own `idea` row says which; the idea file is only read for its text."""
+        links = self.ws.meta_of(cwd, unit).get("links") or {}
+        idea = str(links.get("idea") or "")
+        ref = parse_idea_ref(idea)
+        home = self._workspace_by_name(ref[0]) if ref else None
+        if ref is None or home is None:
             return None
-        me = f"{name}/{unit}"
-        for found in self._ideas_everywhere():
-            line = next((u for u in found["units"] if u["ref"] == me), None)
-            if line is not None:
-                return {
-                    **found,
-                    "ref": idea_ref(found["ws"], found["id"]),
-                    "line": line,
-                    "me": me,
-                }
-        return None
+        try:
+            text = read_text(idea_path(home, ref[1], self.config.data_dir))
+        except CannotCreate, OSError:
+            return None
+        return {
+            "text": text,
+            "me": f"{self.ws.name(cwd)}/{unit}",
+            "units": self._units_of(idea),
+            "depends_on": links.get("dependsOn") or [],
+        }
 
     def idea_note(self, cwd: str, unit: str) -> str:
-        """The idea's text, its units with their `Repo`, and the three header lines."""
+        """The idea's text and the other units of it, for the intent prompt."""
         found = self._idea_of(cwd, unit)
         if found is None:
             return ""
-        ws = found["me"].split("/", 1)[0]
-        siblings = [u["ref"] for u in found["units"] if u["ref"] != found["me"]]
-        header = [f"Idea: {found['ref']}.", f"Repo: {ws}."]
-        if found["line"]["depends_on"]:
-            header.append(f"Depends on: {', '.join(found['line']['depends_on'])}.")
-        return (
-            f"{found['text'].rstrip()}\n\n"
-            "## The other units of this idea\n\n"
-            + ("".join(f"- {s} (Repo: {s.split('/', 1)[0]})\n" for s in siblings) or "None yet.\n")
-            + "\n## The header this unit's intent.md must carry\n\n"
-            "Write these lines into the header of intent.md, beside Type and Status, exactly:\n\n"
-            + "".join(f"    {h}\n" for h in header)
+        others = [f"{w}/{u}" for w, u, _ in found["units"] if f"{w}/{u}" != found["me"]]
+        return f"{found['text'].rstrip()}\n\n## The other units of this idea\n\n" + (
+            "".join(f"- {o}\n" for o in others) or "None yet.\n"
         )
 
     async def siblings(self, cwd: str, unit: str) -> str:
         """The note naming the checkouts `impl` may read, each with its HEAD.
 
-        The other workspaces the idea lists, and those of the unit's dependencies; never the
-        unit's own. A workspace no longer there is named as missing and not read.
+        The other workspaces the idea's units are in, and those of the unit's dependencies; never
+        the unit's own. A workspace no longer there is named as missing and not read.
         """
         found = self._idea_of(cwd, unit)
         if found is None:
             return ""
         own = found["me"].split("/", 1)[0]
-        names = [u["ref"].split("/", 1)[0] for u in found["units"]]
-        names += [d.split("/", 1)[0] for d in found["line"]["depends_on"]]
+        names = [w for w, _, _ in found["units"]]
+        names += [d.split("/", 1)[0] for d in found["depends_on"] if "/" in d]
         lines: list[str] = []
         for name in dict.fromkeys(n for n in names if n != own):
             where = self._workspace_by_name(name)
@@ -324,79 +223,3 @@ class Ideas:
             "are refused outside this worktree, and a commit there is not this unit's.\n\n"
             + "\n".join(lines)
         )
-
-    async def idea(self, cwd: str, idea_id: str) -> dict[str, Any]:
-        """One idea, its text, and a row per unit it lists.
-
-        Each row reads the board of the unit's own workspace, once per workspace; a workspace
-        that is gone is a `missing` row, not a refusal.
-        """
-        self.ws.check(cwd)
-        name = self.ws.name(cwd)
-        try:
-            path = idea_path(cwd, idea_id, self.config.data_dir)
-        except CannotCreate as e:
-            raise Invalid(str(e)) from e
-        if not path.is_file():
-            raise Invalid(f"No idea {idea_id} in this workspace.")
-        text = read_text(path)
-        listed = read_units(text)
-        peers = self.ws.peer_table()[0]
-        boards: dict[str, dict[str, Any] | None] = {}
-        rows: list[dict[str, Any]] = []
-        for line in listed:
-            ws, unit = line["ref"].split("/", 1)
-            if ws not in boards:
-                where = self._workspace_by_name(ws)
-                try:
-                    boards[ws] = (
-                        None
-                        if where is None
-                        else await board_reader.read(
-                            self.ws.units_root(where), state=self.ws.snapshot(where, peers=peers)
-                        )
-                    )
-                except Unavailable:
-                    boards[ws] = None
-            board = boards[ws]
-            found = next((u for u in (board or {}).get("units") or [] if u["name"] == unit), None)
-            waits = [
-                d["ref"]
-                for d in (found or {}).get("depends_on") or []
-                if d.get("merged") is not True
-            ]
-            rows.append(
-                {
-                    "ref": line["ref"],
-                    "ws": ws,
-                    "unit": unit,
-                    "repo": ws,
-                    "missing": found is None,
-                    "stage": (found or {}).get("at") or "",
-                    "state": unit_state(found, None, None)["label"] if found else "missing",
-                    "waits_for": waits if (found or {}).get("why") == "dependency" else [],
-                    "depends_on": line["depends_on"],
-                }
-            )
-        title = next(
-            (l[len("# Idea:") :].strip() for l in text.splitlines() if l.startswith("# Idea:")),
-            idea_id,
-        )
-        return {
-            "cwd": cwd,
-            "ws": name,
-            "id": idea_id,
-            "ref": idea_ref(name, idea_id) if name else "",
-            "title": title,
-            "brief": brief_of(text),
-            "units": rows,
-            "workspaces": [n for n, _ in peers],
-        }
-
-    def refresh_ideas(self, cwd: str) -> None:
-        """`cwd`'s ideas into `cos.db` again, after the app wrote one. A failure is left to
-        the board: the loop then reports the idea link it cannot find."""
-        try:
-            self.ws.unit_meta().refresh_ideas(self.ws.key(cwd), self.ws.units_root(cwd))
-        except MetaError, Busy, sqlite3.Error, OSError:
-            pass

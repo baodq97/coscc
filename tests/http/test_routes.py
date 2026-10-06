@@ -1717,47 +1717,54 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
             depends_on=back_ref,
         )
         self.assertEqual(front.status_code, 200, front.text)
-        # A unit opened from an idea has no `idea.md`, and the idea lists both.
+        # A unit opened from an idea has no `idea.md`, and the idea file lists nothing: both
+        # units are rows of `unit_links`.
         data = self.root / "data"
         self.assertFalse(
             (units.unit_dir(self.cwd["api"], back.json()["unit"], data) / "idea.md").exists()
         )
-        # The frontend's intent, as the intent step is told to write it; the plan accepted.
         front_dir = units.unit_dir(self.cwd["proj"], front.json()["unit"], data)
         (front_dir / "intent.md").write_text(
-            f"# Intent: f\nAuthor: t. Type: feat. Status: accepted.\nIdea: {idea['ref']}. Repo: proj. Depends on: {back_ref}.\n",
-            encoding="utf-8",
+            "# Intent: f\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
         (front_dir / "spec.md").write_text("# S\nStatus: accepted.\n", encoding="utf-8")
         (front_dir / "plan.md").write_text("# P\nStatus: accepted.\n", encoding="utf-8")
         (units.unit_dir(self.cwd["api"], back.json()["unit"], data) / "intent.md").write_text(
-            f"# Intent: b\nAuthor: t. Type: feat. Status: accepted.\nIdea: {idea['ref']}. Repo: api.\n",
-            encoding="utf-8",
+            "# Intent: b\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
+        core = self.app.state.core
+        self.assertEqual(
+            sorted(core.ws.unit_meta().idea_units(idea["ref"])),
+            sorted(
+                [
+                    (core.ws.key(self.cwd["api"]), back.json()["unit"], []),
+                    (core.ws.key(self.cwd["proj"]), front.json()["unit"], [back_ref]),
+                ]
+            ),
+        )
+        self.assertNotIn("## Units", (await self.idea_text(idea)))
 
         proj = await self.board("proj")
-        self.assertEqual(
-            proj["ideas"][0]["units"],
-            [
-                {"ref": back_ref, "depends_on": []},
-                {"ref": f"proj/{front.json()['unit']}", "depends_on": [back_ref]},
-            ],
-        )
+        self.assertNotIn("ideas", proj)
         [f] = proj["units"]
         self.assertEqual((f["why"], f["state"]["state"]), ("dependency", "awaiting"))
+        self.assertEqual(f["idea"], idea["ref"])
         [b] = (await self.board("api"))["units"]
-        self.assertEqual((b["idea"], b["repo"]), (idea["ref"], "api"))
+        self.assertEqual(b["idea"], idea["ref"])
+        self.assertNotIn("repo", b)
         self.assertEqual(b["problems"], [])
 
-        page = await self.app.state.core.ideas.idea(self.cwd["proj"], "0001_one-feature")
-        self.assertEqual(
-            [(r["ref"], r["repo"], r["waits_for"]) for r in page["units"]],
-            [
-                (back_ref, "api", []),
-                (f"proj/{front.json()['unit']}", "proj", [back_ref]),
-            ],
-        )
-        self.assertEqual(page["brief"], "backend adds, frontend calls")
+        # What the next steps are told, from the rows: the other unit of the idea, and where it is.
+        note = core.ideas.idea_note(self.cwd["proj"], front.json()["unit"])
+        self.assertIn("backend adds, frontend calls", note)
+        self.assertIn(f"- {back_ref}\n", note)
+        sib = await core.ideas.siblings(self.cwd["proj"], front.json()["unit"])
+        self.assertIn("- api:", sib)
+
+    async def idea_text(self, idea: dict) -> str:
+        from coscc.units import ideas
+
+        return ideas.read_text(ideas.idea_path(self.cwd["proj"], idea["id"], self.root / "data"))
 
 
 class FeatureStatesOverHttp(unittest.IsolatedAsyncioTestCase):

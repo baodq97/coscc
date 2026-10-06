@@ -277,7 +277,7 @@ def to_impl():
     }
 
 
-# The rows the press wrote for `b/0001_y`: it depends on `a/0001_x`, in the idea `0001_f`.
+# The rows the press wrote for the unit that waits: its idea, and the unit it depends on.
 Y_LINKS = {"0001_y": {"idea": "b/ideas/0001_f.md", "dependsOn": ["a/0001_x"]}}
 
 

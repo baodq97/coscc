@@ -563,18 +563,24 @@ class UnitMeta:
                 )
         return out
 
-    def link(self, workspace: str, unit: str, idea: str | None, depends_on: Iterable[str]) -> None:
+    def link(
+        self,
+        conn: sqlite3.Connection,
+        workspace: str,
+        unit: str,
+        idea: str | None,
+        depends_on: Iterable[str],
+    ) -> None:
         """The unit's idea and the units it depends on, replacing what it had. The one writer of
-        `unit_links`: the press that created the unit calls it."""
+        `unit_links`: the press that created the unit calls it, in the transaction of its row."""
         rows = [("idea", idea)] if idea else []
         rows += [("depends", d) for d in depends_on]
         scope = (self.root, workspace, unit)
-        with self.data.write() as conn:
-            conn.execute(f"DELETE FROM unit_links WHERE {_ONE}", scope)
-            conn.executemany(
-                "INSERT INTO unit_links (root, workspace, unit, kind, ref, pos) VALUES (?, ?, ?, ?, ?, ?)",
-                [(*scope, k, str(ref), i) for i, (k, ref) in enumerate(rows)],
-            )
+        conn.execute(f"DELETE FROM unit_links WHERE {_ONE}", scope)
+        conn.executemany(
+            "INSERT INTO unit_links (root, workspace, unit, kind, ref, pos) VALUES (?, ?, ?, ?, ?, ?)",
+            [(*scope, k, str(ref), i) for i, (k, ref) in enumerate(rows)],
+        )
 
     def idea_units(self, idea: str) -> list[tuple[str, str, list[str]]]:
         """`(workspace, unit, depends_on)` of every unit whose `idea` row names `idea`, in every

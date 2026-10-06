@@ -317,7 +317,7 @@ async def create_unit(request: Request) -> Any:
         str(body.get("cwd") or ""),
         str(body.get("slug") or ""),
         str(body.get("brief") or ""),
-        # A unit opened from a shared idea: no brief, one line under `## Units`.
+        # A unit opened from a shared idea: no brief; its link is a row of `unit_links`.
         idea=str(body.get("idea") or ""),
         depends_on=str(body.get("depends_on") or ""),
     )

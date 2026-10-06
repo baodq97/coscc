@@ -5,10 +5,12 @@ The loop's `new-idea` is run for real, for the reason `tests/units/test_units.py
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from coscc import units
 from coscc.bus import Bus
@@ -31,17 +33,15 @@ class Fixture(unittest.TestCase):
 
 
 class CreatingAnIdea(Fixture):
-    def test_create_idea_writes_with_an_empty_units_section(self):
+    def test_create_idea_writes_the_brief_and_no_units_section(self):
         made = ideas.create_idea(WS, "one-feature", "  backend adds, frontend calls  ", self.data)
         self.assertEqual(made["id"], "0001_one-feature")
         text = ideas.read_text(made["path"])
         self.assertEqual(
             text,
             "# Idea: one feature\nAuthor: the originator. Status: accepted.\n\n"
-            "## In their own words\n\nbackend adds, frontend calls\n\n## Units\n\n",
+            "## In their own words\n\nbackend adds, frontend calls\n",
         )
-        self.assertEqual(ideas.read_units(text), [])
-        self.assertEqual(ideas.brief_of(text), "backend adds, frontend calls")
         self.assertEqual(ideas.create_idea(WS, "two", "b", self.data)["id"], "0002_two")
 
     def test_an_idea_leaves_the_unit_numbering_alone(self):
@@ -49,54 +49,14 @@ class CreatingAnIdea(Fixture):
         self.assertEqual(units.create(WS, "first", "", self.data)["unit"], "0001_first")
 
     def test_a_brief_with_headings_of_its_own_is_kept_whole(self):
-        """A brief pasted from a markdown file ran only to its first `## `."""
-        brief = (
-            "Backend adds an endpoint.\n\n## Why\n\nThe frontend needs it.\n\n## Not this\n\nAuth."
-        )
+        brief = "Backend adds an endpoint.\n\n## Units\n\nThe frontend needs it."
         path = ideas.create_idea(WS, "one", brief, self.data)["path"]
-        ideas.append_unit(path, "api", "0001_backend")
-        text = ideas.read_text(path)
-        self.assertEqual(ideas.brief_of(text), brief)
-        self.assertEqual(ideas.read_units(text), [{"ref": "api/0001_backend", "depends_on": []}])
-
-    def test_a_brief_holding_the_units_heading_is_refused_before_a_number_is_taken(self):
-        with self.assertRaises(CannotCreate) as caught:
-            ideas.create_idea(WS, "one", "words\n## Units\n- api/0001_x.", self.data)
-        self.assertIn("## Units", str(caught.exception))
-        self.assertFalse((units.cos_dir(WS, self.data) / "ideas").exists())
+        self.assertTrue(ideas.read_text(path).endswith(f"## In their own words\n\n{brief}\n"))
 
     def test_an_empty_brief_is_refused_before_a_number_is_taken(self):
         with self.assertRaises(CannotCreate):
             ideas.create_idea(WS, "one", "   ", self.data)
         self.assertFalse((units.cos_dir(WS, self.data) / "ideas").exists())
-
-
-class AppendingAUnit(Fixture):
-    def test_append_unit_only_appends(self):
-        path = ideas.create_idea(WS, "one", "words", self.data)["path"]
-        before = ideas.read_text(path)
-        ideas.append_unit(path, "api", "0001_backend")
-        ideas.append_unit(path, "proj", "0006_frontend", "api/0001_backend")
-        after = ideas.read_text(path)
-        self.assertTrue(after.startswith(before), after)
-        self.assertEqual(
-            after[len(before) :],
-            "- api/0001_backend.\n- proj/0006_frontend. Depends on: api/0001_backend.\n",
-        )
-        self.assertEqual(
-            ideas.read_units(after),
-            [
-                {"ref": "api/0001_backend", "depends_on": []},
-                {"ref": "proj/0006_frontend", "depends_on": ["api/0001_backend"]},
-            ],
-        )
-
-    def test_a_file_without_a_final_newline_gets_one_before_the_line(self):
-        path = ideas.create_idea(WS, "one", "words", self.data)["path"]
-        with open(path, "a", encoding="utf-8") as f:
-            f.write("- api/0001_a.")
-        ideas.append_unit(path, "api", "0002_b")
-        self.assertTrue(ideas.read_text(path).endswith("- api/0001_a.\n- api/0002_b.\n"))
 
 
 class References(unittest.TestCase):
@@ -173,20 +133,15 @@ class PeersAreEveryWorkspaceByName(ServiceFixture):
             problems, ["Two workspaces are named proj, so neither is linked by that name."]
         )
 
-    def test_a_unit_whose_repo_differs_from_its_workspace_gets_a_problem(self):
-        made = self.run_(self.core.answers.create_unit(self.proj, "x"))
-        (Path(made["path"]) / "intent.md").write_text(
-            "# I\nType: feat. Status: accepted.\nRepo: api.\n", encoding="utf-8"
-        )
-        [u] = self.run_(self.core.board(self.proj))["units"]
-        self.assertIn("Repo: api is not this workspace, proj.", u["problems"])
 
-
-class AUnitOpenedFromAnIdea(ServiceFixture):
+class AUnitOpenedFromAnIdeaIsARow(ServiceFixture):
     def setUp(self):
         super().setUp()
         self.idea = self.core.ideas.create_idea(
             self.proj, "one-feature", "backend adds, frontend calls"
+        )
+        self.text = ideas.read_text(
+            ideas.idea_path(self.proj, "0001_one-feature", self.root / "data")
         )
         self.back = self.run_(
             self.core.answers.create_unit(self.api, "backend", idea=self.idea["ref"])
@@ -197,17 +152,29 @@ class AUnitOpenedFromAnIdea(ServiceFixture):
             )
         )
 
-    def test_the_intent_note_carries_the_idea_text_the_siblings_and_the_three_header_lines(self):
+    def test_the_idea_file_is_not_written_and_the_rows_list_its_units(self):
+        path = ideas.idea_path(self.proj, "0001_one-feature", self.root / "data")
+        self.assertEqual(ideas.read_text(path), self.text)
+        self.assertEqual(
+            sorted(self.core.ws.unit_meta().idea_units(self.idea["ref"])),
+            sorted(
+                [
+                    (self.core.ws.key(self.api), self.back["unit"], []),
+                    (self.core.ws.key(self.proj), self.front["unit"], [f"api/{self.back['unit']}"]),
+                ]
+            ),
+        )
+
+    def test_the_intent_note_carries_the_idea_text_and_the_other_units_and_no_header(self):
         note = self.core.ideas.idea_note(self.proj, self.front["unit"])
         self.assertIn("backend adds, frontend calls", note)
-        self.assertIn(f"- api/{self.back['unit']} (Repo: api)", note)
+        self.assertIn(f"- api/{self.back['unit']}\n", note)
+        self.assertNotIn(f"proj/{self.front['unit']}", note)
+        self.assertNotIn("must carry", note)
+        self.assertNotIn("Repo:", note)
         self.assertIn(
-            f"    Idea: proj/ideas/0001_one-feature.md.\n    Repo: proj.\n    Depends on: api/{self.back['unit']}.\n",
-            note,
-        )
-        self.assertNotIn(
-            "Depends on",
-            self.core.ideas.idea_note(self.api, self.back["unit"]).split("must carry")[1],
+            f"- proj/{self.front['unit']}",
+            self.core.ideas.idea_note(self.api, self.back["unit"]),
         )
 
     def test_a_brief_opened_unit_has_no_note_and_no_siblings(self):
@@ -223,6 +190,31 @@ class AUnitOpenedFromAnIdea(ServiceFixture):
         self.assertIn(f"- api: {Path(self.api).resolve()} (HEAD {head[:12]} on main)", note)
         self.assertNotIn("- proj:", note)
 
+    def test_a_dependency_outside_the_idea_is_refused_and_nothing_is_made(self):
+        before = self.run_(board_reader.read(self.core.ws.units_root(self.api)))["count"]
+        with self.assertRaises(Invalid):
+            self.run_(
+                self.core.answers.create_unit(
+                    self.api, "again", idea=self.idea["ref"], depends_on="proj/0099_elsewhere"
+                )
+            )
+        self.assertEqual(
+            self.run_(board_reader.read(self.core.ws.units_root(self.api)))["count"], before
+        )
+
+    def test_the_link_is_written_with_the_units_row_or_not_at_all(self):
+        with (
+            mock.patch(
+                "coscc.units.meta.UnitMeta.add_unit", side_effect=sqlite3.OperationalError("disk")
+            ),
+            self.assertRaisesRegex(Invalid, "idea link was not kept"),
+        ):
+            self.run_(self.core.answers.create_unit(self.api, "again", idea=self.idea["ref"]))
+        self.assertEqual(
+            sorted(u for _, u, _ in self.core.ws.unit_meta().idea_units(self.idea["ref"])),
+            sorted([self.back["unit"], self.front["unit"]]),
+        )
+
     def test_a_brief_with_an_idea_is_refused_and_nothing_is_made(self):
         before = self.run_(board_reader.read(self.core.ws.units_root(self.api)))["count"]
         with self.assertRaises(Invalid):
@@ -231,24 +223,4 @@ class AUnitOpenedFromAnIdea(ServiceFixture):
             )
         self.assertEqual(
             self.run_(board_reader.read(self.core.ws.units_root(self.api)))["count"], before
-        )
-
-    def test_the_idea_page_lists_each_child_with_repo_stage_and_waits_for(self):
-        page = self.run_(self.core.ideas.idea(self.proj, "0001_one-feature"))
-        self.assertEqual(page["title"], "one feature")
-        self.assertEqual(
-            [(r["unit"], r["repo"], r["missing"]) for r in page["units"]],
-            [
-                (self.back["unit"], "api", False),
-                (self.front["unit"], "proj", False),
-            ],
-        )
-        self.assertEqual(page["workspaces"], ["proj", "api"])
-
-    def test_a_workspace_that_is_gone_is_a_missing_row(self):
-        core = self.make(self.proj)
-        page = self.run_(core.ideas.idea(self.proj, "0001_one-feature"))
-        self.assertEqual(
-            [(r["repo"], r["missing"], r["state"]) for r in page["units"]][0],
-            ("api", True, "missing"),
         )

@@ -44,7 +44,6 @@ PRIVATE_IMPORTS: set[tuple[str, str, str]] = {
 OWNERS: dict[str, str] = {
     "auth": "coscc.store.db",
     "auth_sessions": "coscc.store.db",
-    "idea_meta": "coscc.units.meta",
     "impl_claims": "coscc.units.meta",
     "migrations": "coscc.store.db",
     "outputs": "coscc.units.meta",
@@ -75,6 +74,8 @@ FOREIGN_SQL: set[tuple[str, str]] = {
     # The v14 migration rewrites intent and impl records and drops `unit_meta.lane`.
     ("coscc.store.db", "outputs"),
     ("coscc.store.db", "unit_meta"),
+    # The v15 migration rebuilds `unit_links` without its `repo` rows.
+    ("coscc.store.db", "unit_links"),
     ("coscc.run", "workspaces"),
     ("coscc.github.integration", "transitions"),
     ("coscc.units.history", "transitions"),
@@ -200,8 +201,6 @@ DICT_ANY: set[str] = {
     "coscc.units.board:shown_state",
     "coscc.units.board:unit_state",
     "coscc.units.ideas:Ideas.create_idea",
-    "coscc.units.ideas:Ideas.idea",
-    "coscc.units.ideas:Ideas.idea_link",
     "coscc.leif.agents:Models.findings_added",
     "coscc.leif.agents:Models.stage_config",
     "coscc.features.release.rules:classify",
@@ -296,7 +295,6 @@ DICT_ANY: set[str] = {
     "coscc.units.hold:record",
     "coscc.units.hold:refusal",
     "coscc.units.ideas:create_idea",
-    "coscc.units.ideas:read_units",
     "coscc.units.meta:UnitMeta.import_store",
     "coscc.units.meta:UnitMeta.ingest",
     "coscc.units.meta:UnitMeta.snapshot",

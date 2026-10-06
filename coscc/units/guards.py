@@ -44,7 +44,6 @@ REASONS = (
     "recording-ship",
     "closed",
     "overlap-pr",
-    "needs-idea",
     "gate-closed",
     "not-in-lane",
     # The guards' own refusals.
