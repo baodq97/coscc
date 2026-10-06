@@ -1836,7 +1836,7 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
         return probe, final
 
     def test_the_features_get_the_plan_record_the_step_was_handed(self):
-        record = {"impl": "routine", "files": ["a.py"], "steps": [], "rests_on": []}
+        record = {"variant": "routine", "files": ["a.py"], "steps": [], "rests_on": []}
         with tempfile.TemporaryDirectory() as d:
             self._run(d, self._hooks(), "impl", plan=record)
         self.assertEqual(self.made[0].plan, record)

@@ -39,7 +39,6 @@ from coscc.agent.policy import (
     row_for_step,
 )
 from coscc.units import guards
-from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
 
 from coscc.runner import run as run_mod
@@ -187,7 +186,7 @@ def _titled(pieces: list[str], artifact: str) -> bool:
 def _unsubmitted(channel: submit_mod.Channel) -> str:
     """`""` once the run holds an object its channel's guard still opens on, with the app's hash
     taken now; else why not, the object dropped when it went stale. The run itself ends `done`
-    only as the lane's `run-submitted` guard says.
+    only as the `run-submitted` guard says.
     """
     got = channel.received
     if got is not None:
@@ -198,8 +197,7 @@ def _unsubmitted(channel: submit_mod.Channel) -> str:
                 f"guard {channel.guard_id} refused the object it had accepted ({', '.join(verdict.reasons)}): "
                 "the unit's files changed after it was submitted"
             )
-    lane = unit_states.default_lanes().lane("full")
-    ran = guards.guard(lane.guard_for("run", "submitted")).check(
+    ran = guards.guard(guards.TRANSITIONS["run"]["submitted"]).check(
         {"submitted": channel.received is not None}
     )
     return "" if ran.open else f"{', '.join(ran.reasons)}: no object reached submit"
@@ -408,6 +406,7 @@ async def _compose(
 
 def _runs_as(
     stage: str,
+    key: str,
     row: Row,
     model: str | None,
     effort: str | None,
@@ -423,7 +422,7 @@ def _runs_as(
         effort=effort,
         settings=agents.settings_json(agent) if agent is not None else None,
         preset=row.opens_anything,
-        system=str((pack.row(stage) or {}).get(pack.BODY) or ""),
+        system=str((pack.row(key) or {}).get(pack.BODY) or ""),
     )
 
 
@@ -1304,6 +1303,7 @@ class Runner:
         gate_said: str = "",
         gate_reasons: tuple[str, ...] = (),
         lane: str = "full",
+        process: str = pack.DEFAULT_PROCESS,
         cwd: str | None = None,
         model: str | None = None,
         model_source: str = "",
@@ -1448,7 +1448,7 @@ class Runner:
             row, recorder, stage, directory, artifact, head, open_ids, claims_round
         )
         servers = self._with_tools(channel, facts, tools, ledger)
-        runs_as = _runs_as(stage, row, model, effort, agent)
+        runs_as = _runs_as(stage, pack.agent_for(process, stage) or "", row, model, effort, agent)
         start_at = self._write_start(
             was.get("start_at"),
             resume,
@@ -1482,6 +1482,7 @@ class Runner:
             rerun_note=rerun_note,
             agent=agent,
             blocks=[name for name, _ in blocks],
+            process=process,
         )
         owner = _owner(
             journal_key,
@@ -1721,6 +1722,7 @@ class Runner:
         rerun_note: str,
         agent: dict[str, Any] | None,
         blocks: list[str],
+        process: str,
     ) -> Any:
         """The step's `start` record, and its `at`; `start_at` as it was for a step taken up again or
         with no journal."""
@@ -1753,8 +1755,8 @@ class Runner:
             grants=record(grant),
             blocks=blocks,
             max_turns=row.max_turns,
-            # Which row ran: its pack, its hash, the keys the owner's layer set.
-            **pack.stamp(stage),
+            # Which row ran: its pack, its hash, the keys the owner's layer set; the unit's process.
+            **pack.stamp(pack.agent_for(process, stage) or "", process),
             head=head,
             model=model,
             model_source=model_source,

@@ -13,7 +13,7 @@ from coscc.kernel import Facts, Grant, Hooks, Plan
 
 def _plan(*steps: tuple[str, list[str], str]) -> Plan:
     return {
-        "impl": "routine",
+        "variant": "routine",
         "files": [p for _, paths, _ in steps for p in paths],
         "steps": [{"title": t, "paths": p, "report": r} for t, p, r in steps],
         "rests_on": [],

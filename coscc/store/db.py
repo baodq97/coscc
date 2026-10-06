@@ -37,8 +37,9 @@ from typing import Any, Iterator
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
 # 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped;
 # 13: idea 0006 M2 in one step, `_before_13` and `_after_13`; 14: `exhausted` ends are `failed`;
-# 15: the agent prefs move into the owner's layer of the agents' pack, `_to_15`).
-SCHEMA_VERSION = 15
+# 15: the agent prefs move into the owner's layer of the agents' pack, `_to_15`; 16: a unit
+# records its process, `unit_meta.process`, and plan's `impl` is `variant`, `_to_16`).
+SCHEMA_VERSION = 16
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -435,6 +436,9 @@ _COLUMNS = (
     # Who wrote an attempt's `note`: `person` (a rerun's) or `app` (what the autopilot hands a
     # step it queued: a draft to go on with, the red checks of a head).
     ("attempts", "note_by", "TEXT NOT NULL DEFAULT 'person'"),
+    # The process a unit walks, `<pack>/<process>`, fixed when it is created: the pack's default
+    # process for every unit opened before units recorded one.
+    ("unit_meta", "process", "TEXT NOT NULL DEFAULT 'coscc-sdlc/full'"),
 )
 
 
@@ -681,6 +685,7 @@ class Data:
                 self._to_14(conn)
                 if found:
                     self._to_15(conn)
+                    self._to_16(conn)
                 for table, column, declaration in _COLUMNS:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
@@ -759,6 +764,15 @@ class Data:
         for key, _ in rows:
             if str(key).partition(":")[0] in _MOVED:
                 conn.execute("DELETE FROM prefs WHERE key = ?", (key,))
+
+    @staticmethod
+    def _to_16(conn: sqlite3.Connection) -> None:
+        """16: plan's record names its label `variant`, not `impl` (version 4). The process column
+        is `_COLUMNS`'."""
+        conn.execute(
+            "UPDATE outputs SET version = 4, object = json_remove(json_set(object, '$.variant', "
+            "json_extract(object, '$.impl')), '$.impl') WHERE agent = 'plan' AND version = 3"
+        )
 
     @staticmethod
     def _after_13(conn: sqlite3.Connection) -> None:

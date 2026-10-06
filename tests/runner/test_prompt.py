@@ -72,7 +72,7 @@ class TheEnvelopeIsWhatTheRowDeclares(unittest.TestCase):
             self.assertIn("Write a spec", prompt)
 
     def test_review_gets_the_plans_record(self):
-        meta = {"artifacts": {"plan.md": {"result": {"impl": "routine", "files": ["a.py"]}}}}
+        meta = {"artifacts": {"plan.md": {"result": {"variant": "routine", "files": ["a.py"]}}}}
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="I", plan_md="P", impl_md="IMPL")
             prompt, included = compose_prompt(
@@ -643,4 +643,9 @@ class EveryStagesPromptIsTheOneBeforeTheAgentsBecameRows(unittest.TestCase):
                     got = got.replace(root, "<ROOT>")
                 if stage == "spec":
                     text = text.replace(self.BESIDE, "").replace(SPEC_LINE, SPEC_LINE + SPEC_ADDED)
+                if stage == "plan":
+                    # M5: plan's label field is `variant`; the skill names it, nothing else moved.
+                    text = text.replace("- `impl`: `novel`", "- `variant`: `novel`").replace(
+                        "- `impl`: one of", "- `variant`: one of"
+                    )
                 self.assertEqual(got, text)

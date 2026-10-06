@@ -1201,7 +1201,10 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
     def _plan(self, path: str) -> None:
         """A routine plan whose record names `path`."""
         state_of(
-            self.core, str(self.repo), self.made["unit"], plan={"impl": "routine", "files": [path]}
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            plan={"variant": "routine", "files": [path]},
         )
 
     def setUp(self):
@@ -1427,7 +1430,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
                 self.core,
                 str(self.repo),
                 self.made["unit"],
-                plan={"impl": "routine", "files": [plan]},
+                plan={"variant": "routine", "files": [plan]},
             )
 
     def _run(self, stage: str = "impl", arm: str = "opus-5-5", rerun: bool = False):

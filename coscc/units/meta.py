@@ -19,6 +19,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
+from coscc.agent import pack
 from coscc.store.db import Data, now
 from coscc.store.journal import Intervention, Journal
 from coscc.units import UNIT_RE, backlog, contracts
@@ -100,12 +101,19 @@ class UnitMeta:
                 (self.root, workspace, unit, reason, now()),
             )
 
-    def add_unit(self, conn: sqlite3.Connection, workspace: str, unit: str) -> None:
-        """The unit's `unit_meta` row, once."""
+    def add_unit(
+        self,
+        conn: sqlite3.Connection,
+        workspace: str,
+        unit: str,
+        process: str = pack.DEFAULT_PROCESS,
+    ) -> None:
+        """The unit's `unit_meta` row, once, with the process it walks to the end."""
         match = UNIT_RE.fullmatch(unit)
         conn.execute(
-            "INSERT OR IGNORE INTO unit_meta (root, workspace, unit, type, number, slug, imported_at) "
-            "VALUES (?, ?, ?, 'unknown', ?, ?, ?)",
+            "INSERT OR IGNORE INTO unit_meta "
+            "(root, workspace, unit, type, number, slug, imported_at, process) "
+            "VALUES (?, ?, ?, 'unknown', ?, ?, ?, ?)",
             (
                 self.root,
                 workspace,
@@ -113,6 +121,7 @@ class UnitMeta:
                 int(match.group(1)) if match else None,
                 match.group(2) if match else None,
                 now(),
+                process,
             ),
         )
 
@@ -462,7 +471,7 @@ class UnitMeta:
         contracts.check_stored("plan", r["version"])
         o = json.loads(r["object"])
         return {
-            "impl": o["impl"],
+            "variant": o["variant"],
             "files": list(o["files"]),
             "steps": list(o["steps"]),
             "rests_on": list(o["rests_on"]),
@@ -529,7 +538,7 @@ class UnitMeta:
             def rows(sql: str):
                 return conn.execute(sql.format(where=where), args).fetchall()
 
-            for r in rows("SELECT workspace, unit, type FROM unit_meta WHERE {where}"):
+            for r in rows("SELECT workspace, unit, type, process FROM unit_meta WHERE {where}"):
                 if pairs is not None and (r["workspace"], r["unit"]) not in pairs:
                     continue
                 units[f"{name_of[r['workspace']]}/{r['unit']}"] = {
@@ -543,6 +552,7 @@ class UnitMeta:
                     "shipped": False,
                     "reruns": [],
                     "roundsGranted": 0,
+                    "process": r["process"],
                 }
 
             def entry(r) -> dict[str, Any] | None:

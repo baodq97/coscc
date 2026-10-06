@@ -662,7 +662,7 @@ class AV12DatabaseTakesOneStepTo13(unittest.TestCase):
             self._rows(conn)
             conn.execute("PRAGMA user_version=12")
         self.assertEqual(self.data.version(), SCHEMA_VERSION)
-        self.assertEqual(SCHEMA_VERSION, 15)
+        self.assertEqual(SCHEMA_VERSION, 16)
 
     def _rows(self, conn):
         for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):
@@ -745,7 +745,7 @@ class AV12DatabaseTakesOneStepTo13(unittest.TestCase):
     def test_records_rise_to_their_current_contract(self):
         got = self._all(
             "SELECT id, unit, agent, version, json_extract(object, '$.type'), "
-            "json_extract(object, '$.impl'), json_type(object, '$.files'), "
+            "json_extract(object, '$.variant'), json_type(object, '$.files'), "
             "json_type(object, '$.steps'), json_extract(object, '$.rests_on'), "
             "json_extract(object, '$.questions[0].recommendation'), "
             "json_extract(object, '$.questions[1].recommendation') FROM outputs ORDER BY id"
@@ -758,12 +758,21 @@ class AV12DatabaseTakesOneStepTo13(unittest.TestCase):
                 (3, "0001_a", "impl", 3, None, None, None, None, None, None, None),
                 (4, "0001_a", "spec", 2, None, None, None, None, None, None, None),
                 (5, "0001_a", "spec", 2, None, None, None, None, None, "", ""),
-                (6, "0001_a", "plan", 3, None, "novel", "array", "array", '["U1"]', None, None),
-                (7, "0002_b", "plan", 3, None, "novel", "array", "array", "[]", None, None),
+                (6, "0001_a", "plan", 4, None, "novel", "array", "array", '["U1"]', None, None),
+                (7, "0002_b", "plan", 4, None, "novel", "array", "array", "[]", None, None),
                 (8, "0001_a", "spike", 2, None, None, None, None, None, None, None),
             ],
         )
         self.assertEqual(self._all("SELECT recommendation FROM unit_questions"), [("",)])
+        self.assertEqual(
+            self._all("SELECT COUNT(*) FROM outputs WHERE json_type(object, '$.impl')"), [(0,)]
+        )
+
+    def test_every_unit_walks_the_full_process(self):
+        self.assertEqual(
+            self._all("SELECT unit, process FROM unit_meta ORDER BY unit"),
+            [("0001_a", "coscc-sdlc/full"), ("0002_b", "coscc-sdlc/full")],
+        )
 
     def test_an_old_shaped_decisions_table_is_replaced_empty(self):
         cols = self._columns("unit_decisions")
@@ -841,6 +850,46 @@ class AV13DatabaseTakesOneStepTo14(unittest.TestCase):
         )
         self.assertEqual([tuple(r) for r in moves], [("failed",), ("done",)])
         self.assertEqual(event, "failed")
+
+
+class AV15DatabaseTakesOneStepTo16(unittest.TestCase):
+    """Every unit walks `coscc-sdlc/full`; plan's label is `variant` in a version-4 record."""
+
+    def test_units_gain_the_full_process_and_plan_records_rename_their_label(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.write() as conn:
+                conn.execute("ALTER TABLE unit_meta DROP COLUMN process")
+                conn.execute(
+                    "INSERT INTO unit_meta (root, workspace, unit, type, imported_at) "
+                    "VALUES ('/w', 'p', '0001_a', 'feat', 't')"
+                )
+                for agent, version, obj in (
+                    ("plan", 3, '{"impl": "routine", "files": []}'),
+                    ("impl", 3, '{"impl": "kept"}'),
+                ):
+                    conn.execute(
+                        "INSERT INTO outputs (at, root, workspace, unit, agent, version, run, "
+                        "revision, judgement, object) VALUES ('t', '/w', 'p', '0001_a', ?, ?, "
+                        "'r', 'h', 'ready', ?)",
+                        (agent, version, obj),
+                    )
+                conn.execute("PRAGMA user_version=15")
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                units = [tuple(r) for r in conn.execute("SELECT unit, process FROM unit_meta")]
+                outputs = [
+                    tuple(r)
+                    for r in conn.execute("SELECT agent, version, object FROM outputs ORDER BY id")
+                ]
+        self.assertEqual(units, [("0001_a", "coscc-sdlc/full")])
+        self.assertEqual(
+            outputs,
+            [
+                ("plan", 4, '{"files":[],"variant":"routine"}'),
+                ("impl", 3, '{"impl": "kept"}'),
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ def seed(
     with meta.data.write() as conn:
         meta.add_unit(conn, ws, unit)
         if plan is not None:
-            obj = {"judgement": "ready", "questions": [], "impl": "novel", "files": [],
+            obj = {"judgement": "ready", "questions": [], "variant": "novel", "files": [],
                    "steps": [], "rests_on": [], **plan}  # fmt: skip
             meta.record_result(conn, ws, unit, "plan", "plan.md", {"object": obj})
         if type is not None:
@@ -450,15 +450,15 @@ class TheOutputsTheLoopReads(Base):
     def test_the_plan_is_its_latest_record(self):
         self.assertIsNone(self.meta.plan(WS, self.UNIT))
         step = {"title": "a", "paths": ["a.py"], "report": "r"}
-        for impl in ("novel", "routine"):
+        for variant in ("novel", "routine"):
             self.record(
                 "plan",
-                {"judgement": "ready", "questions": [], "impl": impl, "files": ["a.py", "b.py"],
+                {"judgement": "ready", "questions": [], "variant": variant, "files": ["a.py", "b.py"],
                  "steps": [step], "rests_on": ["U1"], "extra": 1},
             )  # fmt: skip
         self.assertEqual(
             self.meta.plan(WS, self.UNIT),
-            {"impl": "routine", "files": ["a.py", "b.py"], "steps": [step], "rests_on": ["U1"]},
+            {"variant": "routine", "files": ["a.py", "b.py"], "steps": [step], "rests_on": ["U1"]},
         )
         self.assertEqual(self.artifact("plan.md")["result"]["rests_on"], ["U1"])
         with self.data.write() as conn:
@@ -745,7 +745,7 @@ class EveryArtifactCarriesItsRecord(Rows):
     def test_an_agents_artifact_carries_the_id_of_its_latest_output(self):
         self.record("spec", {"judgement": "draft", "questions": []})
         self.record("spec", {"judgement": "ready", "questions": []})
-        self.record("plan", {"judgement": "ready", "questions": [], "impl": "novel", "files": [],
+        self.record("plan", {"judgement": "ready", "questions": [], "variant": "novel", "files": [],
                              "steps": [], "rests_on": []})  # fmt: skip
         spec_id = self.ids("SELECT MAX(id) FROM outputs WHERE agent = 'spec'")[0]
         plan_id = self.ids("SELECT MAX(id) FROM outputs WHERE agent = 'plan'")[0]

@@ -656,7 +656,7 @@ def seed_transitions(work: Path, data_dir: Path, proj: Path) -> None:
         "stage": "plan",
         "judgement": "ready",
         "questions": [],
-        "impl": "routine",
+        "variant": "routine",
         "files": ["coscc/board.py", "tests/test_board.py", "ui/src/Board.tsx"],
         "steps": [
             {"title": "The board reads the rows", "paths": ["coscc/board.py",
