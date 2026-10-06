@@ -204,7 +204,7 @@ export function Track({ stages, now, done, waiting }: { stages: StageView[]; now
     <div className="track">
       {TRACK.map((s, i) => {
         // Where the unit is now wins over a stage's status: a stage sent back makes later ones not done.
-        const finished = done || (at >= 0 ? i < at : ["accepted", "done", "skipped"].includes(status[s] ?? ""));
+        const finished = done || (at >= 0 ? i < at : ["accepted", "skipped"].includes(status[s] ?? ""));
         const current = !done && i === at;
         const group = GROUP[s] !== last ? GROUP[s] : "";
         last = GROUP[s];
@@ -253,24 +253,32 @@ function Outputs({ outputs, names }: { outputs: OutputRecord[]; names: Record<st
   );
 }
 
-const pairs = (o: object) =>
-  Object.entries(o)
-    .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
-    .join(", ");
-
-/** A list is one line per item (an object item as `key: value` pairs); anything else is text. */
+/** A list is one line per item; an object is each field under its name, a list field (a plan
+ * step's paths) as a short list; anything else is text. */
 function FieldValue({ value }: { value: unknown }) {
   if (Array.isArray(value))
     return value.length ? (
       <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
         {value.map((item, i) => (
-          <li key={i}>{item && typeof item === "object" ? pairs(item) : String(item)}</li>
+          <li key={i}>
+            <FieldValue value={item} />
+          </li>
         ))}
       </ul>
     ) : (
       <div className="faint">none</div>
     );
-  if (value && typeof value === "object") return <div>{pairs(value)}</div>;
+  if (value && typeof value === "object")
+    return (
+      <div>
+        {Object.entries(value).map(([k, v]) => (
+          <div key={k}>
+            <span className="faint">{k}: </span>
+            {v && typeof v === "object" ? <FieldValue value={v} /> : String(v)}
+          </div>
+        ))}
+      </div>
+    );
   return <div>{String(value)}</div>;
 }
 

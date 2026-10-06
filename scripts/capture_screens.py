@@ -26,7 +26,8 @@ directory, and five units in it, always the same, so a spec can name its address
     0002_open-question     an intent with one open question nobody answered
     0003_awaiting-ship     every artifact up to a passing review.md; pr.md names
                            github.com/o/r/pull/1
-    0004_finished          shipped (a merge-read row), plan.md accepted; its intent has a `## Proposed outcome` whose
+    0004_finished          shipped (a merge-read row), plan.md accepted with a plan record of two
+                           parallel steps (`seed_transitions`); its intent has a `## Proposed outcome` whose
                            deadline (2026-09-20) has passed and two open questions;
                            one `plan` run of it, ended, in the run log, so `/`, `/activity` and its Timeline show a time
     0005_unfinished-review every artifact up to a review.md whose round 2 asked for
@@ -513,6 +514,28 @@ def seed_transitions(work: Path, data_dir: Path, proj: Path) -> None:
         actor="capture_screens",
         source="capture_screens",
     )
+    # The record that result handed back, so the unit page's *Outputs* tab shows a plan's
+    # label, files and parallel steps.
+    from coscc.units.meta import UnitMeta
+
+    meta = UnitMeta(work, data_dir)
+    plan = {
+        "stage": "plan",
+        "judgement": "ready",
+        "questions": [],
+        "impl": "routine",
+        "files": ["coscc/board.py", "tests/test_board.py", "ui/src/Board.tsx"],
+        "steps": [
+            {"title": "The board reads the rows", "paths": ["coscc/board.py",
+             "tests/test_board.py"], "report": "the board's tests, green"},
+            {"title": "The screen", "paths": ["ui/src/Board.tsx"], "report": "a screenshot"},
+        ],
+        "rests_on": [],
+    }  # fmt: skip
+    with meta.data.write() as conn:
+        meta.record_result(
+            conn, key, "0004_finished", "plan", "plan.md", {"run": "capture-plan-1", "object": plan}
+        )
 
 
 def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
