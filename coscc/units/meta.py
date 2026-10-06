@@ -198,8 +198,8 @@ class UnitMeta:
         obj = dict(submitted.get("object") or {})
         screens = {**dict(submitted.get("screens") or {}), "shots": list(obj.get("screens") or ())}
         cur = conn.execute(
-            "INSERT INTO review_rounds (at, root, workspace, unit, n, run, head, verdict, screens) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO review_rounds (at, root, workspace, unit, n, run, head, verdict, screens, criteria) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 now(),
                 self.root,
@@ -210,10 +210,11 @@ class UnitMeta:
                 str(submitted.get("head") or ""),
                 str(obj["verdict"]),
                 json.dumps(screens, ensure_ascii=False),
+                json.dumps(obj.get("criteria") or [], ensure_ascii=False),
             ),
         )
         conn.executemany(
-            "INSERT INTO review_findings (round, finding, open, label, fixed_in, severity, rule, path, lines, text) "
+            "INSERT INTO review_findings (round, finding, open, label, fixed_in, severity, criterion, path, lines, text) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
@@ -223,7 +224,7 @@ class UnitMeta:
                     f["state"],
                     f["fixed_in"],
                     f["severity"],
-                    f["rule"],
+                    f["criterion"],
                     f["path"],
                     f["lines"],
                     f["text"],
@@ -678,7 +679,7 @@ class UnitMeta:
             # Every round a review handed back, read in place of the round of the same number in `review.md`.
             by_id: dict[int, dict[str, Any]] = {}
             for r in rows(
-                "SELECT id, workspace, unit, n, head, verdict, screens FROM review_rounds WHERE {where} ORDER BY n"
+                "SELECT id, workspace, unit, n, head, verdict, screens, criteria FROM review_rounds WHERE {where} ORDER BY n"
             ):
                 a = artifact(
                     {
@@ -693,6 +694,7 @@ class UnitMeta:
                         "reviewed": r["head"],
                         "verdict": r["verdict"],
                         "screens": json.loads(r["screens"]),
+                        "criteria": json.loads(r["criteria"]),
                         "findings": [],
                     }
                     a.setdefault("rounds", []).append(by_id[r["id"]])
@@ -700,7 +702,7 @@ class UnitMeta:
                     if a["questions"] is None:
                         a["questions"] = []
             for r in rows(
-                "SELECT f.round, f.finding, f.label, f.fixed_in, f.severity, f.rule, f.path, f.lines, f.text "
+                "SELECT f.round, f.finding, f.label, f.fixed_in, f.severity, f.criterion, f.path, f.lines, f.text "
                 "FROM review_findings f JOIN review_rounds ON f.round = review_rounds.id WHERE {where} ORDER BY f.rowid"
             ):
                 if r["round"] in by_id:
@@ -710,7 +712,8 @@ class UnitMeta:
                             "label": r["label"],
                             "fixedIn": r["fixed_in"] or None,
                             "severity": r["severity"],
-                            "rule": r["rule"],
+                            "rule": r["criterion"],  # the loop's name for it: its output is pinned
+                            "criterion": r["criterion"],
                             "path": r["path"],
                             "lines": r["lines"],
                             "text": r["text"],

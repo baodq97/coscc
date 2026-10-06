@@ -94,7 +94,7 @@ def round_(n: int, verdict: str, *findings: tuple[str, str, str]) -> dict:
                     "state": state,
                     "fixed_in": "",
                     "severity": "high",
-                    "rule": "",
+                    "criterion": "",
                     "path": "a.py",
                     "lines": "",
                     "text": text,

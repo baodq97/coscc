@@ -530,6 +530,8 @@ def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
                 "dropped": [str(x) for x in r.get("dropped") or []],
                 "unfinished": bool(r.get("unfinished")),
                 "screens": r.get("screens") if isinstance(r.get("screens"), dict) else None,
+                "criteria": r.get("criteria") or [],
+                "items": found,
             }
         )
     return out

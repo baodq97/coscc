@@ -404,12 +404,29 @@ def _decision_text(d: DecisionRow) -> str:
     return f"recorded the outcome: {fields.get('result')}"
 
 
+class RoundCriterion(TypedDict):
+    criterion: str
+    source: str
+    met: Literal["yes", "no", "unclear"]
+    evidence: str
+
+
+class RoundFinding(TypedDict):
+    id: str
+    label: str
+    severity: str
+    criterion: str
+    text: str
+
+
 class Round(TypedDict):
     n: int
     verdict: str
     findings: int
     findings_open: int
     unfinished: bool
+    criteria: list[RoundCriterion]
+    items: list[RoundFinding]
 
 
 class Dependency(TypedDict):
@@ -553,6 +570,20 @@ def detail(
                 "findings": int(r.get("findings") or 0),
                 "findings_open": int(r.get("findings_open") or 0),
                 "unfinished": bool(r.get("unfinished")),
+                "criteria": [
+                    {k: _text(c.get(k)) for k in ("criterion", "source", "met", "evidence")}
+                    for c in r.get("criteria") or []
+                ],
+                "items": [
+                    {
+                        "id": _text(f.get("id")),
+                        "label": _text(f.get("label")),
+                        "severity": _text(f.get("severity")),
+                        "criterion": _text(f.get("rule")),
+                        "text": _text(f.get("text")),
+                    }
+                    for f in r.get("items") or []
+                ],
             }
             for r in unit.get("rounds") or []
         ],

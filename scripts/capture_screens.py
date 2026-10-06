@@ -159,6 +159,27 @@ PATTERNS = (
 INTENT = "# Intent: {title}\nAuthor: capture_screens. Type: feat. Status: accepted.\n\n## Problem\n\n{problem}\n"
 ROUND = "\n## Round 1\n\nReviewed: {sha}. Verdict: pass.\n\n### Findings\n\n### What was not reviewed\n\nNothing.\n"
 ASKED = "\n## Round {n}\n\nReviewed: {sha}. Verdict: changes-requested.\n\n### Findings\n\n{findings}\n\n### What was not reviewed\n\nNothing.\n"
+# What the fixture's review rounds graded: one met, one not, one unclear.
+CRITERIA = [
+    {
+        "criterion": "R1",
+        "source": "Một unit thiếu test thì không xong",
+        "met": "no",
+        "evidence": "a.py:1",
+    },
+    {
+        "criterion": "R2",
+        "source": "Tên gọi nói được việc của nó",
+        "met": "unclear",
+        "evidence": "b.py:2",
+    },
+    {
+        "criterion": "S3",
+        "source": "Không lộ chi tiết nội bộ",
+        "met": "yes",
+        "evidence": "ui/src/screens/UnitPage.tsx:40",
+    },
+]
 FIXTURE = {
     "fresh-intent": {
         "statuses": {"intent.md": "accepted"},
@@ -205,7 +226,7 @@ FIXTURE = {
             + ROUND.format(sha="a" * 40),
         },
         "pr": 1,
-        "rounds": [(1, "a" * 40, "pass", [])],
+        "rounds": [(1, "a" * 40, "pass", [], [CRITERIA[0], CRITERIA[2]])],
     },
     # One question Leif answered and one you answered, so `/decisions` and the Activity tab show
     # both kinds; one nobody answered, so the Questions tab has something to show read-only. A
@@ -292,7 +313,7 @@ FIXTURE = {
                         "state": "open",
                         "fixed_in": "",
                         "severity": "medium",
-                        "rule": "",
+                        "criterion": "R1",
                         "path": "a.py",
                         "lines": "1",
                         "text": "Thiếu test.",
@@ -302,12 +323,13 @@ FIXTURE = {
                         "state": "open",
                         "fixed_in": "",
                         "severity": "low",
-                        "rule": "",
+                        "criterion": "R2",
                         "path": "b.py",
                         "lines": "2",
                         "text": "Tên chưa rõ.",
                     },
                 ],
+                CRITERIA,
             ),
             (
                 2,
@@ -319,12 +341,13 @@ FIXTURE = {
                         "state": "open",
                         "fixed_in": "",
                         "severity": "low",
-                        "rule": "",
+                        "criterion": "R2",
                         "path": "b.py",
                         "lines": "2",
                         "text": "Tên chưa rõ.",
                     },
                 ],
+                CRITERIA,
             ),
         ],  # fmt: skip
     },

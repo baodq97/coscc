@@ -25,7 +25,7 @@ class ARoundIsWrittenFromItsObject(unittest.TestCase):
                 "state": "open",
                 "fixed_in": "",
                 "severity": "high",
-                "rule": "S3",
+                "criterion": "S3",
                 "path": "a.py",
                 "lines": "1-4",
                 "text": "still broken\nsecond line",

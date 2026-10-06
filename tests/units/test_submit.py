@@ -22,7 +22,8 @@ def _filled(channel: Channel | submit.Collector, fields: dict[str, Any]) -> dict
         empty = {"estimate": "units", "integrate": "needs_person"}.get(channel.kind)
         return {empty: [], **fields} if empty else dict(fields)
     if channel.is_round:
-        return {"verdict": "pass", "findings": [], "screens": [], **fields}
+        met = {"criterion": "R1", "source": "a requirement", "met": "yes", "evidence": "a.py:1"}
+        return {"verdict": "pass", "criteria": [met], "findings": [], "screens": [], **fields}
     obj: dict[str, Any] = {"stage": channel.stage, "judgement": "ready", "questions": []}
     if channel.stage == "intent":
         obj["type"] = "feat"
@@ -150,7 +151,7 @@ class EveryToolTakesTheDeclaredSchema(unittest.TestCase):
             "state": "withdrawn",
             "fixed_in": "",
             "severity": "low",
-            "rule": "",
+            "criterion": "R1",
             "path": "a.py",
             "lines": "3",
             "text": "t",
@@ -247,7 +248,7 @@ def finding(fid: str, state: str = "open", severity: str = "medium", **kw: Any) 
         "state": state,
         "fixed_in": kw.pop("fixed_in", "abc1234" if state == "fixed" else ""),
         "severity": severity,
-        "rule": kw.pop("rule", ""),
+        "criterion": kw.pop("criterion", "R1"),
         "path": kw.pop("path", "coscc/x.py"),
         "lines": kw.pop("lines", "1"),
         "text": kw.pop("text", f"what {fid} says"),
@@ -293,6 +294,26 @@ class ARoundIsOfTheHeadTheAppRecorded(unittest.TestCase):
             self.assertTrue(said.get("is_error"), findings)
             self.assertTrue(said["content"][0]["text"].endswith(AGAIN))
         self.assertIsNone(channel.received)
+
+    def test_a_finding_names_a_criterion_the_round_graded(self):
+        channel = self._channel()
+        for crit in ("R9", "S1", "x"):
+            obj = _filled(channel, {"findings": [finding("F1", criterion=crit)]})
+            said = asyncio.run(channel.handle(obj))
+            self.assertTrue(said.get("is_error"), crit)
+        self.assertIsNone(channel.received)
+        ok = _filled(channel, {"findings": [finding("F1", criterion="R1")]})
+        self.assertNotIn("is_error", asyncio.run(channel.handle(ok)))
+
+    def test_pass_is_refused_while_a_criterion_is_not_met_and_a_criterion_is_graded_once(self):
+        channel = self._channel()
+        no = {"criterion": "R1", "source": "s", "met": "no", "evidence": "a.py:1"}
+        said = asyncio.run(channel.handle(_filled(channel, {"verdict": "pass", "criteria": [no]})))
+        self.assertIn("R1 is `no`", said["content"][0]["text"])
+        said = asyncio.run(channel.handle(_filled(channel, {"criteria": [no, no]})))
+        self.assertIn("more than once", said["content"][0]["text"])
+        failing = {"verdict": "changes-requested", "criteria": [no]}
+        self.assertNotIn("is_error", asyncio.run(channel.handle(_filled(channel, failing))))
 
 
 class ImplClaimsOnlyAnOpenFinding(unittest.TestCase):

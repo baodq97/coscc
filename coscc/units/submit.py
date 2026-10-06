@@ -48,8 +48,22 @@ def add_session(kind: str, output: object, purpose: str) -> None:
 
 
 def round_problem(obj: Mapping[str, Any]) -> str:
-    """What a review round says that its schema cannot rule out, `""` when nothing: an id
-    given twice, or a `fixed` with no commit, which the loop would read as neither."""
+    """What a review round says that its schema cannot rule out, `""` when nothing: a criterion
+    or an id given twice, a finding naming a criterion the round does not grade, `pass` while a
+    criterion is `no`, or a `fixed` with no commit, which the loop would read as neither."""
+    named = [c["criterion"] for c in obj.get("criteria") or ()]
+    again = sorted({c for c in named if named.count(c) > 1})
+    if again:
+        return f"criterion {', '.join(again)} is graded more than once."
+    unknown = sorted({f["id"] for f in obj.get("findings") or () if f["criterion"] not in named})
+    if unknown:
+        return (
+            f"{', '.join(unknown)}: `criterion` must be one of the `criteria` you graded "
+            f"({', '.join(named) or 'none'})."
+        )
+    failed = [c["criterion"] for c in obj.get("criteria") or () if c["met"] == "no"]
+    if obj.get("verdict") == "pass" and failed:
+        return f"`pass` while {', '.join(failed)} is `no`: a criterion not met blocks the merge."
     ids = [f["id"] for f in obj.get("findings") or ()]
     twice = sorted({i for i in ids if ids.count(i) > 1})
     if twice:

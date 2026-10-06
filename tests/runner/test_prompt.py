@@ -203,7 +203,7 @@ def _round(n: int, *findings: tuple[str, str]) -> dict:
                 "label": label,
                 "fixedIn": "abc1234" if label == "fixed" else None,
                 "severity": "high",
-                "rule": None,
+                "criterion": "",
                 "path": "a.py",
                 "lines": "3",
                 "text": f"FINDING-{fid}-MARKER",

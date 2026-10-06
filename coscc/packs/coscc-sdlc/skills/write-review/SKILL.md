@@ -21,15 +21,23 @@ non-zero. Read the changed files, not the whole tree.
 ## Round
 
 1. Copy the commit from *The commit you are reviewing* (at a terminal, `git rev-parse HEAD`).
-2. List findings. Carry forward every finding of every earlier round, `[fixed <sha>]` or
-   `[open]`, a `low` too; a round that drops one is not counted and runs again.
-3. Severity: `high` or `medium` only for broken behaviour, lost data, a security hole, or a UI
+2. Grade the criteria one by one before any finding. A criterion is `R<n>`, the n-th item of
+   the spec's `## Requirements`; `P<n>`, the n-th item of the plan's `## Proof`; `O<n>`, the
+   n-th sentence of the intent's `## Proposed outcome`, only when the unit has no spec or plan;
+   `S<n>`, a UI standard rule, only when a screen changed. Each is `met` yes, no or unclear, with
+   `source` quoting it and `evidence` the `path:lines` that shows it. A criterion you cannot
+   see in the diff or the screens is `unclear`, never `yes`.
+3. List findings. Every finding names the criterion it breaks or leaves unclear; a defect no
+   criterion covers is a `low` under the closest one. Carry forward every finding of every
+   earlier round, `[fixed <sha>]` or `[open]`, a `low` too; a round that drops one is not
+   counted and runs again.
+4. Severity: `high` or `medium` only for broken behaviour, lost data, a security hole, or a UI
    standard rule `S<n>`, and a finding naming `S<n>` always blocks. Wording, docstrings,
    comments, citations and style are `low` nits: at most 5, the rest as a count, never
    blocking. Lowering an earlier round's `high`/`medium` is not a fix.
-4. Verdict: any blocking finding not closed, `changes-requested`; otherwise `pass`, which opens
-   `ship`. An `[open]` `low` does not block. If every blocking one is `[needs-person]`, `needs-person`.
-5. Never write `Verdict: incomplete` and never merge.
+5. Verdict: any blocking finding not closed or a criterion `no`, `changes-requested`; otherwise
+   `pass`, which opens `ship`. An `[open]` `low` does not block. If every blocking one is `[needs-person]`, `needs-person`.
+6. Never write `Verdict: incomplete` and never merge.
 
 **Claims.** For each open finding impl claimed only a person can close (its `needs_person`,
 with why under `impl.md ## Needs a person`), label it: `[needs-person]` (the grant really lacks it or it costs money), or `[claim-rejected]`
@@ -51,10 +59,16 @@ PR: pr.md. Author: <name>. Concluded by: <agent session, which one>.
 
 Reviewed: <40-hex sha>. Verdict: changes-requested.
 
+### Criteria
+
+| Criterion | Met | Source | Evidence |
+|---|---|---|---|
+| R<n> | no | the requirement, quoted | path/to/file.py:12 |
+
 ### Findings
 
-- F1 [open] path/to/file.py:12 — high — what is wrong
-- F2 [fixed <sha>] path/to/other.py:40 — low — what was wrong
+- F1 [open] path/to/file.py:12 — high — R<n> what is wrong
+- F2 [fixed <sha>] path/to/other.py:40 — low — R<n> what was wrong
 
 ### Screens
 
@@ -63,7 +77,7 @@ Reviewed: <40-hex sha>. Verdict: changes-requested.
 
 Line shapes code parses: `Reviewed: <sha>. Verdict: <pass|changes-requested|needs-person>.`;
 rounds numbered without a gap; a finding `- F<k> [label] path:line — <high|medium|low> — text`
-with em dashes, label one of `[open]`, `[fixed <sha>]`, `[needs-person]`, `[claim-rejected]`,
+with em dashes, the criterion first in the text, label one of `[open]`, `[fixed <sha>]`, `[needs-person]`, `[claim-rejected]`,
 `[answered]`; no severity blocks; no location is an opinion. `### What was not reviewed` is
 required.
 
