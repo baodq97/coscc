@@ -2774,9 +2774,8 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                 rec["head_before"],
                 rec["head_after"],
                 rec["started_by"],
-                rec["stage"],
             ),
-            ("taken", "a" * 40, "b" * 40, "person", "review"),
+            ("taken", "a" * 40, "b" * 40, "person"),
         )
         self.assertEqual(len(self.seen), 1)
         self.assertIn("# The screenshots, taken again", self.seen[0]["screens_note"])
