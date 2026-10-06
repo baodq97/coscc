@@ -24,35 +24,6 @@ export function modelName(model: string | null | undefined): string {
   return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}` : model;
 }
 
-export const STAGE_LABEL: Record<string, string> = {
-  idea: "Idea",
-  intent: "Intent",
-  spec: "Spec",
-  spike: "Spike",
-  plan: "Plan",
-  impl: "Build",
-  pr: "Pull request",
-  review: "Review",
-  ship: "Ship",
-  integrate: "Integrate",
-};
-
-/** Every agent that spends: the stages', and the ones no unit holds. */
-export const AGENT_LABEL: Record<string, string> = { ...STAGE_LABEL, estimate: "Estimate", scan: "Scan", chat: "Chat" };
-
-/** People see four phases, not nine stages. */
-export const PHASE: Record<string, "Shape" | "Build" | "Check" | "Ship"> = {
-  idea: "Shape",
-  intent: "Shape",
-  spec: "Shape",
-  spike: "Shape",
-  plan: "Shape",
-  impl: "Build",
-  pr: "Check",
-  review: "Check",
-  ship: "Ship",
-};
-
 /** A unit's short code: `COS-162`, from the workspace name and the unit number. */
 export function unitCode(workspace: string, number: number | string): string {
   const prefix = workspace.replace(/[^a-z]/gi, "").slice(0, 3).toUpperCase() || "U";

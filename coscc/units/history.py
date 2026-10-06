@@ -12,6 +12,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Literal, Sequence, get_args
 
 from coscc.units import states
@@ -77,6 +78,8 @@ class History:
         self.data = data if isinstance(data, Data) else Data(data)
         self.machine = machine or states.default()
         self._root = str(self.working_dir)
+        # The process a unit records, set by the owner of `unit_meta`; none until it is.
+        self.process_of: Callable[[sqlite3.Connection, str, str], str | None] = lambda *_: None
 
     def record(
         self,
@@ -155,7 +158,7 @@ class History:
                 row["from_state"] = latest.get(key, self.machine.absent)
             complaint = self.machine.refuse(row["artifact"], row["from_state"])
             if complaint is None:
-                ref = self._process_of(conn, row)
+                ref = self.process_of(conn, row["workspace"], row["unit"])
                 complaint = self.machine.refuse(row["artifact"], row["to_state"], ref)
             if complaint is not None:
                 raise BadTransition(complaint)
@@ -169,14 +172,6 @@ class History:
                 latest[key] = row["to_state"]
                 stored.append({**row, "id": cursor.lastrowid})
         return stored
-
-    def _process_of(self, conn: sqlite3.Connection, row: dict[str, Any]) -> str | None:
-        """The process the unit records, `None` while it has no `unit_meta` row yet."""
-        found = conn.execute(
-            "SELECT process FROM unit_meta WHERE root = ? AND workspace = ? AND unit = ?",
-            (self._root, row["workspace"], row["unit"]),
-        ).fetchone()
-        return found[0] if found else None
 
     def _validate(self, item: dict[str, Any]) -> dict[str, Any]:
         """One row, checked against the state set and filled out.

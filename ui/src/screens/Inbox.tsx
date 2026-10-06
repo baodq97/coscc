@@ -5,11 +5,11 @@ import { useState } from "react";
 import type { Question } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { allUnits, useBoards, type PlacedUnit } from "../lib/boards";
-import { STAGE_LABEL, ago, unitCode, unitTitle } from "../lib/format";
+import { ago, unitCode, unitTitle } from "../lib/format";
 import { Icon } from "../lib/icons";
+import { stageLabel } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
 import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
-import { Track } from "./UnitPage";
 
 export function Inbox({ workspace, number }: { workspace?: string; number?: string }) {
   const { boards, loading } = useBoards();
@@ -75,14 +75,9 @@ function Questions({ unit }: { unit: PlacedUnit }) {
           {unitCode(unit.workspace.name, unit.number)}
         </Link>
         {unit.type && <Chip square tone="plain">{unit.type}</Chip>}
-        {stage && <Chip square>{STAGE_LABEL[stage] ?? stage}</Chip>}
+        {stage && <Chip square>{stageLabel(stage)}</Chip>}
       </div>
       <h1 className="title" style={{ fontSize: 19, marginTop: 12 }}>{unitTitle(unit.name)}</h1>
-      {d && (
-        <div style={{ marginTop: 14 }}>
-          <Track stages={d.stages} now={stage} done={false} waiting />
-        </div>
-      )}
       {detail.state === "error" ? (
         <ErrorState error={detail.error} onRetry={detail.reload} />
       ) : !d ? (

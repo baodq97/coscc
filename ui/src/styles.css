@@ -606,3 +606,19 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
   .tool-line { grid-template-columns: minmax(0, 1fr); }
   .agent-spend { display: none; }
 }
+
+/* process diagram */
+.pd-wrap { overflow-x: auto; max-width: 100%; }
+.pd { display: block; max-width: 100%; height: auto; }
+.pd-node rect { fill: var(--panel); stroke: var(--line-2); stroke-width: 1; }
+.pd-node.opt rect { stroke-dasharray: 4 3; }
+.pd-node.now rect { stroke: var(--accent); stroke-width: 2; fill: var(--bg-sunk); }
+.pd-node.done rect { fill: var(--bg-sunk); }
+.pd-name { font-size: 12.5px; font-weight: 600; fill: var(--text); }
+.pd-sub { font-size: 11px; fill: var(--text-3); }
+.pd-node foreignObject { color: var(--text-2); }
+.pd-check { fill: none; stroke: var(--green, #2a9461); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.pd-line { fill: none; stroke: var(--text-4); stroke-width: 1.3; stroke-linejoin: round; }
+.pd-line.side { stroke: var(--text-3); stroke-dasharray: 4 3; }
+.pd-head { fill: none; stroke: var(--text-3); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.pd-edge { font-size: 11px; fill: var(--text-2); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }

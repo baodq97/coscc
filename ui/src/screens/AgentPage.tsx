@@ -8,6 +8,7 @@ import { api } from "../lib/api";
 import { ago, modelName, money, unitCode, unitTitle } from "../lib/format";
 import { Link, navigate } from "../lib/router";
 import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
+import { useIndex } from "../lib/pack";
 import { AgentGlyph, attention, triggerWords, useAgents } from "./Agents";
 
 export const TABS = [
@@ -22,8 +23,6 @@ type Tab = (typeof TABS)[number]["key"];
 
 const MODELS = ["claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]", "claude-haiku-4-5"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-// The unit's parts a stage may be handed (`contracts.DATA`, the stage names).
-const ARTIFACTS = ["idea", "intent", "spec", "spike", "plan", "impl", "review"];
 const DATA: Record<string, string> = {
   idea: "the shared idea",
   siblings: "sibling checkouts",
@@ -437,6 +436,7 @@ function Tools(ctx: Ctx) {
 type Input = { artifacts: string[]; outputs: string[]; answers: boolean; findings: boolean; data: string[] };
 
 function InputOutput(ctx: Ctx) {
+  const { withAgent } = useIndex();
   const input = ctx.value("input") as Input | undefined;
   const base = (ctx.builtin.input as Input | undefined) ?? { artifacts: [], outputs: [], answers: false, findings: false, data: [] };
   const set = (k: keyof Input, v: unknown) => input && ctx.edit("input", { ...input, [k]: v });
@@ -455,7 +455,7 @@ function InputOutput(ctx: Ctx) {
         ) : (
           <>
             <Part ctx={ctx} path="input.artifacts" label="Artifacts" hint="Whole, as the unit's folder holds them.">
-              {ARTIFACTS.map((n) => (
+              {withAgent.map((n) => (
                 <label key={n} className="check">
                   <input type="checkbox" checked={!!named(input.artifacts, n)} disabled={!ctx.editable} onChange={(e) => toggleArtifact(n, e.target.checked)} /> {n}
                 </label>
@@ -528,7 +528,7 @@ function Trigger({ a, page }: Ctx) {
           <b>{triggerWords(a, page.rows)}</b>
           <div className="muted" style={{ marginTop: 6 }}>
             {t.state
-              ? `A unit at state ${t.state} runs this agent when you, or the autopilot, press Run.`
+              ? `A unit that reaches that state, in a process that has it, runs this agent when you, or the autopilot, press Run.`
               : t.engine
                 ? "The app opens it itself; no unit state starts it."
                 : "Another agent starts it inside its own run."}{" "}

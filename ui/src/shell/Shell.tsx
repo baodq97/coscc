@@ -8,6 +8,7 @@ import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { LeifPanel } from "./LeifPanel";
 import { CommandBar } from "./CommandBar";
+import { PackProvider } from "../lib/pack";
 
 type ShellState = {
   navOpen: boolean;
@@ -92,7 +93,9 @@ export function Shell({ title, crumbs, children }: { title: string; crumbs: stri
         <div className="side-scrim" onClick={() => setNavOpen(false)} />
         <main className="main">
           <Topbar crumbs={crumbs} />
-          <div className="scroll">{children}</div>
+          <div className="scroll">
+            <PackProvider>{children}</PackProvider>
+          </div>
         </main>
         <LeifPanel />
       </div>

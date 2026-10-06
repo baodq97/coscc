@@ -611,6 +611,7 @@ export type State = {
   "action"?: string;
   "optional"?: boolean;
   "hint"?: string;
+  "label"?: string;
   "skip"?: string;
   "rerun"?: string[];
   "next"?: Way[];

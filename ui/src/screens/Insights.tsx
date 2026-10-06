@@ -6,7 +6,8 @@ import { useState } from "react";
 import type { AgentSpend, Insights as View, Target } from "../api.gen";
 import { useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
-import { AGENT_LABEL, ago, money, unitCode, unitTitle } from "../lib/format";
+import { stageLabel } from "../lib/pack";
+import { ago, money, unitCode, unitTitle } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { Link } from "../lib/router";
 import { Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
@@ -183,7 +184,7 @@ function Agents({ rows, workspace }: { rows: AgentSpend[]; workspace: Workspace 
       {rows.map((r) => (
         <details key={r.agent} id={`agent-${r.agent}`} className="agent">
           <summary className="lrow">
-            <span style={{ width: 96 }}>{AGENT_LABEL[r.agent] ?? r.agent}</span>
+            <span style={{ width: 96 }}>{stageLabel(r.agent)}</span>
             <div className="grow" style={{ background: "var(--bg-sunk)", borderRadius: 3, height: 8 }}>
               <div style={{ width: `${((r.usd ?? 0) / top) * 100}%`, background: "var(--accent)", height: 8, borderRadius: 3 }} />
             </div>

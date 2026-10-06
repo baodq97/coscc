@@ -22,7 +22,7 @@ The app runs on a temporary data root with one workspace, `proj`, a clone of a b
 directory, and five units in it, always the same, so a spec can name its addresses (the studio's paths are
 `/`, `/up-next`, `/work/proj`, `/unit/proj/2`, ...; `ui/src/routes.tsx` lists them):
 
-    0001_fresh-intent      an accepted intent, nothing else
+    0001_fresh-intent      an accepted intent, nothing else; it walks the `short` process, the rest `full`
     0002_open-question     an intent with two open questions nobody answered, the first with a
                            recommendation (*Take it* on `/inbox/proj/2`), the second without
     0003_awaiting-ship     every artifact up to a passing review round; the PR machine's row
@@ -505,6 +505,12 @@ def make_all(api: httpx.Client, work: Path, data_dir: Path, proj: Path, other: P
     make_unread_fixture(api, proj, rows)
     make_autopilot_fixture(api, work, data_dir, proj, rows)
     seed_fixture(work, data_dir, rows)
+    from coscc.store.db import Data
+
+    with Data(data_dir).write() as conn:
+        conn.execute(
+            "UPDATE unit_meta SET process = 'coscc-sdlc/short' WHERE unit = '0001_fresh-intent'"
+        )
 
 
 def make_idea_fixture(api: httpx.Client, proj: Path, other: Path, rows: Rows) -> None:
