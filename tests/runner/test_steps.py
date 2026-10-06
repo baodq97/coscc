@@ -1729,6 +1729,13 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
             "- [unmeasured] U1. does it exit?\n",
             encoding="utf-8",
         )
+        # The loop reads what is unmeasured from the spec's record, never from the file.
+        meta = core.ws.unit_meta()
+        spec = {"stage": "spec", "judgement": "ready", "questions": [], "unmeasured": ["U1"]}
+        with meta.data.write() as conn:
+            meta.record_result(
+                conn, core.ws.key(str(self.repo)), made["unit"], "spec", "spec.md", {"object": spec}
+            )
         self.unit = made["unit"]
         self.scratch = units.spike_dir(str(self.repo), self.unit, str(self.root / "data"))
         return core
