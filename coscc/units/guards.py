@@ -65,6 +65,7 @@ REASONS = (
     "updating",
     "unavailable",
     "held",
+    "budget-reached",
     "no-unit",
     "no-stage",
     "rerun-by-person",

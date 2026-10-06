@@ -44,10 +44,11 @@ LOCK_TIMEOUT = BUSY_TIMEOUT
 
 MODES = ("manual", "autonomous")
 
-# How a run ended. `cancelled` and `exhausted` exist so that "no end record" keeps meaning one
-# thing: the app stopped while the step was still running. `stopped` is a person pressing Stop
-# and carries `stopped_by`, the name they typed. `cancelled` is written by nothing.
-Outcome = Literal["done", "failed", "exhausted", "cancelled", "stopped"]
+# How a run ended. `cancelled` exists so that "no end record" keeps meaning one thing: the app
+# stopped while the step was still running. `stopped` is a person pressing Stop and carries
+# `stopped_by`, the name they typed. `paused-budget` is a run that hit one of its two ceilings and
+# kept its session: its `end` names the `ceiling`, and a `raise` record goes on from it.
+Outcome = Literal["done", "failed", "paused-budget", "cancelled", "stopped"]
 OUTCOMES: tuple[Outcome, ...] = get_args(Outcome)
 
 # The fields a caller may report about what a turn cost. Anything else in a record is carried
@@ -414,6 +415,13 @@ class Journal:
             }
         )
 
+    def raised(self, workspace: str, unit: str, stage: str, **fields: Any) -> dict[str, Any]:
+        """A person raised the ceiling a run paused at, and its session goes on (`run` is the new
+        part's): the run's row opens again. `by`, the old and the new ceilings are in `fields`."""
+        return self.append(
+            {"kind": "raise", "workspace": workspace, "unit": unit, "stage": stage, **fields}
+        )
+
     def unresumed(self, timeout: float | None = None) -> list[dict[str, Any]]:
         """Every `suspend` row, in every workspace, with no `resume` naming it."""
         rows = self.records(timeout=timeout, kinds=("suspend", "resume"))
@@ -641,7 +649,7 @@ class Journal:
         two kinds that decide it, since the board asks every few seconds. Writes nothing.
         """
         by_unit: dict[str, list[dict[str, Any]]] = {}
-        for item in self.records(workspace, timeout=timeout, kinds=("start", "end")):
+        for item in self.records(workspace, timeout=timeout, kinds=("start", "end", "raise")):
             by_unit.setdefault(str(item.get("unit") or ""), []).append(item)
         out: dict[str, dict[str, Any]] = {}
         for unit, items in by_unit.items():
@@ -699,50 +707,7 @@ class Journal:
         earlier.reverse()
 
         found = {"attempt": attempt, "latest": _brief(seq[last]), "earlier": earlier}
-        latest = seq[last]
-        # A review that ran out of turns and whose closing turn wrote nothing left no round; what it
-        # had opened is kept in its events, never in `review.md`. A round the app wrote later leaves a
-        # newer `end`, so this stops being the latest. `closing` says whether a closing turn ran at
-        # all: none does with no session id or no head.
-        if (
-            stage == "review"
-            and latest.get("outcome") == "exhausted"
-            and latest.get("review_md") == "none"
-            and latest.get("run")
-        ):
-            found["opened"] = {
-                **self._opened(str(latest["run"]), timeout),
-                "closing": "closing" in latest,
-            }
         return found
-
-    def _opened(self, run: str, timeout: float | None) -> dict[str, Any]:
-        """The paths `run`'s `tool_use` events named, `{"purged": True}` when its events are gone, or
-        `{"error": ...}`: a reason to show, never one to refuse the step for.
-        """
-        try:
-            row = self.data.step_run(run)
-            if row is None or row.get("purged_at"):
-                return {"purged": True}
-            paths: list[str] = []
-            for event in self.data.step_tool_uses(run, timeout=timeout):
-                given = event.get("input")
-                if isinstance(given, str):
-                    # `events._cut` keeps a long `input` as the start of its JSON.
-                    try:
-                        given = json.loads(given)
-                    except ValueError:
-                        continue
-                if not isinstance(given, dict):
-                    continue
-                path = given.get("file_path") or given.get("path") or given.get("pattern")
-                if isinstance(path, str) and path and path not in paths:
-                    paths.append(path)
-            return {"paths": paths}
-        except Exception as e:
-            # `Busy` included: the step still runs.
-            log.exception("the paths a step touched could not be read")
-            return {"error": f"{type(e).__name__}: {e}"}
 
 
 def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -781,6 +746,10 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 "agent": item.get("agent"),
                 # The parts its prompt was handed. A session composed elsewhere has none: None.
                 "envelope": item.get("envelope"),
+                # What a ceiling paused (`paused`: the `ceiling` and what was spent of it) and a
+                # raise went on from: each earlier part of this one session, oldest first.
+                "paused": None,
+                "parts": [],
             }
             rows.append(row)
             open_runs[stage] = row
@@ -821,7 +790,45 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             row["turns_reported"] = "turns" in item
             if "events_lost" in item:
                 row["events_lost"] = item.get("events_lost")
+            row["paused"] = paused_of(item)
+        elif kind == "raise":
+            # The same session goes on after a ceiling: its row opens again under the new run, and
+            # the part that ended stays beside it.
+            row = next(
+                (r for r in reversed(rows) if r["stage"] == stage and r.get("paused") is not None),
+                None,
+            )
+            if row is not None:
+                row["parts"].append(
+                    {k: row.get(k) for k in ("run", "ended", "paused", "cost", "denials")}
+                )
+                row.update(ended=None, outcome=None, paused=None, run=item.get("run"))
+                row["raised_by"] = item.get("by")
+                open_runs[stage] = row
+                if row["run"]:
+                    open_by_run[str(row["run"])] = row
     return rows
+
+
+def paused_of(end: dict[str, Any]) -> dict[str, Any] | None:
+    """What a run that hit a ceiling says of it: which one (`turns` or `usd`), both ceilings and
+    what was spent; `None` for any other `end`."""
+    if end.get("outcome") != "paused-budget":
+        return None
+    return {
+        "ceiling": end.get("ceiling"),
+        "max_usd": end.get("max_budget_usd"),
+        "max_turns": end.get("max_turns"),
+        "usd": end.get("cost_usd"),
+        "turns": end.get("turns"),
+    }
+
+
+def paused_stage(rows: Iterable[dict[str, Any]], stage: str) -> dict[str, Any] | None:
+    """The `paused` of the latest run of `stage` in a timeline, when it ended at a ceiling and
+    nothing went on from it: the unit is held `budget-reached`."""
+    last = next((r for r in reversed(list(rows)) if r.get("stage") == stage), None)
+    return last.get("paused") if last is not None else None
 
 
 def timelines_of(items: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

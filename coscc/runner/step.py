@@ -50,8 +50,6 @@ from coscc.runner.prompt import _read, compose_prompt, submit_prompt, PROGRESS_F
 from coscc.runner.review import (
     _round_number,
     _rounds,
-    closing_prompt,
-    closing_round_problem,
     render_round,
     replace_new_rounds,
     UI_STANDARD,
@@ -65,7 +63,6 @@ from coscc.runner.reply import (
     _title,
     _after_tool,
     _joined,
-    _hit_ceiling,
 )
 from coscc.runner.attempt import (
     branch_of,
@@ -95,46 +92,10 @@ def check_started_by(value: str) -> str:
 SESSIONS_PER_STEP = 1
 
 
-# # How long the closing turn may take. Chosen, not measured: one took 9.8 s, the longest 25.5 s.
-CLOSING_TIMEOUT = 180.0
-
 # # How long the repair turn may take. Rewriting a 26,535-character plan took about 94 s and
 # # a spec 79 s; the text comes at once at the end of the turn, so a turn cut here leaves
 # # nothing to write.
 OPENING_TIMEOUT = 180.0
-
-
-async def _closing_turn(
-    sessions: Sessions,
-    cwd: str,
-    prompt: str,
-    session_id: str,
-    denials: Denials,
-    **kw: Any,
-) -> tuple[str, dict[str, Any] | None]:
-    """The reply of one more turn on a review's own session, and its `done`.
-
-    Same session id, a new handle, no tools and a gate granting none, one turn. A new handle has
-    no recorder, so nothing of this turn reaches the step's live view.
-    """
-    text, done = "", None
-    async for kind, payload in sessions.stream(
-        cwd,
-        prompt,
-        session_id,
-        max_turns=1,
-        gate=Gate(Grant(), Places(roots=(cwd,)), denials),
-        tools=[],
-        step=sessions_mod.StepHandle(),
-        **kw,
-    ):
-        if kind == "chunk":
-            text += payload
-        elif kind == "tool":
-            text = _after_tool(text)
-        elif kind == "done":
-            done = payload
-    return text, done
 
 
 async def _opening_turn(
@@ -397,7 +358,6 @@ async def _compose(
     app_note: str,
     plan_map: str,
     unfinished_round: dict[str, Any] | None,
-    incomplete_round: dict[str, Any] | None,
     idea_note: str,
     siblings_note: str,
     mentions_note: str,
@@ -429,13 +389,12 @@ async def _compose(
         drift_note=drift_note,
         lane=lane,
         worktree=watch or "",
-        ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
+        ceilings=(grant.max_turns, grant.max_budget_usd or None),
         rerun=rerun,
         rerun_note=rerun_note,
         app_note=app_note,
         plan_map=plan_map,
         unfinished_round=unfinished_round,
-        incomplete_round=incomplete_round,
         idea_note=idea_note,
         siblings_note=siblings_note,
         mentions_note=mentions_note,
@@ -636,7 +595,7 @@ def _carried(
     terminal = ""
     session_id = str((resume or {}).get("session_id") or "")
     cost: dict[str, Any] = {}
-    if turn_kind in ("opening", "closing"):
+    if turn_kind == "opening":
         # The main reply ended before the update; what it ended with is in the owner.
         terminal = str(was.get("main_terminal") or "")
         cost = dict(was.get("main_cost") or {})
@@ -734,7 +693,6 @@ def _write_reply(
     pieces: list[str],
     after_submit: int | None,
     channel: submit_mod.Channel | None,
-    terminal: str,
     blocks: int,
     spike_md: str | None,
     review_md: str | None,
@@ -762,7 +720,6 @@ def _write_reply(
         # What came after the last `submit` call, with no title in it, is the session saying it
         # called the tool: never part of the artifact.
         taken = pieces[:after_submit]
-    taken = taken[-1:] if _hit_ceiling(terminal) else taken
     _write_artifact(directory, artifact, _joined(taken, artifact), blocks=blocks)
     if watch:
         # The reply was written, so the progress file is never read.
@@ -783,8 +740,7 @@ def _judged(
     """How a step that raised ends: `(outcome, detail, error, unopened)`; `None` when the app is
     going down or an update paused the session, and the caller lets `e` through with no `end`.
 
-    `error` is set only here, so a step that finished (even one that merely hit its ceiling)
-    carries no error.
+    `error` is set only here, so a step that finished, or paused at a ceiling, carries no error.
     """
     if isinstance(e, asyncio.CancelledError):
         if _taken_back(running, e) is not None:
@@ -796,6 +752,9 @@ def _judged(
         # An update paused the session and wrote its `suspend` row: like an app going down, no
         # `attempt` and no `end`. The next start takes it up.
         return None
+    if run_mod.ceiling_of(terminal):
+        # Bounded, not failed: the session is kept and a raise goes on from it.
+        return "paused-budget", f"stopped at the ceiling: {terminal}", None, None
     error = {"type": type(e).__name__, "message": str(e)}
     if isinstance(e, (RunError, Refused)):
         # "The step did not write impl.md" is a real reason to stop, so it goes into the attempt
@@ -804,16 +763,10 @@ def _judged(
         # What the session said, kept: the money was spent, and a reply with a preamble is
         # often a good artifact that a person can judge in a second.
         detail = _with_reply(str(e), _joined(pieces))
-        ceiling = f"stopped at the ceiling: {terminal} — {detail}"
     else:
         log.exception("the session of %s %s failed", unit, stage)
         unopened = None
         detail = _with_reply(f"{type(e).__name__}: {e}", _joined(pieces))
-        ceiling = f"stopped at the ceiling: {terminal}"
-    # A step stopped by its own ceiling was bounded, not failed. `journal.OUTCOMES` keeps the two
-    # apart so a reader can tell a defect from a limit working as intended.
-    if _hit_ceiling(terminal):
-        return "exhausted", ceiling, error, unopened
     return "failed", detail, error, unopened
 
 
@@ -849,108 +802,6 @@ async def _spike_progress(
         log.exception("the progress file of %s was not read", unit)
         said = f"the progress file was not read: {type(e).__name__}: {e}"
         return "unusable", _noted(detail, said), None
-
-
-def _last_round(path: Path) -> int:
-    return max((_round_number(r) for r in _rounds(_read(path))), default=0)
-
-
-async def _close_review(
-    sessions: Sessions,
-    cwd: str,
-    head: str,
-    directory: Path,
-    artifact: str,
-    session_id: str,
-    denials: Denials,
-    turn_kw: dict[str, Any],
-    take_up: bool,
-    running: steps.Running | None,
-    cost: dict[str, Any],
-    taken: bool,
-    segment_done: dict[str, Any] | None,
-    detail: str,
-    unit: str,
-    stage: str,
-    message: str,
-    rounds_known: tuple[int, ...] = (),
-) -> tuple[
-    str | None,
-    str,
-    dict[str, Any] | None,
-    dict[str, Any],
-    bool,
-    dict[str, Any] | None,
-    BaseException | None,
-]:
-    """A review that ran out of turns before its reply could be written gets one closing turn on its
-    own session, asking for an incomplete round: `(review_md, detail, closing, cost, taken,
-    segment_done, held)`.
-
-    Sealed first, as the reply's road is: from here a Stop is refused, so the turn cannot be
-    cut halfway; `CLOSING_TIMEOUT` bounds it instead. The budget does not: the CLI compares the
-    whole session's cost after the turn has run. Wrapped, for the reason the progress file is
-    read in the `finally`: `outcome` stays `exhausted` and the `end` row never depends on it.
-    """
-    review_md: str | None = None
-    closing: dict[str, Any] | None = None
-    held: BaseException | None = None
-    said = ""
-    try:
-        if not steps.seal(running):
-            review_md = "withheld"
-        else:
-            number = max(_last_round(directory / artifact), *rounds_known, 0) + 1
-            reply, done = await asyncio.wait_for(
-                _closing_turn(
-                    sessions,
-                    cwd,
-                    message if take_up else closing_prompt(head, number),
-                    session_id,
-                    denials,
-                    **turn_kw,
-                ),
-                CLOSING_TIMEOUT,
-            )
-            if take_up:
-                taken, segment_done = True, segment_done or done
-            closing, cost = _turn_cost(done, cost)
-            # Judged on the text, never on `after`. No `await` from here to the write, as on the reply's
-            # road.
-            problem = closing_round_problem(_read(directory / artifact), reply, head, rounds_known)
-            if problem:
-                review_md, said = (
-                    "none",
-                    f"review.md: the closing turn's reply was not written: {problem}",
-                )
-            else:
-                try:
-                    _write_artifact(directory, artifact, reply)
-                    review_md, said = (
-                        "incomplete",
-                        f"review.md: Round {number} incomplete, written by the closing turn",
-                    )
-                except RunError as e:
-                    review_md, said = (
-                        "none",
-                        f"review.md: the closing turn's reply was not written: {e}",
-                    )
-    except asyncio.CancelledError as e:
-        held = _taken_back(running, e)
-        if held is None:
-            review_md = "withheld"
-    except Suspended as e:
-        # Paused by an update, like the main reply: no `end`.
-        held = e
-    except Exception as e:
-        # The `end` row never depends on it.
-        log.exception("the closing turn of %s %s failed", unit, stage)
-        closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
-        review_md, said = (
-            "none",
-            f"review.md: the closing turn failed: {type(e).__name__}: {e}",
-        )
-    return review_md, _noted(detail, said), closing, cost, taken, segment_done, held
 
 
 async def _repair_opening(
@@ -1031,7 +882,7 @@ async def _repair_opening(
             # turn, so what came before may be a draft whose header says `accepted`. At the budget the
             # turn ran whole and the CLI compared the cost after, so its reply may be complete; it is
             # refused all the same, because the reply's road never ends a step past its ceiling `done`.
-            if _hit_ceiling(after):
+            if run_mod.ceiling_of(after):
                 opening, said = (
                     "none",
                     f"{artifact}: the repair turn's reply was not written: it stopped at the ceiling: {after}",
@@ -1124,7 +975,7 @@ async def _repair_submit(
                 OPENING_TIMEOUT,
             )
             submit_turn, cost = _turn_cost(done, cost)
-            if _hit_ceiling(str((done or {}).get("terminal_reason") or "")):
+            if run_mod.ceiling_of(str((done or {}).get("terminal_reason") or "")):
                 channel.received = None
                 said = "the repair turn stopped at its ceiling"
             else:
@@ -1475,7 +1326,6 @@ class Runner:
         plan_map_record: dict[str, Any] | None = None,
         plan: kernel.Plan | None = None,
         unfinished_round: dict[str, Any] | None = None,
-        incomplete_round: dict[str, Any] | None = None,
         open_ids: tuple[str, ...] = (),
         claims_round: int | None = None,
         rounds_known: tuple[int, ...] = (),
@@ -1578,7 +1428,6 @@ class Runner:
             app_note=app_note,
             plan_map=plan_map,
             unfinished_round=unfinished_round,
-            incomplete_round=incomplete_round,
             idea_note=idea_note,
             siblings_note=siblings_note,
             mentions_note=mentions_note,
@@ -1665,7 +1514,7 @@ class Runner:
         spike_md = review_md = None
         try:
             before = await _tree_before(resume, was, watch, owner)
-            if used_up and turn_kind not in ("opening", "closing"):
+            if used_up and turn_kind != "opening":
                 # Nothing left to resume with, so no session is opened. Not for a closing or repair turn:
                 # that is one turn of its own, bounded by its timeout.
                 terminal = used_up
@@ -1714,9 +1563,12 @@ class Runner:
                     session_id, cost, terminal, models_used, segment_done = _reply_done(
                         payload, segment_done, resume
                     )
-            # What the main reply ended with, for an `opening` or `closing` turn an update pauses: its
+            # What the main reply ended with, for an `opening` turn an update pauses: its
             # next start goes through this reply again without a session.
             owner.update(main_terminal=terminal, main_cost=dict(cost))
+            if run_mod.ceiling_of(terminal):
+                # Nothing is written of what it had not finished: the session is kept.
+                raise RunError(f"stopped at the ceiling: {terminal}")
 
             # Before anything is written: a spike that touched the branch it was meant only to read must
             # leave no `spike.md` saying it measured.
@@ -1747,7 +1599,6 @@ class Runner:
                 pieces,
                 after_submit,
                 channel,
-                terminal,
                 blocks,
                 spike_md,
                 review_md,
@@ -1759,11 +1610,6 @@ class Runner:
                 shutting_down = True
                 raise
             outcome, detail, error, unopened = judged
-        else:
-            if _hit_ceiling(terminal):
-                # It wrote something, but it ran out of room doing it. Saying `done` here would hide that
-                # the work may be half finished.
-                outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
             outcome, detail, cost, stopped_by, review_md = await self._conclude(
                 ledger=ledger,
@@ -1819,12 +1665,6 @@ class Runner:
                 "model": model,
                 "model_source": model_source,
                 **({"stopped_by": stopped_by} if outcome == "stopped" else {}),
-                # The round a closing turn wrote, for `Answers.ingest` to record as the review gone back to draft.
-                **(
-                    {"incomplete_round": _last_round(directory / artifact), "head": head}
-                    if review_md == "incomplete"
-                    else {}
-                ),
                 # What guard `stage-result` read, for `Answers.ingest` to apply.
                 **(
                     {
@@ -1989,7 +1829,7 @@ class Runner:
             run_mod.tell_config(
                 recorder, runs_as.model, runs_as.effort, owner, turns_left, budget_left
             )
-        if turn_kind in ("opening", "closing"):
+        if turn_kind == "opening":
             return nothing()
         made = self._scratch(workspace, unit)
         # A step with nothing to name passes nothing, so a stand-in `stream` keeps working.
@@ -2082,42 +1922,9 @@ class Runner:
         held: BaseException | None = None
         closing = opening = submit_turn = None
         message = str((resume or {}).get("message") or "")
-        if watch and not shutting_down and outcome in ("failed", "exhausted") and spike_md is None:
+        if watch and not shutting_down and outcome == "failed" and spike_md is None:
             spike_md, detail, held = await _spike_progress(
                 cwd, watch, before, running, tree_changed, directory, artifact, detail, unit
-            )
-            shutting_down = held is not None
-        if (
-            stage == "review"
-            and grant.app_writes_artifact
-            and not shutting_down
-            and outcome == "exhausted"
-            and review_md is None
-            and session_id
-            and head
-            and not _stop_asked(running)
-        ):
-            # The closing turn an update paused is taken up, not asked again.
-            take_up = turn_kind == "closing"
-            review_md, detail, closing, cost, turn_taken, segment_done, held = await _close_review(
-                self.sessions,
-                cwd,
-                head,
-                directory,
-                artifact,
-                session_id,
-                denials,
-                _turn_kw(kw, owner, "closing", running, turn_budget, take_up, resume),
-                take_up,
-                running,
-                cost,
-                turn_taken,
-                segment_done,
-                detail,
-                unit,
-                stage,
-                message,
-                rounds_known,
             )
             shutting_down = held is not None
         if (
@@ -2217,7 +2024,7 @@ class Runner:
             cost, recorder is not None and not shutting_down, outcome, stored, stored_from
         )
         segment_fields = _segment_fields(owner, resume, segment_done)
-        dropped = turn_kind in ("opening", "closing") and not turn_taken and not shutting_down
+        dropped = turn_kind == "opening" and not turn_taken and not shutting_down
         detail = _noted(
             detail,
             f"the {turn_kind} turn an update paused was not reached again, so it was dropped"
@@ -2286,6 +2093,19 @@ class Runner:
                 ),
                 **extra,
                 **run_fields,
+                # What a raise needs to go on from this end: both ceilings, the one hit, and whose
+                # session it is.
+                **(
+                    {
+                        "ceiling": run_mod.ceiling_of(terminal),
+                        "max_turns": grant.max_turns,
+                        "max_budget_usd": grant.max_budget_usd or None,
+                        "cwd": cwd,
+                        "owner": owner,
+                    }
+                    if outcome == "paused-budget"
+                    else {}
+                ),
                 # Only a spike's `end` carries it.
                 **({"spike_md": spike_md} if watch else {}),
                 # Only a review's; `closing` only when that turn ran.

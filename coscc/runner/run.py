@@ -30,7 +30,6 @@ from coscc.agent.transcript import ceilings_left
 from coscc.kernel import Run, Status
 from coscc.runlog.events import Recorder
 from coscc.runner.attempt import CLAUDE_CODE_PRESET
-from coscc.runner.reply import CEILING_MARKERS
 from coscc.store.db import Busy, Data
 from coscc.store.journal import BadRecord, Journal, Outcome
 from coscc.units import submit as submit_mod
@@ -47,7 +46,7 @@ NO_SUBMISSION = "no-submission"
 # loop's readers read.
 OUTCOME: dict[Status, Outcome] = {
     "done": "done",
-    "paused-budget": "exhausted",
+    "paused-budget": "paused-budget",
     "failed": "failed",
     "refused": "failed",
     "cancelled": "cancelled",
@@ -114,21 +113,25 @@ class Ctx:
 Finish = Callable[[Run], Awaitable[Mapping[str, Any]]]
 
 
-def hit_ceiling(terminal: str) -> bool:
-    """Whether the session said it stopped at one of its two ceilings."""
+def ceiling_of(terminal: str) -> str:
+    """Which ceiling the session said it stopped at, `turns` or `usd`; `""` when at neither. The
+    SDK puts it in `terminal_reason` (`max_turns`), or in `subtype` (`error_max_turns`,
+    `error_max_budget_usd`) for an older CLI."""
     text = (terminal or "").lower()
-    return any(marker in text for marker in CEILING_MARKERS)
+    if "max_turns" in text:
+        return "turns"
+    return "usd" if "budget" in text else ""
 
 
 def status_of(outcome: str) -> Status:
-    """The `Status` a board step's `outcome` is: `exhausted` stopped at a ceiling, a person's
-    Stop is `cancelled`."""
+    """The `Status` a board step's `outcome` is: a person's Stop is `cancelled`, any other that is
+    not `done` or `paused-budget` is `failed`."""
     return _STATUS.get(outcome, "failed")
 
 
 _STATUS: dict[str, Status] = {
     "done": "done",
-    "exhausted": "paused-budget",
+    "paused-budget": "paused-budget",
     "stopped": "cancelled",
     "cancelled": "cancelled",
 }
@@ -479,7 +482,7 @@ def _owner(agent: Agent, given: Input, stage: str, start_at: Any, run: str) -> d
 
 def _judge(out: Run, key: str, terminal: str, channel: Any, reply: str) -> None:
     """How a session that ended by itself ended: at a ceiling, with its channel empty, or done."""
-    if hit_ceiling(terminal):
+    if ceiling_of(terminal):
         out.status, out.detail = "paused-budget", f"stopped at its ceiling: {terminal}"
     elif channel is not None and not submit_mod.submitted(channel):
         out.detail = f"{NO_SUBMISSION}: the session handed back no {key} through submit"

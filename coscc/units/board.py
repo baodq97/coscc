@@ -611,6 +611,13 @@ def _state(state: str, label: str = "") -> dict[str, str]:
     return {"state": state, "label": label or STATE_LABEL[state], "color": STATE_COLOR[state]}
 
 
+def paused_label(p: dict[str, Any]) -> str:
+    """What a card says of a run held at a ceiling: which ceiling, and how much of it was spent."""
+    if p.get("ceiling") == "turns":
+        return f"Paused at {p.get('turns')} of {p.get('max_turns')} turns"
+    return f"Paused at ${float(p.get('usd') or 0):.2f} of ${float(p.get('max_usd') or 0):.2f}"
+
+
 def unit_state(
     unit: dict[str, Any], last_end: dict[str, Any] | None, ci: dict[str, Any] | None
 ) -> dict[str, str]:
@@ -634,6 +641,8 @@ def unit_state(
         return _state("dropped")
     if hold == "paused":
         return _state("paused")
+    if unit.get("paused"):
+        return _state("needs-you", paused_label(unit["paused"]))
     if int(unit.get("open") or 0) > 0 or why in ("needs-person", "awaits-person"):
         return _state("needs-you")
     # The buckets `integrate.classify` reads as red. A held answer that is `gh`'s error has no
@@ -645,7 +654,7 @@ def unit_state(
     ]
     failed = (
         last_end is not None
-        and last_end.get("outcome") in ("failed", "exhausted")
+        and last_end.get("outcome") == "failed"
         and last_end.get("stage") == unit.get("at")
     )
     # `ship-merging` with no `ship` running is a merge nothing will record; `shown_state` lays

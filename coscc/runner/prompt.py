@@ -12,7 +12,7 @@ from typing import Any
 
 from coscc.agent import agents, harness
 from coscc.units import contracts, submit
-from coscc.runner.review import INCOMPLETE_SECTIONS, finding_line
+from coscc.runner.review import finding_line
 from coscc.runner.reply import RunError
 
 
@@ -293,18 +293,11 @@ def _where_you_work(
     stage: str,
     workspace: str | Path,
     worktree: str,
-    ceilings: tuple[int, float] | None,
 ) -> list[str]:
     """`spike` only: its scratch directory, the worktree it may read, its progress file."""
     if stage != "spike":
         return []
     scratch = Path(workspace).expanduser().resolve()
-    # `ceilings` is the grant `Runner.run` holds; `None` leaves the sentence out.
-    within = (
-        f"This step has {ceilings[0]} turns and ${ceilings[1]:.2f}. "
-        if ceilings is not None
-        else ""
-    )
     return [
         "# Where you work\n\n"
         f"Your working directory is `{scratch}`, a "
@@ -319,9 +312,22 @@ def _where_you_work(
         )
         + "\n\n"
         f"Your progress file is `{scratch / PROGRESS_FILE}` (the rules' *The progress "
-        f"file*). {within}If this step ends without a usable final reply — a turn or "
-        "budget ceiling, a reply with no usable end, a session that broke — the app "
-        "writes `spike.md` from this file."
+        f"file*). If this step ends without a usable final reply — a reply with no usable end, a "
+        "session that broke — the app writes `spike.md` from this file."
+    ]
+
+
+def _room(ceilings: tuple[int, float | None] | None, included: list[str]) -> list[str]:
+    """The step's budget, so it knows its room: both ceilings, and what happens at one."""
+    if ceilings is None:
+        return []
+    turns, usd = ceilings
+    included.append("budget")
+    limit = f"{turns} turns" + (f" and ${usd:.2f}" if usd else "")
+    return [
+        "# Your room\n\n"
+        f"This step has at most {limit}. At a ceiling the app pauses you and keeps your session; "
+        "a person may raise it, and you go on from where you stopped. Pace the work to it."
     ]
 
 
@@ -456,33 +462,6 @@ def _unfinished_round(
     ]
 
 
-def _incomplete_round(
-    stage: str, incomplete_round: dict[str, Any] | None, included: list[str]
-) -> list[str]:
-    """`review` only: where to go on from when the last round is one the app's closing turn
-    wrote for a review that ran out of turns: its sections verbatim, `{n, text}` as the loop
-    read it. What the last full round left open is in the findings block.
-    """
-    if stage != "review" or not incomplete_round:
-        return []
-    number = int(incomplete_round["n"])
-    text = str(incomplete_round.get("text") or "")
-    start = text.find(INCOMPLETE_SECTIONS[0])
-    sections = (text[start:] if start != -1 else text).rstrip()
-    included.append("review-incomplete")
-    return [
-        "# The incomplete round\n\n"
-        f"Round {number} is incomplete: the review before this one ran out of turns, "
-        "and the app asked it, with no tools left, to write down where it stood. Go "
-        "on from it. Read what it lists under *What was not reviewed* first, then "
-        f"write Round {number + 1} as a full round for the commit named below. Carry "
-        f"forward every finding of Round {number} and of every earlier round, with "
-        "its id: the `ship` gate stays closed on a round that drops one. Never write "
-        "`Verdict: incomplete` yourself; only the app's closing turn writes it.\n\n"
-        f"Round {number}, from its first section on, verbatim:\n\n{sections}"
-    ]
-
-
 def _commit_reviewed(stage: str, head: str) -> list[str]:
     """`review` only: the commit it reviews.
 
@@ -595,13 +574,12 @@ def compose_prompt(
     screens_note: str = "",
     drift_note: str = "",
     worktree: str = "",
-    ceilings: tuple[int, float] | None = None,
+    ceilings: tuple[int, float | None] | None = None,
     rerun: bool = False,
     rerun_note: str = "",
     app_note: str = "",
     plan_map: str = "",
     unfinished_round: dict[str, Any] | None = None,
-    incomplete_round: dict[str, Any] | None = None,
     idea_note: str = "",
     siblings_note: str = "",
     mentions_note: str = "",
@@ -625,8 +603,7 @@ def compose_prompt(
     `agent` is the stage's resolved row of the agent table; its section opens the prompt.
     `rerun` is true only for a stage a person ran again from the board, with `rerun_note`
     their note; `app_note` is the autopilot's own, under its own heading. `unfinished_round` is
-    `{"n", "dropped"}` and `incomplete_round` `{"n", "text"}` of a last round the loop read so
-    (`review` only). `lane` is what the gate said of the unit (`fast` or `full`).
+    `{"n", "dropped"}` of a last round the loop read so (`review` only). `lane` is what the gate said of the unit (`fast` or `full`).
     `runs_commands` is true when the step's grant holds `Bash`. `branch` is the unit's branch
     the worktree stands on, the one push `impl` may make. `blocks` are the named texts features
     add, in order, before the rerun block and the task.
@@ -643,14 +620,14 @@ def compose_prompt(
         *_artifacts(stage, directory, included),
         *_outputs(stage, unit_meta, included),
         *_shared(stage, drift_note, idea_note, siblings_note, mentions_note, included),
-        *_where_you_work(stage, workspace, worktree, ceilings),
+        *_where_you_work(stage, workspace, worktree),
+        *_room(ceilings, included),
         *_tools(stage, directory, plan_map, runs_commands, state_file, included),
         *_lane(stage, lane, unit_meta, included),
         *_answers(stage, unit_meta, included),
         *_findings(stage, unit_meta, included),
         *_push(stage, branch),
         *_unfinished_round(stage, unfinished_round, included),
-        *_incomplete_round(stage, incomplete_round, included),
         *_commit_reviewed(stage, head),
         *_handed(stage, last_attempt, integration_note, screens_note, included),
     ]

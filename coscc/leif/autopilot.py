@@ -471,13 +471,7 @@ class Autopilot:
                     data = await self.boards.read(cwd)
             last: dict[str, dict[str, Any]] = {}
             integrations: dict[str, dict[str, Any]] = {}
-            # The `start` of the step each unit's last `end` closed, the latest of that unit and stage
-            # before it, so a recording `ship` that ran out is told apart.
-            starts: dict[tuple[str, str], dict[str, Any]] = {}
-            began: dict[str, dict[str, Any] | None] = {}
             for r in records:
-                if r.get("workspace") == key and r.get("kind") == "start" and is_step(r):
-                    starts[(str(r.get("unit") or ""), str(r.get("stage") or ""))] = r
                 # A retake of the screenshots that failed is the unit's last word too, and so is a `pr` or
                 # `ship` the PR machine ran.
                 if (
@@ -488,10 +482,6 @@ class Autopilot:
                     last[str(r.get("unit") or "")] = r
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r
-                    if r.get("kind") == "end":
-                        began[str(r.get("unit") or "")] = starts.get(
-                            (str(r.get("unit") or ""), str(r.get("stage") or ""))
-                        )
 
             running = self._running(key)
             here = {r["unit"]: r["stage"] for r in running}
@@ -533,22 +523,16 @@ class Autopilot:
                 ):
                     reasons[name] = ("ci", "")
                     continue
-                # A first `exhausted` step of a stage other than `ship` runs again once; so does a first prose
-                # step whose reply lacked its opening.
+                # A first prose step whose reply lacked its opening runs again once.
                 last_stage = str((last.get(name) or {}).get("stage") or "")
-                ran_out = decide.exhausted_of(records, key, name, last_stage)
                 unopened = decide.unopened_of(records, key, name, last_stage)
-                # No `start` found reads as no recording `ship`.
-                recorded = (began.get(name) or {}).get("ship_mode") == "record"
                 shipping = here.get(name) == "ship"
                 stop = decide.stop_for(
                     u,
                     nxt,
                     last.get(name),
                     settings["autopilot_may_ship"],
-                    ran_out,
                     unopened,
-                    recorded,
                     shipping,
                 )
                 stage = nxt.get("stage") or ""
@@ -562,7 +546,6 @@ class Autopilot:
                         integrations.get(name),
                         decide.since_integration(records, key, name),
                         nxt,
-                        decide.exhausted_of(records, key, name, "impl"),
                     )
                 )
                 # A unit behind `main`, conflicting or red after integration is integrated first, also after a
@@ -610,9 +593,7 @@ class Autopilot:
                             {**nxt, "rerun": ""},
                             last.get(name),
                             settings["autopilot_may_ship"],
-                            ran_out,
                             unopened,
-                            recorded,
                             shipping,
                         )
                     else:
@@ -663,9 +644,6 @@ class Autopilot:
                 if not stage:
                     continue
                 files = self._files(cwd, name) if stage in decide.CODE_STAGES else None
-                # The exhausted `ship` this pick went past. Not once the stage became `integrate`, which
-                # skipped nothing.
-                skipped = stage == "ship" and decide.skips_exhausted(nxt, last.get(name), recorded)
                 candidates.append(
                     {
                         "unit": name,
@@ -676,7 +654,6 @@ class Autopilot:
                         "rerun": rerun,
                         "note": app_note,
                         "extra": extra,
-                        "past_exhausted": {"at": last[name].get("at")} if skipped else None,
                     }
                 )
 
@@ -746,11 +723,6 @@ class Autopilot:
                             "shortlist": shortlist,
                             "passed": over,
                             **c["extra"],
-                            **(
-                                {"past_exhausted": c["past_exhausted"]}
-                                if c.get("past_exhausted")
-                                else {}
-                            ),
                             # The transitions whose read scheduled this pass.
                             **({"woken_by": woken_by} if woken_by else {}),
                         }

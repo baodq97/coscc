@@ -35,8 +35,8 @@ from typing import Any, Iterator
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
 # 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped;
-# 13: idea 0006 M2 in one step, `_before_13` and `_after_13`).
-SCHEMA_VERSION = 13
+# 13: idea 0006 M2 in one step, `_before_13` and `_after_13`; 14: `exhausted` ends are `failed`).
+SCHEMA_VERSION = 14
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -628,6 +628,7 @@ class Data:
                     conn.execute(statement)
                 if found == 12:
                     self._after_13(conn)
+                self._to_14(conn)
                 for table, column, declaration in _COLUMNS:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
@@ -650,6 +651,21 @@ class Data:
         conn.execute("ALTER TABLE outputs ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
         conn.execute("DROP INDEX IF EXISTS stage_results_scope")
         conn.execute("DROP TABLE IF EXISTS unit_decisions")
+
+    @staticmethod
+    def _to_14(conn: sqlite3.Connection) -> None:
+        """14: a run that `exhausted` its ceiling is `failed`: its session cannot be continued, and
+        a ceiling now pauses (`paused-budget`). Every run-log row, event and attempt move that
+        said it."""
+        conn.execute(
+            "UPDATE runs SET record = json_set(record, '$.outcome', 'failed', '$.status', 'failed') "
+            "WHERE json_extract(record, '$.outcome') = 'exhausted'"
+        )
+        conn.execute(
+            "UPDATE step_events SET event = json_set(event, '$.outcome', 'failed') "
+            "WHERE kind = 'end' AND json_extract(event, '$.outcome') = 'exhausted'"
+        )
+        conn.execute("UPDATE attempt_moves SET outcome = 'failed' WHERE outcome = 'exhausted'")
 
     @staticmethod
     def _after_13(conn: sqlite3.Connection) -> None:
@@ -973,15 +989,6 @@ class Data:
                     "SELECT COUNT(*) FROM step_events WHERE run = ? AND kind = 'turn'", (run,)
                 ).fetchone()[0]
             )
-
-    def step_tool_uses(self, run: str, timeout: float | None = None) -> list[dict[str, Any]]:
-        """Every stored `tool_use` event of `run`, oldest first: what a step that wrote nothing had opened."""
-        with self.connect(timeout=timeout) as conn:
-            rows = conn.execute(
-                "SELECT event FROM step_events WHERE run = ? AND kind = 'tool_use' ORDER BY seq",
-                (run,),
-            ).fetchall()
-        return [json.loads(r["event"]) for r in rows]
 
     def step_runs_open(self) -> list[dict[str, Any]]:
         """Every index row nobody closed and nobody purged, each with the `at` of its last stored event as `last_at` (None when it has none), oldest first."""

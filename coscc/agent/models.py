@@ -411,35 +411,15 @@ SECURITY_SURFACE = (
     ".claude/settings.json",
 )
 # Where a step's label came from: the record's `impl`; `forced` by a file of `SECURITY_SURFACE`;
-# `escalated`, a routine impl that stopped on `max_turns` before (a budget stop does not
-# escalate); `missing`, no plan record, run as `novel`.
-DECLARED, FORCED, ESCALATED, MISSING = "declared", "forced", "escalated", "missing"
-
-
-def _stopped_at_max_turns(end: dict[str, Any], before: Iterable[dict[str, Any]]) -> bool:
-    """An `end` that was `exhausted` on `max_turns`."""
-    if end.get("outcome") != "exhausted":
-        return False
-    terminal = end.get("terminal")
-    if terminal is None:
-        for rec in reversed(list(before)):
-            if rec.get("kind") == "attempt":
-                terminal = rec.get("terminal")
-                break
-            if rec.get("kind") in ("start", "end"):
-                break
-    return "max_turns" in str(terminal or "").lower()
+# `missing`, no plan record, run as `novel`.
+DECLARED, FORCED, MISSING = "declared", "forced", "missing"
 
 
 def label_of(
-    stage: str,
-    stages: list[str],
-    plan: Mapping[str, Any] | None,
-    impl_history: list[dict[str, Any]],
+    stage: str, stages: list[str], plan: Mapping[str, Any] | None
 ) -> tuple[str | None, str | None, str | None]:
     """`(label_declared, label, label_source)` for one step; `(None, None, None)` at or before
-    `plan`, whose record is not written yet. `plan` is the plan's record (`contracts.Plan`). `impl_history` is the unit's run log records for
-    `impl`, oldest first."""
+    `plan`, whose record is not written yet. `plan` is the plan's record (`contracts.Plan`)."""
     if "plan" not in stages or stage not in stages or stages.index(stage) <= stages.index("plan"):
         return None, None, None
     if plan is None:
@@ -447,9 +427,4 @@ def label_of(
     said = plan["impl"]
     if set(plan["files"]) & set(SECURITY_SURFACE):
         return said, policy.NOVEL, FORCED
-    if said == policy.ROUTINE and stage == "impl":
-        history = [r for r in impl_history if r.get("stage") == "impl"]
-        for i, rec in enumerate(history):
-            if rec.get("kind") == "end" and _stopped_at_max_turns(rec, history[:i]):
-                return said, policy.NOVEL, ESCALATED
     return said, said, DECLARED

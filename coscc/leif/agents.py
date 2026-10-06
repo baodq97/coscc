@@ -481,7 +481,7 @@ class Models:
         ran is filled in once its `init` names it. Any other step has no `trial_record` key.
         """
         history = [r for r in journal.records(key, unit) if r.get("stage") == "impl"]
-        label_declared, label, label_source = models.label_of(stage, stages, plan, history)
+        label_declared, label, label_source = models.label_of(stage, stages, plan)
         arm = modeltrial.arm(unit) if modeltrial.applies(stage, label) else None
         trial_kw = {"trial_model": modeltrial.model_for(stage, label, arm)} if arm else {}
         model, model_source, effort, effort_source = models.resolve(
