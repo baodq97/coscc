@@ -1184,6 +1184,17 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
             self.assertEqual(by_stage["impl"]["system_prompt"], "claude_code")
             self.assertEqual(by_stage["idea"]["system_prompt"], "")
 
+    def test_the_start_record_names_the_units_process_and_its_hash(self):
+        with tempfile.TemporaryDirectory() as d:
+            journal = Journal(d, d)
+            self.run_stage(d, "impl", journal)
+            [start] = journal.records(d, kind="start")
+        self.assertEqual(
+            (start["process"], start["process_hash"]),
+            (pack.DEFAULT_PROCESS, pack.process_hash(pack.DEFAULT_PROCESS)),
+        )
+        self.assertEqual(start["pack"], "coscc-sdlc@1.1.0")
+
 
 def _git_repo(root: Path) -> Path:
     repo = root / "repo"

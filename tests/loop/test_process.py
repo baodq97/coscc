@@ -25,7 +25,7 @@ def _status(store: UnitStore) -> dict:
 
 
 def _walked(store: UnitStore, reached: dict[str, str], **extra) -> dict:
-    """The unit `0001_x` on `short` with the files of `reached` written and their statuses."""
+    """The unit on `short` with the files of `reached` written and their statuses."""
     store.unit(
         "0001_x", {f: FILES[f] for f in reached}, {**entry(reached, **extra), "process": SHORT}
     )
