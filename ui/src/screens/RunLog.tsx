@@ -5,7 +5,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { EventsPage, StepEvent } from "../api.gen";
 import { api, useResource } from "../lib/api";
-import { AGENT_LABEL, money, unitCode, unitTitle } from "../lib/format";
+import { stageLabel } from "../lib/pack";
+import { money, unitCode, unitTitle } from "../lib/format";
 import { Link } from "../lib/router";
 import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
@@ -49,7 +50,7 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
   return (
     <div className="page mid">
       <PageHead
-        title={page ? `${AGENT_LABEL[page.stage] ?? page.stage} run` : "Run"}
+        title={page ? `${stageLabel(page.stage)} run` : "Run"}
         lede={
           page ? (
             <>

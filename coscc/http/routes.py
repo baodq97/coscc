@@ -33,6 +33,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from coscc import kernel
+from coscc.agent import pack
+from coscc.agent.pack import PackShown
+from coscc.store.db import Data
 from coscc.bus import Event
 from coscc.http import plugin
 from coscc.kernel import Invalid
@@ -749,6 +752,37 @@ async def set_feature(request: Request) -> Any:
         state,
     )
     return {"name": str(body.get("name")), "state": chosen}
+
+
+@router.get("/api/packs")
+async def get_packs(request: Request) -> list[PackShown]:
+    """Each pack in one workspace: name, version, `on`, the default `process` a new unit walks
+    and every process's states. A workspace the app does not have is a 400."""
+    core = _core(request)
+    key = core.ws.key(core.ws.check(_cwd(request)))
+    return pack.packs_shown(Data(core.config.data_dir), key)
+
+
+@router.post("/api/packs")
+async def set_pack(request: Request) -> Any:
+    """`{cwd, name, on?, process?}` switches a pack on or off for one workspace and/or chooses
+    the process its new units walk (`<pack>/<name>`). A pack, workspace or process not known is
+    a 400. It writes the prefs `packs.state` and `packs.process`, the owner's own settings, and
+    no decision; off, a new unit or idea is refused `no-process` and running units still step.
+    Whoever holds the password or a session can stop a workspace opening units."""
+    body = await kernel.body(request)
+    core = _core(request)
+    key = core.ws.key(core.ws.check(str(body.get("cwd") or "")))
+    on, chosen = body.get("on"), body.get("process")
+    if (on is not None and not isinstance(on, bool)) or (
+        chosen is not None and not isinstance(chosen, str)
+    ):
+        raise Invalid("on is true or false, process is <pack>/<name>")
+    try:
+        pack.set_packs(Data(core.config.data_dir), key, str(body.get("name") or ""), on, chosen)
+    except pack.PackError as e:
+        raise Invalid(str(e)) from e
+    return pack.packs_shown(Data(core.config.data_dir), key)
 
 
 # -- updating the app ----------------------------------------------------

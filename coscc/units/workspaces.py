@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 from coscc import units
+from coscc.agent import pack
 from coscc.agent.sessions import Sessions
 from coscc.config import Config
 from coscc.store.db import Busy, Data
@@ -61,6 +62,12 @@ class WorkspaceList(TypedDict):
     count: int
     workspaces: list[WorkspaceRow]
     paths: list[str]
+
+
+class NoProcess(Invalid):
+    """No unit or idea may open: the workspace's pack is off. Carries the code `no-process`."""
+
+    reasons = ("no-process",)
 
 
 class Workspaces:
@@ -282,6 +289,13 @@ class Workspaces:
             if self.config.working_dir
             else None
         )
+
+    def new_unit_process(self, cwd: str) -> str:
+        """The process a unit opened in `cwd` walks; refused `no-process` while its pack is off."""
+        ref = pack.default_process(Data(self.config.data_dir), self.key(cwd))
+        if ref is None:
+            raise NoProcess("the pack is off for this workspace, so nothing new opens in it")
+        return ref
 
     def unit_meta(self) -> UnitMeta:
         """The unit metadata store. Unlike the journal there is one with no working folder too,

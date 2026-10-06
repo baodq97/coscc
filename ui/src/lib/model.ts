@@ -1,7 +1,8 @@
 // The studio's names for the app's shapes, which `api.gen.ts` holds as the app makes them.
 
 import type { AgentRow, Card, WorkspaceRow } from "../api.gen";
-import { STAGE_LABEL, pausedAt } from "./format";
+import { pausedAt } from "./format";
+import { stageLabel } from "./pack";
 
 export type Workspace = WorkspaceRow;
 export type Unit = Card;
@@ -21,7 +22,7 @@ export function unitState(u: Unit): { group: string; label: string } {
   if (u.open > 0) return { group: "Needs you", label: `${u.open} question${u.open > 1 ? "s" : ""}` };
   // The next stage is refused before it spends until what it declares it needs is there.
   if (u.missing?.length) return { group: "Needs you", label: `Needs ${u.missing.join(" and ")}` };
-  return { group: "In progress", label: STAGE_LABEL[u.next_stage] ?? (u.next_stage || "In progress") };
+  return { group: "In progress", label: u.next_stage ? stageLabel(u.next_stage) : "In progress" };
 }
 
 export const GROUP_ORDER = ["Needs you", "In progress", "Ideas", "Paused", "Shipped", "Dropped"];

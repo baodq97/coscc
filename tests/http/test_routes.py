@@ -2042,3 +2042,95 @@ class FeatureStatesOverHttp(unittest.IsolatedAsyncioTestCase):
             "/api/features", json={"cwd": self.cwd, "name": "graph", "state": "off"}
         )
         self.assertEqual(r.status_code, 200)
+
+
+class PacksOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`/api/packs`: a pack on or off and the default process per workspace."""
+
+    async def asyncSetUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name).resolve()
+        (root / "work" / "proj").mkdir(parents=True)
+        self.cwd = str(root / "work" / "proj")
+        self.app = build(
+            Config(
+                workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+            )
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        self.addAsyncCleanup(self.client.aclose)
+
+    async def packs(self) -> dict:
+        return (await self.client.get("/api/packs", params={"cwd": self.cwd})).json()[0]
+
+    async def open_unit(self, slug: str):
+        return await self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": slug, "brief": "x"}
+        )
+
+    async def test_a_pack_is_on_with_full_until_the_owner_says_otherwise(self):
+        got = await self.packs()
+        self.assertEqual(
+            (got["name"], got["on"], got["process"]), ("coscc-sdlc", True, "coscc-sdlc/full")
+        )
+        self.assertEqual([p["name"] for p in got["processes"]], ["full", "short"])
+
+    async def test_short_as_the_default_is_what_a_new_unit_records(self):
+        r = await self.client.post(
+            "/api/packs",
+            json={"cwd": self.cwd, "name": "coscc-sdlc", "process": "coscc-sdlc/short"},
+        )
+        self.assertEqual(r.status_code, 200)
+        made = (await self.open_unit("quick-fix")).json()
+        core = self.app.state.core
+        entry = core.ws.meta_of(self.cwd, made["unit"])
+        self.assertEqual(entry["process"], "coscc-sdlc/short")
+        board = (await self.client.get("/api/units", params={"cwd": self.cwd})).json()
+        self.assertEqual(board["units"][0]["process"], "coscc-sdlc/short")
+
+    async def test_off_refuses_a_new_unit_and_an_idea_but_a_running_unit_still_steps(self):
+        made = (await self.open_unit("already-here")).json()
+        r = await self.client.post(
+            "/api/packs", json={"cwd": self.cwd, "name": "coscc-sdlc", "on": False}
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse((await self.packs())["on"])
+        for url, body in (
+            ("/api/units", {"slug": "next-one", "brief": "x"}),
+            ("/api/ideas", {"slug": "an-idea", "brief": "x"}),
+        ):
+            r = await self.client.post(url, json={"cwd": self.cwd, **body})
+            self.assertEqual((r.status_code, r.json()["code"]), (400, "no-process"))
+        steps = self.app.state.core.steps
+        await steps._find_stage(self.cwd, made["unit"], "intent")
+
+    async def test_a_unit_whose_process_no_pack_has_is_held_state_gone(self):
+        from coscc.runner.queue import Refused
+
+        made = (await self.open_unit("orphan")).json()
+        core = self.app.state.core
+        with core.ws.unit_meta().data.write() as conn:
+            conn.execute(
+                "UPDATE unit_meta SET process = 'gone/pack' WHERE unit = ?", (made["unit"],)
+            )
+        with self.assertRaises(Refused) as caught:
+            await core.steps._find_stage(self.cwd, made["unit"], "intent")
+        self.assertEqual(caught.exception.reasons, ("state-gone",))
+        board = (await self.client.get("/api/units", params={"cwd": self.cwd})).json()
+        self.assertEqual(board["units"][0]["process"], "gone/pack")
+        self.assertEqual(board["units"][0]["why"], "state-gone")
+
+    async def test_a_pack_or_process_not_known_is_a_400(self):
+        for body in (
+            {"name": "other", "on": True},
+            {"name": "coscc-sdlc", "process": "coscc-sdlc/nope"},
+            {"name": "coscc-sdlc", "process": "other/full"},
+            {"name": "coscc-sdlc", "on": "yes"},
+        ):
+            r = await self.client.post("/api/packs", json={"cwd": self.cwd, **body})
+            self.assertEqual(r.status_code, 400, body)
+        r = await self.client.get("/api/packs", params={"cwd": "/etc"})
+        self.assertEqual(r.status_code, 400)

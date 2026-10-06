@@ -81,6 +81,8 @@ ENGINES = ("integrate", "estimate", "chat")
 # merges it.
 ACTIONS = ("open-pr", "merge")
 # The named guards a process transition may ask; each is a guard of `coscc/units/guards.py`.
+STATE_KEYS = ("agent", "action", "optional", "hint", "label", "skip", "rerun", "next", "when")
+PROCESS_KEYS = ("start", "end", "states")
 PROCESS_GUARDS = ("skip-decision", "spike-holds", "dependency-merged", "ship-ready", "fast-lane")
 # What a `{field, is}` condition may ask of a field that is no enum.
 EMPTINESS = ("non-empty", "empty")
@@ -535,6 +537,7 @@ class State(TypedDict, total=False):
     action: str
     optional: bool
     hint: str
+    label: str
     skip: str
     rerun: list[str]
     next: list[Way]
@@ -601,7 +604,16 @@ def _check_state(
     """One state: an agent or an action, its skip and rerun, each `when` and each way on."""
     if not isinstance(st, dict):
         return [f"{where}: a state is an object"]
-    out: list[str] = []
+    out: list[str] = [
+        f"{where}: no such key {k} (use one of {', '.join(STATE_KEYS)})"
+        for k in st
+        if k not in STATE_KEYS
+    ]
+    for k, kind in (("optional", bool), ("hint", str), ("label", str)):
+        if k in st and not isinstance(st[k], kind):
+            out.append(f"{where}.{k} must be {kind.__name__}")
+    if "agent" in st and "when" in st:
+        out.append(f"{where}.when: an agent state reads none; put the condition on a way")
     fields: Mapping[str, Any] | None = None
     if ("agent" in st) == ("action" in st):
         out.append(f"{where}: a state names exactly one of agent or action")
@@ -613,8 +625,8 @@ def _check_state(
             fields = output_fields(found)
     elif st["action"] not in ACTIONS:
         out.append(f"{where}: action must be one of {', '.join(ACTIONS)}")
-    if st.get("skip") is not None and st["skip"] not in PROCESS_GUARDS:
-        out.append(f"{where}.skip: no guard {st['skip']}")
+    if st.get("skip") is not None and st["skip"] != "skip-decision":
+        out.append(f"{where}.skip: only skip-decision, not {st['skip']}")
     if not set(st.get("rerun") or []) <= {"fresh", "answers"}:
         out.append(f"{where}.rerun is a list of fresh, answers")
     for c in _conditions(st.get("when")):
@@ -647,6 +659,33 @@ def _must_reach(
     return avail
 
 
+def _kind(rows: Mapping[str, Mapping[str, Any]], st: Mapping[str, Any]) -> str | None:
+    return ((rows.get(str(st.get("agent"))) or {}).get("output") or {}).get("kind")
+
+
+def _check_walk(
+    name: str, states: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]]
+) -> list[str]:
+    """What the loop's walk assumes: an opener that is not optional, a review state that can send
+    the unit back, and a fast-lane way that is never the main line (the last way)."""
+    out = []
+    if all(st.get("optional") for st in states.values()):
+        out.append(f"{name}: every state is optional, so there is no opener")
+    for k, st in states.items():
+        ways = st.get("next") or []
+        if _kind(rows, st) == "review" and not any(
+            c.get("field") == "verdict" and c.get("is") == "changes-requested"
+            for w in ways
+            for c in _conditions(w.get("when"))
+        ):
+            out.append(
+                f"{name}.{k}: a review state needs a way on when verdict is changes-requested"
+            )
+        if ways and any(c.get("guard") == "fast-lane" for c in _conditions(ways[-1].get("when"))):
+            out.append(f"{name}.{k}: the fast-lane way is the last way, which is the main line")
+    return out
+
+
 def check_process(name: str, process: Any, rows: Mapping[str, Mapping[str, Any]]) -> list[str]:
     """Why `process` cannot run on `rows`, `[]` when it can: the start and every way on name a
     state; each state runs an agent (a row that is no helper) or an action; a `{guard}` is one of
@@ -657,7 +696,15 @@ def check_process(name: str, process: Any, rows: Mapping[str, Mapping[str, Any]]
         return [f"{name}: a process is {{start, end, states}}"]
     states: dict[str, Any] = process["states"]
     start = process.get("start")
-    out = [] if start in states else [f"{name}: start {start!r} is no state"]
+    out = [
+        f"{name}: no such key {k} (use one of {', '.join(PROCESS_KEYS)})"
+        for k in process
+        if k not in PROCESS_KEYS
+    ]
+    if not isinstance(process.get("end"), str):
+        out.append(f"{name}.end must be str")
+    if start not in states:
+        out.append(f"{name}: start {start!r} is no state")
     for key, st in states.items():
         out += _check_state(f"{name}.{key}", st, states, rows)
     if out:
@@ -672,7 +719,14 @@ def check_process(name: str, process: Any, rows: Mapping[str, Mapping[str, Any]]
     out += [f"{name}.{k}: no path from start reaches it" for k in states if k not in reached]
     if not any(not nexts[k] for k in reached):
         out.append(f"{name}: no path reaches the end")
+    out += _check_walk(name, states, rows)
     avail = _must_reach(str(start), states, nexts, reached)
+    reviews = {k for k, st in states.items() if _kind(rows, st) == "review"}
+    out += [
+        f"{name}.{k}: a review state is not on every path to it"
+        for k in reached
+        if states[k].get("action") == "merge" and not avail[k] & reviews
+    ]
     for k in sorted(reached, key=list(states).index):
         for n in _required_inputs(rows.get(str(states[k].get("agent")))):
             if n not in avail[k]:
@@ -734,6 +788,88 @@ def states_of(key: str) -> str:
             if st.get("agent") == key:
                 where.setdefault(state, []).append(ref.rpartition("/")[2])
     return "; ".join(f"{s} in {', '.join(ps)}" for s, ps in where.items())
+
+
+# --- on or off per workspace -------------------------------------------------
+#
+# The prefs `packs.state` `{pack: {workspace key: "on" | "off"}}` and `packs.process`
+# `{workspace key: "<pack>/<process>"}`. A pack is on and its `full` process the default until
+# the owner says otherwise. A unit records the process when it opens; nothing re-reads these after.
+
+STATE_PREF = "packs.state"
+PROCESS_PREF = "packs.process"
+
+
+def _pref(data: Any, name: str) -> dict[str, Any]:
+    stored = data.pref(name, {})
+    return stored if isinstance(stored, dict) else {}
+
+
+class ProcessShown(Process):
+    ref: str
+    name: str
+
+
+class PackShown(TypedDict):
+    name: str
+    version: str
+    description: str
+    on: bool
+    process: str
+    processes: list[ProcessShown]
+
+
+def pack_on(data: Any, name: str, key: str) -> bool:
+    mine = _pref(data, STATE_PREF).get(name)
+    return not (isinstance(mine, dict) and mine.get(key) == "off")
+
+
+def chosen_process(data: Any, key: str) -> str:
+    ref = _pref(data, PROCESS_PREF).get(key)
+    return ref if isinstance(ref, str) and process(ref) is not None else DEFAULT_PROCESS
+
+
+def default_process(data: Any, key: str) -> str | None:
+    """The process a new unit of workspace `key` walks; `None` when its pack is off."""
+    ref = chosen_process(data, key)
+    return ref if pack_on(data, ref.partition("/")[0], key) else None
+
+
+def packs_shown(data: Any, key: str) -> list[PackShown]:
+    """The packs for Settings: name, version, on, the default process and each process's states."""
+    name = manifest()["name"]
+    return [
+        {
+            "name": name,
+            "version": str(manifest()["version"]),
+            "description": str(manifest().get("description") or ""),
+            "on": pack_on(data, name, key),
+            "process": chosen_process(data, key),
+            "processes": [
+                ProcessShown(ref=ref, name=ref.rpartition("/")[2], **p)
+                for ref, p in processes().items()
+            ],
+        }
+    ]
+
+
+def set_packs(
+    data: Any, key: str, name: str, on: bool | None = None, chosen: str | None = None
+) -> None:
+    """Switch pack `name` on or off for workspace `key` and/or choose its default process;
+    `PackError` for a pack or a process that is not there."""
+    if name != manifest()["name"]:
+        raise PackError(f"not a pack: {name}")
+    if chosen is not None and (process(chosen) is None or not chosen.startswith(f"{name}/")):
+        raise PackError(f"not a process of {name}: {chosen}")
+    if on is not None:
+        state = _pref(data, STATE_PREF)
+        mine = state.get(name)
+        state[name] = {**(mine if isinstance(mine, dict) else {}), key: "on" if on else "off"}
+        data.set_pref(STATE_PREF, state)
+    if chosen is not None:
+        refs = _pref(data, PROCESS_PREF)
+        data.set_pref(PROCESS_PREF, {**refs, key: chosen})
 
 
 # --- the owner's layer --------------------------------------------------------

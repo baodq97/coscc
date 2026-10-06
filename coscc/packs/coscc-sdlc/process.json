@@ -5,14 +5,16 @@
       "start": "idea",
       "end": "shipped",
       "states": {
-        "idea": {"agent": "idea", "optional": true, "hint": "write-idea", "next": [{"to": "intent"}]},
+        "idea": {"label": "Idea", "agent": "idea", "optional": true, "hint": "write-idea", "next": [{"to": "intent"}]},
         "intent": {
+          "label": "Intent",
           "agent": "intent",
           "rerun": ["fresh", "answers"],
           "hint": "write-intent — the unit has no intent.md",
           "next": [{"to": "impl", "when": {"guard": "fast-lane"}}, {"to": "spec"}]
         },
         "spec": {
+          "label": "Spec",
           "agent": "spec",
           "skip": "skip-decision",
           "rerun": ["fresh", "answers"],
@@ -20,18 +22,21 @@
           "next": [{"to": "spike", "when": {"field": "unmeasured", "is": "non-empty"}}, {"to": "plan"}]
         },
         "spike": {
+          "label": "Spike",
           "agent": "spike",
           "rerun": ["fresh", "answers"],
           "hint": "write-spike — spec.md has [unmeasured] items",
           "next": [{"to": "plan", "when": {"guard": "spike-holds"}}, {"to": "spec"}]
         },
         "plan": {
+          "label": "Plan",
           "agent": "plan",
           "rerun": ["fresh", "answers"],
           "hint": "write-plan",
           "next": [{"to": "impl", "when": {"guard": "dependency-merged"}}]
         },
         "impl": {
+          "label": "Build",
           "agent": "impl",
           "rerun": ["answers"],
           "hint": "write-impl — implementation starts",
@@ -40,8 +45,9 @@
             {"to": "pr", "when": {"field": "judgement", "is": "ready"}}
           ]
         },
-        "pr": {"action": "open-pr", "rerun": ["fresh"], "hint": "pr", "next": [{"to": "review"}]},
+        "pr": {"label": "Pull request", "action": "open-pr", "rerun": ["fresh"], "hint": "pr", "next": [{"to": "review"}]},
         "review": {
+          "label": "Review",
           "agent": "review",
           "hint": "write-review",
           "next": [
@@ -49,7 +55,7 @@
             {"to": "ship", "when": {"field": "verdict", "is": "pass"}}
           ]
         },
-        "ship": {"action": "merge", "hint": "ship", "when": {"guard": "ship-ready"}}
+        "ship": {"label": "Ship", "action": "merge", "hint": "ship", "when": {"guard": "ship-ready"}}
       }
     },
     "short": {
@@ -57,19 +63,22 @@
       "end": "shipped",
       "states": {
         "intent": {
+          "label": "Intent",
           "agent": "intent",
           "rerun": ["fresh", "answers"],
           "hint": "write-intent — the unit has no intent.md",
           "next": [{"to": "impl", "when": [{"field": "judgement", "is": "ready"}, {"guard": "dependency-merged"}]}]
         },
         "impl": {
+          "label": "Build",
           "agent": "impl",
           "rerun": ["answers"],
           "hint": "write-impl — implementation starts",
           "next": [{"to": "pr", "when": {"field": "judgement", "is": "ready"}}]
         },
-        "pr": {"action": "open-pr", "rerun": ["fresh"], "hint": "pr", "next": [{"to": "review"}]},
+        "pr": {"label": "Pull request", "action": "open-pr", "rerun": ["fresh"], "hint": "pr", "next": [{"to": "review"}]},
         "review": {
+          "label": "Review",
           "agent": "review",
           "hint": "write-review",
           "next": [
@@ -77,7 +86,7 @@
             {"to": "ship", "when": {"field": "verdict", "is": "pass"}}
           ]
         },
-        "ship": {"action": "merge", "hint": "ship", "when": {"guard": "ship-ready"}}
+        "ship": {"label": "Ship", "action": "merge", "hint": "ship", "when": {"guard": "ship-ready"}}
       }
     }
   }

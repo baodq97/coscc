@@ -3,11 +3,12 @@
 // Delegations in the owner's words come with Leif's own backend.
 
 import { useState, type ReactNode } from "react";
-import type { Shown } from "../api.gen";
+import type { PackShown, Shown } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { money } from "../lib/format";
 import type { Workspace } from "../lib/model";
+import { ProcessDiagram } from "../components/process";
 import { Button, ErrorState, Meter, PageHead, SkeletonRows } from "../components/ui";
 
 export function MayDo() {
@@ -76,9 +77,11 @@ function Project({ workspace }: { workspace: Workspace }) {
   const cwd = workspace.path;
   const settings = useResource("/api/settings/autopilot", { cwd });
   const shown = useResource("/api/features/shown", { cwd });
+  const packs = useResource("/api/packs", { cwd });
   const { error, busy, save } = useSaving(() => {
     settings.reload();
     shown.reload();
+    packs.reload();
   });
   const set = (name: string, value: unknown) => save("/api/settings/autopilot", { cwd, name, value });
   const s = settings.data;
@@ -113,10 +116,44 @@ function Project({ workspace }: { workspace: Workspace }) {
             </Field>
           </>
         )}
+        {packs.data?.map((p) => <Pack key={p.name} workspace={workspace.name} pack={p} disabled={busy} onSave={(body) => save("/api/packs", { cwd, name: p.name, ...body })} />)}
         {shown.data && shown.data.map((f) => <Feature key={f.name} feature={f} disabled={busy} onState={(state) => save("/api/features", { cwd, name: f.name, state })} />)}
         {error && <div style={{ color: "var(--red)", marginTop: 8, fontSize: 12.5 }}>{error.message}</div>}
       </div>
     </div>
+  );
+}
+
+/** A pack in one project: on or off, the process a new unit walks, and that process drawn. */
+function Pack({ workspace, pack, disabled, onSave }: { workspace: string; pack: PackShown; disabled: boolean; onSave: (body: { on?: boolean; process?: string }) => void }) {
+  const [shown, setShown] = useState(pack.process);
+  const drawn = pack.processes.find((p) => p.ref === shown) ?? pack.processes[0];
+  return (
+    <>
+      <Field label={`${pack.name} ${pack.version}`} hint={pack.on ? pack.description : "Off: no new unit or idea opens here. Units already running carry on."}>
+        <Toggle on={pack.on} disabled={disabled} onChange={(on) => onSave({ on })} />
+      </Field>
+      <Field label="New units walk" hint="The process a new unit records when it opens. A unit keeps its own for good.">
+        <select className="input" value={pack.process} disabled={disabled} onChange={(e) => (setShown(e.target.value), onSave({ process: e.target.value }))}>
+          {pack.processes.map((p) => (
+            <option key={p.ref} value={p.ref}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <details id={`pack-${workspace}`} className="pack-draw">
+        <summary>How a unit walks {drawn.name}</summary>
+        <div className="row" style={{ gap: 6, margin: "10px 0 8px" }}>
+          {pack.processes.map((p) => (
+            <button key={p.ref} className={`btn sm ${p.ref === drawn.ref ? "primary" : "ghost"}`} onClick={() => setShown(p.ref)}>
+              {p.name}
+            </button>
+          ))}
+        </div>
+        <ProcessDiagram process={drawn} />
+      </details>
+    </>
   );
 }
 

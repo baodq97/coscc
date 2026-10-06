@@ -483,3 +483,85 @@ class TheOldPrefsMoveOnce(unittest.TestCase):
                 self.assertEqual(agents.agent_for("plan")["role"], "Plans.")
                 self.assertEqual(pack.stray(), [])
             self.assertEqual(data.prefs(), {"autopilot": True})
+
+
+class AProcessIsHeldToWhatTheLoopAssumes(unittest.TestCase):
+    """`check_process`'s tighter reasons, one test each."""
+
+    def reasons(self, process: dict) -> str:
+        return "\n".join(pack.check_process("p", process, pack.builtin_rows()))
+
+    def test_a_key_the_state_does_not_have(self):
+        impl = {**_process()["states"]["impl"], "nxt": []}
+        self.assertIn("p.impl: no such key nxt", self.reasons(_process(impl=impl)))
+        self.assertIn("p: no such key stat", self.reasons({**_process(), "stat": 1}))
+
+    def test_a_field_of_the_wrong_type(self):
+        impl = {**_process()["states"]["impl"], "optional": "yes", "hint": 3}
+        got = self.reasons(_process(impl=impl))
+        self.assertIn("p.impl.optional must be bool", got)
+        self.assertIn("p.impl.hint must be str", got)
+        self.assertIn("p.end must be str", self.reasons({**_process(), "end": 1}))
+
+    def test_skip_is_only_the_skip_decision(self):
+        impl = {**_process()["states"]["impl"], "skip": "ship-ready"}
+        self.assertIn("p.impl.skip: only skip-decision", self.reasons(_process(impl=impl)))
+
+    def test_an_agent_state_reads_no_when(self):
+        impl = {**_process()["states"]["impl"], "when": {"guard": "ship-ready"}}
+        self.assertIn("p.impl.when: an agent state reads none", self.reasons(_process(impl=impl)))
+
+    def test_every_state_optional_leaves_no_opener(self):
+        bad = _process()
+        for st in bad["states"].values():
+            st["optional"] = True
+        self.assertIn("p: every state is optional", self.reasons(bad))
+
+    def test_a_review_that_cannot_send_the_unit_back(self):
+        review = {"agent": "review", "next": [{"to": "ship"}]}
+        self.assertIn("p.review: a review state needs a way", self.reasons(_process(review=review)))
+
+    def test_a_fast_lane_way_that_is_the_last_way(self):
+        intent = {
+            **_process()["states"]["intent"],
+            "next": [{"to": "impl", "when": {"guard": "fast-lane"}}],
+        }
+        self.assertIn(
+            "p.intent: the fast-lane way is the last way", self.reasons(_process(intent=intent))
+        )
+
+    def test_a_merge_with_no_review_before_it(self):
+        impl = {**_process()["states"]["impl"], "next": [{"to": "ship"}]}
+        got = self.reasons(_process(impl=impl))
+        self.assertIn("p.ship: a review state is not on every path to it", got)
+
+
+class APackIsOnOrOffPerWorkspace(unittest.TestCase):
+    def setUp(self):
+        from coscc.store.db import Data
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.data = Data(self._tmp.name)
+
+    def test_on_with_full_until_chosen_and_per_workspace(self):
+        self.assertEqual(pack.default_process(self.data, "/a"), "coscc-sdlc/full")
+        pack.set_packs(self.data, "/a", "coscc-sdlc", chosen="coscc-sdlc/short")
+        self.assertEqual(pack.default_process(self.data, "/a"), "coscc-sdlc/short")
+        self.assertEqual(pack.default_process(self.data, "/b"), "coscc-sdlc/full")
+
+    def test_off_gives_no_process_but_keeps_the_choice(self):
+        pack.set_packs(self.data, "/a", "coscc-sdlc", on=False, chosen="coscc-sdlc/short")
+        self.assertIsNone(pack.default_process(self.data, "/a"))
+        self.assertEqual(pack.default_process(self.data, "/b"), "coscc-sdlc/full")
+        pack.set_packs(self.data, "/a", "coscc-sdlc", on=True)
+        self.assertEqual(pack.default_process(self.data, "/a"), "coscc-sdlc/short")
+
+    def test_a_pack_or_process_that_is_not_there_is_refused(self):
+        for args in (
+            ("other", True, None),
+            ("coscc-sdlc", None, "coscc-sdlc/none"),
+            ("coscc-sdlc", None, "x/full"),
+        ):
+            with self.assertRaises(pack.PackError):
+                pack.set_packs(self.data, "/a", args[0], args[1], args[2])

@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 import { FeatureSlots } from "../lib/feature";
-import { LeifAvatar } from "../lib/icons";
+import { Icon, LeifAvatar } from "../lib/icons";
 import { Kbd } from "../components/ui";
 import { useShell } from "./Shell";
 
@@ -8,6 +8,9 @@ export function Topbar({ crumbs }: { crumbs: string[] }) {
   const shell = useShell();
   return (
     <div className="top">
+      <button className="iconbtn menu-btn" onClick={shell.toggleNav} title="Menu" aria-label="Menu">
+        <Icon name="menu" size={16} />
+      </button>
       <div className="crumbs">
         {crumbs.map((c, i) =>
           i === crumbs.length - 1 ? (

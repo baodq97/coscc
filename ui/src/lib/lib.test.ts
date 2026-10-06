@@ -12,6 +12,7 @@ import { moved } from "../screens/UpNext";
 import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
 import { attention, triggerWords } from "../screens/Agents";
+import { whenWords } from "../components/process";
 import { changes, get, put } from "../screens/AgentPage";
 import type { AgentRow } from "../api.gen";
 
@@ -65,7 +66,7 @@ describe("unit state", () => {
   const base: Unit = {
     name: "0001_x", number: 1, slug: "x", type: "fix", phase: "started", next_stage: "spec", why: "", open: 0,
     state: { state: "ready", label: "Ready", color: "gray" }, hold: null, pr: null, cost_usd: 0, at: "", updated: "",
-    attention_reason: "", missing: [], idea: "", rank: null, effort: null, paused: null,
+    attention_reason: "", process: "p/full", missing: [], idea: "", rank: null, effort: null, paused: null,
   };
 
   it("reads a paused hold as paused", () => {
@@ -221,5 +222,15 @@ describe("agents", () => {
     expect(attention(row({ problems: ["bad"], chip: "failed" }))?.label).toBe("Cannot run");
     expect(attention(row({ chip: "costly" }))?.tone).toBe("amber");
     expect(attention(row({}))).toBeNull();
+  });
+});
+
+describe("whenWords", () => {
+  it("reads a condition in plain words", () => {
+    expect(whenWords({ field: "judgement", is: "ready" })).toBe("ready");
+    expect(whenWords({ field: "unmeasured", is: "non-empty" })).toBe("unmeasured is non-empty");
+    expect(whenWords({ guard: "ship-ready" })).toBe("ship ready");
+    expect(whenWords([{ field: "judgement", is: "ready" }, { guard: "dependency-merged" }])).toBe("ready and dependency merged");
+    expect(whenWords(undefined)).toBe("");
   });
 });

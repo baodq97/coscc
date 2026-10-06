@@ -12,6 +12,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Literal, Sequence, get_args
 
 from coscc.units import states
@@ -77,6 +78,8 @@ class History:
         self.data = data if isinstance(data, Data) else Data(data)
         self.machine = machine or states.default()
         self._root = str(self.working_dir)
+        # The process a unit records, set by the owner of `unit_meta`; none until it is.
+        self.process_of: Callable[[sqlite3.Connection, str, str], str | None] = lambda *_: None
 
     def record(
         self,
@@ -154,6 +157,9 @@ class History:
             if row["from_state"] is None:
                 row["from_state"] = latest.get(key, self.machine.absent)
             complaint = self.machine.refuse(row["artifact"], row["from_state"])
+            if complaint is None:
+                ref = self.process_of(conn, row["workspace"], row["unit"])
+                complaint = self.machine.refuse(row["artifact"], row["to_state"], ref)
             if complaint is not None:
                 raise BadTransition(complaint)
             placeholders = ", ".join("?" for _ in _TRANSITION_COLUMNS)

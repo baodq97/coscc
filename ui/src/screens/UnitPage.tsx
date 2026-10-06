@@ -7,22 +7,22 @@ import { api, useResource } from "../lib/api";
 import type { PlacedUnit } from "../lib/boards";
 import { allUnits, findUnit, useBoards } from "../lib/boards";
 import { FeatureSlots } from "../lib/feature";
-import { STAGE_LABEL, ago, modelName, money, pausedAt, unitCode, unitTitle } from "../lib/format";
+import { ago, modelName, money, pausedAt, unitCode, unitTitle } from "../lib/format";
 import { AgentAvatar, Icon, LeifMark } from "../lib/icons";
 import { unitState } from "../lib/model";
+import { stageLabel, useIndex } from "../lib/pack";
+import { ProcessDiagram } from "../components/process";
 import { Link } from "../lib/router";
 import { Button, Chip, Dot, Empty, ErrorState, Meter, SkeletonRows } from "../components/ui";
 import { RunLog } from "./RunLog";
 
-const TRACK = ["intent", "spec", "plan", "impl", "pr", "review", "ship"];
-const GROUP: Record<string, string> = { intent: "Shape", spec: "Shape", plan: "Shape", impl: "Build", pr: "Check", review: "Check", ship: "Ship" };
 // The unit's own target, from the owner's standing goal: a merged unit costs $15 at most.
 const TARGET_USD = 15;
 
 export function UnitPage({ workspace, number }: { workspace: string; number: string }) {
   const { boards, loading } = useBoards();
   // `#outputs` in the address opens the second tab, so a link can point at what an agent handed back.
-  const [tab, setTab] = useState<"activity" | "outputs">(location.hash === "#outputs" ? "outputs" : "activity");
+  const [tab, setTab] = useState<"activity" | "outputs" | "process">(location.hash === "#outputs" ? "outputs" : location.hash === "#process" ? "process" : "activity");
   const placed = findUnit(allUnits(boards), workspace, number);
   const query: Record<string, string> = placed ? { cwd: placed.workspace.path, name: placed.name } : {};
   const detail = useResource(placed ? "/api/units/{name}" : null, query, { on: [""] });
@@ -56,18 +56,13 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
           {running ? (
             <Chip square tone="accent">
               <Dot tone="live" />
-              {[names[running.stage] ?? running.agent, STAGE_LABEL[running.stage] ?? running.stage].filter(Boolean).join(" · ")}
+              {[names[running.stage] ?? running.agent, stageLabel(running.stage)].filter(Boolean).join(" · ")}
             </Chip>
           ) : (
             <Chip square tone={state.group === "Needs you" ? "amber" : shipped ? "accent" : ""}>{state.label}</Chip>
           )}
         </div>
         <h1 className="title" style={{ marginTop: 10 }}>{unitTitle(placed.name)}</h1>
-        {state.group !== "Dropped" && state.group !== "Ideas" && (
-          <div style={{ marginTop: 20 }}>
-            <Track stages={d?.stages ?? []} now={now} done={shipped} waiting={open.length > 0} />
-          </div>
-        )}
         {placed.paused && <PausedBanner unit={placed} paused={placed.paused} onDone={() => detail.reload()} />}
         {open.length > 0 && (
           <div className="callout amber" style={{ marginTop: 18 }}>
@@ -87,7 +82,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
           <div className="callout" style={{ marginTop: 18 }}>
             <Icon name="arrow" size={15} />
             <div className="grow">
-              <b>Next: {STAGE_LABEL[next.data.stage ?? ""] ?? "nothing to run"}</b>
+              <b>Next: {next.data.stage ? stageLabel(next.data.stage) : "nothing to run"}</b>
               <div className="muted">{next.data.action}</div>
             </div>
           </div>
@@ -96,6 +91,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         <div className="tabs" style={{ marginTop: 22 }}>
           <a className={tab === "activity" ? "on" : ""} onClick={() => setTab("activity")}>Activity</a>
           <a className={tab === "outputs" ? "on" : ""} onClick={() => setTab("outputs")}>Outputs</a>
+          <a className={tab === "process" ? "on" : ""} onClick={() => setTab("process")}>Process</a>
         </div>
         {detail.state === "error" ? (
           <ErrorState error={detail.error} onRetry={detail.reload} />
@@ -103,6 +99,8 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
           <SkeletonRows rows={4} />
         ) : tab === "outputs" ? (
           <Outputs outputs={d.outputs} names={names} />
+        ) : tab === "process" ? (
+          <Process unit={placed} stages={d.stages} now={shipped ? "" : now} />
         ) : (
           <Timeline detail={d} names={names} live={running?.stage} cwd={placed.workspace.path} />
         )}
@@ -111,6 +109,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         <Prop k="Status">{running ? "Running" : state.label}</Prop>
         <Prop k="Project">{workspace}</Prop>
         <Prop k="Type">{placed.type || "—"}</Prop>
+        <Prop k="Process">{placed.process.replace(/^.*\//, "") || "—"}</Prop>
         <Prop k="Idea">{placed.idea ? placed.idea.replace(/^.*\/ideas\//, "").replace(/\.md$/, "") : "—"}</Prop>
         <Prop k="Agent">
           {running && (names[running.stage] ?? running.agent) ? (
@@ -198,7 +197,7 @@ function PausedBanner({ unit, paused, onDone }: { unit: PlacedUnit; paused: Paus
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const at = { cwd: unit.workspace.path, unit: unit.name, stage: paused.stage };
-  const stage = STAGE_LABEL[paused.stage] ?? paused.stage;
+  const stage = stageLabel(paused.stage);
   const act = async (what: string, run: () => Promise<unknown>) => {
     if (asking !== what) return setAsking(what);
     setBusy(true);
@@ -273,30 +272,23 @@ function Prop({ k, children }: { k: string; children: ReactNode }) {
   );
 }
 
-/** The seven stages under their four phases; each says done, now, waiting or not yet. */
-export function Track({ stages, now, done, waiting }: { stages: StageView[]; now: string; done: boolean; waiting: boolean }) {
-  const status = Object.fromEntries(stages.map((s) => [s.stage, s.status]));
-  const at = done ? TRACK.length : TRACK.indexOf(now);
-  let last = "";
+/** The unit's process as a diagram: where it is marked, what is behind it ticked. */
+function Process({ unit, stages, now }: { unit: PlacedUnit; stages: StageView[]; now: string }) {
+  const { packs } = useIndex();
+  const process = packs.flatMap((p) => p.processes).find((p) => p.ref === unit.process);
+  if (!process)
+    return (
+      <Empty icon="warn" title="No such process">
+        {unit.process} is in no pack, so nothing runs on this unit.
+      </Empty>
+    );
+  const done = stages.filter((st) => ["accepted", "skipped"].includes(st.status) && st.stage in process.states).map((st) => st.stage);
   return (
-    <div className="track">
-      {TRACK.map((s, i) => {
-        // Where the unit is now wins over a stage's status: a stage sent back makes later ones not done.
-        const finished = done || (at >= 0 ? i < at : ["accepted", "skipped"].includes(status[s] ?? ""));
-        const current = !done && i === at;
-        const group = GROUP[s] !== last ? GROUP[s] : "";
-        last = GROUP[s];
-        return (
-          <div key={s} className={`st ${finished ? "done" : current ? (waiting ? "wait" : "now") : ""}`}>
-            <div className="grp">{group}</div>
-            <div className="bar" />
-            <div className="lbl">
-              {finished ? <Icon name="check" size={11} /> : current ? waiting ? <Icon name="clock" size={11} /> : <Dot tone="live" /> : null}
-              {STAGE_LABEL[s]}
-            </div>
-          </div>
-        );
-      })}
+    <div id="process">
+      <div className="muted" style={{ marginBottom: 14 }}>
+        This unit walks <b>{process.name}</b> ({process.ref}). A tick is a state behind it; the outlined one is where it is.
+      </div>
+      <ProcessDiagram process={process} current={now} done={done} />
     </div>
   );
 }
@@ -398,7 +390,7 @@ function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: b
         <div className="tl-h">
           <b>{name}</b>
           <span>
-            {stopped ? <Chip square tone={paused ? "amber" : "red"}>{verb}</Chip> : verb} {(STAGE_LABEL[run.stage] ?? run.stage).toLowerCase()}
+            {stopped ? <Chip square tone={paused ? "amber" : "red"}>{verb}</Chip> : verb} {stageLabel(run.stage).toLowerCase()}
           </span>
           {live && <Dot tone="live" />}
           {run.cost_usd != null && <span className="faint">· {money(run.cost_usd)}</span>}
@@ -542,7 +534,7 @@ function Actions({ unit, running, stage, moves, onDone }: { unit: PlacedUnit; ru
         </Button>
       ) : stage ? (
         <Button kind="primary" icon="arrow" disabled={busy} title="Runs a real Claude session and spends account quota." onClick={() => act("run", () => api.start("/api/board/run", { ...at, stage }))}>
-          {asking === "run" ? `Spend quota on ${STAGE_LABEL[stage] ?? stage}?` : `Run ${STAGE_LABEL[stage] ?? stage}`}
+          {asking === "run" ? `Spend quota on ${stageLabel(stage)}?` : `Run ${stageLabel(stage)}`}
         </Button>
       ) : null}
       {moves.includes("active") && (

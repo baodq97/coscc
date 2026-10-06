@@ -94,7 +94,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
             "blocked": hold["state"] == "paused",
             "action": f"{hold['state']} — {js(hold['reason'])} ({js(hold['by'])}, {js(hold['date'])}){how}",
             "stage": "",
-            "why": code(hold["state"]),
+            "why": code(hold.get("code") or hold["state"]),
         }
 
     p = proc(unit)
@@ -373,6 +373,8 @@ def gate_reasons(unit, stage, need, said):
     if p.by_name.get(stage) is None:
         return [code("unreadable")]
     if unit.get("hold"):
+        if unit["hold"].get("code"):
+            return [code(unit["hold"]["code"])]
         return [code("dropped") if unit["hold"]["state"] == "dropped" else code("paused")]
     over = passed_over(unit, stage)
     codes = [code(over[0])] if over and over[0] else []

@@ -62,6 +62,8 @@ REASONS = (
     "no-brief",
     "no-round",
     # A step refused before any spend.
+    "no-process",
+    "state-gone",
     "unit-busy",
     "updating",
     "unavailable",

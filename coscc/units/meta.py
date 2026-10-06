@@ -91,6 +91,15 @@ class UnitMeta:
         self.data = self.history.data
         self.machine = self.history.machine
         self.root = str(self.history.working_dir)
+        self.history.process_of = self._process_of
+
+    def _process_of(self, conn: sqlite3.Connection, workspace: str, unit: str) -> str | None:
+        """The process the unit records, `None` while it has no row."""
+        found = conn.execute(
+            "SELECT process FROM unit_meta WHERE root = ? AND workspace = ? AND unit = ?",
+            (self.root, workspace, unit),
+        ).fetchone()
+        return found[0] if found else None
 
     def ingest_failed(self, workspace: str, unit: str, reason: str) -> None:
         """An ingest that failed, as a row the snapshot turns into a problem on the card."""

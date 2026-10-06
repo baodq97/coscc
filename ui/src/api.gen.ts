@@ -125,6 +125,7 @@ export type Card = {
   "at": string;
   "updated": string;
   "attention_reason": string;
+  "process": string;
   "missing": string[];
   "idea": string;
   "rank": number | null;
@@ -195,6 +196,12 @@ export type Check = {
 export type Commit = {
   "sha": string;
   "subject": string;
+};
+
+export type Condition = {
+  "field"?: string;
+  "is"?: string;
+  "guard"?: string;
 };
 
 export type ConfigRow = {
@@ -340,6 +347,15 @@ export type OutputRecord = {
   "fields": Record<string, unknown>;
 };
 
+export type PackShown = {
+  "name": string;
+  "version": string;
+  "description": string;
+  "on": boolean;
+  "process": string;
+  "processes": ProcessShown[];
+};
+
 export type Paused = {
   "stage": string;
   "code": string;
@@ -348,6 +364,14 @@ export type Paused = {
   "max_usd": number | null;
   "turns": number | null;
   "max_turns": number | null;
+};
+
+export type ProcessShown = {
+  "start": string;
+  "end": string;
+  "states": Record<string, State>;
+  "ref": string;
+  "name": string;
 };
 
 export type Proposal = {
@@ -582,6 +606,18 @@ export type StageView = {
   "last_run": LastRun | null;
 };
 
+export type State = {
+  "agent"?: string;
+  "action"?: string;
+  "optional"?: boolean;
+  "hint"?: string;
+  "label"?: string;
+  "skip"?: string;
+  "rerun"?: string[];
+  "next"?: Way[];
+  "when"?: Condition | Condition[];
+};
+
 export type StepEvent = {
   "run": string;
   "seq": number;
@@ -695,6 +731,11 @@ export type Waste = {
   "not_recorded": number;
 };
 
+export type Way = {
+  "to": string;
+  "when"?: Condition | Condition[];
+};
+
 export type Window = {
   "since": string | null;
   "until": string | null;
@@ -729,6 +770,7 @@ export type Get = {
   "/api/decided": Decided[];
   "/api/features/shown": Shown[];
   "/api/insights": Insights;
+  "/api/packs": PackShown[];
   "/api/release": ReleaseView | null;
   "/api/runs/{run}": EventsPage;
   "/api/scan/proposals": Proposals;

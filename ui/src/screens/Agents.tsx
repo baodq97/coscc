@@ -4,7 +4,7 @@
 
 import type { AgentRow } from "../api.gen";
 import { useResource } from "../lib/api";
-import { AgentAvatar, LeifAvatar } from "../lib/icons";
+import { LeifAvatar, Rune } from "../lib/icons";
 import { modelName, money } from "../lib/format";
 import { Link } from "../lib/router";
 import { Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
@@ -44,10 +44,9 @@ export function attention(a: AgentRow): { tone: "red" | "amber"; label: string }
 
 export function AgentGlyph({ a, size = "" }: { a: AgentRow; size?: "" | "lg" | "xl" }) {
   if (a.key === "leif") return <LeifAvatar size={size} />;
-  if (a.group === "stage" || a.key === "integrate") return <AgentAvatar stage={a.key} size={size} title={a.row.name} />;
   return (
     <span className={`av ${size}`} title={a.row.name}>
-      {a.row.glyph || (a.row.name ?? a.key).slice(0, 1)}
+      <Rune glyph={a.row.glyph || (a.row.name ?? a.key).slice(0, 1)} size={size === "xl" ? 20 : size === "lg" ? 16 : 12} />
     </span>
   );
 }
