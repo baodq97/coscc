@@ -1732,3 +1732,423 @@ class AWorkspacesListsChangeOnlyImplsCommands(unittest.TestCase):
         self.assertEqual(policy.lists_of(stored, "/w"), (("curl",), ("rm",)))
         self.assertEqual(policy.lists_of(stored, "/other"), ((), ()))
         self.assertEqual(policy.lists_of("junk", "/w"), ((), ()))
+
+
+class _Unit(unittest.TestCase):
+    """A worktree, the unit's folder and its two scratch directories on disk, and the secrets."""
+
+    def setUp(self):
+        made = tempfile.TemporaryDirectory()
+        self.addCleanup(made.cleanup)
+        self.root = Path(made.name).resolve()
+        self.tree, self.unit = self.root / "tree", self.root / "data" / "ws" / "0001_x"
+        self.ram, self.disk = self.root / "ram", self.root / "disk"
+        for d in (self.tree, self.unit, self.ram, self.disk):
+            d.mkdir(parents=True)
+        self.home = self.root / "home"
+        self.secrets = policy.protected_paths(
+            str(self.root / "data"), str(self.home / ".config"), str(self.home)
+        )
+        self.places = policy.Places(
+            roots=(str(self.tree), str(self.unit)),
+            scratch=(str(self.ram), str(self.disk)),
+            ram_cap=10,
+            branch="feat/x",
+            secrets=self.secrets,
+        )
+
+    def critical(self, tool, tool_input, grant=IMPL, places=None, agent_id=None) -> str:
+        return policy.critical(grant, places or self.places, tool, tool_input, agent_id)
+
+    def bash(self, command, **kw) -> str:
+        return self.critical("Bash", {"command": command}, **kw)
+
+
+class AWriteOutsideTheUnitsPlacesIsRefused(_Unit):
+    """The write tools reach the worktree, the unit's folder and, with Bash, the scratch."""
+
+    def test_the_worktree_the_unit_and_the_scratch_are_written(self):
+        for path in (self.tree / "a.py", self.unit / "impl.md", self.ram / "f", self.disk / "f"):
+            for tool in policy.WRITE_TOOLS:
+                with self.subTest(tool=tool, path=path):
+                    self.assertEqual(self.critical(tool, {"file_path": str(path)}), "")
+
+    def test_anywhere_else_is_refused(self):
+        for path in (
+            self.root / "outside.txt",
+            self.unit.parent / "0002_y" / "impl.md",
+            self.tree / ".." / "x",
+            self.ram,
+        ):
+            for tool in policy.WRITE_TOOLS:
+                with self.subTest(tool=tool, path=path):
+                    self.assertIn(policy.WRITES, self.critical(tool, {"file_path": str(path)}))
+
+    def test_a_spike_writes_only_its_cwd(self):
+        spike = replace(self.places, roots=(str(self.tree),))
+        inside = {"file_path": str(self.tree / "a")}
+        self.assertEqual(self.critical("Write", inside, places=spike), "")
+        unit = {"file_path": str(self.unit / "spike.md")}
+        self.assertIn(policy.WRITES, self.critical("Write", unit, places=spike))
+
+    def test_the_scratch_is_only_for_a_step_with_bash(self):
+        plan = Grant(tools=READ_TOOLS + ("Write",))
+        self.assertIn(
+            policy.WRITES, self.critical("Write", {"file_path": str(self.disk / "f")}, plan)
+        )
+
+    def test_the_ram_scratch_is_refused_once_full(self):
+        (self.ram / "big").write_bytes(b"x" * 10)
+        said = self.critical("Write", {"file_path": str(self.ram / "f")})
+        self.assertIn(str(self.disk), said)
+        self.assertEqual(self.critical("Write", {"file_path": str(self.disk / "f")}), "")
+
+    def test_a_session_with_no_place_writes_nothing(self):
+        inside = {"file_path": str(self.tree / "a")}
+        self.assertIn(policy.WRITES, self.critical("Write", inside, places=policy.Places()))
+
+
+class ASecretIsOutOfEveryToolsReach(_Unit):
+    """The vault, the app's config and database, and the machine's keys, for every tool."""
+
+    def test_the_list(self):
+        data, cfg = str(self.root / "data"), str(self.home / ".config")
+        for path in (
+            f"{data}/vault",
+            f"{data}/cos.db",
+            f"{data}/cos.db-wal",
+            f"{data}/cos.db-shm",
+            f"{cfg}/coscc",
+            f"{cfg}/gh",
+            f"{self.home}/.ssh",
+            f"{self.home}/.aws",
+            f"{self.home}/.gnupg",
+        ):
+            self.assertIn(path, self.secrets)
+
+    def test_the_database_is_the_apps(self):
+        from coscc.store.db import DB_FILENAME
+
+        self.assertEqual(policy.DB_FILE, DB_FILENAME)
+
+    def test_a_file_tool_naming_one_is_refused(self):
+        key = str(self.home / ".ssh" / "id_rsa")
+        for tool, tool_input in (
+            ("Read", {"file_path": key}),
+            ("Read", {"file_path": str(self.root / "data" / "cos.db")}),
+            ("Write", {"file_path": str(self.home / ".config" / "coscc" / "env")}),
+            ("Edit", {"file_path": str(self.root / "data" / "vault" / "a.age")}),
+            ("Grep", {"pattern": "x", "path": str(self.home / ".aws")}),
+            ("Glob", {"pattern": f"{self.home}/.gnupg/*"}),
+        ):
+            with self.subTest(tool=tool, tool_input=tool_input):
+                self.assertIn(policy.SECRETS, self.critical(tool, tool_input))
+
+    def test_grep_and_glob_over_a_folder_holding_one_are_refused(self):
+        for tool, tool_input in (
+            ("Grep", {"pattern": "x", "path": str(self.home)}),
+            ("Glob", {"pattern": "**/*", "path": str(self.home)}),
+            ("Glob", {"pattern": f"{self.home}/**/id_*"}),
+            ("Glob", {"pattern": "../home/**"}),
+        ):
+            with self.subTest(tool=tool, tool_input=tool_input):
+                self.assertIn(policy.SECRETS, self.critical(tool, tool_input))
+
+    def test_reading_anything_else_runs(self):
+        for tool, tool_input in (
+            ("Read", {"file_path": str(self.root / "elsewhere.txt")}),
+            ("Read", {"file_path": str(self.home / ".config" / "other" / "x")}),
+            ("Grep", {"pattern": "x", "path": str(self.root / "data" / "ws")}),
+            ("Glob", {"pattern": "**/*.py"}),
+            ("Glob", {"pattern": "*.md", "path": str(self.unit)}),
+        ):
+            with self.subTest(tool=tool, tool_input=tool_input):
+                self.assertEqual(self.critical(tool, tool_input), "")
+
+    def test_a_bash_word_or_redirect_naming_one_is_refused(self):
+        cfg = self.home / ".config"
+        for line in (
+            "cat ~/.ssh/id_rsa",
+            "cat $HOME/.aws/credentials",
+            f"sqlite3 {self.root}/data/cos.db .tables",
+            f"echo x > {cfg}/gh/hosts.yml",
+            f"cat < {cfg}/coscc/env",
+            f"ls {cfg}/cos*/vault.key",
+            f"python3 - <<EOF\nopen('{self.home}/.ssh/id_rsa')\nEOF",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.SECRETS, self.bash(line))
+
+    def test_a_bash_line_near_one_runs(self):
+        for line in (f"ls {self.home}/.config", "cat ~/.sshx/a", f"ls {self.root}/data"):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
+
+class OnlyTheUnitsBranchIsPushed(_Unit):
+    """One push, `origin <the unit's branch>`; no other road to the host."""
+
+    def test_the_units_branch_is_pushed(self):
+        for line in (
+            "git push origin feat/x",
+            "git push -u origin HEAD:feat/x",
+            "npm test && git push origin feat/x",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
+    def test_every_other_push_is_refused(self):
+        for line in (
+            "git push origin main",
+            "git push",
+            "git push origin feat/x --force",
+            "git push -f origin feat/x",
+            "git push origin +feat/x",
+            "git push --all origin",
+            "git push --tags origin feat/x",
+            "git push --delete origin feat/x",
+            "git push --force-with-lease origin feat/x",
+            "git -C . push origin main",
+            "uv run git push origin main",
+            "timeout 60 git push origin main",
+            "bash -c 'git push origin main'",
+            "git $X origin main",
+            "git send-pack origin main",
+            "git http-push origin main",
+            "git -c alias.p=push p origin main",
+            "git config alias.p push",
+            "GIT_CONFIG_COUNT=1 git status",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.HOST, self.bash(line))
+
+    def test_no_branch_pushes_nothing(self):
+        places = replace(self.places, branch="")
+        self.assertIn(policy.HOST, self.bash("git push origin feat/x", places=places))
+
+    def test_the_lease_is_gebos_and_bound_to_its_head(self):
+        head = "a" * 40
+        gebo = replace(self.places, lease=head)
+        leased = f"git push --force-with-lease=feat/x:{head} origin feat/x"
+        self.assertEqual(self.bash(leased, places=gebo), "")
+        for line in (
+            "git push origin feat/x",
+            f"git push --force-with-lease=feat/x:{'b' * 40} origin feat/x",
+            "git push --force-with-lease origin feat/x",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.HOST, self.bash(line, places=gebo))
+
+    def test_merging_and_writing_on_the_host_are_refused(self):
+        for line in (
+            "gh pr merge 7",
+            "gh -R o/r pr merge 7 --squash",
+            "gh api -X PUT repos/o/r/pulls/7/merge",
+            "gh api --method=PATCH repos/o/r/git/refs/heads/x -f sha=1",
+            "gh api repos/o/r/git/refs -f ref=x",
+            "gh repo sync",
+            "gh release create v1",
+            "gh alias set m 'pr merge'",
+            "gh pr update-branch 7",
+            "gh $P merge 7",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.HOST, self.bash(line))
+
+    def test_reading_the_host_runs(self):
+        for line in (
+            "gh pr view 7 --json headRefOid",
+            "gh pr checks 7",
+            "gh api repos/o/r/pulls/7",
+            "git fetch origin && git rebase origin/main",
+            "git log --grep push",
+            'git commit -m "$MSG"',
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
+
+class RecursiveRmStaysInsideAndNoClaudeIsNested(_Unit):
+    """No `rm -r` outside, and no Claude Code inside."""
+
+    def test_rm_inside_the_places_runs(self):
+        for line in (
+            "rm -rf build",
+            f"rm -r {self.tree}/dist",
+            f"rm -rf {self.disk}/old",
+            "rm -fr ./node_modules/*",
+            "rm a.txt ../b.txt",
+            "git rm -r --cached build",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
+    def test_rm_outside_or_of_a_variable_is_refused(self):
+        for line in (
+            "rm -rf ..",
+            "rm -rf ~",
+            "rm -Rf /",
+            f"rm -rf {self.root}/elsewhere",
+            "rm --recursive ../x",
+            'rm -rf "$TMPDIR/x"',
+            "rm -rf -- -x ../y",
+            "find . -exec rm -rf ../y ;",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.REMOVAL, self.bash(line))
+
+    def test_claude_is_not_started_inside_a_session(self):
+        for line in ("claude -p hi", "npx claude -p hi", "env X=1 claude", "uv run claude"):
+            with self.subTest(line=line):
+                self.assertIn(policy.REMOVAL, self.bash(line))
+        self.assertEqual(self.bash("grep -rn claude coscc"), "")
+        self.assertEqual(self.bash("ls ~/.claude"), "")
+
+
+class TheHelperRulesHold(_Unit):
+    """Who may be started, what a helper runs, and nothing in the background."""
+
+    def test_only_a_named_helper_in_the_foreground_from_the_leading_session(self):
+        self.assertEqual(self.critical("Agent", {"subagent_type": "worker"}), "")
+        for tool_input, agent_id in (
+            ({"subagent_type": "general-purpose"}, None),
+            ({"subagent_type": "worker", "run_in_background": True}, None),
+            ({"subagent_type": "worker"}, "a1"),
+        ):
+            with self.subTest(tool_input=tool_input, agent_id=agent_id):
+                self.assertIn(policy.HELPERS, self.critical("Agent", tool_input, agent_id=agent_id))
+
+    def test_list_agents_is_refused(self):
+        self.assertIn(policy.HELPERS, self.critical("ListAgents", {}))
+
+    def test_a_helper_runs_git_only_to_read(self):
+        self.assertEqual(self.bash("git diff HEAD", agent_id="a1"), "")
+        self.assertIn(policy.HELPERS, self.bash("git commit -m x", agent_id="a1"))
+        self.assertEqual(self.bash("git commit -m x"), "")
+
+    def test_nothing_runs_in_the_background(self):
+        background = {"command": "npm test", "run_in_background": True}
+        self.assertIn(policy.HELPERS, self.critical("Bash", background))
+        self.assertIn(policy.HELPERS, self.bash("npm run dev &"))
+        self.assertIn(policy.BACKGROUND_REFUSAL, self.bash("sleep 1 & wait"))
+        self.assertEqual(self.bash("npm test && echo ok 2>&1"), "")
+
+    def test_a_helper_hands_back_its_result(self):
+        handback = self.critical("SubagentHandback", {"message": "done"}, agent_id="a1")
+        self.assertEqual(handback, "")
+
+
+class AnMcpToolNotGrantedIsRefused(_Unit):
+    """`submit` with `submits`, `peers` with `Agent`, and `Grant.mcp`; nothing else."""
+
+    PING = "mcp__vault__vault_exec"
+
+    def test_what_the_grant_holds_runs(self):
+        self.assertEqual(self.critical(policy.SUBMIT_TOOL, {}, Grant(submits=True)), "")
+        self.assertEqual(self.critical(policy.PEERS_TOOL, {}, IMPL), "")
+        self.assertEqual(self.critical(self.PING, {}, Grant(mcp=(self.PING,))), "")
+
+    def test_anything_else_is_refused(self):
+        for grant, tool in (
+            (Grant(), policy.SUBMIT_TOOL),
+            (grant_for("review"), policy.PEERS_TOOL),
+            (Grant(submits=True), "mcp__cos__other"),
+            (Grant(), self.PING),
+            (IMPL, "mcp__github__merge_pull_request"),
+        ):
+            with self.subTest(tool=tool):
+                self.assertIn(policy.HELD, self.critical(tool, {}, grant))
+
+    def test_what_skips_the_classifier_is_what_the_grant_holds(self):
+        self.assertEqual(
+            policy.allowed_mcp(replace(IMPL, submits=True, mcp=(self.PING,))),
+            (policy.SUBMIT_TOOL, policy.PEERS_TOOL, self.PING),
+        )
+        self.assertEqual(policy.allowed_mcp(Grant()), ())
+
+
+class AnUnreadableLineIsRefused(_Unit):
+    """The shell reader is today's: what it cannot read is refused, and so is a substitution or a
+    variable program on a line that names a critical road."""
+
+    def test_an_unreadable_line(self):
+        for line in ("echo 'unclosed", "cat <<EOF\nno end", "echo $(ls"):
+            with self.subTest(line=line):
+                self.assertIn("could not be read", self.bash(line))
+
+    def test_a_hidden_command_on_a_line_naming_a_road(self):
+        for line in (
+            "echo $(git push origin main)",
+            "x=`gh pr merge 7`",
+            "diff <(rm -rf ..) a",
+            "$CMD push origin main",
+            "git push origin $(git branch --show-current)",
+        ):
+            with self.subTest(line=line):
+                self.assertIn("hides what runs", self.bash(line))
+
+    def test_a_hidden_command_elsewhere_runs(self):
+        for line in (
+            "echo $(date)",
+            "x=$((1 + 2)) && echo $x",
+            'cd "$(git rev-parse --show-toplevel)"',
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
+
+class ACommandOffTheOldListsRuns(_Unit):
+    """No list of programs and no read boundary: what is not critical is `auto`'s."""
+
+    def test_programs_no_list_names(self):
+        for line in (
+            "curl -s https://example.com",
+            "jq .x a.json",
+            "make test",
+            "cd .. && ls",
+            "echo x > notes.txt",
+            "git -C ../sibling status",
+            "cat /etc/hosts",
+            "pip install x",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
+    def test_reads_outside_the_worktree(self):
+        for tool, tool_input in (
+            ("Read", {"file_path": "/etc/hosts"}),
+            ("Grep", {"pattern": "x", "path": "/usr/share"}),
+            ("Glob", {"pattern": "/usr/lib/*.so"}),
+        ):
+            with self.subTest(tool=tool):
+                self.assertEqual(self.critical(tool, tool_input, Grant(tools=READ_TOOLS)), "")
+
+
+class WhatGoesToTheClassifier(_Unit):
+    """`classified`: an estimate of the calls `auto` sends to its classifier, as measured."""
+
+    def test_reads_edits_inside_the_worktree_and_read_only_commands_do_not(self):
+        grant = replace(IMPL, submits=True)
+        for tool, tool_input in (
+            ("Read", {"file_path": "/etc/hosts"}),
+            ("Grep", {"pattern": "x"}),
+            ("Edit", {"file_path": str(self.tree / "a.py")}),
+            ("Bash", {"command": "ls -la && git status"}),
+            ("Bash", {"command": "grep -rn x . | head -5"}),
+            (policy.SUBMIT_TOOL, {}),
+        ):
+            with self.subTest(tool=tool, tool_input=tool_input):
+                self.assertFalse(policy.classified(grant, self.places, tool, tool_input))
+
+    def test_commands_writes_elsewhere_and_helpers_do(self):
+        for tool, tool_input in (
+            ("Bash", {"command": "npm test"}),
+            ("Bash", {"command": "ls > out.txt"}),
+            ("Write", {"file_path": str(self.unit / "impl.md")}),
+            ("Write", {"file_path": str(self.tree / ".claude" / "x.md")}),
+            ("Agent", {"subagent_type": "worker"}),
+            ("SendMessage", {"to": "main"}),
+            ("SubagentHandback", {}),
+        ):
+            with self.subTest(tool=tool, tool_input=tool_input):
+                self.assertTrue(policy.classified(IMPL, self.places, tool, tool_input))

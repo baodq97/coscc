@@ -597,6 +597,7 @@ CORE_MAY_NAME: dict[tuple[str, str], str] = {
     "feature only tells the agent about them",
     ("coscc/agent/policy.py", "vault"): "the vault's store is a protected path even with the "
     "vault off",
+    ("coscc/agent/policy.py", "release"): "`gh release`, which no session may run, not the feature",
     ("coscc/update/updater.py", "release"): "the update channel of that name, not the feature",
     ("coscc/update/__init__.py", "release"): "the update channel of that name, not the feature",
     ("coscc/loop/branch.py", "release"): "the kind of tag `check-tag` prints, not the feature",

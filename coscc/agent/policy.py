@@ -89,6 +89,10 @@ AGENT_TOOL = "Agent"
 SEND_MESSAGE = "SendMessage"
 # The kernel's own tool listing the helpers of the run, on `submit`'s server.
 PEERS_TOOL = "mcp__cos__peers"
+# Lists every Claude session on the machine, not only this run's helpers.
+LIST_AGENTS = "ListAgents"
+# What a helper calls to hand its result back to the leading session.
+HANDBACK = "SubagentHandback"
 # The only `git` subcommands a helper may run: only the leading session commits.
 HELPER_GIT = ("status", "diff", "log", "show", "blame")
 # Named helpers with a bounded report, so big reads and test output stay out of the main
@@ -445,20 +449,29 @@ def with_lists(grant: Grant, allow: tuple[str, ...], block: tuple[str, ...]) -> 
     return replace(grant, commands=tuple(c for c in merged if c not in block))
 
 
-def protected_paths(data_root: str, config_home: str, home: str = "") -> tuple[str, ...]:
-    """The vault's store, `<data root>/vault`, and the app's own config, `<config home>/coscc`
-    (`env`, `vault.key`), as a command word may spell them: as given, symlinks resolved, and
-    below `home` with `~`, `$HOME` or `${HOME}` in front. An empty `config_home` protects the
-    store alone.
+# The app's database file in its data root, `coscc/store/db.py`'s `DB_FILENAME`; spelled here so
+# this module imports nothing of the store, and pinned by a test.
+DB_FILE = "cos.db"
 
-    The kernel keeps this list, not the feature, so `Bash` is held to it with the vault off too.
+
+def protected_paths(data_root: str, config_home: str, home: str = "") -> tuple[str, ...]:
+    """The secrets no tool may reach: the vault's store `<data root>/vault`, the app's database (with its `-wal`
+    and `-shm`), the app's config `<config home>/coscc` (`env`, `vault.key`), `gh`'s login
+    `<config home>/gh`, and `~/.ssh`, `~/.aws`, `~/.gnupg`. Each as a command word may spell it:
+    as given, symlinks resolved, and below `home` with `~`, `$HOME` or `${HOME}` in front. An
+    empty `config_home` or `home` leaves its own entries out.
+
+    The kernel keeps this list, not the feature, so every session is held to it with the vault off.
     """
     import os
     from pathlib import Path
 
-    dirs = [os.path.join(data_root, "vault")]
+    db = os.path.join(data_root, DB_FILE)
+    dirs = [os.path.join(data_root, "vault"), db, f"{db}-wal", f"{db}-shm"]
     if config_home:
-        dirs.append(os.path.join(config_home, "coscc"))
+        dirs += [os.path.join(config_home, "coscc"), os.path.join(config_home, "gh")]
+    if home:
+        dirs += [os.path.join(home, d) for d in (".ssh", ".aws", ".gnupg")]
     top = os.path.normpath(home) if home else ""
     out: list[str] = []
     for d in dirs:
@@ -1045,14 +1058,20 @@ _PUSH_WIDE = frozenset(
 )
 
 
-def check_push(words: list[str], branch: str, lease_head: str) -> str:
+def check_push(words: list[str], branch: str, lease_head: str = "") -> str:
     """ "" if `git push <words>` is the one push allowed, else why not.
 
     `words` are the tokens after `push`. The one allowed shape is `origin <branch>` or
-    `origin HEAD:<branch>`, carrying exactly one `--force-with-lease=<branch>:<lease_head>`
-    with a full SHA. Pure: the branch and the head come from the app, never the session.
+    `origin HEAD:<branch>`, never forced. With `lease_head` (Gebo's) it carries exactly one
+    `--force-with-lease=<branch>:<lease_head>` with a full SHA; without, no lease at all. Pure:
+    the branch and the head come from the app, never the session.
     """
-    if not branch or not _FULL_SHA.match(lease_head or ""):
+    if not branch:
+        return (
+            "this session has no branch of its own (the trunk, a detached HEAD or no worktree), "
+            "so it may not push"
+        )
+    if lease_head and not _FULL_SHA.match(lease_head):
         return "no lease was fixed for this step, so it may not push"
     leases = []
     positional = []
@@ -1060,10 +1079,12 @@ def check_push(words: list[str], branch: str, lease_head: str) -> str:
         if token in ("--force", "-f") or (
             token.startswith("-") and not token.startswith("--") and "f" in token[1:]
         ):
-            return "a push may not use --force: only --force-with-lease bound to the head this step began at"
-        if token == "--force-with-lease":
-            return "--force-with-lease needs a value: --force-with-lease=<branch>:<head this step began at>"
-        if token.startswith("--force-with-lease="):
+            return "a push may not use --force: only the integration step's lease may overwrite"
+        if token == "--force-with-lease" or token.startswith("--force-with-lease="):
+            if not lease_head:
+                return "a push may not use --force-with-lease: only the integration step's push carries a lease"
+            if "=" not in token:
+                return "--force-with-lease needs a value: --force-with-lease=<branch>:<head this step began at>"
             leases.append(token.split("=", 1)[1])
             continue
         if token in _PUSH_WIDE:
@@ -1073,9 +1094,9 @@ def check_push(words: list[str], branch: str, lease_head: str) -> str:
                 return f"a push may not use {token}"
             continue
         positional.append(token)
-    if len(leases) != 1:
+    if lease_head and len(leases) != 1:
         return "a push must carry exactly one --force-with-lease=<branch>:<head this step began at>"
-    if leases[0] != f"{branch}:{lease_head}":
+    if lease_head and leases[0] != f"{branch}:{lease_head}":
         return f"the lease must be bound to {branch}:{lease_head}, the head this step began at"
     if positional not in (["origin", branch], ["origin", f"HEAD:{branch}"]):
         return f"a push may only name `origin {branch}` or `origin HEAD:{branch}`"
@@ -1232,8 +1253,9 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
         # hide what it pushes.
         if raw[0] != "push":
             return "a push must be spelled `git push …`, with nothing between"
-        branch, head = lease if lease else ("", "")
-        reason = check_push(raw[1:], branch, head)
+        if lease is None:
+            return "no lease was fixed for this step, so it may not push"
+        reason = check_push(raw[1:], *lease)
         if reason:
             return reason
     return ""
@@ -1402,19 +1424,24 @@ def _words(base: str, rest: list[str]) -> tuple[str, ...]:
     step, or `node -e` spawning `gh`, is not seen. The `integrate` grant also refuses an alias
     made during the step (`_GIT_CONFIG_ROAD`).
     """
-    out = [base]
+    return (base, *(rest[i] for i in _positions(base, rest)))
+
+
+def _positions(base: str, rest: list[str]) -> list[int]:
+    """Where in `rest` the positional words `_words` keeps stand."""
+    out: list[int] = []
     skip = False
-    for token in rest:
+    for i, token in enumerate(rest):
         if skip:
             skip = False
             continue
         if token.startswith("-"):
             skip = (base == "gh" and token in _GH_VALUE_FLAGS) or (
-                base == "git" and len(out) == 1 and token in _GIT_VALUE_FLAGS
+                base == "git" and not out and token in _GIT_VALUE_FLAGS
             )
             continue
-        out.append(token)
-    return tuple(out)
+        out.append(i)
+    return out
 
 
 def _paths_in(tool_input: dict) -> list[str]:
@@ -1733,3 +1760,387 @@ def _read_paths_in(tool: str, tool_input: dict) -> list:
                 fixed.append(part)
             out.append("/".join(fixed) or "/")
     return out
+
+
+# --- the critical calls ------------------------------------------------------
+#
+# Every session runs Claude Code's `auto` mode. These are what the app refuses before `auto` sees
+# a call, from one `PreToolUse` hook (`coscc/agent/helpers.py` `Gate`); each reason opens with the
+# rule it breaks. Words are read, nothing is run: a program that builds a path or pushes by itself
+# walks past them, and `auto`'s classifier is the layer behind.
+
+WRITES = "a session writes only in its worktree, its unit's folder and its scratch"
+SECRETS = "no tool reaches the app's or the machine's secrets"
+HOST = "pushing, merging and releasing on the host are the app's, but for the unit's own branch"
+REMOVAL = "rm -r stays inside the unit's places, and no Claude Code runs inside a session"
+HELPERS = (
+    "helpers are named, in the foreground, read-only in git, and nothing runs in the background"
+)
+HELD = "only the MCP tools this session holds"
+
+
+@dataclass(frozen=True)
+class Places:
+    """What one session may touch, fixed by the app as it opens; nothing here is the session's."""
+
+    # Where the write tools may write: the session's `cwd` first (a relative path a command names
+    # is read from there), then the unit's folder for a step that writes its own artifact.
+    roots: tuple[str, ...] = ()
+    # The unit's `(ram, disk)` directories (`coscc/units/scratch.py`), written only by a step
+    # holding Bash, the ram one while its files add up to less than `ram_cap` bytes.
+    scratch: tuple[str, str] | None = None
+    ram_cap: int = 0
+    # The branch the worktree stood on as the session opened, the one `git push` may name. ""
+    # (the trunk, a detached HEAD, no worktree) pushes nothing.
+    branch: str = ""
+    # Gebo's lease, the head its pull request had when it began: its every push carries
+    # `--force-with-lease=<branch>:<lease>`. "" refuses the flag.
+    lease: str = ""
+    # `protected_paths`: no tool may reach one.
+    secrets: tuple[str, ...] = ()
+
+
+def allowed_mcp(grant: Grant) -> tuple[str, ...]:
+    """The MCP tools a grant holds: `submit` with `submits`, `peers` with `Agent`, and `Grant.mcp`.
+    The session allows them by name, so they skip the classifier; the hook still asks first."""
+    return (
+        *((SUBMIT_TOOL,) if grant.submits else ()),
+        *((PEERS_TOOL,) if AGENT_TOOL in grant.tools else ()),
+        *grant.mcp,
+    )
+
+
+def critical(
+    grant: Grant, places: Places, tool: str, tool_input: dict, agent_id: str | None
+) -> str:
+    """ "" unless the call is one every session is refused, else why, opening with its item.
+
+    `agent_id` is the CLI's, set when one of `SUBAGENTS` made the call. Reads no command list
+    and no read boundary: what is not here is `auto`'s to decide.
+    """
+    if tool.startswith("mcp__"):
+        if tool in allowed_mcp(grant):
+            return ""
+        return f"{HELD}: {tool} is not one"
+    if tool == AGENT_TOOL:
+        return _agent_refused(tool_input, agent_id)
+    if tool == LIST_AGENTS:
+        return f"{HELPERS}: ListAgents lists sessions outside this step; call {PEERS_TOOL}"
+    reason = _secret_refused(tool, tool_input, places)
+    if reason:
+        return reason
+    if tool in WRITE_TOOLS:
+        roots = _resolved(places.roots)
+        if not roots:
+            return f"{WRITES}: this session has no place to write"
+        own = places.scratch if any(t in grant.tools for t in EXEC_TOOLS) else None
+        reason = _write_refused(tool_input, roots, own, places.ram_cap)
+        return f"{WRITES}: {reason}" if reason else ""
+    if tool in EXEC_TOOLS:
+        if tool_input.get("run_in_background"):
+            return f"{HELPERS}: run_in_background is refused: {BACKGROUND_REFUSAL}"
+        return bash_refused(places, str(tool_input.get("command") or ""), agent_id)
+    return ""
+
+
+def _agent_refused(tool_input: dict, agent_id: str | None) -> str:
+    if agent_id is not None:
+        return f"{HELPERS}: a helper may not start another helper"
+    if tool_input.get("subagent_type") not in SUBAGENTS:
+        return f"{HELPERS}: only these helpers may be started: {', '.join(SUBAGENTS)}"
+    if tool_input.get("run_in_background"):
+        return f"{HELPERS}: a helper runs in the foreground: this session ends when its turn ends"
+    return ""
+
+
+def _resolved(paths) -> list:
+    """Each non-empty path, `~` expanded and symlinks resolved; one that cannot be is left out."""
+    from pathlib import Path
+
+    out = []
+    for p in paths:
+        try:
+            if p:
+                out.append(Path(p).expanduser().resolve())
+        except OSError, RuntimeError, ValueError:
+            continue
+    return out
+
+
+def _secret_refused(tool: str, tool_input: dict, places: Places) -> str:
+    """For a file tool: a path in a secret, or a folder Grep or Glob searches holding one."""
+    from pathlib import Path
+
+    if tool not in READ_TOOLS + WRITE_TOOLS or not places.secrets:
+        return ""
+    secrets = _resolved(p for p in places.secrets if p.startswith("/"))
+    cwd = _resolved(places.roots[:1])
+    searches = tool in ("Grep", "Glob")
+    targets = [(raw, searches) for raw in _paths_in(tool_input)]
+    pattern = tool_input.get("pattern")
+    if tool == "Glob" and isinstance(pattern, str) and pattern:
+        fixed = []
+        for part in pattern.split("/"):
+            if any(c in part for c in _GLOB_CHARS):
+                break
+            fixed.append(part)
+        start = str(tool_input.get("path") or "")
+        targets.append((str(Path(start) / "/".join(fixed)) if start else "/".join(fixed), True))
+    if searches and not tool_input.get("path"):
+        targets.append((".", True))
+    for raw, folder in targets:
+        try:
+            path = Path(raw or ".").expanduser()
+            if not path.is_absolute() and cwd:
+                path = cwd[0] / path
+            path = path.resolve()
+        except OSError, RuntimeError, ValueError:
+            return f"{SECRETS}: {raw} could not be resolved, so it may be a secret"
+        for s in secrets:
+            if path == s or s in path.parents or (folder and path in s.parents):
+                return f"{SECRETS}: {s}"
+    return ""
+
+
+# What a line names when a command hidden in it could be one of the critical roads.
+_ROADS = re.compile(r"\b(?:push|merge|release|rm|gh|claude)\b")
+# Programs that run the words after them as a program.
+_WRAPPERS = frozenset(
+    {"env", "exec", "command", "nohup", "nice", "setsid", "stdbuf", "time", "timeout", "xargs"}
+    | {"npx", "uvx", "sudo"}
+)
+_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "eval"})
+_CLAUDE = frozenset({"claude", "claude-code"})
+# `gh` commands that push, merge or release on the host, or run what this reader cannot read.
+_GH_ROADS = (
+    ("pr", "merge"),
+    ("pr", "update-branch"),
+    ("repo", "sync"),
+    ("release",),
+    ("alias", "set"),
+    ("extension",),
+)
+_GH_FIELDS = ("-f", "-F", "--field", "--raw-field", "--input")
+
+
+def bash_refused(places: Places, command: str, agent_id: str | None = None) -> str:
+    """ "" unless a Bash line is critical, else why. Read as bash reads it (`_read`):
+    a line it cannot read is refused, and so is a substitution or a variable program on a line
+    that names a critical road, since what runs there is not read.
+
+    `git`, `gh` and `rm` are checked wherever they stand among a command's words, so a wrapper
+    (`timeout 9 git push`) does not hide them; `sh -c` and `eval` are read again inside.
+    """
+    import os
+
+    parsed = _read(command)
+    if isinstance(parsed, _Unreadable):
+        return (
+            f"this command could not be read as the shell reads it: {parsed.what} "
+            f"at character {parsed.at + 1}; nothing was guessed"
+        )
+    if parsed.background:
+        # `&&`, `&>`, `&>>`, `>&`, `<&` and `|&` are read elsewhere and never land here.
+        return f"{HELPERS}: `&` at character {parsed.background[0] + 1} runs a command in the background: {BACKGROUND_REFUSAL}"
+    hidden = any(t != "$((" for t, _ in parsed.substitutions) or any(
+        s.expanded[k] and not _ASSIGNMENT.match(s.words[k])
+        for s in parsed.commands
+        for k in _launched(list(s.words))
+        if k < len(s.words)
+    )
+    if hidden and _ROADS.search(command):
+        return (
+            "a substitution or a variable program hides what runs, on a line that names push, "
+            "merge, release, rm, gh or claude: spell each command out"
+        )
+    for p in places.secrets:
+        named = re.compile(re.escape(p) + r"(?![\w.-])")
+        words = [w for s in parsed.commands for w in (*s.words, *(r.target for r in s.redirects))]
+        if named.search(command) or any(
+            named.search(form) or _glob_reaches(form, p)
+            for w in words
+            if w
+            for form in (w, os.path.normpath(w))
+        ):
+            return f"{SECRETS}: {p}"
+    runs_git = any(w.rsplit("/", 1)[-1] == "git" for s in parsed.commands for w in s.words)
+    if runs_git and (
+        _GIT_CONFIG_ROAD.search(command)
+        or any(_GIT_CONFIG_ROAD.search(" " + w) for s in parsed.commands for w in s.words)
+    ):
+        return (
+            f"{HOST}: a git alias, an include or GIT_CONFIG_* can rename `push`: none may be made"
+        )
+    for simple in parsed.commands:
+        reason = _simple_refused(places, simple, agent_id, command)
+        if reason:
+            return reason
+    reason = _helper_git(command, agent_id)
+    return f"{HELPERS}: {reason}" if reason else ""
+
+
+def _simple_refused(places: Places, simple: _Simple, agent_id: str | None, line: str) -> str:
+    words, unknown = list(simple.words), list(simple.expanded)
+    names = [w.rsplit("/", 1)[-1] for w in words]
+    for i, name in enumerate(names):
+        rest, rest_unknown = words[i + 1 :], unknown[i + 1 :]
+        if name == "git":
+            reason = _git_refused(places, rest, rest_unknown)
+        elif name == "gh":
+            reason = _gh_refused(rest, rest_unknown)
+        elif name == "rm":
+            reason = _rm_refused(places, rest, rest_unknown)
+        else:
+            continue
+        if reason:
+            return reason
+    launched = [k for k in _launched(words) if k < len(words)]
+    wrapped = bool(launched) and names[launched[0]] in _WRAPPERS
+    if any(names[k] in _CLAUDE for k in launched) or (
+        wrapped and any(n in _CLAUDE for n in names[launched[0] + 1 :])
+    ):
+        return f"{REMOVAL}: a session may not start Claude Code inside itself"
+    for k in launched:
+        if names[k] not in _SHELLS:
+            continue
+        at = k + 1 if names[k] == "eval" else _script_at(words, k + 1)
+        if at is None or at >= len(words):
+            continue
+        if unknown[at] and _ROADS.search(line):
+            return "a variable script hides what runs, on a line that names a critical road: spell it out"
+        reason = bash_refused(
+            places, " ".join(words[at:]) if names[k] == "eval" else words[at], agent_id
+        )
+        if reason:
+            return reason
+    return ""
+
+
+def _script_at(words: list[str], j: int) -> int | None:
+    """Where the script of `sh -c <script>` stands, from `j`; `None` for a script file."""
+    for i in range(j, len(words)):
+        w = words[i]
+        if not w.startswith("-"):
+            return None
+        if w == "-c" or (not w.startswith("--") and "c" in w[1:]):
+            return i + 1
+    return None
+
+
+def _git_refused(places: Places, rest: list[str], unknown: list[bool]) -> str:
+    at = _positions("git", rest)
+    if at and unknown[at[0]]:
+        return f"{HOST}: git's subcommand may not be a variable ({rest[at[0]]}): it can hide a push"
+    sub = rest[at[0]] if at else ""
+    if sub in ("send-pack", "http-push"):
+        return f"{HOST}: git {sub} pushes past the one push allowed"
+    if not _may_be_push(rest):
+        return ""
+    if rest[0] != "push":
+        return f"{HOST}: a push must be spelled `git push …`, with nothing between"
+    reason = check_push(rest[1:], places.branch, places.lease)
+    return f"{HOST}: {reason}" if reason else ""
+
+
+def _gh_refused(rest: list[str], unknown: list[bool]) -> str:
+    at = _positions("gh", rest)
+    if any(unknown[i] for i in at[:2]):
+        return f"{HOST}: gh's command may not be a variable: it can hide a merge"
+    words = tuple(rest[i] for i in at)
+    for prefix in _GH_ROADS:
+        if words[: len(prefix)] == prefix:
+            return f"{HOST}: `gh {' '.join(prefix)}` acts on the host"
+    if words[:1] == ("api",) and _api_writes(rest):
+        return f"{HOST}: a `gh api` call that writes (a method other than GET, or a field) is refused; read with `gh pr view` or `gh pr checks`"
+    return ""
+
+
+def _api_writes(rest: list[str]) -> bool:
+    for j, token in enumerate(rest):
+        name, eq, value = token.partition("=")
+        if token in _GH_FIELDS or name in _GH_FIELDS or re.fullmatch(r"-[fF].+", token):
+            return True
+        if token in ("-X", "--method"):
+            value = rest[j + 1] if j + 1 < len(rest) else ""
+        elif token.startswith("-X"):
+            value = token[2:]
+        elif not (name == "--method" and eq):
+            continue
+        if value.upper() != "GET":
+            return True
+    return False
+
+
+def _rm_refused(places: Places, rest: list[str], unknown: list[bool]) -> str:
+    from pathlib import Path
+
+    flags, targets, ended = [], [], False
+    for token, var in zip(rest, unknown):
+        if not ended and token == "--":
+            ended = True
+        elif not ended and token.startswith("-") and token != "-":
+            flags.append(token)
+        else:
+            targets.append((token, var))
+    if not any(f == "--recursive" or (f[1:2] != "-" and ("r" in f or "R" in f)) for f in flags):
+        return ""
+    roots = _resolved(places.roots)
+    for target, var in targets:
+        if var:
+            return f"{REMOVAL}: rm -r of a variable ({target}): where it points is not known here"
+        path = Path(target).expanduser()
+        if not path.is_absolute() and roots:
+            path = roots[0] / path
+        if _inside(str(path), roots, None) or _scratch_of(str(path), places.scratch) is not None:
+            continue
+        return f"{REMOVAL}: rm -r outside this unit's places: {target}"
+    return ""
+
+
+# Programs `auto` runs without its classifier when every command of a line is one of them.
+_READ_ONLY = frozenset(
+    {"ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "echo", "printf", "which", "sort"}
+    | {"uniq", "diff", "true", "test", "stat", "file", "tree", "find", "cut", "tr", "date"}
+)
+
+
+def classified(grant: Grant, places: Places, tool: str, tool_input: dict) -> bool:
+    """Whether `auto` is estimated to send a call the hook let through to its classifier (as
+    measured): not a read, an edit inside the working directory outside `.git` and `.claude`, a line of
+    read-only commands, or an MCP tool the session allows by name; anything else Bash, a write
+    elsewhere, `Agent`, `SendMessage` and a helper's hand-back. An estimate, the time signal of
+    the run's `end`."""
+    from pathlib import Path
+
+    if tool in READ_TOOLS:
+        return False
+    if tool.startswith("mcp__"):
+        return tool not in allowed_mcp(grant)
+    if tool in WRITE_TOOLS:
+        cwd = _resolved(places.roots[:1])
+        return not cwd or any(
+            not _inside(p, cwd, cwd[0]) or bool({".git", ".claude"} & set(Path(p).parts))
+            for p in _paths_in(tool_input)
+        )
+    if tool in EXEC_TOOLS:
+        return not _reads_only(str(tool_input.get("command") or ""))
+    return tool in (AGENT_TOOL, SEND_MESSAGE, HANDBACK)
+
+
+def _reads_only(command: str) -> bool:
+    parsed = _read(command)
+    if isinstance(parsed, _Unreadable) or parsed.substitutions:
+        return False
+    for simple in parsed.commands:
+        for r in simple.redirects:
+            to_fd = r.op == ">&" and bool(_DESCRIPTOR.fullmatch(r.target))
+            if r.op not in _READ_REDIRECTS and not to_fd and r.target != "/dev/null":
+                return False
+        words = [w for w in simple.words if not _ASSIGNMENT.match(w)]
+        name = words[0].rsplit("/", 1)[-1] if words else ""
+        if name == "git":
+            if _words("git", words[1:])[1:2] not in [(s,) for s in HELPER_GIT]:
+                return False
+        elif words and name not in _READ_ONLY:
+            return False
+    return True
