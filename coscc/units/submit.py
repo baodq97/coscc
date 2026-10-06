@@ -78,8 +78,11 @@ def round_problem(obj: Mapping[str, Any]) -> str:
 
 def plan_problem(obj: Mapping[str, Any]) -> str:
     """What a plan's steps say that its schema cannot rule out, `""` when nothing: a step naming
-    a path its `files` do not, or one path in two steps."""
+    a path its `files` do not, one path in two steps, or a path not as the repository names it."""
     files = set(obj.get("files") or ())
+    for path in sorted(files):
+        if path != path.strip() or path.startswith(("/", "./", "`")) or "`" in path or ":" in path:
+            return f"`files` names {path!r}: give each path as the repository names it, as `coscc/bus.py`."
     seen: dict[str, str] = {}
     for step in obj.get("steps") or ():
         for path in step["paths"]:

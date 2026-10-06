@@ -23,6 +23,7 @@ from coscc.config import LOOPBACK, Config
 from coscc.store.db import Data
 from coscc.runner.queue import Refused
 from coscc.units.board import shown_state
+from coscc.units.contracts import ContractError
 from coscc.units.read import count, number
 from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK
 from coscc.kernel import Invalid
@@ -330,8 +331,11 @@ class Autopilot:
 
     def _files(self, cwd: str, unit: str) -> set[str] | None:
         """The files the unit's plan record names; `None`, which overlaps with everything, when
-        it has no record or names none."""
-        plan = self.ws.unit_meta().plan(self.ws.key(cwd), unit)
+        it has no record, names none or cannot be read."""
+        try:
+            plan = self.ws.unit_meta().plan(self.ws.key(cwd), unit)
+        except Busy, ContractError:
+            return None
         return set(plan["files"]) or None if plan else None
 
     def cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:

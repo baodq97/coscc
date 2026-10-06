@@ -83,6 +83,15 @@ class APlanStepNamesOnlyItsFiles(unittest.TestCase):
         self.assertTrue(said.get("is_error"), said)
         self.assertIn("a.py", said["content"][0]["text"])
 
+    def test_a_file_not_named_as_the_repository_names_it_is_refused(self):
+        # A label reads `files` as written: `./coscc/agent/policy.py` would miss the
+        # security surface and run as routine.
+        for path in ("./coscc/agent/policy.py", "coscc/loop/rules.py:40", "`a.py`", "/a.py"):
+            with self.subTest(path=path):
+                said = self.submit(files=[path], steps=[])
+                self.assertTrue(said.get("is_error"), said)
+                self.assertIn(path, said["content"][0]["text"])
+
     def test_disjoint_steps_inside_files_are_taken(self):
         said = self.submit(
             files=["a.py", "b.py", "c.py"],

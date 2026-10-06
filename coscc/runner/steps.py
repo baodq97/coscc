@@ -35,7 +35,7 @@ from coscc.units import backlog, mentions, planmap, retake, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
 from coscc.units.board import Unavailable
-from coscc.units.contracts import Plan
+from coscc.units.contracts import ContractError, Plan
 from coscc.units.ideas import Ideas
 from coscc.units.read import HoldView
 from coscc.units.workspaces import Workspaces
@@ -1059,7 +1059,10 @@ class Steps:
         the step here; every other read that fails is recorded as the reason."""
         mode = journal.modes(key).get((unit, stage), "manual")
         round_kw = _round_kwargs(found, row, stage, rounds_before)
-        plan = self.ws.unit_meta().plan(key, unit)
+        try:
+            plan = self.ws.unit_meta().plan(key, unit)
+        except (Busy, ContractError) as e:
+            raise Refused(str(e), ("unavailable",)) from e
         config, failed = await self._stage_config(
             cwd, key, journal, unit, stage, stages, plan, work
         )
