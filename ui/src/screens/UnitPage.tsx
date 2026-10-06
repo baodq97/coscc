@@ -21,7 +21,8 @@ const TARGET_USD = 15;
 
 export function UnitPage({ workspace, number }: { workspace: string; number: string }) {
   const { boards, loading } = useBoards();
-  const [tab, setTab] = useState<"activity" | "outputs">("activity");
+  // `#outputs` in the address opens the second tab, so a link can point at what an agent handed back.
+  const [tab, setTab] = useState<"activity" | "outputs">(location.hash === "#outputs" ? "outputs" : "activity");
   const placed = allUnits(boards).find((u) => u.workspace.name === workspace && u.number === Number(number));
   const query: Record<string, string> = placed ? { cwd: placed.workspace.path, name: placed.name } : {};
   const detail = useResource(placed ? "/api/units/{name}" : null, query, { on: [""] });
@@ -232,7 +233,7 @@ function Outputs({ outputs, names }: { outputs: OutputRecord[]; names: Record<st
       </Empty>
     );
   return (
-    <div className="col gap6">
+    <div id="outputs" className="col gap6">
       {outputs.map((o) => (
         <div key={o.agent} style={{ padding: "10px 12px", background: "var(--bg-sunk)", borderRadius: "var(--r2)" }}>
           <div className="row" style={{ gap: 6 }}>
