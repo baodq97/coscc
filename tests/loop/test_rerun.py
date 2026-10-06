@@ -1,13 +1,12 @@
 """`rerun` answers as its goldens hold in `python -m coscc.loop`: the offers, each refusal,
-and the `### Rerun` block with the digests of what it makes stale."""
+and the records of what a rerun makes stale."""
 
 from __future__ import annotations
 
 import json
 
 from coscc.loop import RERUNNABLE
-from coscc.loop.model import above_answers
-from tests.loop.conftest import UnitStore, entry, header, expect, python
+from tests.loop.conftest import UnitStore, entry, expect, header, python, rerun_row
 
 UNIT = "0001_x"
 KINDS = {
@@ -26,19 +25,23 @@ def make(store: UnitStore, statuses: dict[str, str], *, unmeasured: bool = False
     """A unit with one file per `statuses` item, the app's snapshot saying the same; with
     `unmeasured`, it says spec.md has an [unmeasured] item, so spike.md is required."""
     files = {f: header("x", s, KINDS[f]) for f, s in statuses.items()}
+    for f in statuses:
+        key = f.replace(".md", "_md")
+        fields[key] = {**fields.get(key, {}), "record": record(f)}
     if unmeasured:
-        fields["spec_md"] = {"result": {"unmeasured": ["U1"]}}
+        fields["spec_md"] = {**fields["spec_md"], "result": {"unmeasured": ["U1"]}}
     store.unit(UNIT, files, entry(statuses, **fields))
 
 
+def record(file: str) -> int:
+    """The record id an artifact holds: its place among the stages' files."""
+    return list(KINDS).index(file) + 1
+
+
 def make_stale(store: UnitStore, file: str, stage: str) -> None:
-    """A `### Rerun` block in intent.md that makes `file` stale: its digest is `file`'s now."""
-    digest = above_answers((store.cos / UNIT / file).read_text())
-    intent = store.cos / UNIT / "intent.md"
-    intent.write_text(
-        intent.read_text()
-        + "\n## Answers\n\n### Rerun\nRequested by: owner. Date: 2026-09-01. Via: product.\n"
-        + f"Stage: {stage}.\nStale: {file} sha256:{digest}\n"
+    """A rerun row that makes `file` stale: it names `file` with the record it holds now."""
+    store.units[f"ws/{UNIT}"]["reruns"].append(
+        rerun_row(stage, date="2026-09-01", **{file.replace(".md", "_md"): record(file)})
     )
 
 
@@ -180,31 +183,20 @@ def test_a_paused_unit_refuses_a_stage(store):
 # --- a granted rerun ---------------------------------------------------------------------
 
 
-def test_a_granted_rerun_prints_the_block_with_a_digest_per_file(store):
+def test_a_granted_rerun_prints_the_record_of_each_file_it_makes_stale(store):
     make(store, {"intent.md": "accepted", "spec.md": "accepted", "plan.md": "accepted"})
     r = rerun(store, UNIT, "spec")
     assert r.code == 0
     said = json.loads(r.out)
     assert said["later"] == ["plan", "impl", "pr", "review", "ship"]
-    lines = said["block"].split("\n")
-    assert lines[0] == "### Rerun"
-    assert lines[2] == "Stage: spec."
-    assert [line.split(" sha256:")[0] for line in lines[3:5]] == [
-        "Stale: spec.md",
-        "Stale: plan.md",
-    ]
-    assert all(len(line.split("sha256:")[1]) == 64 for line in lines[3:5])
-    assert said["block"].endswith("\n")
+    assert said["stale"] == {"spec.md": record("spec.md"), "plan.md": record("plan.md")}
 
 
 def test_a_granted_rerun_names_only_the_files_that_exist(store):
     make(store, {"intent.md": "accepted", "pr.md": "accepted"})
     said = json.loads(rerun(store, UNIT, "intent").out)
     assert said["later"] == ["spec", "plan", "impl", "pr", "review", "ship"]
-    assert [line.split(" sha256:")[0] for line in said["block"].split("\n")[3:-1]] == [
-        "Stale: intent.md",
-        "Stale: pr.md",
-    ]
+    assert said["stale"] == {"intent.md": record("intent.md"), "pr.md": record("pr.md")}
 
 
 def test_a_bad_unit_name_is_refused(store):

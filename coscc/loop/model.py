@@ -8,11 +8,8 @@ regex that reads `\\d`, `\\w` or `\\b` is `re.ASCII`, as the loop's regexes alwa
 
 from __future__ import annotations
 
-import datetime
-import hashlib
 import os
 import re
-import unicodedata
 from typing import Any
 
 from coscc.loop import (
@@ -20,7 +17,6 @@ from coscc.loop import (
     BRANCH_TYPES,
     DECIDERS,
     IDEAS,
-    RERUNNABLE,
     REVIEW_ROUNDS,
     SLUG_MAX,
     SLUG_RE,
@@ -32,10 +28,7 @@ from coscc.loop import (
     dig,
     js,
     nullish,
-    read_text,
-    split_lines,
     trim,
-    trim_end,
     truthy,
 )
 
@@ -43,27 +36,6 @@ A = re.ASCII
 
 # --- reading -------------------------------------------------------------------------
 
-STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+(?:-[A-Za-z]+)*)", A)
-
-
-def section(text, title):
-    """The lines of `## <title>` up to the next `## `, or `None` with no such heading."""
-    lines = split_lines(text)
-    start = next((i for i, l in enumerate(lines) if trim_end(l) == f"## {title}"), -1)
-    if start == -1:
-        return None
-    rest = lines[start + 1 :]
-    end = next((i for i, l in enumerate(rest) if l.startswith("## ")), -1)
-    return rest if end == -1 else rest[:end]
-
-
-def _find(items, pred):
-    return next((i for i, x in enumerate(items) if pred(x)), -1)
-
-
-ANSWER_META = re.compile(r"^Answered by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\.?\s*$", A)
-HOLD_HEAD = re.compile(r"^###\s+(Paused|Dropped|Resumed)\s*$", A)
-HOLD_META = re.compile(r"^Decided by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\.?\s*$", A)
 HOLD_TO = {"Paused": "paused", "Dropped": "dropped", "Resumed": "active"}
 HOLD_MOVES = {
     "active": ["paused", "dropped"],
@@ -71,40 +43,6 @@ HOLD_MOVES = {
     "dropped": ["paused"],
 }
 HOLD_HEAD_OF = {to: head for head, to in HOLD_TO.items()}
-MORE_ROUNDS_HEAD = re.compile(r"^###\s+More rounds\s*$", A)
-MORE_ROUNDS_N = re.compile(r"^Rounds:\s*(\d+)\s*$", A)
-RERUN_HEAD = re.compile(r"^###\s+Rerun\s*$", A)
-RERUN_META = re.compile(r"^Requested by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\.?\s*$", A)
-RERUN_STAGE = re.compile(r"^Stage:\s*([a-z]+)\.?\s*$", A)
-RERUN_STALE = re.compile(r"^Stale:\s*(\S+)\s+sha256:([0-9a-f]{64})\s*$", A)
-H3 = re.compile(r"^###\s", A)
-
-
-def answer_blocks(text):
-    lines = section(text, "Answers")
-    if lines is None:
-        return []
-    blocks: list[Any] = []
-    for line in lines:
-        m = re.match(r"^###\s+(?:Câu\s+(\d+)|(F\d+)|(Outcome))\s*$", line, A)
-        if m:
-            blocks.append(
-                {
-                    "n": int(m[1]) if m[1] is not None else None,
-                    "id": m[2],
-                    "outcome": m[3] is not None,
-                    "lines": [],
-                }
-            )
-        elif HOLD_HEAD.match(line):
-            blocks.append({"hold": True, "lines": []})
-        elif RERUN_HEAD.match(line):
-            blocks.append({"rerun": True, "lines": []})
-        elif MORE_ROUNDS_HEAD.match(line):
-            blocks.append({"moreRounds": True, "lines": []})
-        elif blocks:
-            blocks[-1]["lines"].append(line)
-    return blocks
 
 
 def fold_holds(rows):
@@ -128,84 +66,6 @@ def fold_holds(rows):
     return {"hold": hold, "problems": problems}
 
 
-def parse_more_rounds(text):
-    lines = section(text or "", "Answers")
-    problems = []
-    if lines is None:
-        return {"granted": 0, "problems": problems}
-    blocks: list[Any] = []
-    for line in lines:
-        if MORE_ROUNDS_HEAD.match(line):
-            blocks.append({"more": True, "lines": []})
-        elif H3.match(line):
-            blocks.append({"more": False, "lines": []})
-        elif blocks:
-            blocks[-1]["lines"].append(line)
-    granted = 0
-    k = 0
-    for b in blocks:
-        if not b["more"]:
-            continue
-        k += 1
-        body = [l for l in b["lines"] if trim(l) != ""]
-        first = body[0] if body else None
-        second = body[1] if len(body) > 1 else None
-        if first is None or not HOLD_META.match(first):
-            problems.append(
-                f"more rounds block {k} has no valid Decided by line — it is not counted"
-            )
-            continue
-        n = MORE_ROUNDS_N.match(second) if second is not None else None
-        if not n or int(n[1]) < 1:
-            problems.append(f"more rounds block {k} has no valid Rounds line — it is not counted")
-            continue
-        granted += int(n[1])
-    return {"granted": granted, "problems": problems}
-
-
-def above_answers(text):
-    lines = split_lines(text)
-    at = _find(lines, lambda l: trim_end(l) == "## Answers")
-    above = trim_end("\n".join(lines if at == -1 else lines[:at]))
-    return hashlib.sha256(above.encode("utf-8", "surrogatepass")).hexdigest()
-
-
-def parse_reruns(text):
-    lines = section(text or "", "Answers")
-    reruns = []
-    problems = []
-    if lines is None:
-        return {"reruns": reruns, "problems": problems}
-    blocks: list[Any] = []
-    for line in lines:
-        if RERUN_HEAD.match(line):
-            blocks.append({"rerun": True, "lines": []})
-        elif H3.match(line):
-            blocks.append({"rerun": False, "lines": []})
-        elif blocks:
-            blocks[-1]["lines"].append(line)
-    n = 0
-    for b in blocks:
-        if not b["rerun"]:
-            continue
-        n += 1
-        body = [l for l in b["lines"] if trim(l) != ""]
-        meta = RERUN_META.match(body[0]) if body else None
-        stage = RERUN_STAGE.match(body[1]) if len(body) > 1 else None
-        if not meta or not stage or stage[1] not in RERUNNABLE:
-            problems.append(
-                f"rerun block {n} has no well-formed Requested by: and Stage: lines — it is ignored"
-            )
-            continue
-        stale = {}
-        for l in body[2:]:
-            m = RERUN_STALE.match(l)
-            if m and m[1] in ARTIFACTS:
-                stale[m[1]] = m[2]
-        reruns.append({"stage": stage[1], "by": trim(meta[1]), "date": meta[2], "stale": stale})
-    return {"reruns": reruns, "problems": problems}
-
-
 def join_answers(questions, answers):
     if questions is None:
         return None
@@ -216,98 +76,8 @@ def join_answers(questions, answers):
     out = []
     for q in questions:
         a = latest.get(dig(q, "n"))
-        out.append(
-            {"n": dig(q, "n"), "text": dig(q, "text"), "answered": a is not None, "answer": a}
-        )
+        out.append({**q, "answered": a is not None, "answer": a})
     return out
-
-
-# --- the outcome a unit was measured against ------------------------------------------
-
-
-def _real_date(s):
-    y, m, d = (int(x) for x in s.split("-"))
-    try:
-        # Year 0 is a leap year in JavaScript's proleptic calendar, as 2000 is.
-        datetime.date(y or 2000, m, d)
-    except ValueError:
-        return False
-    return True
-
-
-def parse_deadline(text):
-    lines = section(text, "Proposed outcome")
-    if lines is None:
-        return None
-    for m in re.finditer(r"\b(\d{4}-\d{2}-\d{2})\b", "\n".join(lines), A):
-        if _real_date(m[1]):
-            return m[1]
-    return None
-
-
-OUTCOME_RESULTS = {"đạt": "met", "trượt": "missed", "không đo được": "unmeasurable"}
-OUTCOME_KEY = re.compile(r"^(Result|Measured by|Source|Reason):\s*(.*)$", A)
-
-
-def parse_outcome(text):
-    blocks: list[Any] = []
-    invalid = 0
-    for b in answer_blocks(text):
-        if not b.get("outcome"):
-            continue
-        at = _find(b["lines"], lambda l: trim(l) != "")
-        meta = None if at == -1 else ANSWER_META.match(b["lines"][at])
-        if not meta:
-            invalid += 1
-            continue
-        rest = b["lines"][at + 1 :]
-        i = _find(rest, lambda l: trim(l) != "")
-        if i == -1:
-            i = len(rest)
-        keys = {}
-        note = []
-        while i < len(rest) and trim(rest[i]) != "":
-            k = OUTCOME_KEY.match(trim(rest[i]))
-            if k:
-                keys[k[1]] = trim(k[2])
-            else:
-                note.append(rest[i])
-            i += 1
-        note.extend(rest[i:])
-        result = OUTCOME_RESULTS.get(unicodedata.normalize("NFC", keys.get("Result", "")).lower())
-        measured_by = keys.get("Measured by") or None
-        source = keys.get("Source") or None
-        reason = keys.get("Reason") or None
-        ok = (
-            result is not None
-            and measured_by is not None
-            and (reason is not None if result == "unmeasurable" else source is not None)
-        )
-        if not ok:
-            invalid += 1
-            continue
-        blocks.append({
-            "result": result, "by": trim(meta[1]), "date": meta[2], "via": meta[3],
-            "measuredBy": measured_by, "source": source, "reason": reason,
-            "note": trim("\n".join(note)) or None,
-        })  # fmt: skip
-    return {"blocks": blocks, "invalid": invalid}
-
-
-def unit_outcome(text):
-    parsed = parse_outcome(text)
-    last = parsed["blocks"][-1] if parsed["blocks"] else {}
-    return {
-        "deadline": parse_deadline(text),
-        "result": last.get("result"),
-        "by": last.get("by"),
-        "date": last.get("date"),
-        "measuredBy": last.get("measuredBy"),
-        "source": last.get("source"),
-        "reason": last.get("reason"),
-        "note": last.get("note"),
-        "invalid": parsed["invalid"],
-    }
 
 
 def unit_questions(unit):
@@ -318,8 +88,9 @@ def unit_questions(unit):
     questions = []
     for s in STAGES:
         for q in nullish(dig(unit["artifacts"], s["file"], "questions"), []):
+            asked = {k: v for k, v in q.items() if k not in ("answered", "answer")}
             questions.append({
-                "artifact": s["file"], "n": q["n"], "text": q["text"],
+                "artifact": s["file"], **asked,
                 "answered": q["answered"], "counted": s["file"] == counted,
             })  # fmt: skip
     asked = unit["artifacts"][counted]["questions"] if counted else []
@@ -330,198 +101,10 @@ def unit_questions(unit):
 # --- the pull request and the review rounds -------------------------------------------
 
 
-def parse_pr(text):
-    m = re.search(r"\bPR:\s*(\S+?/pull/(\d+))", text, A)
-    return {"url": m[1], "number": int(m[2])} if m else None
-
-
-TITLE_LINE = re.compile(r"^# PR:([^\n\r  ]*?)\r?$")
-
-
-def pr_text(text):
-    lines = text.split("\n")
-    title_at = _find(lines, lambda l: TITLE_LINE.fullmatch(l) is not None)
-    title_line = TITLE_LINE.fullmatch(lines[title_at]) if title_at != -1 else None
-    title = (trim(title_line[1]) or None) if title_line else None
-    m = STATUS_RE.search(text)
-    status_at = len(text[: m.start()].split("\n")) - 1 if m else -1
-    kept = [l for i, l in enumerate(lines) if i != status_at and i != title_at]
-    while kept and trim(kept[0]) == "":
-        kept.pop(0)
-    pr = parse_pr(text)
-    return {
-        "title": title,
-        "body": "\n".join(kept),
-        "url": pr["url"] if pr else None,
-        "scope": pr_scope(text),
-    }
-
-
 TYPE_LIST = ", ".join(BRANCH_TYPES)
 
-
-def title_problem(title, type_, number):
-    if not title:
-        return "pr.md has no title: its # PR: line is missing or empty"
-    m = re.fullmatch(r"([a-z]+)\((\d{4})\): ([^\n\r  ]+)", title, A)
-    if not m:
-        return f'the title "{title}" is not <type>(<NNNN>): <text>'
-    if m[1] not in BRANCH_TYPES:
-        return f'the title\'s type "{m[1]}" is not one of {TYPE_LIST}'
-    if not type_:
-        return f'the intent has handed back no type, so the title\'s type "{m[1]}" cannot be checked against it'
-    if m[1] != type_:
-        return f"the title's type is \"{m[1]}\", but the intent's type is {type_}"
-    if m[2] != number:
-        return f"the title names unit {m[2]}, not {number}"
-    if re.match(r"wip(?![a-z0-9])", m[3], A | re.I):
-        return 'the title\'s text opens with "wip" — it names the change, not how far it got'
-    marked = re.search("[À-ɏḀ-ỿ]", unicodedata.normalize("NFC", title))
-    if marked:
-        return f'the title carries "{marked[0]}", a letter with a diacritic — the title is English'
-    return None
-
-
-def title_needs(unit):
-    artifact = unit["artifacts"].get("pr.md")
-    if not artifact:
-        return []
-    wrong = title_problem(artifact.get("title"), unit.get("type"), unit["name"][:4])
-    return [f"{wrong} — the pr stage writes the # PR: line of pr.md again"] if wrong else []
-
-
-def pr_scope(text):
-    lines = [l.removesuffix("\r") for l in text.split("\n")]
-    at = _find(lines, lambda l: re.fullmatch(r"## Scope of the diff\s*", l, A) is not None)
-    if at == -1:
-        return None
-    nxt = next((i for i, l in enumerate(lines) if i > at and l.startswith("## ")), -1)
-    part = lines[at + 1 : len(lines) if nxt == -1 else nxt]
-    i = _find(part, lambda l: trim(l) != "")
-    m = None if i == -1 else re.fullmatch(r"(\d+) files, \+(\d+)/-(\d+)\s*", part[i], A)
-    if not m:
-        return None
-    i += 1
-    while i < len(part) and trim(part[i]) == "":
-        i += 1
-    paths = []
-    while i < len(part):
-        p = re.fullmatch(r"- `([^`]+)`\s*", part[i], A)
-        if not p:
-            break
-        paths.append(p[1])
-        i += 1
-    if len(set(paths)) != len(paths):
-        return None
-    return {"files": int(m[1]), "additions": int(m[2]), "deletions": int(m[3]), "paths": paths}
-
-
-ROUND_HEAD = re.compile(r"^## Round (\d+)\s*$", A)
-ROUND_META = re.compile(
-    r"^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*"
-    r"(pass|changes-requested|needs-person|incomplete)\.?\s*$",
-    A | re.I,
-)
 PERSON_LABELS = ["needs-person", "claim-rejected", "answered"]
-FINDING = re.compile(r"^- (F\d+)\s+\[([^\]]*)\]\s*([^\n\r  ]*)$", A)
 SEVERITY = re.compile(r"^\S+\s+—\s+(high|medium|low)\s+—\s", A | re.I)
-SCREENS_HEAD = re.compile(
-    r"^Taken at:\s*`?([0-9a-f]{7,40})`?\.\s+Standard:\s*`?([^`\s]+?)`?\.\s+"
-    r"Looked at by:\s*(.+?),\s*from screenshots\.?\s*$",
-    A | re.I,
-)
-SCREENS_SHOT = re.compile(
-    r"^- `?(\S+?\.png)`?\s+—\s+(\d+)\s*[×x]\s*(\d+)(?:\s*\([^()]*\))?\s+—\s+`?([^`\s]+)`?\s+—\s+"
-    r"(\S[^\n\r  ]*)$",
-    A,
-)
-
-
-def parse_review(text):
-    lines = split_lines(text)
-    stop = _find(lines, lambda l: trim_end(l) == "## Answers")
-    rounds: list[Any] = []
-    in_findings = False
-    in_screens = False
-    for line in lines if stop == -1 else lines[:stop]:
-        head = ROUND_HEAD.match(line)
-        if head:
-            rounds.append({
-                "n": int(head[1]), "reviewed": None, "verdict": None, "findings": [],
-                "screens": None, "seenText": False, "closed": False, "lines": [line],
-            })  # fmt: skip
-            in_findings = in_screens = False
-            continue
-        if line.startswith("## "):
-            if rounds:
-                rounds[-1]["closed"] = True
-            in_findings = in_screens = False
-            continue
-        r = rounds[-1] if rounds else None
-        if not r or r["closed"]:
-            continue
-        r["lines"].append(line)
-        if not r["seenText"] and trim(line) != "":
-            r["seenText"] = True
-            meta = ROUND_META.match(trim(line))
-            if meta:
-                r["reviewed"] = meta[1].lower()
-                r["verdict"] = meta[2].lower()
-                continue
-        if line.startswith("### "):
-            in_findings = trim_end(line) == "### Findings"
-            in_screens = trim_end(line) == "### Screens"
-            if in_screens and not r["screens"]:
-                r["screens"] = {
-                    "taken": None,
-                    "standard": None,
-                    "by": None,
-                    "header": None,
-                    "shots": [],
-                }
-            continue
-        if in_screens:
-            if trim(line) == "":
-                continue
-            if r["screens"]["header"] is None:
-                r["screens"]["header"] = trim(line)
-                m = SCREENS_HEAD.match(r["screens"]["header"])
-                if m:
-                    r["screens"].update({"taken": m[1].lower(), "standard": m[2], "by": trim(m[3])})
-                continue
-            shot = SCREENS_SHOT.match(trim(line))
-            if shot:
-                r["screens"]["shots"].append({
-                    "path": shot[1], "size": f"{shot[2]}x{shot[3]}",
-                    "address": shot[4], "result": trim(shot[5]),
-                })  # fmt: skip
-            continue
-        if not in_findings:
-            continue
-        f = FINDING.match(line)
-        if not f:
-            continue
-        label = trim(f[2])
-        lower = label.lower()
-        fixed = re.fullmatch(r"fixed\s+([0-9a-f]{7,40})", label, A | re.I)
-        body = trim(f[3])
-        severity = SEVERITY.match(body)
-        r["findings"].append({
-            "id": f[1],
-            "label": "open" if lower == "open" else "fixed" if fixed
-            else lower if lower in PERSON_LABELS else "unreadable",
-            "fixedBy": fixed[1].lower() if fixed else None,
-            "text": body,
-            "severity": severity[1].lower() if severity else None,
-        })  # fmt: skip
-    return with_dropped([
-        {
-            "n": r["n"], "reviewed": r["reviewed"], "verdict": r["verdict"],
-            "findings": r["findings"], "screens": r["screens"],
-            "text": trim_end("\n".join(r["lines"])),
-        }
-        for r in rounds
-    ])  # fmt: skip
 
 
 def with_dropped(rounds):
@@ -556,16 +139,24 @@ def _finding_from_row(f):
     return out
 
 
-def review_from(rows, parsed):
-    by_n = {r["n"]: r for r in parsed["rounds"]}
+def round_text(verdict, findings):
+    """A round's words, built from its rows: its verdict, then a line per finding."""
+    said = [f"Verdict: {js(verdict)}."]
+    said += [f"- {js(f['id'])} [{js(f['label'])}] {f['text']}" for f in findings]
+    return "\n".join(said)
+
+
+def review_from(rows):
+    """The review rounds the app recorded, each with its findings and the words they make."""
+    by_n: dict[Any, dict[str, Any]] = {}
     for row in rows:
         shots = nullish(dig(row, "screens", "shots"), [])
-        text = nullish(dig(by_n.get(row["n"], {}), "text"), "")
+        findings = [_finding_from_row(f) for f in row["findings"]]
         by_n[row["n"]] = {
             "n": row["n"],
             "reviewed": row.get("reviewed") or None,
             "verdict": dig(row, "verdict"),
-            "findings": [_finding_from_row(f) for f in row["findings"]],
+            "findings": findings,
             "screens": {
                 "taken": nullish(row["screens"].get("taken")),
                 "standard": nullish(row["screens"].get("standard")),
@@ -575,7 +166,7 @@ def review_from(rows, parsed):
                     {k: dig(s, k) for k in ("path", "size", "address", "result")} for s in shots
                 ],
             } if shots else None,
-            "text": text,
+            "text": round_text(dig(row, "verdict"), findings),
         }  # fmt: skip
     ordered = sorted(by_n.values(), key=lambda r: r["n"])
     return with_dropped(
@@ -583,27 +174,7 @@ def review_from(rows, parsed):
     )
 
 
-# --- the questions a spec could not answer, and what a spike measured -----------------
-
-
-def _header_line(own):
-    first = _find(own, lambda l: l.startswith("## "))
-    head = own if first == -1 else own[:first]
-    return next((l for l in head if re.search(r"\bStatus:", l, A)), None)
-
-
-def parse_ship(text):
-    lines = split_lines(text)
-    stop = _find(lines, lambda l: trim_end(l) == "## Answers")
-    own = lines if stop == -1 else lines[:stop]
-    header = _header_line(own)
-    round_ = re.search(r"\bRound:\s*(\d+)", header, A) if header is not None else None
-    out = nullish(section("\n".join(own), "What went out"), [])
-    refused = next((l for l in out if l.startswith("Refused:")), None)
-    return {
-        "round": int(round_[1]) if round_ else None,
-        "refused": (trim(refused[len("Refused:") :]) or None) if refused is not None else None,
-    }
+# --- the review limit -------------------------------------------------------------------
 
 
 def review_rounds(env=os.environ):
@@ -627,6 +198,8 @@ NO_ENTRY = {
     "unknowns": [],
     "merged": False,
     "shipped": False,
+    "reruns": [],
+    "roundsGranted": 0,
 }
 
 
@@ -1113,7 +686,7 @@ def branch_for(unit_name, type_):
 # --- a unit -------------------------------------------------------------------------------
 
 
-def _artifact(unit, known, file, text):
+def _artifact(unit, known, file):
     status = status_in(known, file)
     if status is None:
         unit["problems"].append(NO_STATUS.format(file=file))
@@ -1132,20 +705,15 @@ def _artifact(unit, known, file, text):
     if status == "skipped" and by not in DECIDERS:
         a["agentSkip"] = {"by": by}
     if file == "pr.md":
-        a["pr"] = parse_pr(text)
-        title = pr_text(text)["title"]
-        if title is not None:
-            a["title"] = title
+        a["pr"] = nullish(dig(known, "artifacts", file, "pr"))
     if file == "review.md":
-        rows = nullish(dig(known, "artifacts", file, "rounds"), [])
-        a["review"] = review_from(rows, parse_review(text)) if rows else parse_review(text)
+        a["review"] = review_from(nullish(dig(known, "artifacts", file, "rounds"), []))
         answers = answers_in(known, file)
         ids = [a_.get("id") for a_ in answers if not ("id" in a_ and a_["id"] is None)]
         a["personAnswers"] = list(dict.fromkeys(ids))
-        more = parse_more_rounds(text)
-        if more["granted"] > 0:
-            a["roundsGranted"] = more["granted"]
-        unit["problems"].extend(f"review.md: {p}" for p in more["problems"])
+        granted = nullish(dig(known, "roundsGranted"), 0)
+        if granted > 0:
+            a["roundsGranted"] = granted
     result = nullish(dig(known, "artifacts", file, "result"))
     if file == "impl.md":
         # Only the ids: a claim's sentence quotes its finding (`person_findings`).
@@ -1163,8 +731,8 @@ def _artifact(unit, known, file, text):
             },
         }
     if file == "ship.md":
-        ship = parse_ship(text)
-        if ship["round"] is not None or ship["refused"] is not None:
+        ship = nullish(dig(known, "artifacts", file, "ship"))
+        if ship and (ship.get("round") is not None or ship.get("refused") is not None):
             a["ship"] = ship
     if file == "plan.md" and required(unit, SPIKE):
         a["restsOn"] = list(nullish(dig(result, "rests_on"), []))
@@ -1175,12 +743,25 @@ def _artifact(unit, known, file, text):
         a["questions"] = questions
 
 
-def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
-    """`readUnit`: `state` is the snapshot; the files are read for what it does not keep."""
+def stale_marks(unit, known):
+    """Each settled artifact a person's rerun named at the record it still holds is stale."""
+    reruns = nullish(dig(known, "reruns"), [])
+    for file, a in unit["artifacts"].items():
+        record = dig(known, "artifacts", file, "record")
+        if not reruns or record in (None, UNDEFINED) or not settled(status_of(unit, file)):
+            continue
+        if file == "spike.md" and not unmeasured_of(unit)["ids"]:
+            continue
+        by = next((r for r in reversed(reruns) if dig(r, "stale", file) == record), None)
+        if by:
+            a["stale"] = {"stage": by["stage"], "date": by["date"]}
+
+
+def read_unit(dir_, name, state):  # noqa: PLR0915 - `readUnit` kept whole
+    """`readUnit`: `state` is the snapshot, the one source; the directory says which artifacts
+    are present."""
     unit: dict[str, Any] = {"name": name, "artifacts": {}, "problems": []}
     known = nullish(entry_of(state, state["workspace"], name), NO_ENTRY)
-    intent_text = None
-    texts = {}
     match = UNIT_RE.fullmatch(name)
     if not match:
         unit["problems"].append("directory name does not match NNNN_<slug>")
@@ -1189,14 +770,9 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
         unit["slug"] = match[2]
 
     for file in ARTIFACTS:
-        path = os.path.join(dir_, file)
-        if not os.path.exists(path):
-            continue
-        text = read_text(path)
-        texts[file] = text
-        if file == "intent.md":
-            intent_text = text
-        _artifact(unit, known, file, text)
+        if os.path.exists(os.path.join(dir_, file)):
+            _artifact(unit, known, file)
+    has_intent = present(unit, "intent.md")
     for file, a in nullish(dig(known, "artifacts"), {}).items():
         if not dig(a, "status") or file in unit["artifacts"]:
             continue
@@ -1250,11 +826,10 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
     unit.update(lane_of(unit, dig(known, "artifacts", "intent.md", "result", "fix"), left_lane))
     if unit["enteredFast"] and status_of(unit, "impl.md") == "draft" and _said(left_lane):
         unit["artifacts"]["impl.md"]["leftLane"] = True
-    unit["outcome"] = None if intent_text is None else unit_outcome(intent_text)
 
     # An idea is held too; with no intent.md a problem names no file.
     held = fold_holds(nullish(dig(known, "holds"), []))
-    where = "" if intent_text is None else "intent.md: "
+    where = "intent.md: " if has_intent else ""
     unit["problems"].extend(f"{where}{p}" for p in held["problems"])
     unit["hold"] = held["hold"]
     # Only when true, so a unit that never shipped reads as it did before.
@@ -1262,7 +837,7 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
         unit["shipped"] = True
     ended = ended_of(unit)
     if ended and unit["hold"]:
-        carrier = "the unit" if intent_text is None else "intent.md"
+        carrier = "intent.md" if has_intent else "the unit"
         unit["problems"].append(
             f"{carrier} carries a hold block, but the unit is {ended} — it is ignored"
         )
@@ -1270,19 +845,9 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
     hold_state = dig(unit, "hold", "state") if unit["hold"] else "active"
     unit["holdMoves"] = [] if ended else list(HOLD_MOVES[hold_state])
 
-    rerun = parse_reruns(intent_text)
-    unit["problems"].extend(f"intent.md: {p}" for p in rerun["problems"])
-    for file, text in texts.items():
-        if not rerun["reruns"] or not settled(status_of(unit, file)):
-            continue
-        if file == "spike.md" and not unmeasured_of(unit)["ids"]:
-            continue
-        digest = above_answers(text)
-        by = next((r for r in reversed(rerun["reruns"]) if r["stale"].get(file) == digest), None)
-        if by:
-            unit["artifacts"][file]["stale"] = {"stage": by["stage"], "date": by["date"]}
+    stale_marks(unit, known)
 
-    if intent_text is not None:
+    if has_intent:
         resolve_links(unit, nullish(dig(known, "links"), NO_ENTRY["links"]), state)
     return unit
 

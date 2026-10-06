@@ -131,7 +131,7 @@
  ],
  "tests/loop/test_repo_rules.py::test_next_after_changes_were_asked_and_git_cannot_say[no pr]#1": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"fix the open findings of review round 1 on the branch, then write-review again (1 of 3 rounds used) — pr.md names no pull request to read the branch from\",\"blocked\":true,\"reasons\":[\"changes-requested\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"fix the open findings of review round 1 on the branch, then write-review again (1 of 3 rounds used) — no pull request is recorded to read the branch from\",\"blocked\":true,\"reasons\":[\"changes-requested\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_next_after_changes_were_asked_and_git_cannot_say[no repo]#1": [
@@ -167,66 +167,6 @@
  "tests/loop/test_repo_rules.py::test_next_after_the_branch_was_rewritten[no trunk]#1": [
   0,
   "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"#7 was rewritten past 8a1460c — its patch could not be compared with the reviewed one: there is no origin/main and no main here to take the merge-base from; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"changes-requested\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[None]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - pr.md has no title: its # PR: line is missing or empty — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[None]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - pr.md has no title: its # PR: line is missing or empty — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040) add]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title \\\"feat(0040) add\\\" is not <type>(<NNNN>): <text> — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040) add]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040): caf\\xe9]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title carries \\\"é\\\", a letter with a diacritic — the title is English — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040): caf\\xe9]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040): wip]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title's text opens with \\\"wip\\\" — it names the change, not how far it got — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[feat(0040): wip]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[fix(0041): add]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title's type is \\\"fix\\\", but the intent's type is feat — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[fix(0041): add]#2": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md does not exist\"],\"reasons\":[\"missing\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_in_a_repository_that_is_not_there#1": [
@@ -536,7 +476,7 @@
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_without_a_repo_or_a_pr#2": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - pr.md names no pull request — the pr stage opens one and writes PR: <url>\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - no pull request is recorded — the pr stage opens one\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_screens_counts_the_files_the_globs_name[files0]#1": [
@@ -701,43 +641,43 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - pr.md names no pull request — nothing says what ship would merge\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - no pull request is recorded — nothing says what ship would merge\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#2": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - pr.md names no pull request — the pr stage opens one and writes PR: <url>\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - no pull request is recorded — the pr stage opens one\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#3": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"pr.md names no pull request — nothing says what ship would merge\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"no pull request is recorded — nothing says what ship would merge\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#4": [
   1,
   "",
-  "blocked: ship cannot proceed for 0040_widget\n  - pr.md names no pull request — nothing says what ship would merge\n"
+  "blocked: ship cannot proceed for 0040_widget\n  - no pull request is recorded — nothing says what ship would merge\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#5": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - the intent has handed back no type, so the title's type \\\"feat\\\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review.md has no ## Round — nothing says what was reviewed or found\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#6": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - pr.md names no pull request — the pr stage opens one and writes PR: <url>\",\"  - the intent has handed back no type, so the title's type \\\"feat\\\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - no pull request is recorded — the pr stage opens one\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#7": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"the intent has handed back no type, so the title's type \\\"feat\\\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"review.md has no ## Round — nothing says what was reviewed or found\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#8": [
   1,
   "",
-  "blocked: ship cannot proceed for 0040_widget\n  - the intent has handed back no type, so the title's type \"feat\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\n"
+  "blocked: ship cannot proceed for 0040_widget\n  - review.md has no ## Round — nothing says what was reviewed or found\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_already_merged#1": [
   0,
@@ -1644,45 +1584,25 @@
   "open: ship may proceed for 0040_widget — merge with --match-head-commit d7d879bfa7f81bfc36dcf49cf2098c53551bf2bd\n",
   ""
  ],
- "tests/loop/test_repo_rules.py::test_ship_gate_screens[header does not parse]#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review round 1 passed, but the first line of its ### Screens is not \\\"Taken at: <sha>. Standard: <path>. Looked at by: <which agent session>, from screenshots.\\\" — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\"],\"reasons\":[\"gate-closed\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_screens[header does not parse]#2": [
-  0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\",\"review round 1 passed on d7d879b and the ship gate is still closed: review round 1 passed, but the first line of its ### Screens is not \\\"Taken at: <sha>. Standard: <path>. Looked at by: <which agent session>, from screenshots.\\\" — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens — this round is the one retry: fix what that names in this round; a second passing round on the same head that leaves ship closed stops the unit for a person\"]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_screens[header does not parse]#3": [
-  0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"review round 1 passed, but the first line of its ### Screens is not \\\"Taken at: <sha>. Standard: <path>. Looked at by: <which agent session>, from screenshots.\\\" — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
-  ""
- ],
- "tests/loop/test_repo_rules.py::test_ship_gate_screens[header does not parse]#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - review round 1 passed, but the first line of its ### Screens is not \"Taken at: <sha>. Standard: <path>. Looked at by: <which agent session>, from screenshots.\" — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\n"
- ],
  "tests/loop/test_repo_rules.py::test_ship_gate_screens[no shot]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review round 1 passed, but its ### Screens lists no screenshot — one line per image, \\\"- <path>.png — <W>×<H> — <address> — <result>\\\" — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review round 1 passed, but it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_screens[no shot]#2": [
   0,
-  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\",\"review round 1 passed on d7d879b and the ship gate is still closed: review round 1 passed, but its ### Screens lists no screenshot — one line per image, \\\"- <path>.png — <W>×<H> — <address> — <result>\\\" — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens — this round is the one retry: fix what that names in this round; a second passing round on the same head that leaves ship closed stops the unit for a person\"]}\n",
+  "{\"ok\":true,\"lines\":[\"open: review may proceed for 0040_widget\",\"review round 1 passed on d7d879b and the ship gate is still closed: review round 1 passed, but it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens — this round is the one retry: fix what that names in this round; a second passing round on the same head that leaves ship closed stops the unit for a person\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_screens[no shot]#3": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"review round 1 passed, but its ### Screens lists no screenshot — one line per image, \\\"- <path>.png — <W>×<H> — <address> — <result>\\\" — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"review round 1 passed, but it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens; CI is green: write-review\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_screens[no shot]#4": [
   1,
   "",
-  "blocked: ship cannot proceed for 0040_widget\n  - review round 1 passed, but its ### Screens lists no screenshot — one line per image, \"- <path>.png — <W>×<H> — <address> — <result>\" — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\n"
+  "blocked: ship cannot proceed for 0040_widget\n  - review round 1 passed, but it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section — this unit changes src/ui/page.py, which .claude/rules/ui-standard.md counts as screens\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_screens[none]#1": [
   1,
@@ -2006,7 +1926,7 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[5]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 carries no title gh could read, not pr.md's \\\"feat(0040): add the widget\\\" — start ship from the board, which puts pr.md onto it first\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 carries no title gh could read, not the unit's \\\"feat(0040): widget\\\" — start ship from the board, which puts it onto the pull request first\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[5]#2": [
@@ -2016,17 +1936,17 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[5]#3": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — #7 carries no title gh could read, not pr.md's \\\"feat(0040): add the widget\\\" — start ship from the board, which puts pr.md onto it first\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — #7 carries no title gh could read, not the unit's \\\"feat(0040): widget\\\" — start ship from the board, which puts it onto the pull request first\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[5]#4": [
   1,
   "",
-  "blocked: ship cannot proceed for 0040_widget\n  - #7 carries no title gh could read, not pr.md's \"feat(0040): add the widget\" — start ship from the board, which puts pr.md onto it first\n"
+  "blocked: ship cannot proceed for 0040_widget\n  - #7 carries no title gh could read, not the unit's \"feat(0040): widget\" — start ship from the board, which puts it onto the pull request first\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[None]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 carries no title gh could read, not pr.md's \\\"feat(0040): add the widget\\\" — start ship from the board, which puts pr.md onto it first\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 carries no title gh could read, not the unit's \\\"feat(0040): widget\\\" — start ship from the board, which puts it onto the pull request first\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[None]#2": [
@@ -2036,17 +1956,17 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[None]#3": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — #7 carries no title gh could read, not pr.md's \\\"feat(0040): add the widget\\\" — start ship from the board, which puts pr.md onto it first\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — #7 carries no title gh could read, not the unit's \\\"feat(0040): widget\\\" — start ship from the board, which puts it onto the pull request first\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[None]#4": [
   1,
   "",
-  "blocked: ship cannot proceed for 0040_widget\n  - #7 carries no title gh could read, not pr.md's \"feat(0040): add the widget\" — start ship from the board, which puts pr.md onto it first\n"
+  "blocked: ship cannot proceed for 0040_widget\n  - #7 carries no title gh could read, not the unit's \"feat(0040): widget\" — start ship from the board, which puts it onto the pull request first\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 carries the title \\\"\\\", not pr.md's \\\"feat(0040): add the widget\\\" — start ship from the board, which puts pr.md onto it first\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 carries the title \\\"\\\", not the unit's \\\"feat(0040): widget\\\" — start ship from the board, which puts it onto the pull request first\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[]#2": [
@@ -2056,17 +1976,17 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[]#3": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — #7 carries the title \\\"\\\", not pr.md's \\\"feat(0040): add the widget\\\" — start ship from the board, which puts pr.md onto it first\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — #7 carries the title \\\"\\\", not the unit's \\\"feat(0040): widget\\\" — start ship from the board, which puts it onto the pull request first\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[]#4": [
   1,
   "",
-  "blocked: ship cannot proceed for 0040_widget\n  - #7 carries the title \"\", not pr.md's \"feat(0040): add the widget\" — start ship from the board, which puts pr.md onto it first\n"
+  "blocked: ship cannot proceed for 0040_widget\n  - #7 carries the title \"\", not the unit's \"feat(0040): widget\" — start ship from the board, which puts it onto the pull request first\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[feat(0040): other]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 carries the title \\\"feat(0040): other\\\", not pr.md's \\\"feat(0040): add the widget\\\" — start ship from the board, which puts pr.md onto it first\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - #7 carries the title \\\"feat(0040): other\\\", not the unit's \\\"feat(0040): widget\\\" — start ship from the board, which puts it onto the pull request first\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[feat(0040): other]#2": [
@@ -2076,17 +1996,17 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[feat(0040): other]#3": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — #7 carries the title \\\"feat(0040): other\\\", not pr.md's \\\"feat(0040): add the widget\\\" — start ship from the board, which puts pr.md onto it first\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — #7 carries the title \\\"feat(0040): other\\\", not the unit's \\\"feat(0040): widget\\\" — start ship from the board, which puts it onto the pull request first\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_when_the_pull_request_carries_another_title[feat(0040): other]#4": [
   1,
   "",
-  "blocked: ship cannot proceed for 0040_widget\n  - #7 carries the title \"feat(0040): other\", not pr.md's \"feat(0040): add the widget\" — start ship from the board, which puts pr.md onto it first\n"
+  "blocked: ship cannot proceed for 0040_widget\n  - #7 carries the title \"feat(0040): other\", not the unit's \"feat(0040): widget\" — start ship from the board, which puts it onto the pull request first\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_with_an_answer_that_closes_a_finding#1": [
-  1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - review round 1 still has findings not fixed: F1 [answered, no answer in review.md]\"],\"reasons\":[\"gate-closed\"]}\n",
+  0,
+  "{\"ok\":true,\"lines\":[\"open: ship may proceed for 0040_widget — merge with --match-head-commit 8a1460c9f5453964e23365c35cfb247ca8b30b71\"],\"reasons\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_with_an_answer_that_closes_a_finding#2": [
@@ -2096,13 +2016,13 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_with_an_answer_that_closes_a_finding#3": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"review round 1 still has findings not fixed: F1 [answered, no answer in review.md]\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"ship\",\"action\":\"ship — merge with --match-head-commit 8a1460c9f5453964e23365c35cfb247ca8b30b71\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_with_an_answer_that_closes_a_finding#4": [
-  1,
-  "",
-  "blocked: ship cannot proceed for 0040_widget\n  - review round 1 still has findings not fixed: F1 [answered, no answer in review.md]\n"
+  0,
+  "open: ship may proceed for 0040_widget — merge with --match-head-commit 8a1460c9f5453964e23365c35cfb247ca8b30b71\n",
+  ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_without_a_repo#1": [
   1,

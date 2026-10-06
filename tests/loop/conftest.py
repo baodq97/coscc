@@ -106,11 +106,6 @@ def expect(argv, *, environ=None, stdin=None, cwd=REPO) -> Ran:
     # A new case has no golden to be held to: it asserts fixed values instead.
     assert key in table, f"no golden for {key}: assert what the command says in the test"
     said, want = [got.code, _plain(got.out), _plain(got.err)], table[key]
-    if os.environ.get(CONTRADICT):
-        # A digest is of the file's text, which the contradiction changed; it decides nothing.
-        said, want = (
-            [c, *(_DIGEST.sub("sha256:<digest>", t) for t in r)] for c, *r in (said, want)
-        )
     assert said == want, f"argv: {argv}"
     return got
 
@@ -125,12 +120,15 @@ def entry(
     unknowns: list | None = None,
     merged: bool = False,
     shipped: bool = False,
+    reruns: list | None = None,
+    rounds_granted: int = 0,
     **artifact_fields: dict,
 ) -> dict:
     """A snapshot entry as `UnitMeta.snapshot` builds it: `{file: status}` and the rest.
 
-    `artifact_fields` adds keys to one artifact's record, `review_md={"rounds": [...]}` for
-    `review.md`.
+    `artifact_fields` adds keys to one artifact's entry: `review_md={"rounds": [round_row(...)]}`,
+    `pr_md=pr_row(7)`, `ship_md={"ship": {"round": 1, "refused": None}}`, `spec_md={"record": 3}`.
+    `reruns` are `rerun_row(...)`s; `rounds_granted` the more rounds a person allowed.
     """
     arts: dict[str, dict] = {f: {"status": s} for f, s in (artifacts or {}).items()}
     for key, extra in artifact_fields.items():
@@ -144,10 +142,65 @@ def entry(
         "unknowns": unknowns or [],
         "merged": merged,
         "shipped": shipped,
+        "reruns": reruns or [],
+        "roundsGranted": rounds_granted,
     }
 
 
-_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+def pr_row(number: int = 7, url: str | None = None, record: int = 1) -> dict:
+    """`pr.md`'s entry fields: the pull request the PR machine's last `open` recorded."""
+    return {
+        "pr": {"number": number, "url": url or f"https://github.com/o/r/pull/{number}"},
+        "record": record,
+    }
+
+
+def finding_row(
+    id: str,
+    label: str,
+    severity: str = "high",
+    text: str = "the function is wrong",
+    path: str = "src/a.py",
+    lines: str = "",
+    rule: str = "",
+    fixed_in: str | None = None,
+) -> dict:
+    """One `review_findings` row as the snapshot carries it."""
+    return {
+        "id": id,
+        "label": label,
+        "fixedIn": fixed_in,
+        "severity": severity,
+        "rule": rule,
+        "path": path,
+        "lines": lines,
+        "text": text,
+    }
+
+
+def round_row(
+    n: int, verdict: str, reviewed: str, *findings: dict, screens: dict | None = None
+) -> dict:
+    """One `review_rounds` row: `screens` is `{taken, standard, by, shots: [{path, size,
+    address, result}]}` or none."""
+    return {
+        "n": n,
+        "reviewed": reviewed,
+        "verdict": verdict,
+        "screens": screens or {},
+        "findings": list(findings),
+    }
+
+
+def rerun_row(stage: str, date: str = "2026-10-01", **stale: int) -> dict:
+    """A person's rerun of `stage`: `stale` maps a file (`spec_md=3`) to the record it held."""
+    return {
+        "stage": stage,
+        "stale": {k.replace("_md", ".md"): v for k, v in stale.items()},
+        "date": date,
+    }
+
+
 # Set by `test_reads_no_artifact`: every header then says what no row says, so a decision read
 # from a file's text instead of the snapshot shows as a changed golden.
 CONTRADICT = "COS_LOOP_CONTRADICT"

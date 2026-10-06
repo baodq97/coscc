@@ -18,16 +18,14 @@ import pytest
 from coscc.loop import STAGE_NAMES, stringify
 from coscc.loop.model import (
     WAITING_ON,
-    above_answers,
     lane_of,
     parse_unit_ref,
     read_unit,
-    title_problem,
 )
 from coscc.loop.probe import make_probe
 from coscc.loop.repo_rules import branch_checks
 from coscc.loop.rules import gate_answer, next_answer
-from tests.loop.conftest import python
+from tests.loop.conftest import pr_row, python, rerun_row
 from tests.loop.test_model import (
     NOT_ANCESTOR,
     check_gate,
@@ -44,7 +42,7 @@ from tests.loop.test_model import (
     moved_to,
     ok,
     passed,
-    read,
+    fr,
     review_art,
     round_,
     unit,
@@ -110,15 +108,6 @@ def read_in(dir_: Path, name: str, root: Path, peers=(), links=None, entry=None)
         "links": state["units"][f"{own}/{name}"]["links"],
     }
     return read_unit(str(dir_), name, state)
-
-
-def tree(tmp_path: Path, files: dict[str, str], entry: dict) -> dict:
-    """`read_unit` of a unit holding `files`, its rows `entry`."""
-    d = tmp_path / "qroot" / ".cos" / "0001_q"
-    d.mkdir(parents=True)
-    for f, text in files.items():
-        (d / f).write_text(text)
-    return read(d, "0001_q", entry)
 
 
 def make_store(tmp_path: Path, units: dict) -> Path:
@@ -532,24 +521,7 @@ def test_status_carries_the_source_of_a_backlog_dependency_and_a_unit_with_none_
     assert re.search(r"waits on 0003_z: .* \(Depends on:\)", gate.err)
 
 
-# --- the pull request's title -------------------------------------------------------------
-
-PR_MD = "\n".join(
-    [
-        "# PR: the pr body is taken from pr.md",
-        "Intent: intent.md. Impl: impl.md. PR: https://github.com/o/r/pull/7. Author: a. "
-        "Status: accepted.",
-        "",
-        "## Where",
-        "",
-        "https://github.com/o/r/pull/7, branch fix/x, checks pending.",
-        "",
-        "## Scope of the diff",
-        "",
-        "## What a reviewer should look at first",
-        "",
-    ]
-)
+# --- a red check, and the pull request's title ---------------------------------------------
 
 
 def test_a_red_check_that_sends_the_work_back_to_impl_waits_on_the_dependency_too(tmp_path):
@@ -559,7 +531,7 @@ def test_a_red_check_that_sends_the_work_back_to_impl_waits_on_the_dependency_to
         return {
             **to_impl(),
             "impl.md": "# Impl\nStatus: accepted.\n",
-            "pr.md": PR_MD.replace("# PR: the pr body is taken from pr.md", f"# PR: feat({n}): x"),
+            "pr.md": "# PR: x\nStatus: accepted.\n",
         }
 
     a = make_store(tmp_path, {"0001_x": {"intent.md": intent_for("accepted")}})
@@ -571,15 +543,18 @@ def test_a_red_check_that_sends_the_work_back_to_impl_waits_on_the_dependency_to
         },
     )
 
-    rows = known(
-        {
-            "intent.md": "accepted",
-            "spec.md": "skipped",
-            "plan.md": "accepted",
-            "impl.md": "accepted",
-            "pr.md": "accepted",
-        }
-    )
+    rows = {
+        **known(
+            {
+                "intent.md": "accepted",
+                "spec.md": "skipped",
+                "plan.md": "accepted",
+                "impl.md": "accepted",
+                "pr.md": "accepted",
+            }
+        )
+    }
+    rows["artifacts"]["pr.md"].update(pr_row(7))
 
     def read(name):
         return read_in(b / ".cos" / name, name, b, [("a", a)], Y_LINKS, rows)
@@ -594,90 +569,6 @@ def test_a_red_check_that_sends_the_work_back_to_impl_waits_on_the_dependency_to
     }
 
 
-TITLE_REFUSED = [
-    (
-        "wip: impl run 1 stopped at max_turns before committing",
-        "0049",
-        r"is not <type>\(<NNNN>\): <text>",
-    ),
-    ("a clean rebase voids a passing review", "0049", r"is not <type>\(<NNNN>\): <text>"),
-    ("feat(0049): x", "0049", r'type is "feat", but the intent\'s type is fix'),
-    ("fix(0049): x", "0048", r"names unit 0049, not 0048"),
-    ("fix(0049): wip x", "0049", r'opens with "wip"'),
-    ("fix(0049): WIP: x", "0049", r'opens with "wip"'),
-    ("fix(0049): tiêu đề", "0049", r'carries "ê", a letter with a diacritic'),
-    ("fix(0049): de đi", "0049", r'carries "đ"'),
-    ("wibble(0049): x", "0049", r'type "wibble" is not one of feat, fix'),
-    (None, "0049", r"no title"),
-    ("", "0049", r"no title"),
-]
-
-
-def test_title_problem_refuses_the_titles_the_spec_names_and_passes_the_one_it_names():
-    for title, number, why in TITLE_REFUSED:
-        assert re.search(why, title_problem(title, "fix", number) or "null"), str(title)
-    assert title_problem("fix(0049): a pr title is taken from pr.md", "fix", "0049") is None
-    # `wip` is a word, not a prefix: `wipe` is text like any other.
-    assert title_problem("fix(0049): wipe the stale manifest", "fix", "0049") is None
-
-
-def pr_tree(tmp_path: Path, files: dict) -> Path:
-    root = tmp_path / "prroot"
-    for name, text in files.items():
-        (root / ".cos" / name).mkdir(parents=True)
-        (root / ".cos" / name / "intent.md").write_text(
-            "# Intent: x\nAuthor: a. Type: fix. Status: accepted.\n"
-        )
-        if text is not None:
-            (root / ".cos" / name / "pr.md").write_text(text)
-    return root
-
-
-WIP = "wip: impl run 1 stopped at max_turns before committing"
-AGAIN = "the pr stage writes the # PR: line of pr.md again"
-
-
-def test_the_review_gate_is_closed_on_a_title_outside_the_grammar_before_gh_is_asked(tmp_path):
-    calls: list[str] = []
-    u = branched({**CHAIN, "pr.md": {**PR, "title": WIP}})
-    g = check_gate(u, "review", counted(green_probe(), calls))
-    assert g["ok"] is False
-    assert g["need"] == [f"{title_problem(WIP, 'feat', '0001')} — {AGAIN}"]
-    assert g["need"][0].startswith(f'the title "{WIP}" is not <type>(<NNNN>): <text>')
-    assert calls == []
-    # Read off the file, as the board reads it: a pr.md with no # PR: line at all.
-    files = {
-        "intent.md": "# I\nAuthor: t. Type: feat. Status: accepted.\n",
-        "spec.md": "Status: accepted.\n",
-        "plan.md": "Status: accepted.\n",
-        "impl.md": "Status: accepted.\n",
-        "pr.md": "PR: https://github.com/o/r/pull/1. Status: accepted.\n",
-    }
-    read = tree(tmp_path, files, known({f: "accepted" for f in files}))
-    assert re.search(
-        r"pr\.md has no title", check_gate(read, "review", counted(green_probe(), calls))["need"][0]
-    )
-    assert calls == []
-    # And with a good one the gate reads CI as before.
-    assert check_gate(branched(CHAIN), "review", green_probe())["ok"] is True
-
-
-def test_next_names_no_stage_for_a_unit_whose_pr_md_title_is_outside_the_grammar():
-    calls: list[str] = []
-    title = "a clean rebase voids a passing review"
-    n = next_step(
-        branched({**CHAIN, "pr.md": {**PR, "title": title}}), counted(green_probe(), calls)
-    )
-    assert n["stage"] == ""
-    assert n["blocked"] is True
-    assert re.search(
-        r'the title "a clean rebase voids a passing review" is not <type>\(<NNNN>\): <text>'
-        r" — the pr stage writes",
-        n["action"],
-    )
-    assert calls == []
-
-
 def titled_view(**over) -> dict:
     return {"state": "OPEN", "headRefOid": SHA, **over}
 
@@ -688,8 +579,8 @@ def test_the_ship_gate_is_closed_when_the_open_pull_requests_title_differs_and_n
     assert g["ok"] is False
     assert len(g["need"]) == 1, "the title is the only reason"
     assert g["need"][0] == (
-        '#7 carries the title "wip: something else", not pr.md\'s "feat(0001): x" — start ship '
-        "from the board, which puts pr.md onto it first"
+        '#7 carries the title "wip: something else", not the unit\'s "feat(0001): x" — start ship '
+        "from the board, which puts it onto the pull request first"
     )
     # gh giving no title is not a title that matches.
     untitled = SimpleNamespace(
@@ -703,13 +594,13 @@ def test_the_ship_gate_is_closed_when_the_open_pull_requests_title_differs_and_n
     none = check_gate(passed(), "ship", untitled)
     assert none["ok"] is False
     assert re.search(
-        r'#7 carries no title gh could read, not pr\.md\'s "feat\(0001\): x"', none["need"][0]
+        r'#7 carries no title gh could read, not the unit\'s "feat\(0001\): x"', none["need"][0]
     )
     # Only once everything else is open: a finding still open is named, and the title is not.
     open_ = branched(
         {
             **CHAIN,
-            "review.md": review_art("accepted", round_(1, "pass", ["- F1 [open] x"])),
+            "review.md": review_art("accepted", [round_(1, "pass", [fr("F1", "open")])]),
         }
     )
     assert "carries the title" not in "\n".join(check_gate(open_, "ship", differs)["need"])
@@ -835,7 +726,7 @@ def test_a_spec_a_plan_or_a_left_lane_in_the_impl_record_keeps_a_fix_in_full_and
     assert lane_for(left_lane=None) == FAST
 
 
-def lane_tree(tmp_path, files, statuses, fix=FIX, left_lane=None, holds=None):
+def lane_tree(tmp_path, files, statuses, fix=FIX, left_lane=None, holds=None, reruns=None):
     """One store holding a unit with `files`, whose rows say `statuses` (a dict the test may
     change), asked through the command line as the app asks, its records saying `fix` (intent)
     and `left_lane` (impl)."""
@@ -843,11 +734,13 @@ def lane_tree(tmp_path, files, statuses, fix=FIX, left_lane=None, holds=None):
     records = {"intent.md": {"result": {"judgement": "ready", "fix": fix}}}
     if fix is None:
         records = {}
+    if reruns:
+        records["intent.md"]["record"] = 3
     if left_lane is not None:
         records["impl.md"] = {"result": {"judgement": "ready", "left_lane": left_lane}}
 
     def run(*args):
-        units = {"/0001_x": known(statuses, type="fix", holds=holds)}
+        units = {"/0001_x": {**known(statuses, type="fix", holds=holds), "reruns": reruns or []}}
         return ask("--root", root, *args, records={"0001_x": records}, units=units)
 
     return SimpleNamespace(
@@ -893,12 +786,9 @@ def test_gate_impl_in_the_fast_lane_stays_shut_while_stale_held_or_a_dependency_
     tmp_path,
 ):
     text = intent_of()
-    rerun = (
-        "\n## Answers\n\n### Rerun\nRequested by: owner. Date: 2026-09-29. Via: product.\n"
-        f"Stage: intent.\nStale: intent.md sha256:{above_answers(text)}\n"
-    )
     accepted = {"intent.md": "accepted"}
-    stale = lane_tree(tmp_path, {"intent.md": text + rerun}, accepted)
+    rerun = [rerun_row("intent", date="2026-09-29", intent_md=3)]
+    stale = lane_tree(tmp_path, {"intent.md": text}, accepted, reruns=rerun)
     assert stale.gate("impl")["ok"] is False
     assert "stale" in stale.gate("impl")["reasons"]
     assert stale.next()["stage"] == "intent"
@@ -975,10 +865,10 @@ def test_review_and_ship_ask_a_fix_in_the_fast_lane_what_they_ask_one_in_the_ful
         moved_to(["src/a.py"]),
         None,
     ]
-    out = "\n".join(round_(n, "changes-requested", ["- F1 [open] x"]) for n in [1, 2, 3])
+    out = [round_(n, "changes-requested", [fr("F1", "open")]) for n in [1, 2, 3]]
     reviews = [
         {},
-        {"review.md": review_art("accepted", round_(1, "pass"))},
+        {"review.md": review_art("accepted", [round_(1, "pass")])},
         {"review.md": review_art("changes-requested", out)},
     ]
     for extra in reviews:
@@ -1051,28 +941,20 @@ def test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl
     ]
 
 
-def test_the_ship_gate_is_closed_on_a_title_outside_the_grammar_before_gh_is_asked():
-    calls: list[str] = []
-    g = check_gate(passed_titled("fix(0001): x"), "ship", counted(green_probe(), calls))
-    assert g["ok"] is False
-    assert g["need"] == [f"{title_problem('fix(0001): x', 'feat', '0001')} — {AGAIN}"]
-    assert calls == []
-
-
 def test_next_offers_ship_when_a_differing_title_is_the_only_thing_closing_its_gate():
     differs = green_probe(None, {}, titled_view(title="feat(0001): y"))
     n = next_step(passed(), differs)
     assert n["stage"] == "ship"
     assert n["blocked"] is True
     assert re.search(
-        r'^ship — #7 carries the title "feat\(0001\): y", not pr\.md\'s "feat\(0001\): x"',
+        r'^ship — #7 carries the title "feat\(0001\): y", not the unit\'s "feat\(0001\): x"',
         n["action"],
     )
     # A draft ship.md a refused merge left, against the last round: the same.
     refused = branched(
         {
             **CHAIN,
-            "review.md": review_art("accepted", round_(1, "pass")),
+            "review.md": review_art("accepted", [round_(1, "pass")]),
             "ship.md": {
                 **art("draft"),
                 "ship": {"round": 1, "refused": "Pull request is not mergeable"},
@@ -1083,8 +965,8 @@ def test_next_offers_ship_when_a_differing_title_is_the_only_thing_closing_its_g
         "blocked": True,
         "stage": "ship",
         "action": (
-            'ship — #7 carries the title "feat(0001): y", not pr.md\'s "feat(0001): x" — start '
-            "ship from the board, which puts pr.md onto it first"
+            'ship — #7 carries the title "feat(0001): y", not the unit\'s "feat(0001): x" — start '
+            "ship from the board, which puts it onto the pull request first"
         ),
     }
     # Any other reason alongside it and ship is not offered: the title is compared last.
@@ -1096,13 +978,3 @@ def test_next_offers_ship_when_a_differing_title_is_the_only_thing_closing_its_g
     late = next_step(passed(), behind)
     assert late["stage"] == ""
     assert "carries the title" not in late["action"]
-
-
-def passed_titled(title):
-    return branched(
-        {
-            **CHAIN,
-            "pr.md": {**PR, "title": title},
-            "review.md": review_art("accepted", round_(1, "pass")),
-        }
-    )

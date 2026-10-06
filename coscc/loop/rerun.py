@@ -1,28 +1,34 @@
-"""`rerun`: which accepted stages the board may run again, and the `### Rerun` block.
+"""`rerun`: which accepted stages the board may run again, and the records it makes stale.
 
-`rerun_later`, `rerun_closed`, `rerun_refusal`, `rerun_offers`, `rerun_block`, `cmd_rerun`
-and `local_date`. It reads files and prints; it writes nothing, the app appends the
-block.
+`rerun_later`, `rerun_closed`, `rerun_refusal`, `rerun_offers`, `rerun_stale` and `cmd_rerun`.
+It reads the snapshot and prints; it writes nothing, the app records the person's rerun.
 """
 
 from __future__ import annotations
 
 import os
-from datetime import datetime
 
 from coscc.loop import (
     REVIEW_ROUNDS,
     RERUNNABLE,
     STAGE_NAMES,
     STAGES,
+    UNDEFINED,
     UNIT_RE,
+    dig,
     nullish,
-    read_text,
     stage_of,
     stringify,
     truthy,
 )
-from coscc.loop.model import above_answers, present, read_unit, required, status_of, unmeasured_of
+from coscc.loop.model import (
+    entry_of,
+    present,
+    read_unit,
+    required,
+    status_of,
+    unmeasured_of,
+)
 from coscc.loop.rules import evaluate
 
 
@@ -76,33 +82,16 @@ def rerun_offers(unit, limit=REVIEW_ROUNDS):
     ]
 
 
-def rerun_block(unit, name, date, hash_of):
-    """the `### Rerun` block the app appends to `intent.md ## Answers`, whole. `hash_of(file)`
-    is `above_answers` of that artifact as it is on disk now."""
-    files = [
-        f
-        for f in (stage_of(n)["file"] for n in [name, *rerun_later(unit, name)])
-        if present(unit, f)
-    ]
-    return "\n".join(
-        [
-            "### Rerun",
-            f"Requested by: owner. Date: {date}. Via: product.",
-            f"Stage: {name}.",
-            *[f"Stale: {f} sha256:{hash_of(f)}" for f in files],
-            "",
-        ]
-    )
+def rerun_stale(unit, name, known):
+    """`{file: record}`: the record each artifact of `name` and the stages after it holds now, for
+    those present that have one. The rerun's row names them; one still at it is stale."""
+    files = [stage_of(n)["file"] for n in [name, *rerun_later(unit, name)]]
+    records = {f: dig(known, "artifacts", f, "record") for f in files if present(unit, f)}
+    return {f: r for f, r in records.items() if r not in (None, UNDEFINED)}
 
 
-def local_date(d=None):
-    """Today on this machine's calendar, `YYYY-MM-DD` — the date the app's own blocks carry."""
-    d = d or datetime.now()
-    return f"{d.year:04d}-{d.month:02d}-{d.day:02d}"
-
-
-def cmd_rerun(unit_name, stage, cos_dir, limit, today, state, out, err):
-    """`cmdRerun`: `{unit, offers, why}` with no `stage`, else `{unit, stage, later, block}`
+def cmd_rerun(unit_name, stage, cos_dir, limit, state, out, err):
+    """`cmdRerun`: `{unit, offers, why}` with no `stage`, else `{unit, stage, later, stale}`
     and exit 0, or the reason and exit 1. Exit 2 is misuse, as `gate`'s."""
     if not unit_name:
         err(f"usage: python -m coscc.loop rerun <NNNN_slug> [{'|'.join(RERUNNABLE)}]")
@@ -129,12 +118,15 @@ def cmd_rerun(unit_name, stage, cos_dir, limit, today, state, out, err):
     if refused:
         err(f"{stage} cannot be run again for {unit_name}: {refused}")
         return 1
-    block = rerun_block(
-        unit, stage, today, lambda f: above_answers(read_text(os.path.join(dir_, f)))
-    )
+    known = entry_of(state, state["workspace"], unit_name)
     out(
         stringify(
-            {"unit": unit_name, "stage": stage, "later": rerun_later(unit, stage), "block": block}
+            {
+                "unit": unit_name,
+                "stage": stage,
+                "later": rerun_later(unit, stage),
+                "stale": rerun_stale(unit, stage, known),
+            }
         )
     )
     return 0
@@ -147,7 +139,6 @@ def run(args, out, err) -> int:
         rest[1] if len(rest) > 1 else None,
         args.cos_dir,
         args.limit,
-        local_date(),
         args.state,
         out,
         err,

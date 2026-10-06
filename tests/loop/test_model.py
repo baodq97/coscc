@@ -27,19 +27,13 @@ from coscc.loop.model import (
     read_unit,
 )
 from coscc.loop.paths import next_number
-from coscc.loop import stringify
-from coscc.loop.model import (
-    parse_deadline,
-    parse_outcome,
-    unit_outcome,
-)
 from coscc.loop import SPIKE_ROUNDS
 from coscc.loop.model import fold_holds, non_blocking
 from coscc.loop.rules import between_pr_and_ship, decide, gate_answer, next_answer
 from coscc.loop.run import ask
-from coscc.loop.model import parse_pr, parse_review, review_rounds
+from coscc.loop.model import review_from, review_rounds
 from coscc.loop import REVIEW_ROUNDS
-from tests.loop.conftest import python
+from tests.loop.conftest import finding_row, pr_row, python, round_row
 
 # --- the suite's glue -------------------------------------------------------------------
 
@@ -193,7 +187,7 @@ def cli(*argv: str, stdin: str | None = None, units: dict[str, dict] | None = No
     """`python -m coscc.loop argv`; a deciding command gets `units` (`known` entries by name) as
     the snapshot of its `--root`."""
     words = list(argv)
-    deciding = {"status", "gate", "next", "rerun", "unit-branch", "pr-text", "screens"}
+    deciding = {"status", "gate", "next", "rerun", "unit-branch", "screens"}
     if "--root" in words and deciding & set(words) and "--state" not in words:
         root = Path(words[words.index("--root") + 1])
         return python([*words, "--state", "-"], stdin=json.dumps(state_of_root(root, units)))
@@ -610,54 +604,46 @@ CHAIN = {**FULL, "impl.md": art("accepted"), "pr.md": PR}
 NOT_ANCESTOR = {"code": 1, "out": "", "err": ""}
 
 
-def review_art(status, text):
-    return {**art(status), "review": parse_review(text)}
+def review_art(status, rounds):
+    """A review.md the app holds `rounds` (`round_` rows) of."""
+    return {**art(status), "review": review_from(list(rounds))}
 
 
-def round_(n, verdict, findings=()):
-    return (
-        f"## Round {n}\n\nReviewed: {SHA}. Verdict: {verdict}.\n\n### Findings\n\n"
-        f"{chr(10).join(findings)}\n\n### What was not reviewed\n\nnothing\n"
+def round_(n, verdict, findings=(), reviewed=SHA, screens=None):
+    return round_row(n, verdict, reviewed, *findings, screens=screens)
+
+
+def fr(id_, label="open", text="x", severity="high", **more):
+    """A finding row; `path`, `lines`, `rule`, `fixed_in` in `more`."""
+    return finding_row(
+        id_,
+        label,
+        severity,
+        text,
+        more.get("path", "a.py"),
+        more.get("lines", "3"),
+        more.get("rule", ""),
+        more.get("fixed_in"),
     )
+
+
+def fx(id_, text="x", severity="high"):
+    """A finding fixed at `FIX`."""
+    return fr(id_, "fixed", text, severity, fixed_in=FIX)
 
 
 def branched(artifacts):
     return {**unit(artifacts), "name": "0001_x", "branch": "feat/x"}
 
 
-def test_parse_pr_reads_the_pull_request_or_none():
-    assert parse_pr("# PR\nPR: https://github.com/o/r/pull/42. Status: accepted.") == {
-        "url": "https://github.com/o/r/pull/42",
-        "number": 42,
-    }
-    assert parse_pr("# PR\nStatus: accepted.") is None
-
-
-def test_parse_review_reads_rounds_verdicts_and_findings():
-    one = round_(1, "changes-requested", ["- F1 [open] a", "- F2 [open] b"])
-    two = round_(2, "pass", [f"- F1 [fixed {FIX}] a", "- F2 [maybe] b"])
-    rounds = parse_review(
-        f"# Review\nStatus: accepted.\n\n{one}\n{two}\n## Answers\n\n## Round 3\n"
-    )["rounds"]
-    assert [[r["n"], r["verdict"], r["reviewed"]] for r in rounds] == [
-        [1, "changes-requested", SHA],
-        [2, "pass", SHA],
-    ]
-    assert [[f["id"], f["label"], f["fixedBy"]] for f in rounds[1]["findings"]] == [
-        ["F1", "fixed", FIX],
-        ["F2", "unreadable", None],
-    ]
-    assert parse_review("# Review written before rounds\nStatus: accepted.\n")["rounds"] == []
-
-
-def test_the_review_gate_is_closed_while_pr_md_names_no_pull_request():
+def test_the_review_gate_is_closed_while_no_pull_request_is_recorded():
     g = check_gate(unit({**CHAIN, "pr.md": art("accepted")}), "review", green_probe())
     assert g["ok"] is False
-    assert "pr.md names no pull request" in g["need"][0]
+    assert "no pull request is recorded" in g["need"][0]
 
 
 def test_changes_requested_and_rejected_lead_to_different_places():
-    cr = review_art("changes-requested", round_(1, "changes-requested", ["- F1 [open] x"]))
+    cr = review_art("changes-requested", [round_(1, "changes-requested", [fr("F1", "open", "x")])])
     asked = next_action(unit({**CHAIN, "review.md": cr}))
     assert asked["blocked"] is True
     assert re.search(
@@ -669,7 +655,7 @@ def test_changes_requested_and_rejected_lead_to_different_places():
 
 
 def test_changes_requested_closes_ship_but_not_review():
-    cr = review_art("changes-requested", round_(1, "changes-requested", ["- F1 [open] x"]))
+    cr = review_art("changes-requested", [round_(1, "changes-requested", [fr("F1", "open", "x")])])
     u = unit({**CHAIN, "review.md": cr})
     assert check_gate(u, "review", green_probe())["ok"] is True
     assert 'review.md is "changes-requested"' in check_gate(u, "ship", green_probe())["need"][0]
@@ -699,8 +685,8 @@ def test_ci_decides_whether_review_may_begin():
 
 
 def test_the_round_limit_stops_the_loop_for_a_person():
-    text = "\n".join(round_(n, "changes-requested", ["- F1 [open] x"]) for n in (1, 2, 3))
-    u = unit({**CHAIN, "review.md": review_art("changes-requested", text)})
+    rounds = [round_(n, "changes-requested", [fr("F1", "open", "x")]) for n in (1, 2, 3)]
+    u = unit({**CHAIN, "review.md": review_art("changes-requested", rounds)})
     assert REVIEW_ROUNDS == 3
     assert (
         "needs a person — review used 3 of 3 rounds"
@@ -719,26 +705,27 @@ def test_review_rounds_reads_the_variable_and_refuses_what_is_no_positive_intege
             review_rounds({"COS_REVIEW_ROUNDS": bad})
 
 
-def ship(text, status="accepted"):
-    return branched({**CHAIN, "review.md": review_art(status, text)})
+def ship(*rounds, status="accepted"):
+    return branched({**CHAIN, "review.md": review_art(status, rounds)})
 
 
 def test_an_accepted_review_with_a_finding_open_cannot_ship():
-    g = check_gate(ship(round_(1, "pass", ["- F1 [open] the thing"])), "ship", green_probe())
+    g = check_gate(ship(round_(1, "pass", [fr("F1", "open", "the thing")])), "ship", green_probe())
     assert g["ok"] is False
     assert "F1 [open]" in "\n".join(g["need"])
 
 
 def test_an_earlier_round_survives_and_a_dropped_or_renumbered_one_is_caught():
-    r1 = round_(1, "changes-requested", ["- F1 [open] x"])
-    good = f"{r1}\n{round_(2, 'pass', [f'- F1 [fixed {FIX}] x'])}"
-    assert check_gate(ship(good), "ship", green_probe())["ok"] is True
-    dropped = f"{r1}\n{round_(2, 'pass')}"
+    r1 = round_(1, "changes-requested", [fr("F1", "open", "x")])
+    good = [r1, round_(2, "pass", [fx("F1")])]
+    assert check_gate(ship(*good), "ship", green_probe())["ok"] is True
+    dropped = [r1, round_(2, "pass")]
     assert re.search(
-        r"drops findings .*F1", "\n".join(check_gate(ship(dropped), "ship", green_probe())["need"])
+        r"drops findings .*F1",
+        "\n".join(check_gate(ship(*dropped), "ship", green_probe())["need"]),
     )
-    gap = f"{r1}\n{round_(3, 'pass', [f'- F1 [fixed {FIX}] x'])}"
-    assert "numbered 1, 3" in "\n".join(check_gate(ship(gap), "ship", green_probe())["need"])
+    gap = [r1, round_(3, "pass", [fx("F1")])]
+    assert "numbered 1, 3" in "\n".join(check_gate(ship(*gap), "ship", green_probe())["need"])
 
 
 def test_code_after_the_reviewed_commit_closes_ship_and_the_units_files_do_not():
@@ -807,26 +794,26 @@ def test_a_rebase_after_the_pass_closes_ship_and_another_pass_opens_it():
         },
         rebased,
     )
-    r1 = round_(1, "changes-requested", ["- F1 [open] x"])
-    r2 = round_(2, "pass", [f"- F1 [fixed {FIX}] x"])
-    g = check_gate(ship(f"{r1}\n{r2}"), "ship", after)
+    r1 = round_(1, "changes-requested", [fr("F1", "open", "x")])
+    r2 = round_(2, "pass", [fx("F1", "x")])
+    g = check_gate(ship(r1, r2), "ship", after)
     assert g["ok"] is False
     assert (
         "rewritten after the pass (a rebase does this): review its new head in another round"
         in g["need"][0]
     )
-    r3 = round_(3, "pass", [f"- F1 [fixed {FIX}] x"]).replace(SHA, reb, 1)
-    opened = check_gate(ship(f"{r1}\n{r2}\n{r3}"), "ship", green_probe(None, {}, rebased))
+    r3 = round_(3, "pass", [fx("F1", "x")], reviewed=reb)
+    opened = check_gate(ship(r1, r2, r3), "ship", green_probe(None, {}, rebased))
     assert opened["ok"] is True
     assert opened["head"] == reb
-    r3cr = round_(3, "changes-requested", [f"- F1 [fixed {FIX}] x", "- F2 [open] y"])
-    u = unit({**CHAIN, "review.md": review_art("changes-requested", f"{r1}\n{r2}\n{r3cr}")})
+    r3cr = round_(3, "changes-requested", [fx("F1", "x"), fr("F2", "open", "y")])
+    u = unit({**CHAIN, "review.md": review_art("changes-requested", [r1, r2, r3cr])})
     assert "2 of 3 rounds used" in next_action(u)["action"]
     assert check_gate(u, "review", green_probe())["ok"] is True
 
 
 def test_a_review_md_with_no_rounds_cannot_ship():
-    u = ship("# Review\nStatus: accepted.\n")
+    u = ship()
     assert "no ## Round" in check_gate(u, "ship", green_probe())["need"][0]
 
 
@@ -836,9 +823,9 @@ HEAD2 = "e" * 40
 FULL_LANE = {"lane": "full", "enteredFast": False, "laneMissing": []}
 
 
-def asked(text=None):
-    text = text or round_(1, "changes-requested", ["- F1 [open] x"])
-    return branched({**CHAIN, "review.md": review_art("changes-requested", text)})
+def asked(*rounds):
+    rounds = rounds or [round_(1, "changes-requested", [fr("F1", "open", "x")])]
+    return branched({**CHAIN, "review.md": review_art("changes-requested", rounds)})
 
 
 def moved_to(files, checks=None):
@@ -847,7 +834,7 @@ def moved_to(files, checks=None):
 
 
 def passed(findings=()):
-    return branched({**CHAIN, "review.md": review_art("accepted", round_(1, "pass", findings))})
+    return branched({**CHAIN, "review.md": review_art("accepted", [round_(1, "pass", findings)])})
 
 
 def test_next_action_stage_names_the_missing_stage_or_nothing():
@@ -856,7 +843,7 @@ def test_next_action_stage_names_the_missing_stage_or_nothing():
     assert next_action(unit({"intent.md": art("draft")}))["stage"] == ""
     assert next_action(unit({"intent.md": art("rejected")}))["stage"] == ""
     assert next_action(unit({"intent.md": art(None)}))["stage"] == ""
-    cr = review_art("changes-requested", round_(1, "changes-requested", ["- F1 [open] x"]))
+    cr = review_art("changes-requested", [round_(1, "changes-requested", [fr("F1", "open", "x")])])
     assert next_action(unit({**CHAIN, "review.md": cr}))["stage"] == ""
 
 
@@ -918,11 +905,11 @@ def test_an_open_pull_request_with_no_review_goes_by_ci():
 
 
 def test_the_round_limit_used_up_offers_nothing():
-    text = "\n".join(round_(n, "changes-requested", ["- F1 [open] x"]) for n in (1, 2, 3))
-    n = next_step(asked(text), moved_to(["src/a.py"]))
+    rounds = [round_(n, "changes-requested", [fr("F1", "open", "x")]) for n in (1, 2, 3)]
+    n = next_step(asked(*rounds), moved_to(["src/a.py"]))
     assert n["stage"] == ""
     assert "needs a person — review used 3 of 3 rounds" in n["action"]
-    assert next_step(asked(text), moved_to(["src/a.py"]), 4)["stage"] == "review"
+    assert next_step(asked(*rounds), moved_to(["src/a.py"]), 4)["stage"] == "review"
 
 
 def test_a_pass_with_the_ship_gate_open_is_ship_pinned():
@@ -932,7 +919,7 @@ def test_a_pass_with_the_ship_gate_open_is_ship_pinned():
 
 
 def test_a_shipped_unit_offers_nothing_whatever_the_later_files_say():
-    cr = review_art("changes-requested", round_(1, "changes-requested", ["- F1 [open] x"]))
+    cr = review_art("changes-requested", [round_(1, "changes-requested", [fr("F1", "open", "x")])])
     u = {**unit({**CHAIN, "review.md": cr}), "shipped": True}
     assert next_step(u, green_probe()) == {"blocked": False, "action": "finished", "stage": ""}
 
@@ -943,7 +930,7 @@ def test_a_branch_moved_after_the_pass_is_review_again():
     assert "changed after the reviewed commit" in n["action"]
     red = moved_to(["src/a.py"], [{"name": "tests", "bucket": "fail"}])
     assert next_step(passed(), red)["stage"] == "impl"
-    assert next_step(passed(["- F1 [open] x"]), green_probe())["stage"] == ""
+    assert next_step(passed([fr("F1", "open", "x")]), green_probe())["stage"] == ""
 
 
 def test_with_no_repository_the_git_cases_offer_nothing_and_say_repo():
@@ -969,9 +956,12 @@ def test_next_step_never_offers_a_stage_whose_gate_is_closed():
 
 # --- 0028: a finding impl cannot fix waits for a person -------------------------------------
 
-REVIEW_HEAD = "# Review: x\nPR: pr.md. Author: t. Status: changes-requested.\n\n"
-ROUND1 = round_(1, "changes-requested", ["- F1 [open] a", "- F2 [open] b", "- F3 [open] c"])
-ROUND2 = round_(2, "changes-requested", [f"- F1 [fixed {FIX}] a", "- F2 [open] b", "- F3 [open] c"])
+ROUND1 = round_(
+    1, "changes-requested", [fr("F1", "open", "a"), fr("F2", "open", "b"), fr("F3", "open", "c")]
+)
+ROUND2 = round_(
+    2, "changes-requested", [fx("F1", "a"), fr("F2", "open", "b"), fr("F3", "open", "c")]
+)
 
 
 def impl_text(needs=""):
@@ -990,13 +980,13 @@ def round3(f3="needs-person", extra=()):
     return round_(
         3,
         "needs-person",
-        [f"- F1 [fixed {FIX}] a", "- F2 [needs-person] b", f"- F3 [{f3}] c", *extra],
+        [fx("F1", "a"), fr("F2", "needs-person", "b"), fr("F3", f3, "c"), *extra],
     )
 
 
-def round_two_entry(claims=("F2", "F3"), answers=()):
-    """The rows of a unit right after its second review round, impl's record claiming `claims`
-    only a person can close, and a person's `answers` on the review."""
+def round_two_entry(rounds, claims=("F2", "F3"), answers=()):
+    """The rows of a unit right after its second review round: `rounds`, impl's record claiming
+    `claims` only a person can close, and a person's `answers` on the review."""
     return known(
         {
             "intent.md": "accepted",
@@ -1007,7 +997,11 @@ def round_two_entry(claims=("F2", "F3"), answers=()):
             "review.md": "changes-requested",
         },
         type="fix",
-        records=claim_record(*claims),
+        records={
+            **claim_record(*claims),
+            "pr.md": pr_row(7),
+            "review.md": {"rounds": list(rounds)},
+        },
         answers=list(answers),
     )
 
@@ -1017,47 +1011,31 @@ ROUND_TWO_FILES = {
     "spec.md": "# S\n",
     "plan.md": "# P\n",
     "impl.md": impl_text(),
-    "pr.md": "# PR: fix(0001): x\nPR: https://github.com/o/r/pull/7.\n",
+    "pr.md": "# PR\n",
+    "review.md": "# Review\n",
 }
 
 
-def tree_after_round_two(tmp_path, review, claims=("F2", "F3"), answers=()):
+def tree_after_round_two(tmp_path, rounds, claims=("F2", "F3"), answers=()):
     """A unit right after its second review round, as files on disk."""
     _, u = question_tree(
         tmp_path / str(len(list(tmp_path.iterdir()))),
-        {**ROUND_TWO_FILES, "review.md": review},
-        round_two_entry(claims, answers),
+        ROUND_TWO_FILES,
+        round_two_entry(rounds, claims, answers),
     )
     return u
 
 
-R12 = f"{REVIEW_HEAD}{ROUND1}\n{ROUND2}"
-
-
-def test_the_person_labels_and_the_needs_person_verdict_are_read():
-    findings = [
-        "- F1 [needs-person] a",
-        "- F2 [Claim-Rejected] b",
-        "- F3 [answered] c",
-        "- F4 [waiting] d",
-    ]
-    r = parse_review(round_(1, "needs-person", findings))["rounds"][0]
-    assert r["verdict"] == "needs-person"
-    assert [f["label"] for f in r["findings"]] == [
-        "needs-person",
-        "claim-rejected",
-        "answered",
-        "unreadable",
-    ]
+R12 = [ROUND1, ROUND2]
 
 
 def test_a_needs_person_round_is_not_counted_toward_the_limit():
-    three = "\n".join(round_(n, "changes-requested", ["- F1 [open] x"]) for n in (1, 2, 3))
-    text = f"{three}\n{round_(4, 'needs-person', ['- F1 [needs-person] x'])}"
-    assert "needs a person — F1: x" in next_action(asked(text), 4)["action"]
-    assert "3 of 4 rounds used" in next_action(asked(three), 4)["action"]
-    assert "needs a person — review used 3 of 3" in next_action(asked(text), 3)["action"]
-    one = next_action(asked(round_(1, "needs-person", ["- F1 [needs-person] x"])), 1)
+    three = [round_(n, "changes-requested", [fr("F1", "open", "x")]) for n in (1, 2, 3)]
+    four = [*three, round_(4, "needs-person", [fr("F1", "needs-person", "x")])]
+    assert "needs a person — F1: a.py:3 — high — x" in next_action(asked(*four), 4)["action"]
+    assert "3 of 4 rounds used" in next_action(asked(*three), 4)["action"]
+    assert "needs a person — review used 3 of 3" in next_action(asked(*four), 3)["action"]
+    one = next_action(asked(round_(1, "needs-person", [fr("F1", "needs-person", "x")])), 1)
     assert "rounds and findings are still open" not in one["action"]
     assert one["waiting"] == ["F1"]
 
@@ -1070,12 +1048,12 @@ def test_every_open_finding_claimed_and_unconfirmed_is_review(tmp_path):
 
 
 def test_both_claims_confirmed_names_a_person(tmp_path):
-    u = tree_after_round_two(tmp_path, f"{R12}\n{round3()}")
+    u = tree_after_round_two(tmp_path, [*R12, round3()])
     n = next_step(u, green_probe())
     assert n["stage"] == ""
     assert n["blocked"] is True
     assert n["action"].startswith(
-        "needs a person — F2: b; F3: c — answer each on the Questions tab"
+        "needs a person — F2: a.py:3 — high — b; F3: a.py:3 — high — c — answer each on the Questions tab"
     )
     assert n["waiting"] == ["F2", "F3"]
     assert next_step(u)["waiting"] == ["F2", "F3"]
@@ -1084,15 +1062,15 @@ def test_both_claims_confirmed_names_a_person(tmp_path):
 
 
 def test_one_answered_one_not_still_waits_for_the_other(tmp_path):
-    u = tree_after_round_two(tmp_path, f"{R12}\n{round3()}", answers=f_ans("F2"))
+    u = tree_after_round_two(tmp_path, [*R12, round3()], answers=f_ans("F2"))
     n = next_step(u, green_probe())
     assert n["stage"] == ""
-    assert n["action"].startswith("needs a person — F3: c")
+    assert n["action"].startswith("needs a person — F3: a.py:3 — high — c")
     assert n["waiting"] == ["F3"]
 
 
 def test_both_answered_review_reads_the_answers(tmp_path):
-    u = tree_after_round_two(tmp_path, f"{R12}\n{round3()}", answers=f_ans("F2", "F3"))
+    u = tree_after_round_two(tmp_path, [*R12, round3()], answers=f_ans("F2", "F3"))
     n = next_step(u, green_probe())
     assert n["stage"] == "review"
     assert "a person answered F2, F3 in review.md" in n["action"]
@@ -1104,53 +1082,54 @@ def test_an_open_finding_impl_did_not_claim_is_impl(tmp_path):
     r2 = round_(
         2,
         "changes-requested",
-        [f"- F1 [fixed {FIX}] a", "- F2 [open] b", "- F3 [open] c", "- F4 [open] d"],
+        [fx("F1", "a"), fr("F2", "open", "b"), fr("F3", "open", "c"), fr("F4", "open", "d")],
     )
-    u = tree_after_round_two(tmp_path, f"{REVIEW_HEAD}{ROUND1}\n{r2}")
+    u = tree_after_round_two(tmp_path, [ROUND1, r2])
     assert next_step(u, green_probe())["stage"] == "impl"
 
 
 def test_a_rejected_claim_is_impl(tmp_path):
-    u = tree_after_round_two(tmp_path, f"{R12}\n{round3('claim-rejected')}")
+    u = tree_after_round_two(tmp_path, [*R12, round3("claim-rejected")])
     assert next_step(u, green_probe())["stage"] == "impl"
     assert u["personFindings"] == []
     r3cr = round_(
         3,
         "changes-requested",
-        [f"- F1 [fixed {FIX}] a", "- F2 [needs-person] b", "- F3 [claim-rejected] c"],
+        [fx("F1", "a"), fr("F2", "needs-person", "b"), fr("F3", "claim-rejected", "c")],
     )
     assert (
-        next_step(tree_after_round_two(tmp_path, f"{R12}\n{r3cr}"), green_probe(), 4)["stage"]
-        == "impl"
+        next_step(tree_after_round_two(tmp_path, [*R12, r3cr]), green_probe(), 4)["stage"] == "impl"
     )
 
 
 def test_answered_but_kept_open_is_impl_not_review_again(tmp_path):
     r4 = round_(
-        4, "changes-requested", [f"- F1 [fixed {FIX}] a", "- F2 [answered] b", "- F3 [open] c"]
+        4, "changes-requested", [fx("F1", "a"), fr("F2", "answered", "b"), fr("F3", "open", "c")]
     )
-    review = f"{R12}\n{round3()}\n{r4}"
+    review = [*R12, round3(), r4]
     u = tree_after_round_two(tmp_path, review, answers=f_ans("F2", "F3"))
     n = next_step(u, green_probe(), 4)
     assert n["stage"] == "impl"
     assert "claimed in impl.md ## Needs a person" not in n["action"]
     r4b = round_(
-        4, "changes-requested", [f"- F1 [fixed {FIX}] a", "- F2 [needs-person] b", "- F3 [open] c"]
+        4,
+        "changes-requested",
+        [fx("F1", "a"), fr("F2", "needs-person", "b"), fr("F3", "open", "c")],
     )
     r3cr = round_(
         3,
         "changes-requested",
-        [f"- F1 [fixed {FIX}] a", "- F2 [open] b", "- F3 [claim-rejected] c"],
+        [fx("F1", "a"), fr("F2", "open", "b"), fr("F3", "claim-rejected", "c")],
     )
-    u = tree_after_round_two(tmp_path, f"{R12}\n{r3cr}\n{r4b}")
+    u = tree_after_round_two(tmp_path, [*R12, r3cr, r4b])
     assert next_step(u, green_probe(), 5)["stage"] == "impl"
 
 
-def test_a_needs_person_verdict_written_wrong_falls_back(tmp_path):
-    a = tree_after_round_two(tmp_path, f"{R12}\n{round3('needs-person', ['- F4 [open] d'])}")
+def test_a_needs_person_verdict_with_an_open_finding_left_falls_back(tmp_path):
+    a = tree_after_round_two(tmp_path, [*R12, round3("needs-person", [fr("F4", "open", "d")])])
     assert next_step(a, green_probe())["stage"] == "impl"
     assert "waiting" not in next_step(a, green_probe())
-    b = tree_after_round_two(tmp_path, f"{R12}\n{round3('answered')}")
+    b = tree_after_round_two(tmp_path, [*R12, round3("answered")])
     assert next_step(b, green_probe())["stage"] == "impl"
     assert b["personFindings"] == []
 
@@ -1162,8 +1141,8 @@ def test_an_impl_that_claims_nothing_changes_nothing(tmp_path):
 
 
 def test_ship_closes_an_answered_finding_only_with_its_answer():
-    pass_ = round_(1, "pass", [f"- F1 [fixed {FIX}] a", "- F2 [answered] b"])
-    with_block = {**review_art("accepted", pass_), "personAnswers": ["F2"]}
+    pass_ = round_(1, "pass", [fx("F1", "a"), fr("F2", "answered", "b")])
+    with_block = {**review_art("accepted", [pass_]), "personAnswers": ["F2"]}
     g = check_gate(branched({**CHAIN, "review.md": with_block}), "ship", green_probe())
     assert g["ok"] is True, g["need"]
     bare = check_gate(ship(pass_), "ship", green_probe())
@@ -1171,7 +1150,7 @@ def test_ship_closes_an_answered_finding_only_with_its_answer():
     assert "F2 [answered, no answer in review.md]" in "\n".join(bare["need"])
     for label in ["needs-person", "claim-rejected"]:
         art_ = {
-            **review_art("accepted", round_(1, "pass", [f"- F2 [{label}] b"])),
+            **review_art("accepted", [round_(1, "pass", [fr("F2", label, "b")])]),
             "personAnswers": ["F2"],
         }
         shut = check_gate(branched({**CHAIN, "review.md": art_}), "ship", green_probe())
@@ -1180,12 +1159,8 @@ def test_ship_closes_an_answered_finding_only_with_its_answer():
 
 
 def test_next_prints_waiting_only_when_a_person_is_awaited(tmp_path):
-    entry = round_two_entry(claims=(), answers=f_ans("F2"))
-    root, _ = question_tree(
-        tmp_path,
-        {**ROUND_TWO_FILES, "review.md": f"{R12}\n{round3()}"},
-        entry,
-    )
+    entry = round_two_entry([*R12, round3()], claims=(), answers=f_ans("F2"))
+    root, _ = question_tree(tmp_path, ROUND_TWO_FILES, entry)
     units = {"0001_q": entry}
     out = json.loads(cli("--root", str(root), "next", "0001_q", units=units).out)
     assert out["stage"] == ""
@@ -1193,8 +1168,8 @@ def test_next_prints_waiting_only_when_a_person_is_awaited(tmp_path):
     status = json.loads(cli("--root", str(root), "status", "--json", units=units).out)["units"][0]
     assert status["next"]["waiting"] == ["F3"]
     assert status["personFindings"] == [
-        {"id": "F2", "reason": "b", "answered": True},
-        {"id": "F3", "reason": "c", "answered": False},
+        {"id": "F2", "reason": "a.py:3 — high — b", "answered": True},
+        {"id": "F3", "reason": "a.py:3 — high — c", "answered": False},
     ]
 
 
@@ -1209,7 +1184,7 @@ def test_between_pr_and_ship_only_on_an_accepted_pr_naming_a_pull_request():
     assert between(no_pr) is False
     assert between({**no_pr, "pr.md": {**art("draft"), "pr": PR["pr"]}}) is False
     assert between({**no_pr, "pr.md": {**art("accepted"), "pr": None}}) is False
-    cr = review_art("changes-requested", round_(1, "changes-requested", ["- F1 [open] x"]))
+    cr = review_art("changes-requested", [round_(1, "changes-requested", [fr("F1", "open", "x")])])
     assert between({**CHAIN, "review.md": cr}) is True
     assert between_pr_and_ship({**unit(CHAIN), "shipped": True}) is False
     assert between({**CHAIN, "review.md": art("rejected")}) is False
@@ -1236,113 +1211,6 @@ def test_the_plans_impl_label_opens_and_closes_no_gate_and_moves_no_next(tmp_pat
     assert routine[0] == 0, routine[1]
     assert ask_("novel") == routine
     assert ask_(None) == routine
-
-
-# --- 0047: the outcome a unit was measured against ------------------------------------------
-
-OUTCOME_INTENT = "\n".join(
-    [
-        "# Intent: x",
-        "Author: a. Type: feat. Status: accepted.",
-        "",
-        "## Proposed outcome",
-        "",
-        "By 2026-10-07, three of three. Compared against 2026-09-01.",
-        "",
-        "## Open questions",
-        "",
-        "1. First?",
-        "",
-    ]
-)
-
-
-def outcome_block(lines, by="Linh", date="2026-10-08"):
-    body = "\n".join(lines)
-    return f"\n### Outcome\nAnswered by: {by}. Date: {date}. Via: product.\n\n{body}\n"
-
-
-def test_the_deadline_is_the_first_real_date_under_proposed_outcome():
-    assert parse_deadline(OUTCOME_INTENT) == "2026-10-07"
-    assert (
-        parse_deadline("## Proposed outcome\n\nOn 2026-02-30, then 2026-03-01.\n") == "2026-03-01"
-    )
-    assert parse_deadline("## Problem\n\n2026-10-07\n\n## Proposed outcome\n\nSoon.\n") is None
-    assert parse_deadline("## Problem\n\n2026-10-07\n") is None
-    tail = f"## Proposed outcome\n\nSoon.\n\n## Answers\n{outcome_block(['Result: đạt'])}"
-    assert parse_deadline(tail) is None
-
-
-def test_a_valid_outcome_block_needs_a_result_measured_by_and_source_or_reason():
-    blocks = [
-        outcome_block(["Result: đạt", "Measured by: agent", "Source: npm test, 12 pass"]),
-        outcome_block(["Result: trượt", "Measured by: Linh"]),
-        outcome_block(["Result: không đo được", "Measured by: agent", "Source: x"]),
-        outcome_block(["Result: maybe", "Measured by: agent", "Source: x"]),
-        outcome_block(["Result: đạt", "Source: x"]),
-        "\n### Outcome\nno header line\n\nResult: đạt\nMeasured by: agent\nSource: x\n",
-        outcome_block(
-            [
-                "Source: board, 2026-10-08",
-                "Result: Trượt",
-                "a note line inside",
-                "Measured by: Linh",
-            ]
-        ),
-        outcome_block(
-            [
-                "Result: không đo được",
-                "Measured by: agent",
-                "Reason: no script",
-                "",
-                "A longer note.",
-            ]
-        ),
-    ]
-    text = f"{OUTCOME_INTENT}\n## Answers\n" + "".join(blocks)
-    parsed = parse_outcome(text)
-    assert parsed["invalid"] == 5
-    found = parsed["blocks"]
-    assert [b["result"] for b in found] == ["met", "missed", "unmeasurable"]
-    assert found[1]["source"] == "board, 2026-10-08"
-    assert found[1]["note"] == "a note line inside"
-    assert found[2]["reason"] == "no script"
-    assert found[2]["note"] == "A longer note."
-    o = unit_outcome(text)
-    assert o["result"] == "unmeasurable"
-    assert o["deadline"] == "2026-10-07"
-    assert o["invalid"] == 5
-    assert o["by"] == "Linh"
-    assert o["measuredBy"] == "agent"
-
-
-def test_an_outcome_block_changes_nothing_but_outcome(tmp_path):
-    d = tmp_path / "u"
-    d.mkdir()
-    files = ["idea.md", "spec.md", "impl.md", "pr.md", "review.md", "ship.md", "plan.md"]
-    for f in files:
-        pr = "PR: https://github.com/o/r/pull/7.\n"
-        (d / f).write_text(pr if f == "pr.md" else "# x\n")
-    (d / "intent.md").write_text(OUTCOME_INTENT)
-    entry = known(dict.fromkeys([*files, "intent.md"], "accepted"))
-    entry["shipped"] = True
-
-    def view():
-        u = read(d, "0047_x", entry)
-        gates = [check_gate(u, s, green_probe()) for s in STAGE_NAMES]
-        rest = {k: v for k, v in u.items() if k != "outcome"}
-        return u["outcome"], stringify({"rest": rest, "next": next_action(u), "gates": gates})
-
-    before = view()
-    assert before[0]["result"] is None
-    blocks = outcome_block(["Result: đạt", "Measured by: agent", "Source: x"]) + outcome_block(
-        ["Result: ?"]
-    )
-    (d / "intent.md").write_text(f"{OUTCOME_INTENT}\n## Answers\n{blocks}")
-    after = view()
-    assert after[0]["result"] == "met"
-    assert after[0]["invalid"] == 1
-    assert after[1] == before[1]
 
 
 # --- 0039: spike, only when the spec left a question unmeasured ------------------------------
@@ -1435,37 +1303,18 @@ def test_the_loop_reads_no_prose_for_spec_spike_and_impl_decisions(tmp_path):
 
 
 def test_a_round_and_the_claims_the_app_holds_decide(tmp_path):
-    review = (
-        "# Review: x\nStatus: changes-requested.\n\n## Round 1\n\nReviewed: abc1234. "
-        "Verdict: changes-requested.\n\n### Findings\n\n- F1 [open] a.py:3 — high — old\n\n"
-        "## Round 2\n\nReviewed: abc1234. Verdict: pass.\n\n### Findings\n\nNone.\n"
-    )
     impl = "# Impl: x\nStatus: accepted.\n\n## Needs a person\n\n- F2: a login\n"
-    files = {"intent.md": INTENT_0039, "review.md": review, "impl.md": impl}
+    files = {"intent.md": INTENT_0039, "review.md": "# Review\n", "impl.md": impl}
     d = files_in(tmp_path, files)
     state, entry = with_entry(files)
     entry["artifacts"]["review.md"]["status"] = "changes-requested"
 
     def row(label, severity="medium"):
-        return {
-            "id": "F2",
-            "label": label,
-            "fixedIn": None,
-            "severity": severity,
-            "rule": "S3",
-            "path": "b.py",
-            "lines": "9",
-            "text": "new",
-        }
+        return fr("F2", label, "new", severity, path="b.py", lines="9", rule="S3")
 
     entry["artifacts"]["review.md"]["rounds"] = [
-        {
-            "n": 2,
-            "reviewed": "f" * 40,
-            "verdict": "changes-requested",
-            "screens": {},
-            "findings": [row("open")],
-        }
+        round_(1, "changes-requested", [fr("F1", "open", "old", lines="3")], reviewed="abc1234"),
+        round_(2, "changes-requested", [row("open")], reviewed="f" * 40),
     ]
     entry["artifacts"]["impl.md"]["result"] = {
         "stage": "impl",
@@ -1483,12 +1332,12 @@ def test_a_round_and_the_claims_the_app_holds_decide(tmp_path):
         ["F2", "open", "medium"]
     ]
     assert rounds[1]["dropped"] == ["F1"]
-    assert "Verdict: pass" in rounds[1]["text"]
+    assert rounds[1]["text"] == "Verdict: changes-requested.\n- F2 [open] b.py:9 — medium — S3 new"
     assert u["artifacts"]["impl.md"]["needsPerson"] == []
     entry["artifacts"]["impl.md"]["result"]["needs_person"] = ["F2"]
     again = read_unit(str(d), "0039_x", state)
     assert again["artifacts"]["impl.md"]["needsPerson"] == [{"id": "F2"}]
-    entry["artifacts"]["review.md"]["rounds"][0]["findings"] = [row("open", "low")]
+    entry["artifacts"]["review.md"]["rounds"][1]["findings"] = [row("open", "low")]
     assert non_blocking(read_unit(str(d), "0039_x", state)) == []
 
 
@@ -1824,46 +1673,22 @@ def test_an_idea_with_no_intent_can_be_held(tmp_path):
 
 
 def low(id_, label="open", what="x"):
-    return f"- {id_} [{label}] a.py:3 — low — {what}"
+    return fr(id_, label, what, "low")
 
 
 def rated(id_, severity, label="open"):
-    return f"- {id_} [{label}] a.py:3 — {severity} — x"
-
-
-def test_severity_is_read_only_between_two_em_dashes_after_the_location():
-    findings = [
-        "- F1 [open] a.py:3 — Mức thấp — x",
-        "- F2 [open] a.py:3 - low - x",
-        "- F3 [open] a.py:3 – low – x",
-        "- F4 [open] a.py:3 — HIGH — x",
-        "- F5 [open] a.py:3 — medium — x",
-        f"- F6 [fixed {FIX}] a.py:3 — low — x",
-        "- F7 [open] no location — low",
-        "- F8 [open] a.py:3 x — low — y",
-    ]
-    r = parse_review(round_(1, "changes-requested", findings))["rounds"][0]
-    assert [[f["id"], f["severity"]] for f in r["findings"]] == [
-        ["F1", None],
-        ["F2", None],
-        ["F3", None],
-        ["F4", "high"],
-        ["F5", "medium"],
-        ["F6", "low"],
-        ["F7", None],
-        ["F8", None],
-    ]
+    return fr(id_, label, "x", severity)
 
 
 def test_an_open_low_does_not_block_unless_rated_higher_before():
-    one = asked(round_(1, "pass", [low("F1"), rated("F2", "medium"), "- F3 [open] a.py:3 x"]))
+    one = asked(round_(1, "pass", [low("F1"), rated("F2", "medium"), rated("F3", "")]))
     assert non_blocking(one) == [{"id": "F1", "text": "a.py:3 — low — x"}]
     r1 = round_(1, "changes-requested", [rated("F1", "high")])
-    assert non_blocking(asked(f"{r1}\n{round_(2, 'pass', [low('F1')])}")) == []
-    prose = round_(1, "changes-requested", ["- F1 [open] a.py:3 — Mức thấp — x"])
-    got = non_blocking(asked(f"{prose}\n{round_(2, 'pass', [low('F1')])}"))
+    assert non_blocking(asked(r1, round_(2, "pass", [low("F1")]))) == []
+    unrated = round_(1, "changes-requested", [rated("F1", "")])
+    got = non_blocking(asked(unrated, round_(2, "pass", [low("F1")])))
     assert [f["id"] for f in got] == ["F1"]
-    for label in ["needs-person", "claim-rejected", "answered", "maybe"]:
+    for label in ["needs-person", "claim-rejected", "answered", "unreadable"]:
         assert non_blocking(asked(round_(1, "needs-person", [low("F1", label)]))) == [], label
     assert non_blocking(unit(CHAIN)) == []
 
@@ -1873,17 +1698,18 @@ def test_ship_lets_an_open_low_through_and_nothing_else():
         return check_gate(ship(round_(1, "pass", findings)), "ship", green_probe())
 
     assert gate([low("F1")])["ok"] is True
-    for findings in ([rated("F1", "medium")], ["- F1 [open] a.py:3 x"]):
+    for findings in ([rated("F1", "medium")], [rated("F1", "")]):
         g = gate(findings)
         assert g["ok"] is False
         assert "F1 [open]" in "\n".join(g["need"])
 
 
 def test_a_severity_lowered_between_rounds_closes_ship():
-    text = (
-        f"{round_(1, 'changes-requested', [rated('F1', 'high')])}\n{round_(2, 'pass', [low('F1')])}"
-    )
-    g = check_gate(ship(text), "ship", green_probe())
+    rounds = [
+        round_(1, "changes-requested", [rated("F1", "high")]),
+        round_(2, "pass", [low("F1")]),
+    ]
+    g = check_gate(ship(*rounds), "ship", green_probe())
     assert g["ok"] is False
     assert (
         "F1 is low in review round 2, but review round 1 rated it high — lowering a severity is "
@@ -1894,8 +1720,8 @@ def test_a_severity_lowered_between_rounds_closes_ship():
 def test_next_step_never_offers_a_closed_gate_in_the_person_states(tmp_path):
     reviews = [
         (R12, ()),
-        (f"{R12}\n{round3()}", ()),
-        (f"{R12}\n{round3()}", f_ans("F2", "F3")),
+        ([*R12, round3()], ()),
+        ([*R12, round3()], f_ans("F2", "F3")),
     ]
     probes = [
         green_probe(),
