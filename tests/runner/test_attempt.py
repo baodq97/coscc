@@ -150,3 +150,6 @@ class TheBranchIsTheOneTheWorktreeStandsOn(unittest.TestCase):
             self.assertEqual(asyncio.run(branch_of(d)), "feat/x")
             self.git(tree, "switch", "-q", "--detach")
             self.assertEqual(asyncio.run(branch_of(d)), "")
+            for other in ("master", "develop", "feat/Bad_name"):
+                self.git(tree, "switch", "-q", "-c", other)
+                self.assertEqual(asyncio.run(branch_of(d)), "", other)

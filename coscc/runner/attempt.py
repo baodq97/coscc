@@ -36,8 +36,9 @@ CLAUDE_CODE_PRESET: SystemPromptPreset = {"type": "preset", "preset": "claude_co
 
 
 async def branch_of(cwd: str) -> str:
-    """The branch the worktree at `cwd` stands on, the one its session may push; "" for the
-    trunk, a detached HEAD or no checkout. A failure costs the push, never the step."""
+    """The branch the worktree at `cwd` stands on, the one its session may push; "" for any
+    branch not a unit's (the trunk, `master`, `develop`), a detached HEAD or no checkout. A
+    failure costs the push, never the step."""
     path = Path(cwd)
     if not (path / ".git").exists():
         return ""
@@ -45,7 +46,7 @@ async def branch_of(cwd: str) -> str:
         _, branch = await gitops.head_and_branch(path)
     except gitops.GitError:
         return ""
-    return "" if branch in (gitops.TRUNK, "detached") else branch
+    return branch if gitops.unit_branch(branch) else ""
 
 
 async def snapshot(cwd: str, session_id: str) -> tuple[dict[str, Any], BaseException | None]:
