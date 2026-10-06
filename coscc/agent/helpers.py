@@ -52,12 +52,12 @@ NOT_APPROVED = "auto mode did not approve"
 PEERS = PEERS_TOOL.rsplit("__", 1)[-1]
 # The first word of every message between the agents of a step.
 KINDS = ("need", "changed", "done", "blocked")
-# The kinds that point at code, each naming the `path:line` it means.
+# The kinds that point at code, each naming the files it means (`path:line` when it can).
 POINTING = ("changed", "done")
 # A message's most lines: the longest of 100 real ones ran 33, and 14 ran over 20.
 MESSAGE_LINES = 40
 _KIND = re.compile(r"\s*(\w+):")
-_PATH_LINE = re.compile(r"([\w.~/-]+):\d+")
+_PATH = re.compile(r"[\w~-]*[/.][\w.~/-]*\w")
 
 # In the leading session's prompt and in every `worker`'s, the same words.
 PROTOCOL = """# Working with helpers
@@ -74,7 +74,7 @@ The agents of this step talk through `SendMessage`, to `"main"` (the leading ses
 - A worker sends a message only when it needs something outside its own paths, changes an
   interface another step uses, or is done or blocked.
 - A message is 1 to 40 lines. Its first line opens with one of `need:`, `changed:`, `done:`,
-  `blocked:`; a `changed:` or `done:` names each `path:line` it means.
+  `blocked:`; a `changed:` or `done:` names each file it means, as `path:line` when it can.
 - No message for courtesy or to say one arrived. When agents disagree, the leading session
   decides.
 - Every worker ends with exactly one `done:` or `blocked:` to `"main"`: that is the report its
@@ -103,11 +103,8 @@ def malformed(message: object) -> str:
             f"a message is at most {MESSAGE_LINES} lines; this one is {lines}: keep what the "
             "receiver acts on and point at `path:line` for the rest"
         )
-    if kind in POINTING and not any("/" in p or "." in p for p in _PATH_LINE.findall(message)):
-        return (
-            f"a `{kind}:` names each `path:line` it means (as `coscc/bus.py:42`); this one "
-            "names none"
-        )
+    if kind in POINTING and not _PATH.search(message[found.end() :]):
+        return f"a `{kind}:` names each file it means (as `coscc/bus.py:42`); this one names none"
     return ""
 
 

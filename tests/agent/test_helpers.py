@@ -282,7 +282,7 @@ class SendMessageStaysInTheStep(unittest.TestCase):
 
 class AMessageKeepsTheProtocolsShape(unittest.TestCase):
     """`PROTOCOL`'s shape: a kind first, at most `MESSAGE_LINES` lines, and a `changed:` or
-    `done:` pointing at `path:line`. A message out of it is denied with what to fix, in the run's
+    `done:` naming the files it means. A message out of it is denied with what to fix, in the run's
     denials."""
 
     def test_each_good_shape_passes(self):
@@ -292,6 +292,7 @@ class AMessageKeepsTheProtocolsShape(unittest.TestCase):
             "changed: `publish` takes a payload, coscc/bus.py:120",
             "done: step (a)\n- `/w/t/coscc/bus.py:153-160` checks the payload",
             "done: x\n" + "- coscc/a.py:1\n" * (MESSAGE_LINES - 1),
+            "done: src/screens/coverage/index.tsx rebuilt",
         ):
             with self.subTest(message=message):
                 self.assertEqual(malformed(message), "")
@@ -303,8 +304,8 @@ class AMessageKeepsTheProtocolsShape(unittest.TestCase):
             ("", "as text"),
             ({"type": "shutdown_request"}, "as text"),
             ("done: x\n" + "- coscc/a.py:1\n" * MESSAGE_LINES, f"at most {MESSAGE_LINES} lines"),
-            ("done: src/screens/coverage/index.tsx rebuilt", "names each `path:line`"),
-            ("changed: the API at 10:30", "names each `path:line`"),
+            ("changed: the API at 10:30", "names each file"),
+            ("done: all of it, finished.", "names each file"),
         ):
             with self.subTest(message=message):
                 denials = Denials()
