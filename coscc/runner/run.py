@@ -362,6 +362,7 @@ def _started(ctx: Ctx, agent: Agent, given: Input, stage: str, run: str, grant: 
             grants=policy.record(grant),
             max_turns=row.max_turns,
             max_budget_usd=row.max_budget_usd or None,
+            max_budget_source=str(agent.sources.get("max_budget_source") or ""),
             model=model_of(ctx, agent),
             model_source=str(agent.sources.get("model_source") or ""),
             effort=agent.effort,

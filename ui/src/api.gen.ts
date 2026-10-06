@@ -5,6 +5,7 @@ export type AgentPage = {
   "catalog": CatalogTool[];
   "problems": string[];
   "cos_model": string | null;
+  "scope": "workspace" | "all";
 };
 
 export type AgentRow = {

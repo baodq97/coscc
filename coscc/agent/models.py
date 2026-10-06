@@ -39,6 +39,8 @@ def check(field: str, value: Any) -> tuple[Any, str]:
             return None, "model must be a name"
         if len(value.strip()) > pack.MODEL_MAX:
             return None, f"model must be at most {pack.MODEL_MAX} characters"
+        if why := pack.no_long_context(value.strip()):
+            return None, why
         return value.strip(), ""
     if field == "effort":
         if value not in pack.EFFORTS:

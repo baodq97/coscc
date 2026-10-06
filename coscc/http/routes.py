@@ -227,7 +227,8 @@ async def get_agents(request: Request) -> AgentPage:
     """Every agent, every part of its row as it stands and as built in, which keys the owner set,
     its problems, skills, hash and runs grouped by definition; the tool catalog, each feature on
     or off for `cwd`; what was wrong."""
-    return _core(request).agents.agent_page(cwd=_cwd(request))
+    core, cwd = _core(request), _cwd(request)
+    return core.agents.agent_page(core.ws.key(cwd) if cwd else None, cwd=cwd)
 
 
 @router.post("/api/agents/field")

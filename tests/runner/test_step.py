@@ -1062,6 +1062,18 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
         )
         self.assertEqual(stored[0]["max_turns_source"], "default")
 
+    def start_of(self, ceilings):
+        with tempfile.TemporaryDirectory() as d:
+            self.run_spec(d, ceilings)
+            [start] = Journal(d, d).records(d, kind="start")
+        return start["max_budget_usd"], start["max_budget_source"]
+
+    def test_the_start_records_the_dollar_ceiling_and_its_source(self):
+        self.assertEqual(self.start_of({"usd": 2.5}), (2.5, "override"))
+
+    def test_the_start_records_the_built_in_dollar_ceiling_as_default(self):
+        self.assertEqual(self.start_of(None), (row_for("spec").max_budget_usd, "default"))
+
     def test_the_floor_of_a_step_that_submits_still_applies_to_an_override(self):
         with tempfile.TemporaryDirectory() as d:
             probe, _, stored = self.run_spec(d, {"turns": 1})

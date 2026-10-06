@@ -305,7 +305,52 @@ class ThePage(_WithAService):
         path.write_text('---\nmodel: "nope"\n---\n', encoding="utf-8")
         row = self._row(self.core.agents.agent_page(now=NOW), "spec")
         self.assertTrue(row["problems"])
-        self.assertNotIn("model", row["row"])
+        self.assertEqual(row["row"]["model"], pack.row("spec")["builtin"]["model"])
+
+    def test_a_hand_written_owner_file_of_any_shape_is_a_problem_never_a_crash(self):
+        from coscc.runner.queue import Refused
+        from coscc.runner.steps import Steps
+
+        bad = [
+            "skills: 5",
+            'trigger: "x"',
+            "skills: [5]",
+            'tools: ["Read"]',
+            'output: "x"',
+            "helpers: 3",
+            'ceilings: {"turns": "abc"}',
+        ]
+        path = pack.owner_dir() / "agents" / "spec.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        for line in bad:
+            with self.subTest(line=line):
+                path.write_text(f"---\n{line}\n---\n", encoding="utf-8")
+                page = self.core.agents.agent_page(now=NOW)
+                self.assertTrue(self._row(page, "spec")["problems"])
+                self.assertEqual(self._row(page, "plan")["problems"], [])
+                self.assertEqual(pack.row("spec")["model"], pack.row("spec")["builtin"]["model"])
+                self.core.agents.set_agent_field("plan", "ceilings", {"turns": 70})
+                self.core.agents.set_agent_field("plan", "ceilings", None)
+                steps = mock.Mock(hooks=kernel.Hooks())
+                with self.assertRaises(Refused) as caught:
+                    Steps.refuse_unready(steps, "spec", Path(self._tmp.name), None)
+                self.assertEqual(caught.exception.reasons, ("agent-invalid",))
+
+    def test_the_page_says_whose_runs_it_adds_up(self):
+        self.assertEqual(self.core.agents.agent_page(now=NOW)["scope"], "all")
+        scoped = self.core.agents.agent_page(self.core.ws.key("w"), now=NOW, cwd="w")
+        self.assertEqual(scoped["scope"], "workspace")
+
+    def test_a_workspace_page_counts_only_that_workspaces_runs(self):
+        self._seed(
+            [
+                _end("spec", "done", 1, cost=1.0),
+                {**_end("spec", "done", 1, cost=2.0), "workspace": "other"},
+            ]
+        )
+        both = self._row(self.core.agents.agent_page(now=NOW), "spec")
+        mine = self._row(self.core.agents.agent_page("w", now=NOW), "spec")
+        self.assertEqual((both["runs_30d"], mine["runs_30d"], mine["cost_30d"]), (2, 1, 1.0))
 
     def test_a_novel_run_is_costly_against_its_own_ceiling(self):
         def start(label, days_ago):

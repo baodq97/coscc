@@ -192,7 +192,7 @@ DB_FILE = "cos.db"
 
 
 def protected_paths(data_root: str, config_home: str, home: str = "") -> tuple[str, ...]:
-    """The secrets no tool may reach: the vault's store `<data root>/vault`, the app's database (with its `-wal`
+    """The secrets no tool may reach: the vault's store `<data root>/vault`, the owner's agent rows `<data root>/packs`, the app's database (with its `-wal`
     and `-shm`), the app's config `<config home>/coscc` (`env`, `vault.key`), `gh`'s login
     `<config home>/gh`, and `~/.ssh`, `~/.aws`, `~/.gnupg`. Each as a command word may spell it:
     as given, symlinks resolved, and below `home` with `~`, `$HOME` or `${HOME}` in front. An
@@ -204,7 +204,13 @@ def protected_paths(data_root: str, config_home: str, home: str = "") -> tuple[s
     from pathlib import Path
 
     db = os.path.join(data_root, DB_FILE)
-    dirs = [os.path.join(data_root, "vault"), db, f"{db}-wal", f"{db}-shm"]
+    dirs = [
+        os.path.join(data_root, "vault"),
+        os.path.join(data_root, "packs"),
+        db,
+        f"{db}-wal",
+        f"{db}-shm",
+    ]
     if config_home:
         dirs += [os.path.join(config_home, "coscc"), os.path.join(config_home, "gh")]
     if home:

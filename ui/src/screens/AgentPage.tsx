@@ -135,7 +135,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
         </div>
         <div className="agent-spend">
           <b>{money(a.cost_30d)}</b> <span className="faint">in 30 days</span>
-          <div className="faint" style={{ fontSize: 12 }}>{a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}</div>
+          <div className="faint" style={{ fontSize: 12 }}>{a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}</div>
         </div>
       </div>
       {a.problems.length > 0 && (
@@ -159,7 +159,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
       {t === "io" && <InputOutput {...ctx} />}
       {t === "trigger" && <Trigger {...ctx} />}
       {t === "prompt" && <Prompt {...ctx} />}
-      {t === "runs" && <Runs a={a} names={Object.fromEntries((ws.data?.workspaces ?? []).map((w) => [w.path, w.name]))} />}
+      {t === "runs" && <Runs a={a} page={page} names={Object.fromEntries((ws.data?.workspaces ?? []).map((w) => [w.path, w.name]))} />}
 
       {(pending.length > 0 || error) && (
         <div className="savebar">
@@ -277,7 +277,7 @@ function Configuration(ctx: Ctx) {
   const has = (k: string) => ctx.saved[k] !== undefined || ctx.builtin[k] !== undefined;
   const trial = get(ctx.value("model"), ["trial"]) as string[] | undefined;
   const ran = (c: AgentRow["config"]) =>
-    `Runs on ${modelName(c.model)}${c.model_source === "COS_MODEL" ? " (COS_MODEL)" : ""}${c.effort ? `, ${c.effort} effort` : ""}, at most ${c.ceilings.max_turns ?? "—"} turns and ${c.ceilings.max_budget_usd != null ? money(c.ceilings.max_budget_usd) : "no $ ceiling"}.`;
+    `Runs on ${modelName(c.model)}${c.model_source === "COS_MODEL" ? " (COS_MODEL)" : ""}${c.effort ? `, ${c.effort} effort` : ""}, at most ${c.ceilings.max_turns ?? "—"} turn${c.ceilings.max_turns === 1 ? "" : "s"} and ${c.ceilings.max_budget_usd != null ? money(c.ceilings.max_budget_usd) : "no $ ceiling"}.`;
   return (
     <>
       <datalist id="models">{MODELS.map((m) => <option key={m} value={m} />)}</datalist>
@@ -287,7 +287,7 @@ function Configuration(ctx: Ctx) {
           <Text ctx={ctx} path="name" width={200} />
         </Part>
         <Part ctx={ctx} path="glyph" label="Glyph">
-          <Text ctx={ctx} path="glyph" width={60} />
+          <Text ctx={ctx} path="glyph" width={120} />
         </Part>
         <Part ctx={ctx} path="description" label="Description">
           <Text ctx={ctx} path="description" width={520} />
@@ -582,7 +582,7 @@ function settingWords(s: RunGroup["settings"][number]): string {
   return s.new == null ? `${s.field} reset` : `${s.field} edited`;
 }
 
-function Runs({ a, names }: { a: AgentRow; names: Record<string, string> }) {
+function Runs({ a, page, names }: { a: AgentRow; page: Page; names: Record<string, string> }) {
   if (!a.groups.length)
     return (
       <Empty icon="clock" title="No runs in 30 days">
@@ -592,7 +592,7 @@ function Runs({ a, names }: { a: AgentRow; names: Record<string, string> }) {
   return (
     <>
       <p className="muted" style={{ marginTop: 0 }}>
-        Runs of the last 30 days, grouped by the definition they ran; an edit starts a new group. Total {money(a.cost_30d)} over {a.runs_30d} runs.
+        Runs of the last 30 days, grouped by the definition they ran; an edit starts a new group. Total {money(a.cost_30d)} over {a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}.
       </p>
       {a.groups.map((g, i) => (
         <div key={i} className="card run-group">
@@ -602,7 +602,7 @@ function Runs({ a, names }: { a: AgentRow; names: Record<string, string> }) {
               {g.row_hash && <span className="faint mono" title={g.row_hash}>#{g.row_hash.slice(0, 6)}</span>}
             </span>
             <span className="faint" style={{ fontWeight: 500 }}>
-              {g.runs.length} run{g.runs.length === 1 ? "" : "s"} · {money(g.cost_usd)} · {g.turns} turns
+              {g.runs.length} run{g.runs.length === 1 ? "" : "s"} · {money(g.cost_usd)} · {g.turns} turn{g.turns === 1 ? "" : "s"}
             </span>
           </div>
           {g.settings.length > 0 && (
