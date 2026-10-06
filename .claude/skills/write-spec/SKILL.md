@@ -10,9 +10,10 @@ later a rewrite.
 
 ## What you are given (trust it)
 
-`intent.md`, the answers, and any prior `spec.md` or `spike.md` are in the prompt. Do not
-re-read or re-verify them. A question with a block under `## Answers` is decided: cite it as
-`<artifact> ## Answers, câu N`, quote the person, never re-ask, never write into that section.
+`intent.md`, any `spike.md`, the spec as it stands and the answers a person gave are in the
+prompt, each under its own heading: do not Read them or re-verify them. An answered question is
+decided: cite it as `<artifact> câu N`, quote the person, never re-ask, never copy it into the
+file.
 
 Gate: from the board it was asked (the prompt says so); at a terminal ask
 `uv run python -m coscc.loop gate <unit> spec` first and stop on non-zero.

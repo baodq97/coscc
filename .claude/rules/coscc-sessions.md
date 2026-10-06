@@ -23,3 +23,4 @@ paths:
 - The app's database is a secret like the vault: no tool reaches it by its path. A step reads
   the board through the app, never through `sqlite3`.
 - A measuring script's `--measure` inside a step reads an empty database: run it at a terminal.
+- A prompt holds only what its row's `input` declares; a stage needing another file declares it.

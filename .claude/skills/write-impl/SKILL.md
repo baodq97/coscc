@@ -10,8 +10,9 @@ a diff. The code is in git; do not copy it here.
 
 ## What you are given (trust it)
 
-The plan (accepted), the answers, the files `main` changed since the plan, and the files' line
-maps are in the prompt. Do not re-read them or re-verify the plan.
+`intent.md`, `spec.md`, the accepted `plan.md`, the answers, the findings a review left open, the
+files `main` changed since the plan and the files' line maps are in the prompt, each under its
+own heading. Do not Read them or re-verify the plan; Read `impl.md` only to edit it.
 From the board the gate was asked (the prompt says so); at a terminal ask
 `uv run python -m coscc.loop gate <unit> impl` first and stop on non-zero.
 
