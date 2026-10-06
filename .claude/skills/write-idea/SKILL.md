@@ -5,7 +5,7 @@ description: Write the idea.md that records an observation before it is a proble
 
 # Write an idea
 
-An observation, not a solution. The only optional stage; `rejected` is a real outcome.
+An observation, not a solution. The only optional stage.
 
 ## Steps
 
@@ -15,7 +15,7 @@ An observation, not a solution. The only optional stage; `rejected` is a real ou
 
 ```markdown
 # Idea: <title>
-Author: <name>. Status: accepted.
+Author: <name>.
 
 ## What was noticed
 
@@ -24,7 +24,8 @@ Author: <name>. Status: accepted.
 ## What is not known yet
 ```
 
-`Status`: `draft`, `accepted` or `rejected`.
+The file carries no status: what the app records is the `judgement` of `submit` (`ready` when
+it is written, `not-ready` when it is not).
 
 ## Done when
 

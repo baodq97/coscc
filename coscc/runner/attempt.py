@@ -17,7 +17,7 @@ from coscc.runner.reply import (
     ATTEMPT_EXCERPT,
     OpeningError,
     RunError,
-    _unfence,
+    unfence,
     from_title,
     opening_problem,
     opening_reason,
@@ -278,7 +278,7 @@ def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | Non
     # The reply's own `## Answers` never reaches disk; only the section already there does, read
     # as late as possible (after every `await` of the step, with no yield before the write), so a
     # block a person appended while the step ran is carried through untouched.
-    body = strip_answers(from_title(_unfence(text), artifact) + "\n")
+    body = strip_answers(from_title(unfence(text), artifact) + "\n")
     # Asked of what will be written, below the reply's own `## Answers` cut, and before the file
     # is read: a refusal leaves it byte for byte.
     problem = opening_problem(body, artifact)

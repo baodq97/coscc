@@ -30,6 +30,7 @@ from coscc.units.board import unit_state
 SHA = "a" * 40
 PR_MD = "# PR: feat(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân cũ\n"
 ARTIFACTS = {
+    "idea.md": "# Idea: x\nStatus: accepted.\n\n## In their own words\n\nwords\n",
     "intent.md": "# Intent: x\nType: feat. Status: accepted.\n\n## Open questions\n\n1. Một?\n",
     "spec.md": "# Spec: x\nIntent: intent.md. Status: accepted.\n\nR1.\n",
     "plan.md": "# Plan: x\nStatus: accepted.\n\n1. build it\n",

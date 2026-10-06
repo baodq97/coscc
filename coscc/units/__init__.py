@@ -186,10 +186,6 @@ def create(
 
 
 def _idea(unit: str, brief: str) -> str:
-    """The brief as an `idea.md` the loop can read, `Status: accepted` (nothing for an agent to accept)."""
+    """The brief as an `idea.md`; the app records it accepted when the unit opens."""
     title = unit.split("_", 1)[-1].replace("-", " ")
-    return (
-        f"# Idea: {title}\n"
-        f"Author: the originator. Status: accepted.\n\n"
-        f"## In their own words\n\n{brief.strip()}\n"
-    )
+    return f"# Idea: {title}\nAuthor: the originator.\n\n## In their own words\n\n{brief.strip()}\n"

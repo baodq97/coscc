@@ -21,9 +21,7 @@ from tests.test_layers import ROOT, _files
 DATA = "coscc.store.db"
 
 PRIVATE_IMPORTS: set[tuple[str, str, str]] = {
-    ("coscc/runner/attempt.py", "coscc.runner.reply", "_unfence"),
     ("coscc/runner/prompt.py", "coscc.runner.review", "_ROUND_RE"),
-    ("coscc/runner/prompt.py", "coscc.runner.review", "_header_status"),
     ("coscc/runner/prompt.py", "coscc.runner.review", "_round_meta"),
     ("coscc/runner/prompt.py", "coscc.runner.review", "_round_number"),
     ("coscc/runner/prompt.py", "coscc.runner.review", "_rounds"),

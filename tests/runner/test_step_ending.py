@@ -273,14 +273,14 @@ class AnUnusableReplyIsKeptBesideTheReason(unittest.TestCase):
     """A paid step that produced nothing usable must not throw the reply away.
 
     Measured 2026-09-22 inside a proof run that spends real money: a `spec` step failed
-    with *"the reply carries no `Status:` line"* and the reply went with the run's
+    with *"the reply carries no title"* and the reply went with the run's
     temporary data root. Nothing was left to say whether the artifact had been there
     behind a preamble, and the only way to find out was to pay again."""
 
-    class NoStatus:
+    class NoTitle:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "Here is the spec you asked for:\n\n")
-            yield ("chunk", "# Spec: a problem\n\n## Requirements\n\nR1 — something.\n")
+            yield ("chunk", "## Requirements\n\nR1 — something.\n")
             await _submits(kw)
             yield ("done", {"session_id": "s-9", "cost": {}})
 
@@ -288,7 +288,7 @@ class AnUnusableReplyIsKeptBesideTheReason(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="Status: accepted.\nI")
             journal = Journal(d, d)
-            r = Runner(sessions=self.NoStatus(), journal=journal)
+            r = Runner(sessions=self.NoTitle(), journal=journal)
 
             async def go():
                 out = []
@@ -307,7 +307,7 @@ class AnUnusableReplyIsKeptBesideTheReason(unittest.TestCase):
 
             _, payload = asyncio.run(go())[-1]
             self.assertNotEqual(payload["outcome"], "done")
-            self.assertIn("no `Status:` line", payload["error"])
+            self.assertIn("no `# Spec:` title", payload["error"])
             self.assertIn("R1 — something.", payload["error"])
             # And it is in the run log too, so it survives the page being closed.
             [row] = journal.timeline(d, UNIT)
@@ -384,7 +384,7 @@ class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
         final, end, written = self.go(self.Pieces(self.UNTITLED, blank=True))
         self.assertEqual(final["outcome"], "failed")
         first = end["detail"].splitlines()[0]
-        for part in ("plan.md", "title", "`Status:`", "3 blocks"):
+        for part in ("plan.md", "title", "3 blocks"):
             self.assertIn(part, first)
         self.assertIsNone(written)
 
@@ -406,7 +406,7 @@ class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
 
 class AFencedAnswerAfterNarrationIsUnwrapped(unittest.TestCase):
     """Narration, a tool call, then the artifact in a fence: it is written whole, not as only the
-    fenced piece that `_unfence` would take out."""
+    fenced piece that `unfence` would take out."""
 
     BODY = "# Plan: x\nIntent: i. Status: accepted.\n\n## Body\n\n```\n# Plan: quoted\n```\n"
 
@@ -932,8 +932,8 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
         self.assertIsNone(written)
         self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "none"))
 
-    def test_e_a_progress_file_with_no_status_is_unusable(self):
-        final, written, end, _ = self.run_spike(progress="# Spike: x\n\n## U1\n\nChưa đo.\n")
+    def test_e_a_progress_file_with_no_title_is_unusable(self):
+        final, written, end, _ = self.run_spike(progress="## U1\n\nChưa đo.\n")
         self.assertIsNone(written)
         self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unusable"))
         self.assertIn("the progress file was not an artifact", end["detail"])
@@ -1431,7 +1431,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertIn(f"Reviewed: {head}. Verdict: incomplete.", closing["text"])
         self.assertIn("## Round 2", closing["text"])
         # The round is appended, and everything above it is byte for byte what it was.
-        self.assertTrue(review.startswith("# Review: x\nSpec: spec.md. Author: t. Status: draft."))
+        self.assertTrue(review.startswith("# Review: x\nSpec: spec.md. Author: t.\n"))
         self.assertIn(REVIEW_R1.split("\n\n", 1)[1].rstrip(), review)
         self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: incomplete.", review)
         self.assertEqual(out[-1][1]["outcome"], "exhausted")
@@ -1494,9 +1494,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertIn("Verdict: incomplete.", review)
 
     def test_a_review_that_finished_gets_no_closing_turn(self):
-        sessions = self.Closes(
-            first=incomplete_reply("a" * 40, verdict="pass", status="accepted"), terminal="success"
-        )
+        sessions = self.Closes(first=incomplete_reply("a" * 40, verdict="pass"), terminal="success")
         _, [end], _, _, _ = self.run_review(sessions)
         self.assertEqual(len(sessions.calls), 1)
         self.assertEqual((end["outcome"], end["review_md"]), ("done", "round"))
@@ -1571,7 +1569,6 @@ REPAIRED_PLAN = (
     "## Files that change\n\nPHẦN-SỬA\n"
 )
 UNOPENED_PLAN = "## Files that change\n\nPHẦN-ĐẦU\n"
-NO_STATUS_PLAN = "# Plan: x\n\n## Files that change\n\nStatus: accepted.\n"
 
 
 class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
@@ -1692,7 +1689,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         self.assertEqual(repair["max_turns"], 1)
         self.assertIsNot(repair["step"], handle.handle)
         self.assertIsNone(repair["step"].recorder)
-        self.assertIn("no `# Plan:` title and no `Status:` line in its header", repair["text"])
+        self.assertIn("no `# Plan:` title", repair["text"])
         self.assertIn("the whole of `plan.md`", repair["text"])
 
     def test_the_repair_turn_grants_nothing_and_counts_what_it_refused(self):
@@ -1860,7 +1857,7 @@ class AnAnswerCutAtItsCeilingIsNotWritten(unittest.TestCase):
         self.assertEqual(written.decode("utf-8"), AnAnswerInPiecesIsWrittenWhole.HEAD)
 
     def test_a_drafted_round_leaves_the_review_its_closing_turn(self):
-        draft = incomplete_reply("c" * 40, verdict="pass", status="accepted")
+        draft = incomplete_reply("c" * 40, verdict="pass")
         sessions = self.DraftsThenRunsOut(first=draft)
         _, [end], review, head, _ = AReviewThatRunsOutGetsAClosingTurn.run_review(self, sessions)
         self.assertEqual(len(sessions.calls), 2)

@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -456,8 +457,9 @@ class RecordingAnOutcome(unittest.TestCase):
     def test_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
         journal = self.core.ws.journal()
         key = self.core.ws.key(self.cwd)
-        before = len(journal.records(key))
+        # The first read of a store imports it, and says what it could not read.
         self.assertIsNone(self.board_unit()["outcome"]["result"])
+        before = len(journal.records(key))
         self.board_unit()
         self.assertEqual(len(journal.records(key)), before)
         self.assertEqual(self.core.chat.sessions_for(self.cwd)["sessions"], [])
@@ -498,3 +500,60 @@ class DroppingAUnitRemovesItsScratch(unittest.TestCase):
             )
         self.assertFalse(ram.exists())
         self.assertFalse(disk.exists())
+
+
+class OpeningAUnitWritesItsRowAndItsIdea(unittest.TestCase):
+    """A press that opens a unit records two things in one transaction: the unit's row, and, when
+    it carried a brief, `idea.md` accepted through the `unit-created` guard. No file is read."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.cwd = str(root / "work" / "proj")
+        Path(self.cwd).mkdir(parents=True)
+        config = Config(
+            workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
+        self.core = Core(config, Sessions(config))
+
+    def rows(self, unit):
+        meta = self.core.ws.unit_meta()
+        with meta.data.connect() as conn:
+            return conn.execute("SELECT unit FROM unit_meta WHERE unit = ?", (unit,)).fetchall()
+
+    def test_a_brief_gives_the_row_and_the_accepted_idea(self):
+        with mock.patch("coscc.leif.answers.Answers.ingest") as ingest:
+            made = create_sync(self.core, self.cwd, "a-problem", "some words")
+        ingest.assert_not_called()
+        self.assertEqual(len(self.rows(made["unit"])), 1)
+        [row] = unit_history(self.core, self.cwd, made["unit"])["transitions"]
+        self.assertEqual(
+            (row["artifact"], row["from_state"], row["to_state"]),
+            ("idea.md", "not started", "accepted"),
+        )
+        self.assertEqual(
+            (row["guard"], row["authority"], row["source"], row["actor"]),
+            ("unit-created", "code", "app:create", "app:create"),
+        )
+        self.assertNotIn("error", made)
+        self.assertNotIn("ingest_error", made)
+
+    def test_no_brief_gives_the_row_only(self):
+        made = create_sync(self.core, self.cwd, "a-problem", "")
+        self.assertEqual(len(self.rows(made["unit"])), 1)
+        self.assertEqual(unit_history(self.core, self.cwd, made["unit"])["transitions"], [])
+        self.assertFalse((Path(made["path"]) / "idea.md").exists())
+
+    def test_a_failed_write_is_told_as_an_ingest_error_and_a_card_problem(self):
+        with mock.patch(
+            "coscc.units.transitions.apply", side_effect=sqlite3.OperationalError("disk")
+        ):
+            made = create_sync(self.core, self.cwd, "a-problem", "some words")
+        self.assertIn("ingest_error", made)
+        meta = self.core.ws.unit_meta()
+        with meta.data.connect() as conn:
+            found = conn.execute(
+                "SELECT field FROM unit_unknowns WHERE unit = ?", (made["unit"],)
+            ).fetchall()
+        self.assertEqual([r["field"] for r in found], ["ingest"])

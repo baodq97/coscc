@@ -1,16 +1,10 @@
-"""Checking what a session returned before it becomes an artifact: its opening line, its
+"""Checking what a session returned before it becomes an artifact: its title, its
 fences, and whether it was cut at a ceiling.
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-
-
-# # An artifact has to carry one of these on its first line, or the gate cannot read it and
-# # the loop reports the unit as broken.
-STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+)")
 
 
 class RunError(Exception):
@@ -29,12 +23,6 @@ class OpeningError(RunError):
 
 class _Stopped(Exception):
     """A Stop came before `steps.seal`, so the artifact is not to be written."""
-
-
-# # A status as the loop's `parseStatus` reads it: the first `Status:` in the file, hyphenated
-# # words as one. Only the first: a later round or finding quoting "Status: changes-requested"
-# # must not send a passed review back to `impl`.
-HEADER_STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+(?:-[A-Za-z]+)*)")
 
 
 # # How much of an unusable reply to keep beside the reason it was refused. Chosen, not measured.
@@ -56,7 +44,7 @@ def _with_reply(reason: str, collected: str) -> str:
     return f"{reason}\n--- what the session replied{more} ---\n{kept}"
 
 
-def _unfence(text: str) -> str:
+def unfence(text: str) -> str:
     """The reply stripped, and out of the fence it came wrapped in, if it came in one."""
     body = (text or "").strip()
     if not body:
@@ -68,17 +56,6 @@ def _unfence(text: str) -> str:
         if len(lines) >= 2 and lines[-1].strip().startswith("```"):
             body = "\n".join(lines[1:-1]).strip()
     return body
-
-
-def check_reply(text: str) -> str:
-    """The reply, ready to be written, or a reason it is not an artifact.
-
-    The write path asks `opening_problem`; `closing_round_problem` still asks this.
-    """
-    body = _unfence(text)
-    if not STATUS_RE.search(body):
-        raise RunError("the reply carries no `Status:` line, so the gate could not read it")
-    return body + "\n"
 
 
 def _title(artifact: str) -> str:
@@ -105,18 +82,12 @@ def from_title(text: str, artifact: str) -> str:
 
 
 def opening_problem(text: str, artifact: str) -> str | None:
-    """`None` when `text` opens with its title and a `Status:` header, else what it lacks. Nothing
-    else of the template is checked.
+    """`None` when `text` opens with its title, else what it lacks. Nothing else of the template
+    is checked.
     """
     lines = text.splitlines()
     first = lines[0] if lines else ""
-    header = next((line for line in lines[1:] if line.strip()), "")
-    missing = []
-    if not first.startswith(_title(artifact)):
-        missing.append(f"no `{_title(artifact)}` title")
-    if not HEADER_STATUS_RE.search(header):
-        missing.append("no `Status:` line in its header")
-    return " and ".join(missing) or None
+    return None if first.startswith(_title(artifact)) else f"no `{_title(artifact)}` title"
 
 
 def opening_reason(artifact: str, problem: str, blocks: int | None) -> str:
@@ -129,7 +100,7 @@ def opening_reason(artifact: str, problem: str, blocks: int | None) -> str:
 
 def opening_prompt(artifact: str, problem: str) -> str:
     """What the app sends when it reopens a prose step whose reply lacked its opening. English:
-    an instruction to the model. It names no `Status:` value; the session picks its own.
+    an instruction to the model.
     """
     title = _title(artifact)
     if artifact == "review.md":
@@ -144,8 +115,7 @@ def opening_prompt(artifact: str, problem: str) -> str:
         f"Your reply could not be written as `{artifact}`: it lacks its opening: {problem}.\n\n"
         "You have no tools now; do not try to call one. "
         f"{whole} No preamble, no code fence. Its first line is the title, opening with "
-        f"`{title}`. The next line that is not blank is the header, carrying the `Status:` "
-        "line your stage's skill sets out."
+        f"`{title}`."
     )
 
 
@@ -163,7 +133,7 @@ def _unwrapped(piece: str, artifact: str) -> str:
     """
     body = piece.strip()
     if body.startswith("```"):
-        inside = _unfence(body)
+        inside = unfence(body)
         if inside != body and inside.startswith(_title(artifact)):
             return inside + "\n"
     return piece

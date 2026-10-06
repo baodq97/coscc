@@ -784,7 +784,7 @@ def _write_reply(
         # reports success for a file that is not there.
         if not (directory / artifact).exists():
             raise RunError(f"the step did not write {artifact}")
-        # Its `Status:` line is not looked at: what decides is the object.
+        # What decides is the object.
         return spike_md, review_md
     # Synchronous, so nothing yields between reading the `## Answers` already on disk and writing
     # the artifact over it.
@@ -840,8 +840,8 @@ def _judged(
         # "The step did not write impl.md" is a real reason to stop, so it goes into the attempt
         # record's `error` like any other.
         unopened = e if isinstance(e, OpeningError) else None
-        # What the session said, kept: the money was spent, and a reply with no `Status:` line is
-        # often a good artifact with a preamble that a person can judge in a second.
+        # What the session said, kept: the money was spent, and a reply with a preamble is
+        # often a good artifact that a person can judge in a second.
         detail = _with_reply(str(e), _joined(pieces))
         ceiling = f"stopped at the ceiling: {terminal} — {detail}"
     else:
@@ -1219,9 +1219,8 @@ def _write_round(
         rendered = render_round(
             new[-1] if new else "## Round", number, head, received["object"], screens
         )
-        status = submit_mod.ROUND_STATES[str(received["object"]["verdict"])]
         (directory / artifact).write_text(
-            replace_new_rounds(text, rounds_before or set(), rendered, status),
+            replace_new_rounds(text, rounds_before or set(), rendered),
             encoding="utf-8",
         )
         channel.extra = {"n": number, "screens": screens}

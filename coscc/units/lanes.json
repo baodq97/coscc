@@ -16,6 +16,7 @@
       "end": "shipped",
       "guards": {
         "unit": {
+          "create": "unit-created",
           "result": "stage-result",
           "round": "review-round",
           "claim": "impl-claim",

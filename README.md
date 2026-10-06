@@ -13,7 +13,7 @@ A local AI-native SDLC harness: a unit of work moves through eight stages — `i
 `intent.md`, `spec.md`, `plan.md`, `impl.md`, `pr.md`, `review.md`, `ship.md` — each
 artifact accepted and committed before the next begins. `idea.md` is optional and gates
 nothing; the other seven are gated on the one before. The agent writes those artifacts and
-accepts its own, so `Status: accepted` records readiness rather than approval;
+judges its own, so a stage's `judgement` records readiness rather than approval;
 `.claude/CLAUDE.md`, under `## What is deliberately not built`, says what was traded
 away for that and what is left.
 

@@ -73,18 +73,19 @@ class ARoundIsWrittenFromItsObject(unittest.TestCase):
             "# Review: x\nStatus: draft.\n\n## Round 1\n\nold\n\n## Round 2\n\nrendered\n\n## Answers\n\n### Câu 1\nkept\n",
         )
 
-    def test_the_header_takes_the_status_the_object_gave(self):
-        """Not the session's word, and only the header's."""
+    def test_the_header_stays_byte_for_byte(self):
+        """The app writes no `Status:`: a header's own line is prose it never touches."""
         text = (
             "# Review: x\nPR: pr.md. Status: accepted.\n\n## Round 1\n\nStatus: draft.\n\n"
             "## Round 2\n\nStatus: accepted.\n"
         )
-        out = replace_new_rounds(text, {1}, "## Round 2\n\nrendered", "changes-requested")
+        out = replace_new_rounds(text, {1}, "## Round 2\n\nrendered")
         self.assertEqual(
             out,
-            "# Review: x\nPR: pr.md. Status: changes-requested.\n\n## Round 1\n\nStatus: draft.\n\n"
+            "# Review: x\nPR: pr.md. Status: accepted.\n\n## Round 1\n\nStatus: draft.\n\n"
             "## Round 2\n\nrendered\n",
         )
+        self.assertEqual(out.split("## Round 1")[0], text.split("## Round 1")[0])
 
 
 class MergeReview(unittest.TestCase):
@@ -108,8 +109,7 @@ class OpenFindings(unittest.TestCase):
     def test_the_last_round_only_and_its_open_findings(self):
         from coscc.runner.review import open_findings
 
-        header, number, findings = open_findings(_REVIEW_TWO_ROUNDS)
-        self.assertEqual(header, "PR: pr.md. Concluded by: agent. Status: changes-requested.")
+        number, findings = open_findings(_REVIEW_TWO_ROUNDS)
         self.assertEqual(number, 2)
         self.assertEqual(
             findings,
@@ -135,25 +135,21 @@ class OpenFindings(unittest.TestCase):
             "- F5 [fixed] e — high — KEPT-5\n"
             "- F6 [Fixed 0123456789abcdef0123456789abcdef01234567] f — low — GONE-6\n"
         )
-        _, _, findings = open_findings(text)
+        _, findings = open_findings(text)
         self.assertNotIn("GONE", findings)
         for kept in ("KEPT-2", "KEPT-3", "KEPT-4", "KEPT-5"):
             self.assertIn(kept, findings)
 
-    def test_a_status_quoted_in_a_round_is_not_the_header(self):
+    def test_a_file_with_no_round_is_one_round_with_no_number(self):
         from coscc.runner.review import open_findings
 
-        text = (
-            "# Review: x\nPR: pr.md. Status: accepted.\n\n## Round 1\n\n"
-            "The header read\nStatus: changes-requested.\n\n- F1 [open] a — low — L\n"
-        )
-        header, number, _ = open_findings(text)
-        self.assertEqual(header, "PR: pr.md. Status: accepted.")
-        self.assertEqual(number, 1)
+        number, findings = open_findings("# Review: x\n\n- F1 [open] a — low — L\n")
+        self.assertIsNone(number)
+        self.assertIn("F1", findings)
 
 
 class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
-    """Only an incomplete round, under `draft`, for the head the step ran on."""
+    """Only an incomplete round, for the head the step ran on, whatever its header says."""
 
     HEAD = "b" * 40
 
@@ -166,6 +162,11 @@ class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
         self.assertIsNone(self.problem(incomplete_reply(self.HEAD)))
         self.assertIsNone(self.problem("```\n" + incomplete_reply(self.HEAD) + "```\n"))
         self.assertIsNone(self.problem(incomplete_reply(self.HEAD, number=1), existing=""))
+
+    def test_a_round_with_no_status_line_passes(self):
+        reply = incomplete_reply(self.HEAD).replace("Status: draft.", "").replace("Status: ", "")
+        self.assertNotIn("Status:", reply)
+        self.assertIsNone(self.problem(reply))
 
     def test_only_the_round_after_the_last_one_on_disk(self):
         # Round 5 on one round would be written, and `ship` would call it renumbered for good.
@@ -185,7 +186,6 @@ class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
                     self.HEAD, sections=("Findings", "Reviewed so far", "What was not reviewed")
                 ),
             ),
-            ("header", incomplete_reply(self.HEAD, status="changes-requested")),
             ("another head", incomplete_reply("c" * 40)),
             (
                 "two rounds",
@@ -193,8 +193,8 @@ class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
                 + "\n"
                 + incomplete_reply(self.HEAD, number=3).split("\n\n", 1)[1],
             ),
-            ("no round", "# Review: x\nStatus: draft.\n"),
-            ("no status", "Tôi hết lượt."),
+            ("no round", "# Review: x\n"),
+            ("nothing", "Tôi hết lượt."),
         ):
             with self.subTest(why=why):
                 self.assertIsNotNone(self.problem(reply))

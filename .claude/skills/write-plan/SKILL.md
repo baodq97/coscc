@@ -41,7 +41,7 @@ it as `spec.md ## Answers, câu N`. Do not check the spec again.
 
 ````markdown
 # Plan: <title>
-Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: accepted. Impl: routine | novel.
+Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Impl: routine | novel.
 
 ## Files that change
 - path (new)
@@ -82,8 +82,7 @@ Or, under the heading, the one line `none: one session`.
 - When the spec had `[unmeasured] U<n>` items, every step resting on one cites
   `spike.md ## U<n>`; the `impl` gate is closed on a plan that never names `spike.md`. Never
   write "measure X first, stop if not" for such a question: a new one goes back to the spec.
-- `Status: done` only after the shipped work passed `## Proof`; never to close a unit with
-  stages left. "Verify manually" is not proof.
+- "Verify manually" is not proof.
 
 ## Done when
 

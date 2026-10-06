@@ -101,8 +101,8 @@ def describe(drift: dict[str, Any]) -> str:
         "1. The line numbers the plan cites in these files may no longer point where they did.",
         "2. If what was merged contradicts what the plan sets out to do, stop before editing "
         "that file.",
-        "3. Record the contradiction in `impl.md` under `## What is still open`, set "
-        "`Status: draft`, and do not edit `plan.md`.",
+        "3. Record the contradiction in `impl.md` under `## What is still open`, submit "
+        "`not-ready`, and do not edit `plan.md`.",
     ]
     return "\n".join(lines)
 

@@ -328,6 +328,52 @@ class Answers:
                 pass
             return {"ingest_error": reason}
 
+    async def _open_unit(self, cwd: str, unit: str, brief: bool) -> dict[str, Any]:
+        """A new unit's `unit_meta` row and, given a brief, its `idea.md` accepted through guard
+        `unit-created`, in one transaction. A failure is told as `ingest` tells it."""
+        meta = self.ws.unit_meta()
+        workspace = self.ws.key(cwd)
+        try:
+            await asyncio.to_thread(self._write_opening, meta, workspace, unit, brief)
+            return {}
+        except (BadTransition, Busy, sqlite3.Error, OSError) as e:
+            log.warning("%s in %s could not be opened: %s", unit, workspace, e)
+            if isinstance(e, BadTransition):
+                reason = str(e) or "its first state was refused"
+            else:
+                reason = "the database could not be written"
+            try:
+                meta.ingest_failed(workspace, unit, reason)
+            except Busy, sqlite3.Error, OSError:
+                pass
+            return {"ingest_error": reason}
+
+    def _write_opening(self, meta: UnitMeta, workspace: str, unit: str, brief: bool) -> None:
+        if not brief:
+            with meta.data.write() as conn:
+                meta.add_unit(conn, workspace, unit)
+            return
+        journal = self.ws.journal() or Journal(meta.root, self.config.data_dir)
+        applied = transitions.apply(
+            meta.history,
+            journal,
+            machine="unit",
+            transition="create",
+            workspace=workspace,
+            unit=unit,
+            artifact="idea.md",
+            to_state="accepted",
+            inputs={"brief": True},
+            authority="code",
+            actor="app:create",
+            source="app:create",
+            also=lambda conn: meta.add_unit(conn, workspace, unit),
+        )
+        if not applied.open:
+            raise BadTransition(
+                f"guard {applied.guard} refused {unit}: {', '.join(applied.reasons)}"
+            )
+
     def _apply_result(
         self,
         meta: UnitMeta,
@@ -452,10 +498,8 @@ class Answers:
                     ) from e
                 made["idea"] = idea
                 self.ideas.refresh_ideas(linked["home"])
-            # The new unit's row, and its `idea.md`'s status.
-            made.update(
-                await self.ingest(cwd, made["unit"], {"outcome": "done", "stage": "create"})
-            )
+            # The new unit's row, and its `idea.md` accepted when it has a brief.
+            made.update(await self._open_unit(cwd, made["unit"], bool(made.get("brief"))))
             try:
                 made["worktree"] = await worktrees.ensure(
                     cwd, made["unit"], None, self.config.data_dir

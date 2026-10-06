@@ -39,7 +39,7 @@ Keeps what you measured if the step runs out of turns or budget.
 
 ````markdown
 # Spike: <title>
-Spec: spec.md. Author: <name>. Status: accepted.
+Spec: spec.md. Author: <name>.
 
 ## U1
 

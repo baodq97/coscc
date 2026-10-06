@@ -39,14 +39,13 @@ every test. Never skip a test or switch a check off: fix the code.
 
 A unit is `.cos/NNNN_<slug>/` holding its artifacts; its state is in the app's `cos.db`.
 `coscc.loop` is the one definition of the loop. The app runs every stage.
-`Status: accepted` is the agent's judgement, not a person's approval.
+A stage's `judgement` (`ready`, in `submit`) is the agent's, not a person's approval.
 
 ## Things agents get wrong
 
 - Re-asking a gate the prompt answered; at a terminal, ask `uv run python -m coscc.loop gate` and stop on non-zero.
-- No code while `plan.md` is `draft` (accept it in its own commit), or in the `fast` lane while
-  `gate <unit> impl` is closed; there the first commit is the failing test.
-- `plan.md: done` is terminal: set it only after the proof command passed.
+- No code while `gate <unit> impl` is closed; in the `fast` lane the first commit is the failing
+  test.
 - A skip is a person's: `uv run coscc skip <workspace> <unit> spec <reason>`.
 - Committing on `main`: cut the branch from `unit-branch` first.
 

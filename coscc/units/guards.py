@@ -58,6 +58,7 @@ REASONS = (
     "bad-branch",
     "not-merged",
     "not-closed",
+    "no-brief",
     # A step refused before any spend.
     "unit-busy",
     "updating",
@@ -146,6 +147,11 @@ def impl_claim(inputs: Mapping[str, Any]) -> Verdict:
     if any(c not in open_ids for c in inputs.get("claims") or ()):
         return _closed("not-open-finding")
     return OPEN
+
+
+def unit_created(inputs: Mapping[str, Any]) -> Verdict:
+    """`brief`, whether the press that opened the unit carried one."""
+    return OPEN if inputs.get("brief") else _closed("no-brief")
 
 
 def skip_decision(inputs: Mapping[str, Any]) -> Verdict:
@@ -262,6 +268,11 @@ GUARDS: dict[str, Guard] = {
             impl_claim,
         ),
         Guard(
+            "unit-created",
+            "A unit opens accepted only from a brief a person gave.",
+            unit_created,
+        ),
+        Guard(
             "skip-decision",
             "Spec or plan is skipped only on a person's decision.",
             skip_decision,
@@ -312,6 +323,7 @@ GUARDS: dict[str, Guard] = {
 # Each machine's transitions and the guards the lane config may choose from; a config must name one for every transition.
 TRANSITIONS: dict[str, dict[str, tuple[str, ...]]] = {
     "unit": {
+        "create": ("unit-created",),
         "result": ("stage-result",),
         "round": ("review-round",),
         "claim": ("impl-claim",),
