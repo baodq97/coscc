@@ -109,6 +109,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         <Prop k="Status">{running ? "Running" : state.label}</Prop>
         <Prop k="Project">{workspace}</Prop>
         <Prop k="Type">{placed.type || "—"}</Prop>
+        <Prop k="Idea">{placed.idea ? placed.idea.replace(/^.*\/ideas\//, "").replace(/\.md$/, "") : "—"}</Prop>
         <Prop k="Agent">
           {running && (names[running.stage] ?? running.agent) ? (
             <>

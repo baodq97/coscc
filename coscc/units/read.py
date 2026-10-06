@@ -146,7 +146,6 @@ class Card(TypedDict):
     updated: str
     attention_reason: str
     idea: str
-    repo: str
     rank: int | None
     effort: str | None
 
@@ -266,7 +265,6 @@ def card(u: Mapping[str, Any]) -> Card:
         ),
         "attention_reason": str(u.get("attention_reason") or ""),
         "idea": str(u.get("idea") or ""),
-        "repo": str(u.get("repo") or ""),
         "rank": backlog_.get("rank"),
         "effort": backlog_.get("effort"),
     }
@@ -735,13 +733,6 @@ class Board:
         lap("loop")
         _brief_rounds(data["units"])
         data["read_at"] = read_at
-        name = self.ws.name(cwd)
-        for unit in data["units"]:
-            if unit.get("repo") and name and unit["repo"] != name:
-                unit["problems"] = [
-                    *unit["problems"],
-                    f"Repo: {unit['repo']} is not this workspace, {name}.",
-                ]
 
         journal = self.ws.journal()
         key = self.ws.key(cwd)

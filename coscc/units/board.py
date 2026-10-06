@@ -116,7 +116,7 @@ async def _run(argv: list[str], timeout: float, stdin: str | None = None) -> tup
 
 
 # The snapshot of a store with no units, for a question that needs none: `stages`.
-EMPTY_STATE: dict[str, Any] = {"workspace": "", "workspaces": [], "units": {}, "ideas": {}}
+EMPTY_STATE: dict[str, Any] = {"workspace": "", "workspaces": [], "units": {}}
 
 
 def _source(state: dict[str, Any] | None) -> tuple[list[str], str | None]:
@@ -133,31 +133,11 @@ async def _ask(argv: list[str], timeout: float, stdin: str | None) -> tuple[int,
 
 
 def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each `{ref, merged, why}` of the unit's `Depends on:`, as the loop resolved it."""
+    """Each `{ref, merged, why}` of the unit's dependencies, as the loop resolved it."""
     return [
         {"ref": str(d.get("ref") or ""), "merged": d.get("merged"), "why": str(d.get("why") or "")}
         for d in u.get("dependsOn") or []
         if isinstance(d, dict)
-    ]
-
-
-def _ideas_of(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """The store's ideas, `{id, title, status, units: [{ref, depends_on}], problems}`."""
-    return [
-        {
-            "id": str(i.get("id") or ""),
-            "title": str(i.get("title") or ""),
-            "status": str(i.get("status") or ""),
-            "units": [
-                {
-                    "ref": str(x.get("ref") or ""),
-                    "depends_on": [str(d) for d in x.get("dependsOn") or []],
-                }
-                for x in i.get("units") or []
-            ],
-            "problems": [str(p) for p in i.get("problems") or []],
-        }
-        for i in data.get("ideas") or []
     ]
 
 
@@ -238,9 +218,8 @@ async def read(
             ),
             # On each row too, so whoever holds one row from this read sees the same list.
             "after_answers": list(after_answers),
-            # The idea the unit was opened from, its `Repo:`, and each dependency as the loop resolved it.
+            # The idea the unit was opened from, and each dependency as the loop resolved it.
             "idea": str(u.get("idea") or ""),
-            "repo": str(u.get("repo") or ""),
             "depends_on": _depends_on_of(u),
         }
         for u in data.get("units") or []
@@ -251,7 +230,6 @@ async def read(
         "stages": [s["name"] for s in stages],
         "after_answers": after_answers,
         "units": units,
-        "ideas": _ideas_of(data),
         "count": len(units),
         # A healthy workspace can hold no units; that is not a failed read.
         "empty_because": None if units else _why_empty(path),
