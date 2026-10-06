@@ -12,7 +12,7 @@ const GAP = 30;
 const ROW = NODE_H + GAP;
 const LANE0 = NODE_W + 22;
 const LANE_STEP = 30;
-const SIDE_W = 138;
+const SIDE_W = 124;
 
 const ACTIONS: Record<string, string> = { "open-pr": "Opens the pull request", merge: "Merges it" };
 
@@ -57,8 +57,8 @@ export function ProcessDiagram({ process, current, done = [] }: { process: Proce
   const jumps = edges.filter((e) => main.includes(e.from) && main.includes(e.to) && main.indexOf(e.to) !== main.indexOf(e.from) + 1);
   const fwd = jumps.filter((e) => main.indexOf(e.to) > main.indexOf(e.from)).sort((a, b) => span(b) - span(a));
   const back = jumps.filter((e) => main.indexOf(e.to) < main.indexOf(e.from)).sort((a, b) => span(b) - span(a));
-  const left = back.length ? 150 + back.length * LANE_STEP : 0;
-  const sideX = LANE0 + Math.max(1, fwd.length) * LANE_STEP + 170;
+  const left = back.length ? 118 + back.length * LANE_STEP : 0;
+  const sideX = LANE0 + Math.max(1, fwd.length) * LANE_STEP + 140;
   const width = left + (side.length ? sideX + SIDE_W + 8 : LANE0 + Math.max(1, fwd.length) * LANE_STEP + 70);
   const height = main.length * ROW - GAP + 4;
 
