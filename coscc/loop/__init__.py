@@ -13,9 +13,10 @@ import re
 import subprocess
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from coscc.units import UNIT_RE, states
+from coscc.units.contracts import BranchType
 from coscc.units.guards import DECIDERS, REASONS
 
 __all__ = ["DECIDERS", "REASONS", "UNIT_RE"]
@@ -88,7 +89,7 @@ RERUNNABLE = ["intent", "spec", "spike", "plan", "pr"]
 RERUN_STAGES = ["intent", "spec", "spike", "plan", "impl"]
 SPIKE_ROUNDS = 2
 REVIEW_ROUNDS = 3
-BRANCH_TYPES = ["feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci", "revert"]
+BRANCH_TYPES = list(get_args(BranchType))
 SLUG_MAX = 60
 IDEAS = "ideas"
 LOCAL_ONLY = {"check-branch", "check-tag", "check-version"}

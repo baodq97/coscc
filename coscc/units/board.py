@@ -40,10 +40,12 @@ class Unavailable(Exception):
 
 class Gate(tuple):
     """`gate`'s answer: `(open, what it said)`, and `reasons`, the codes beside the words,
-    which the app branches on. `rebased`, `{reviewed, head}`, only when `ship` opened on a clean rebase."""
+    which the app branches on. `rebased`, `{reviewed, head}`, only when `ship` opened on a clean rebase;
+    `lane`, `fast` only when the loop says the unit is in the fast lane, else `full`."""
 
     reasons: tuple[str, ...]
     rebased: dict[str, str] | None
+    lane: str
 
     def __new__(
         cls,
@@ -51,11 +53,17 @@ class Gate(tuple):
         said: str,
         reasons: tuple[str, ...] = (),
         rebased: dict[str, str] | None = None,
+        lane: str = "full",
     ) -> "Gate":
         answer = super().__new__(cls, (opened, said))
         answer.reasons = tuple(reasons)
         answer.rebased = rebased
+        answer.lane = lane
         return answer
+
+
+def _lane(data: dict[str, Any]) -> str:
+    return "fast" if data.get("lane") == "fast" else "full"
 
 
 def _rebased(data: dict[str, Any]) -> dict[str, str] | None:
@@ -308,6 +316,7 @@ async def gate(
             said or f"the gate exited {code} and said nothing",
             _codes(data),
             _rebased(data),
+            _lane(data),
         )
     said = (out_text + err_text).strip()
     return Gate(False, said or f"the gate exited {code} and said nothing")

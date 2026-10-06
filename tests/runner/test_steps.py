@@ -1308,6 +1308,46 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.assertEqual(ceilings, [(120, 8.0), (250, 16.0)])
 
 
+class TheGatesLaneReachesThePrompt(unittest.TestCase):
+    """What the gate says of the lane is what the step's prompt is built for."""
+
+    setUp = AnImplStepRunsUnderThePlansLabel.setUp
+
+    class Impl(AnImplStepRunsUnderThePlansLabel.Impl):
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.test.prompts.append(text)
+            async for item in super().stream(cwd, text, session_id, max_turns, **kw):
+                yield item
+
+    def _run(self, lane):
+        from coscc.units import board as board_reader
+
+        self.prompts = []
+
+        async def gate(units_root, unit, stage, repo=None, **kw):
+            return board_reader.Gate(True, "open: impl may proceed", (), None, lane)
+
+        async def go():
+            return [
+                i async for i in self.core.steps.run_step(str(self.repo), self.made["unit"], "impl")
+            ]
+
+        with mock.patch.object(board_reader, "gate", gate):
+            asyncio.run(go())
+        journal = self.core.ws.journal()
+        return journal.records(self.core.ws.key(str(self.repo)), kind="start")[-1]
+
+    def test_a_fast_lane_gate_puts_the_block_in_the_prompt_and_the_record(self):
+        start = self._run("fast")
+        self.assertIn("# The fast lane", self.prompts[-1])
+        self.assertIn("fast-lane", start["included"])
+
+    def test_a_full_lane_gate_puts_no_block_anywhere(self):
+        start = self._run("full")
+        self.assertNotIn("# The fast lane", self.prompts[-1])
+        self.assertNotIn("fast-lane", start["included"])
+
+
 class AnImplStepUnderTheModelTrial(unittest.TestCase):
     """The fixture of `AnImplStepRunsUnderThePlansLabel`, with the arm forced by patching
     `modeltrial.arm`; the session stand-in names in `init` the model it was asked for, unless

@@ -21,6 +21,7 @@ from coscc.units import board as _board
 
 board = WithSnapshot(_board)
 from coscc.agent import harness
+from coscc.store.db import Data
 from coscc.loop import run as loop_run
 from coscc.units.board import (
     COLLAPSED_STATES,
@@ -31,6 +32,7 @@ from coscc.units.board import (
     shown_state,
     unit_state,
 )
+from coscc.units.meta import UnitMeta
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -242,6 +244,29 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
             with self.assertRaises(Unavailable):
                 run(board.gate(REPO, "0001_no-session-management", "spec"))
 
+    def test_a_fix_its_intent_record_hands_a_fix_comes_back_in_the_fast_lane(self):
+        """The lane the loop decides reaches `Gate.lane`, which the step hands the prompt."""
+        fix = {
+            "reproduction": "python -m pytest x",
+            "expected": {"source": "coscc/units/guards.py:19-30", "text": "Every code is named."},
+            "actual": "One is missing.",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / ".cos" / "0001_a-clear-fix"
+            d.mkdir(parents=True)
+            (d / "intent.md").write_text("# I\nAuthor: t. Type: fix. Status: accepted.\n")
+            key = str(Path(tmp).resolve())
+            meta = UnitMeta(Path(tmp) / "work", Data(Path(tmp) / "data"))
+            meta.import_store(key, key)
+            submitted = {"run": "r", "revision": "h", "object": {"judgement": "ready", "fix": fix}}
+            with meta.data.write() as conn:
+                meta.record_result(conn, key, "0001_a-clear-fix", "intent", "intent.md", submitted)
+            snap = meta.snapshot(key, {})
+            got = run(_board.gate(tmp, "0001_a-clear-fix", "impl", state=snap))
+            allowed, said = got
+            self.assertTrue(allowed, said)
+            self.assertEqual(got.lane, "fast")
+
     def test_an_open_gate_comes_back_open_and_says_so(self):
         # A unit closed under the old loop: every stage behind it is settled, so any
         # stage's gate is open. Chosen by shape, not by number.
@@ -411,6 +436,17 @@ class TheGateHandsOnACleanRebase(unittest.TestCase):
             self.assertIsNone(_board._rebased(bad), bad)
         self.assertEqual(_board.Gate(True, "open", (), both).rebased, both)
         self.assertIsNone(_board.Gate(True, "open").rebased)
+
+
+class TheGateHandsOnTheLane(unittest.TestCase):
+    """`gate --json`'s `lane` reaches the app: `fast` only when the loop says so."""
+
+    def test_the_lane_is_fast_only_when_the_loop_says_fast(self):
+        self.assertEqual(_board._lane({"lane": "fast"}), "fast")
+        for bad in ({}, {"lane": None}, {"lane": "full"}, {"lane": "slow"}, {"lane": 1}):
+            self.assertEqual(_board._lane(bad), "full", bad)
+        self.assertEqual(_board.Gate(True, "open", (), None, "fast").lane, "fast")
+        self.assertEqual(_board.Gate(True, "open").lane, "full")
 
 
 class TheStateOfAUnit(unittest.TestCase):

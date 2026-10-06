@@ -35,7 +35,7 @@ from typing import Any, Iterator
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
 # 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped; 13: `stage_results` becomes `outputs`).
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -193,15 +193,13 @@ CREATE TABLE IF NOT EXISTS step_events (
     "DROP TABLE IF EXISTS decisions",
     """-- One row per directory under a store's `.cos/`, whatever its name --
 -- `number` and `slug` are NULL for one that does not match NNNN_<slug>. `type` is the
--- word `intent.md` declares, or `unknown` until one is read. `lane` is `full` for every
--- unit and nothing reads it to decide. Status is not here: it is the fold over
--- `transitions`.
+-- intent's record hands over (the word `intent.md` declares for a unit with no record),
+-- or `unknown` until one is read. Status is not here: it is the fold over `transitions`.
 CREATE TABLE IF NOT EXISTS unit_meta (
     root        TEXT NOT NULL,
     workspace   TEXT NOT NULL,
     unit        TEXT NOT NULL,
     type        TEXT NOT NULL,
-    lane        TEXT NOT NULL DEFAULT 'full',
     number      INTEGER,
     slug        TEXT,
     imported_at TEXT NOT NULL,
@@ -633,6 +631,7 @@ class Data:
                 self._outputs_from_stage_results(conn)
                 for statement in _SCHEMA:
                     conn.execute(statement)
+                self._records_v2(conn)
                 for table, column, declaration in _COLUMNS:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
@@ -656,6 +655,20 @@ class Data:
         conn.execute("ALTER TABLE outputs RENAME COLUMN stage TO agent")
         conn.execute("ALTER TABLE outputs ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
         conn.execute("DROP INDEX IF EXISTS stage_results_scope")
+
+    @staticmethod
+    def _records_v2(conn: sqlite3.Connection) -> None:
+        """14: intent's records gain `type`, from the unit's, impl's change version only, and
+        `unit_meta` loses `lane`."""
+        conn.execute(
+            "UPDATE outputs SET version = 2, object = json_set(object, '$.type', "
+            "COALESCE((SELECT type FROM unit_meta m WHERE m.root = outputs.root "
+            "AND m.workspace = outputs.workspace AND m.unit = outputs.unit), 'unknown')) "
+            "WHERE agent = 'intent' AND version = 1"
+        )
+        conn.execute("UPDATE outputs SET version = 2 WHERE agent = 'impl' AND version = 1")
+        if "lane" in {r[1] for r in conn.execute("PRAGMA table_info(unit_meta)")}:
+            conn.execute("ALTER TABLE unit_meta DROP COLUMN lane")
 
     def version(self) -> int:
         with self.connect() as conn:

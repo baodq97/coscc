@@ -1218,6 +1218,7 @@ class Steps:
             stages=list(stages),
             gate_said=answer[1],
             gate_reasons=_gate_reasons(answer),
+            lane=getattr(answer, "lane", "full"),
             cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
             base=base,
             base_note=describe_base(base),

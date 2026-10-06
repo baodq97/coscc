@@ -88,11 +88,15 @@ PR = "PR: https://github.com/o/r/pull/7\n"
 MORE = (
     "\n## Answers\n### More rounds\nDecided by: Phong. Date: 2026-10-01. Via: board.\nRounds: 2\n"
 )
-FIX_INTENT = (
-    "# Intent: lỗi\nAuthor: test. Status: accepted. Type: fix.\n\n"
-    "## Reproduction\n```\n$ run\nboom\n```\n\n## Expected\nSource: src/a.py:1-3\n"
-    "trả về 3\n\n## Actual\ntrả về 2\n"
-)
+FIX_INTENT = "# Intent: lỗi\nAuthor: test. Status: accepted. Type: fix.\n"
+# What intent's record hands over for a fix to enter the fast lane, and impl's to leave it.
+FIX = {
+    "reproduction": "$ run\nboom",
+    "expected": {"source": "src/a.py:1-3", "text": "trả về 3"},
+    "actual": "trả về 2",
+}
+FIX_RECORD = {"result": {"judgement": "ready", "fix": FIX}}
+LEFT_RECORD = {"result": {"judgement": "ready", "left_lane": "nguồn nói khác"}}
 ASKED = "## Open questions\n1. Ai chịu trách nhiệm cho phần này?\n"
 ANSWER = {"artifact": "intent.md", "n": 1, "id": None, "text": "Người dùng.", **PERSON}
 
@@ -188,11 +192,12 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
         spec_md=SPEC_U, spike_md=spike_md("holds"))  # fmt: skip
     put(s, "0024_spike-skipped-spec", accepted("intent.md", **{"spec.md": "skipped"}),
         texts={"spec.md": text("spec.md", "skipped")}, spec_md={"authority": "person", **SPEC_U})  # fmt: skip
-    put(s, "0025_fast-lane", {"intent.md": "accepted"}, texts={"intent.md": FIX_INTENT}, type="fix")
+    put(s, "0025_fast-lane", {"intent.md": "accepted"}, texts={"intent.md": FIX_INTENT},
+        type="fix", intent_md=FIX_RECORD)  # fmt: skip
     put(s, "0026_fast-lane-impl", {"intent.md": "accepted", "impl.md": "accepted"},
-        texts={"intent.md": FIX_INTENT}, type="fix")  # fmt: skip
+        texts={"intent.md": FIX_INTENT}, type="fix", intent_md=FIX_RECORD)  # fmt: skip
     put(s, "0027_fast-lane-left", accepted("plan.md", **{"impl.md": "draft"}),
-        texts={"intent.md": FIX_INTENT, "impl.md": text("impl.md", "draft", head="Lane: full.")}, type="fix")  # fmt: skip
+        texts={"intent.md": FIX_INTENT}, type="fix", intent_md=FIX_RECORD, impl_md=LEFT_RECORD)  # fmt: skip
     put(s, "0028_review-missing", accepted("pr.md"))
     put(s, "0029_review-draft", accepted("pr.md", **{"review.md": "draft"}))
     pr: dict[str, str] = {}

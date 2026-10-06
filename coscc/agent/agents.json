@@ -21,10 +21,16 @@
       "role": "States the problem and the outcome that would prove it solved, and decides no design.",
       "output": {
         "kind": "artifact",
-        "version": 1,
+        "version": 2,
         "fields": {
           "judgement": {"enum": ["ready", "not-ready"]},
-          "questions": {"list": {"n": "number", "text": "text"}}
+          "questions": {"list": {"n": "number", "text": "text"}},
+          "type": {"enum": ["feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci", "revert"]},
+          "fix?": {
+            "reproduction": "text",
+            "expected": {"source": "[^\\s:]+(:[0-9]+-[0-9]+)?", "text": "text"},
+            "actual": "text"
+          }
         }
       }
     },
@@ -77,11 +83,12 @@
       "role": "Builds what the accepted plan names and nothing beyond it.",
       "output": {
         "kind": "artifact",
-        "version": 1,
+        "version": 2,
         "fields": {
           "judgement": {"enum": ["ready", "not-ready"]},
           "questions": {"list": {"n": "number", "text": "text"}},
-          "needs_person": {"list": "F[0-9]+"}
+          "needs_person": {"list": "F[0-9]+"},
+          "left_lane?": "text"
         }
       }
     },

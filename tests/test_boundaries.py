@@ -74,6 +74,9 @@ FOREIGN_SQL: set[tuple[str, str]] = {
     ("coscc.github.prmachine", "review_rounds"),
     ("coscc.github.prmachine", "transitions"),
     ("coscc.run", "unit_meta"),
+    # The v14 migration rewrites intent and impl records and drops `unit_meta.lane`.
+    ("coscc.store.db", "outputs"),
+    ("coscc.store.db", "unit_meta"),
     ("coscc.run", "workspaces"),
     ("coscc.github.integration", "transitions"),
     ("coscc.units.history", "transitions"),

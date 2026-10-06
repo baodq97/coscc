@@ -214,7 +214,7 @@ class StageResultsBecomeOutputs(unittest.TestCase):
                     )
                 conn.execute("PRAGMA user_version=12")
 
-            self.assertEqual(data.version(), 13)
+            self.assertEqual(data.version(), 14)
             with data.connect() as conn:
                 names = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master")}
                 rows = [
@@ -226,6 +226,53 @@ class StageResultsBecomeOutputs(unittest.TestCase):
             self.assertEqual(rows, [(7, "spec", 1, '{"n": 7}'), (9, "spec", 1, '{"n": 9}')])
             self.assertIn("outputs_scope", names)
             self.assertFalse({"stage_results", "stage_results_scope"} & names)
+
+
+class IntentRecordsRiseToV2WithTheirType(unittest.TestCase):
+    def test_a_v13_database_gets_a_type_in_every_intent_record_and_loses_the_lane(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.connect() as conn:
+                conn.execute("ALTER TABLE unit_meta ADD COLUMN lane TEXT NOT NULL DEFAULT 'full'")
+                for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):
+                    conn.execute(
+                        "INSERT INTO unit_meta (root, workspace, unit, type, imported_at) "
+                        f"VALUES ('/w', 'p', '{unit}', '{kind}', 't')"
+                    )
+                rows = [
+                    (1, "intent", "0001_a", '{"stage": "intent", "judgement": "ready"}'),
+                    (2, "intent", "0002_b", '{"stage": "intent", "judgement": "ready"}'),
+                    (3, "impl", "0001_a", '{"stage": "impl", "needs_person": []}'),
+                    (4, "spec", "0001_a", '{"stage": "spec"}'),
+                ]
+                for n, agent, unit, obj in rows:
+                    conn.execute(
+                        "INSERT INTO outputs (id, at, root, workspace, unit, agent, version, run, "
+                        "revision, judgement, object) VALUES "
+                        f"({n}, 't', '/w', 'p', '{unit}', '{agent}', 1, 'r', 'h', 'ready', '{obj}')"
+                    )
+                conn.execute("PRAGMA user_version=13")
+
+            self.assertEqual(data.version(), 14)
+            with data.connect() as conn:
+                got = [
+                    tuple(r)
+                    for r in conn.execute(
+                        "SELECT id, agent, version, json_extract(object, '$.type'), "
+                        "json_extract(object, '$.judgement') FROM outputs ORDER BY id"
+                    )
+                ]
+                cols = {r["name"] for r in conn.execute("PRAGMA table_info(unit_meta)")}
+            self.assertEqual(
+                got,
+                [
+                    (1, "intent", 2, "fix", "ready"),
+                    (2, "intent", 2, "feat", "ready"),
+                    (3, "impl", 2, None, None),
+                    (4, "spec", 1, None, None),
+                ],
+            )
+            self.assertNotIn("lane", cols)
 
 
 class AStepsEvents(unittest.TestCase):

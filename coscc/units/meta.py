@@ -235,8 +235,8 @@ class UnitMeta:
         at = now()
         match = UNIT_RE.fullmatch(unit)
         conn.execute(
-            "INSERT OR IGNORE INTO unit_meta (root, workspace, unit, type, lane, number, slug, imported_at) "
-            "VALUES (?, ?, ?, 'unknown', 'full', ?, ?, ?)",
+            "INSERT OR IGNORE INTO unit_meta (root, workspace, unit, type, number, slug, imported_at) "
+            "VALUES (?, ?, ?, 'unknown', ?, ?, ?)",
             (*scope, int(match.group(1)) if match else None, match.group(2) if match else None, at),
         )
         seen = {
@@ -310,8 +310,18 @@ class UnitMeta:
             )
         if "intent.md" in dict(changed) and "links" in meta:
             kind = meta.get("type")
-            conn.execute(f"UPDATE unit_meta SET type = ? WHERE {_ONE}", (kind or "unknown", *scope))
-            if kind is None:
+            # A run that submitted its intent hands the type to `record_result`.
+            recorded = (
+                "intent.md" in decided
+                or conn.execute(
+                    f"SELECT 1 FROM outputs WHERE {_ONE} AND agent = 'intent'", scope
+                ).fetchone()
+            )
+            if not recorded:
+                conn.execute(
+                    f"UPDATE unit_meta SET type = ? WHERE {_ONE}", (kind or "unknown", *scope)
+                )
+            if kind is None and not recorded:
                 unknowns.append(
                     {
                         "unit": unit,
@@ -426,6 +436,8 @@ class UnitMeta:
             "ON CONFLICT (root, workspace, unit, artifact) DO UPDATE SET questions = 1",
             (*scope, artifact),
         )
+        if stage == "intent" and obj.get("type"):
+            conn.execute(f"UPDATE unit_meta SET type = ? WHERE {_ONE}", (str(obj["type"]), *scope))
         # impl's claims, each against the round whose open findings guard `impl-claim` read.
         conn.executemany(
             "INSERT INTO impl_claims (at, root, workspace, unit, run, round, finding) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -753,13 +765,12 @@ class UnitMeta:
             def rows(sql: str):
                 return conn.execute(sql.format(where=where), args).fetchall()
 
-            for r in rows("SELECT workspace, unit, type, lane FROM unit_meta WHERE {where}"):
+            for r in rows("SELECT workspace, unit, type FROM unit_meta WHERE {where}"):
                 if pairs is not None and (r["workspace"], r["unit"]) not in pairs:
                     continue
                 units[f"{name_of[r['workspace']]}/{r['unit']}"] = {
                     "artifacts": {},
                     "type": None if r["type"] == "unknown" else r["type"],
-                    "lane": r["lane"],
                     "links": {"idea": None, "repo": None, "dependsOn": None},
                     "holds": [],
                     "answers": [],

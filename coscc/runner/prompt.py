@@ -7,10 +7,11 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from coscc.agent import agents, harness
 from coscc.units import submit
+from coscc.units.contracts import BranchType
 from coscc.agent.policy import is_prose_stage
 from coscc.runner.review import (
     INCOMPLETE_SECTIONS,
@@ -550,32 +551,48 @@ def _tools(
 
 _FAST_IMPL = (
     "# The fast lane\n\n"
-    "This is a `Type: fix` with no spec or plan; `intent.md` is the plan and the open gate is "
-    "what lets you code. In this order:\n\n"
-    "1. Check that the file `intent.md ## Expected` names under `Source:` says what "
-    "`## Expected` says.\n"
+    "This is a fix with no spec or plan; `intent.md` is the plan and the open gate is what "
+    "lets you code. Intent's record names `{source}` as where the expected result is "
+    "stated: {expected}\n\n"
+    "In this order:\n\n"
+    "1. Check that `{source}` says what that sentence says.\n"
     "2. Commit a test that reproduces the bug, and nothing else. Run it and keep its failing "
     "output.\n"
     "3. Commit the fix. Run the same test and keep its passing output.\n"
     "4. `## What was measured` gives both shas, the test command, and both outputs. The header "
-    "names no `Plan:`."
+    "names no `Plan:`.\n\n"
+    "If the source says otherwise, or the fix needs more than this lane, hand back `not-ready` "
+    "with `left_lane` saying why: the unit then goes through spec and plan."
 )
 _FAST_REVIEW = (
     "# The fast lane\n\n"
-    "This is a `Type: fix` with no spec or plan. Check three things; a missing one is a "
+    "This is a fix with no spec or plan. Check three things; a missing one is a "
     "finding of `medium` or more:\n\n"
     "- the commit holding only the reproducing test comes before the fix;\n"
     "- `impl.md` shows that test failing at the first commit and passing at the fix;\n"
-    "- the file `Source:` names says what `intent.md ## Expected` says."
+    "- `{source}` says what intent's record says it should: {expected}"
 )
 _LANE_BLOCKS = {"impl": _FAST_IMPL, "review": _FAST_REVIEW}
 
 
-def _lane(stage: str, unit_meta: dict[str, Any] | None) -> list[str]:
-    """What only a unit in the fast lane is told."""
-    if (unit_meta or {}).get("lane") == "fast" and stage in _LANE_BLOCKS:
-        return [_LANE_BLOCKS[stage]]
-    return []
+def _lane(
+    stage: str, lane: str, unit_meta: dict[str, Any] | None, included: list[str]
+) -> list[str]:
+    """What only a unit in the fast lane is told, with the `source` and `expected` of intent's
+    record. The gate says the lane; the record is read as the snapshot carries it."""
+    if lane != "fast" or stage not in _LANE_BLOCKS:
+        return []
+    fix = ((unit_meta or {}).get("artifacts", {}).get("intent.md", {}).get("result") or {}).get(
+        "fix"
+    ) or {}
+    expected = fix.get("expected") or {}
+    included.append("fast-lane")
+    return [
+        _LANE_BLOCKS[stage].format(
+            source=expected.get("source", "the file intent names"),
+            expected=expected.get("text", ""),
+        )
+    ]
 
 
 def _answers(
@@ -891,6 +908,7 @@ def compose_prompt(
     state_file: str | Path | None = None,
     blocks: tuple[tuple[str, str], ...] = (),
     branch: str = "",
+    lane: str = "full",
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole, and the ones it names by
     path only.
@@ -906,8 +924,9 @@ def compose_prompt(
     under its own heading. `plan_map` is what `planmap.for_step` built and
     `commands` the words of the step's grant (`impl` only). `unfinished_round` is
     `{"n", "dropped"}` of a last round the loop read as unfinished (`review` only).
-    `runs_commands` is true when the step's grant holds `Bash`. `branch` is the unit's branch
-    the worktree stands on, the one push `impl` may make. `unit_meta` is the unit's entry
+    `lane` is what the gate said of the unit (`fast` or `full`). `runs_commands` is true when
+    the step's grant holds `Bash`. `branch` is the unit's branch the worktree stands on, the
+    one push `impl` may make. `unit_meta` is the unit's entry
     in the snapshot: its answers and holds, rendered where the file's `## Answers` blocks were.
 
     The list of included artifacts is returned rather than inferred later: if a step ran
@@ -932,7 +951,7 @@ def compose_prompt(
         *_second_artifact(directory, stage, unit_meta, included),
         *_where_you_work(stage, workspace, worktree, ceilings),
         *_tools(stage, directory, plan_map, commands, runs_commands, state_file, included),
-        *_lane(stage, unit_meta),
+        *_lane(stage, lane, unit_meta, included),
         *_answers(stage, directory, artifact, writes_own, unit_meta),
         *_sent_back(stage, directory, review, included),
         *_push(stage, branch),
@@ -974,6 +993,15 @@ def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
         "- `questions`: every item under `## Open questions` still waiting on a person, as "
         "`{n, text}` with the number the file gives it; `[]` when there is none.",
     ]
+    if stage == "intent":
+        types = ", ".join(f"`{t}`" for t in get_args(BranchType))
+        fields.append(f"- `type`: the branch type of the unit, one of {types}.")
+        fields.append(
+            "- `fix`: only for a clear fix: `{reproduction, expected: {source, text}, actual}`, "
+            "the command that shows it, what the code in `source` (`path` or `path:L1-L2`, in "
+            "the repository) says should happen, and what happens instead. Leave it out when "
+            "any of the three is unknown; the unit then takes the full flow."
+        )
     if stage == "spec":
         fields.append(
             "- `unmeasured`: every `U<n>` id a `## Concerns` item opens with `[unmeasured]`; `[]` for none."
@@ -981,6 +1009,11 @@ def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
     if stage == "spike":
         fields.append(
             "- `verdicts`: one `{id, verdict}` per `## U<n>` section, `verdict` being `holds` or `fails`."
+        )
+    if stage == "impl":
+        fields.append(
+            "- `left_lane`: only when this fix needs the full flow after all: why. The unit "
+            "then leaves the fast lane."
         )
     if stage == "impl":
         fields.append(
