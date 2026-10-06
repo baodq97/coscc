@@ -7,6 +7,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from contextlib import suppress
 from pathlib import Path
 from unittest import mock
 
@@ -210,6 +211,39 @@ class ARaiseIsAPersonsAndOnlyOfAPausedStage(unittest.TestCase):
         self.assertEqual(record["session_id"], "sess-1")
         self.assertEqual(record["owner"]["max_budget_usd"], 8.0)
         self.assertEqual(raised["by"], "owner")
+
+    def test_the_raised_run_has_its_own_start_and_the_row_stays_one(self):
+        from coscc.agent.sessions import Suspended
+
+        here = {"workspace": self.key, "workspace_dir": str(self.repo), "unit": self.unit}
+        self.pause(owner={**OWNER, **here})
+        path = a_transcript(self._tmp.name)
+
+        class Ends:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def run(self, **kw):
+                raise Suspended("stop here")
+                yield
+
+        with (
+            mock.patch.object(transcript, "path_for", lambda cwd, sid: path),
+            mock.patch("coscc.runner.steps.Runner", Ends),
+        ):
+            with suppress(Exception):
+                self.raise_({"usd": 8})
+        [raise_row] = self.journal.records(self.key, self.unit, kind="raise")
+        starts = self.journal.records(self.key, self.unit, kind="start")
+        self.assertEqual(len(starts), 2)
+        self.assertEqual(starts[1]["run"], raise_row["run"])
+        self.assertEqual(
+            (starts[1]["raised_by"], starts[1]["continues"], starts[1]["agent"]),
+            ("owner", "r1", "impl"),
+        )
+        self.assertEqual(starts[1]["model"], END["model"])
+        rows = self.journal.timeline(self.key, self.unit)
+        self.assertEqual([r["run"] for r in rows], [raise_row["run"]])
 
     def test_the_run_log_shows_one_session_in_two_parts_and_holds_the_stage_until_then(self):
         self.pause()

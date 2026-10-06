@@ -208,9 +208,9 @@ def identity_section(row: dict[str, Any]) -> str:
 
 
 def of_record(record: dict[str, Any], overrides: dict[str, dict[str, str]] | None = None) -> str:
-    """A record's own `agent`; for an older one, its stage's name in today's table; else `""`."""
-    if record.get("agent"):
-        return str(record["agent"])
+    """A record's own `agent_name`; else its stage's name in today's table; else `""`."""
+    if record.get("agent_name"):
+        return str(record["agent_name"])
     row = agent_for(str(record.get("stage") or ""), overrides)
     return str(row["name"]) if row else ""
 

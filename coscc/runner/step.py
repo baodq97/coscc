@@ -1814,8 +1814,10 @@ class Runner:
             # Only on a stage run again from the board.
             **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),
             **ship_extra,
-            # Top level, the name when the step began; none for a stage the agent table has no row for.
-            **({"agent": agent["name"]} if agent is not None else {}),
+            # The agent's key, as its `end` names it, and its name when the step began (none for a
+            # stage the agent table has no row for).
+            agent=stage,
+            **({"agent_name": agent["name"]} if agent is not None else {}),
             # Whose step this is, so the next start can tell one this process still runs from one the app
             # went down under.
             **({"run": recorder.run, "pid": os.getpid()} if recorder is not None else {}),

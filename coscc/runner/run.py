@@ -322,6 +322,15 @@ def open_session(
     )
 
 
+def model_of(ctx: Ctx, agent: Agent) -> str | None:
+    """The model the run's session opens on, as its `start` and `end` say: the agent's, else this
+    app's (`Sessions.stream`'s own fallback); `None` leaves it to the CLI."""
+    if agent.model is not None:
+        return agent.model
+    config = getattr(ctx.sessions, "config", None)
+    return getattr(config, "model", None)
+
+
 def _started(ctx: Ctx, agent: Agent, given: Input, stage: str, run: str, grant: Grant) -> Any:
     """The run's `start`, and its `at`; `None` when the run log refused it."""
     if ctx.journal is None:
@@ -338,7 +347,7 @@ def _started(ctx: Ctx, agent: Agent, given: Input, stage: str, run: str, grant: 
             grants=policy.record(grant),
             max_turns=row.max_turns,
             max_budget_usd=row.max_budget_usd or None,
-            model=agent.model,
+            model=model_of(ctx, agent),
             model_source=str(agent.sources.get("model_source") or ""),
             effort=agent.effort,
             effort_source=str(agent.sources.get("effort_source") or ""),
@@ -347,7 +356,8 @@ def _started(ctx: Ctx, agent: Agent, given: Input, stage: str, run: str, grant: 
                 if ctx.app is not None
                 else {}
             ),
-            **({"agent": agent.name} if agent.name else {}),
+            agent=agent.key,
+            **({"agent_name": agent.name} if agent.name else {}),
             run=run,
             pid=os.getpid(),
             **given.start,
@@ -579,7 +589,7 @@ def _end(
             out.status,
             agent=agent.key,
             session_id=out.session,
-            model=agent.model,
+            model=model_of(ctx, agent),
             denials=denials,
             cost=out.cost if out.cost else {"cost_unknown": True},
             detail=out.detail or None,

@@ -310,6 +310,7 @@ def _raised(end: dict[str, Any], ceilings: Any) -> tuple[dict[str, Any], dict[st
         "owner": owner,
         "cwd": cwd,
         "session_id": sid,
+        "run": end.get("run"),
         "model": end.get("model"),
         "start_at": owner.get("start_at"),
         "boundary": edge,
@@ -1777,8 +1778,24 @@ class Steps:
         LIVE[run] = recorder
         self.holds.attempts.set_run(attempt, run)
         if raised is not None:
-            journal.raised(
-                key, unit, stage, run=run, session_id=str(record.get("session_id") or ""), **raised
+            session_id = str(record.get("session_id") or "")
+            journal.raised(key, unit, stage, run=run, session_id=session_id, **raised)
+            # The new run's own `start`, so every run has one start and one end; `continues` tells
+            # the run log's fold that the `raise` already reopened the row.
+            journal.started(
+                key,
+                unit,
+                stage,
+                "manual",
+                started_by="person",
+                raised_by=raised["by"],
+                continues=str(record.get("run") or ""),
+                session_id=session_id,
+                agent=stage,
+                model=record.get("model"),
+                head=owner.get("head"),
+                run=run,
+                pid=os.getpid(),
             )
         rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
         extra = {

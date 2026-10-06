@@ -500,9 +500,11 @@ class Models:
             "label_declared": label_declared,
             "label": label,
             "label_source": label_source,
-            # Every `start` of `impl` counts, the review-driven fixes included.
+            # Every `start` of `impl` counts, the review-driven fixes included; a raise's does not.
             "impl_run": (
-                sum(1 for r in history if r.get("kind") == "start") + 1 if stage == "impl" else None
+                sum(1 for r in history if r.get("kind") == "start" and "continues" not in r) + 1
+                if stage == "impl"
+                else None
             ),
         }
 
