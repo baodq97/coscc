@@ -338,6 +338,7 @@ export type NextStep = {
   "rerun"?: string;
   "continue"?: string;
   "reasons": string[];
+  "gate"?: string;
 };
 
 export type OutputRecord = {

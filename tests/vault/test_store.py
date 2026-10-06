@@ -49,6 +49,9 @@ class ANameSaysWhichTierItIsIn(unittest.TestCase):
         )
         self.assertFalse(made.has_value)
 
+    def test_a_secret_created_with_no_agent_is_usable_by_nobody(self):
+        self.assertEqual(self.store.create("ws:db", "/a", stages=()).stages, ())
+
     def test_a_broker_secret_is_ssh_only_from_the_start_and_after_a_policy_change(self):
         made = self.store.create("global:jump", "", modes=("env",), broker=True)
         self.assertEqual(made.modes, ("ssh",))

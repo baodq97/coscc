@@ -270,6 +270,8 @@ NextStep = TypedDict(
         "continue": NotRequired[str],
         # The codes the autopilot branches on.
         "reasons": list[str],
+        # What the gate says of the offered stage when it is closed (asked only for a page).
+        "gate": NotRequired[str],
     },
 )
 
@@ -464,11 +466,12 @@ class Steps:
             log.exception("what follows the %s of %s was not done", stage, unit)
             return
 
-    async def next_step(self, cwd: str, unit: str) -> NextStep:
+    async def next_step(self, cwd: str, unit: str, with_gate: bool = False) -> NextStep:
         """The one stage the run button may offer, and why -- `coscc.loop next`'s answer.
 
         Read with the same store and the same `repo=cwd` that `run_step` hands the gate, so
         the stage offered and the gate that will be asked read one checkout. Nothing here chooses a stage.
+        `with_gate` also asks the gate of the stage offered and adds what it says when closed.
         """
         self.ws.check(cwd)
         if not unit:
@@ -510,12 +513,27 @@ class Steps:
             )
         except Unavailable as e:
             raise Refused(str(e), ("unavailable",)) from e
+        closed = ""
+        if with_gate and found["stage"] and not found["blocked"]:
+            try:
+                answer = await board_reader.gate(
+                    self.ws.units_root(cwd),
+                    unit,
+                    found["stage"],
+                    repo=repo,
+                    state=self.ws.snapshot(cwd, [unit]),
+                )
+            except Unavailable as e:
+                closed = str(e)
+            else:
+                closed = "" if answer[0] else str(answer[1])
         return {
             "cwd": cwd,
             "unit": unit,
             "stage": found["stage"],
             "action": str(found["action"]),
             "blocked": bool(found["blocked"]),
+            "gate": closed,
             # The findings a person is awaited on, copied from `coscc.loop next`.
             "waiting": list(found.get("waiting") or []),
             # The ids the last review round left out, copied from `coscc.loop next`.
@@ -858,7 +876,7 @@ class Steps:
                     workspace=cwd,
                     workspace_key=key,
                     unit=unit,
-                    agent=stage,
+                    agent=agent_key,
                     run="",
                     cwd=work,
                     watch=None,

@@ -22,6 +22,7 @@ from coscc.agent import pack
 ROOT = Path(__file__).resolve().parents[1] / "coscc"
 BARE = {"idea", "pr", "review"}
 STAGE_WORDS = {"stage", "agent", "artifact", "state", "at"}
+LOOKUPS = {"agent", "row_of", "action_of", "by_of", "kind_of", "data_of", "get_agent"}
 LOOP = "loop"
 
 # `(file, enclosing function or "", constant)`: why it may stay.
@@ -30,9 +31,15 @@ ALLOWED = {
     ("features/notices/__init__.py", "", "ship"): (
         "the same run-log record kind, read by a feature that imports only the kernel"
     ),
-    ("units/meta.py", "", "ship"): (
-        "the key of the merge record on its artifact, which the loop reads by that name"
-    ),
+    ("features/notices/__init__.py", "_kind_and_text", "ship"): "the same run-log record kind",
+    (
+        "units/meta.py",
+        "snapshot",
+        "ship",
+    ): "the key of the merge record on its artifact, which the loop reads by that name",
+    ("runner/prompt.py", "", "review"): "keyed by output kind: the fast-lane review block",
+    ("units/contracts.py", "", "review"): "the contract of the output kind `review`",
+    ("units/guards.py", "", "pr"): "the guard table of the output kind `pr`",
     ("store/db.py", "_after_13", "*"): "an old migration's data rewrite names the stored values",
     ("store/db.py", "_to_15", "*"): "an old migration's data rewrite names the stored values",
     ("store/db.py", "_to_16", "*"): "an old migration's data rewrite names the stored values",
@@ -80,6 +87,28 @@ def _is_stage_ref(node: ast.AST) -> bool:
     return False
 
 
+def _stage_use(node: ast.AST, holder: ast.AST | None, parents: dict[ast.AST, ast.AST]) -> bool:
+    """A bare word used as a stage: compared with one, a key of a module-level table, a `stage:` value, or the
+    first argument of an agent or row lookup."""
+    if isinstance(holder, ast.Compare):
+        return any(_is_stage_ref(o) for o in [holder.left, *holder.comparators])
+    if isinstance(holder, ast.Dict):
+        if node in holder.keys:
+            table = parents.get(holder)
+            return isinstance(table, (ast.Assign, ast.AnnAssign)) and any(
+                isinstance(t, ast.Name) and t.id.isupper()
+                for t in (table.targets if isinstance(table, ast.Assign) else [table.target])
+            )
+        at = holder.values.index(node) if node in holder.values else -1
+        key = holder.keys[at] if at >= 0 else None
+        return isinstance(key, ast.Constant) and key.value in STAGE_WORDS
+    if isinstance(holder, ast.Call) and holder.args and holder.args[0] is node:
+        func = holder.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        return name in LOOKUPS or name.endswith("_for_step")
+    return False
+
+
 def findings(tree: ast.AST, known: set[str]) -> list[tuple[int, str, str]]:
     """`(line, enclosing function, constant)` of every stage name in `tree`."""
     parents: dict[ast.AST, ast.AST] = {}
@@ -100,10 +129,7 @@ def findings(tree: ast.AST, known: set[str]) -> list[tuple[int, str, str]]:
             holder = parent
             while isinstance(holder, (ast.Tuple, ast.List, ast.Set)):
                 holder = parents.get(holder)
-            if not isinstance(holder, ast.Compare):
-                continue
-            others = [holder.left, *holder.comparators]
-            if not any(_is_stage_ref(o) for o in others):
+            if not _stage_use(node, holder, parents):
                 continue
         func = ""
         up = parents.get(node)
@@ -127,8 +153,6 @@ def scan(under: str = "") -> list[str]:
             continue
         for line, func, value in findings(ast.parse(path.read_text(encoding="utf-8")), known):
             if (rel, func, value) in ALLOWED or (rel, func, "*") in ALLOWED:
-                continue
-            if (rel, "", value) in ALLOWED:
                 continue
             out.append(f"{rel}:{line}: {value!r}")
     return out
@@ -159,7 +183,7 @@ class NoStageNames(unittest.TestCase):
         for path in ROOT.rglob("*.py"):
             rel = path.relative_to(ROOT).as_posix()
             for _, func, value in findings(ast.parse(path.read_text(encoding="utf-8")), known):
-                used |= {(rel, func, value), (rel, func, "*"), (rel, "", value)}
+                used |= {(rel, func, value), (rel, func, "*")}
         self.assertEqual([k for k in ALLOWED if k not in used], [])
 
     def test_the_scan_finds_a_planted_name(self):
@@ -170,9 +194,17 @@ class NoStageNames(unittest.TestCase):
         )
         self.assertEqual([v for _, _, v in findings(tree, known)], ["impl", "impl.md", "review"])
 
+    def test_the_scan_finds_stage_keyed_code(self):
+        known = {"impl", "review", "pr"}
+        tree = ast.parse(
+            "T = {'review': 3}\nself.agent('review')\nrow_for_step('review', 1)\n"
+            "x = {'stage': 'review'}\ny = {'name': 'review'}\nfoo('review')"
+        )
+        self.assertEqual([line for line, _, _ in findings(tree, known)], [1, 2, 3, 4])
+
     def test_the_loop_is_counted(self):
         # Its own rebuild; the number only shrinks.
-        self.assertGreaterEqual(len(scan(LOOP)), 0)
+        self.assertLessEqual(len(scan(LOOP)), 7)
 
 
 if __name__ == "__main__":

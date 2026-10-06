@@ -46,7 +46,8 @@ A stage's `judgement` (`ready`, in `submit`) is the agent's, not a person's appr
 - Re-asking a gate the prompt answered; at a terminal, ask `uv run python -m coscc.loop gate` and stop on non-zero.
 - No code while `gate <unit> impl` is closed; in the `fast` lane the first commit is the failing
   test.
-- A skip is a person's: `uv run coscc skip <workspace> <unit> spec <reason>`.
+- A skip is a person's: `uv run coscc skip <workspace> <unit> <state> <reason>`, for any state the
+  process marks `skip`.
 - Committing on `main`: cut the branch from `unit-branch` first.
 
 ## Docs (read when it applies)
