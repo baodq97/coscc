@@ -9,8 +9,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+from coscc import kernel
 from coscc.config import Config
-from coscc.agent import pack
+from coscc.agent import models, pack, policy
+from coscc.runner import run as run_mod
+from coscc.units import contracts
 from coscc.store.db import Data
 from coscc.http.app import Core
 from coscc.kernel import Invalid
@@ -78,32 +81,43 @@ class _WithAService(unittest.TestCase):
 class AFieldIsCheckedSavedAndLogged(_WithAService):
     def test_a_value_out_of_bounds_is_refused_and_nothing_is_written(self):
         wrong = [
-            ("spec", "turns", 0),
-            ("spec", "turns", 501),
-            ("spec", "turns", 2.5),
-            ("spec", "budget", 0.09),
-            ("spec", "budget", 50.01),
-            ("spec", "model", "x" * 101),
-            ("spec", "effort", "turbo"),
-            ("chat", "effort", "low"),
-            ("chat", "turns", 10),
-            ("review:novel", "turns", 10),
-            ("plan:novel", "effort", "low"),
-            ("deploy", "model", "m"),
+            ("spec", "ceilings", {"turns": 0}),
+            ("spec", "ceilings", {"turns": 501}),
+            ("spec", "ceilings", {"turns": 2.5}),
+            ("spec", "ceilings", {"usd": 0.09}),
+            ("spec", "ceilings", {"usd": 50.01}),
+            ("spec", "model", {"id": "x" * 101}),
+            ("spec", "model", {"id": "m", "effort": "turbo"}),
+            ("spec", "model", "m"),
+            ("chat", "model", {"id": "m"}),
+            ("spec", "variants", {"routine": {}}),
+            ("deploy", "model", {"id": "m"}),
             ("spec", "tools", ["Bash"]),
-            ("", "model", "m"),
-            (None, "model", "m"),
+            ("spec", "tools", {"Read": "maybe"}),
+            ("spec", "tools", {"peers": "allow"}),
+            ("scout", "tools", {"Agent": "allow"}),
+            ("impl", "helpers", ["spec"]),
+            ("spec", "skills", ["write-nothing"]),
+            ("spec", "input", {"artifacts": ["intent"]}),
+            ("spec", "input", {**pack.row("spec")["input"], "data": ["gossip"]}),
+            ("spec", "output", {**pack.row("spec")["output"], "fields": {}}),
+            ("spec", "trigger", {"state": "plan"}),
+            ("spec", "body", 3),
+            ("spec", "skill:write-plan", "x"),
+            ("spec", "colour", "red"),
+            ("", "model", {"id": "m"}),
+            (None, "model", {"id": "m"}),
         ]
         for key, field, value in wrong:
             with self.assertRaises(Invalid, msg=(key, field, value)):
                 self.core.agents.set_agent_field(key, field, value)
-        self.assertEqual(pack.owner_fields("spec")[0], {})
+        self.assertEqual(pack.owner_fields("spec"), ({}, ""))
         self.assertEqual(self._settings(), [])
 
     def test_an_empty_value_puts_the_builtin_back(self):
-        self.core.agents.set_agent_field("spec", "model", "m")
-        self.core.agents.set_agent_field("spec", "model", "")
-        self.assertEqual(pack.owner_fields("spec")[0], {})
+        self.core.agents.set_agent_field("spec", "body", "Another role.")
+        self.core.agents.set_agent_field("spec", "body", "")
+        self.assertEqual(pack.owner_fields("spec"), ({}, ""))
 
     def test_identity_fields_keep_their_rules(self):
         agents = self.core.agents
@@ -112,7 +126,7 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
         for key, field, value in (
             ("review", "name", "Two words"),
             ("review", "glyph", "abc"),
-            ("review", "meaning", "m" * 61),
+            ("review", "description", "m" * 201),
             # Another row's name, whatever its case.
             ("spec", "name", "judge"),
             ("review", "name", "GEBO"),
@@ -142,11 +156,90 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
     def test_an_unreadable_store_writes_nothing(self):
         self.core.agents.set_agent_field("review", "name", "Judge")
         with mock.patch.object(pack, "write", side_effect=OSError("read-only")):
-            for field, value in (("role", "Reads it all."), ("turns", 10)):
+            for field, value in (("body", "Reads it all."), ("ceilings", {"turns": 10})):
                 with self.assertRaises(Invalid):
                     self.core.agents.set_agent_field("review", field, value)
         self.assertEqual(pack.owner_fields("review")[0], {"name": "Judge"})
         self.assertEqual(len(self._settings()), 1)
+
+    def test_a_catalog_names_the_tools_a_row_may_hold(self):
+        catalog = kernel.Hooks(parts=(("f", kernel.Parts(tools=(_TOOL,))),))
+        self.core.agents.hooks = lambda: catalog
+        self.core.agents.set_agent_field("spec", "tools", {"Read": "allow", "probe": "ask"})
+        with self.assertRaises(Invalid) as said:
+            self.core.agents.set_agent_field("spec", "tools", {"Read": "allow", "nope": "allow"})
+        self.assertIn("nope: no such tool in the catalog", str(said.exception))
+        page = self.core.agents.agent_page(now=NOW)
+        [probe] = [t for t in page["catalog"] if t["name"] == "probe"]
+        self.assertEqual((probe["feature"], probe["effect"], probe["on"]), ("f", "read", True))
+
+
+def _probe_server(_facts):
+    return {"type": "sdk", "name": "probe", "instance": None}
+
+
+_TOOL = kernel.Tool("probe", "read", "low", server="probe", names=("look",), make=_probe_server)
+
+
+class EveryPartReachesTheNextRun(_WithAService):
+    """Per part: saved on the page, the row has it, and what the next run is given has it."""
+
+    def _grant(self, key):
+        return run_mod.issue(policy.row_for(key), self.core.sessions, cwd=self._tmp.name)
+
+    def test_model_effort_and_ceilings(self):
+        self.core.agents.set_agent_field("spec", "model", {"id": "m-1", "effort": "low"})
+        self.core.agents.set_agent_field("spec", "ceilings", {"turns": 6, "usd": 0.15})
+        self.assertEqual(models.resolve("spec", None, None), ("m-1", "override", "low", "override"))
+        row = policy.row_for_step("spec", None)
+        self.assertEqual((row.max_turns, row.max_budget_usd), (6, 0.15))
+
+    def test_a_tool_off_leaves_the_grant_and_one_on_ask_is_refused(self):
+        tools = {**pack.row("intent")["tools"], "Grep": "off", "Glob": "ask"}
+        self.core.agents.set_agent_field("intent", "tools", tools)
+        grant = self._grant("intent")
+        self.assertNotIn("Grep", grant.tools)
+        self.assertIn("Glob", grant.tools)
+        self.assertEqual(grant.asks, ("Glob",))
+        reason = policy.critical(grant, "Glob", {"pattern": "*.py"}, None)
+        self.assertTrue(reason.startswith(policy.ASKS), reason)
+        self.assertEqual(policy.lacked(reason), "asks-a-person")
+        self.assertEqual(policy.critical(grant, "Read", {"file_path": "a"}, None), "")
+
+    def test_a_write_tool_on_ask_opens_no_place_to_write(self):
+        tools = {**pack.row("impl")["tools"], "Write": "ask", "Edit": "ask", "NotebookEdit": "ask"}
+        tools.pop("vault"), tools.pop("codegraph")
+        self.core.agents.set_agent_field("impl", "tools", tools)
+        self.assertEqual(self._grant("impl").write, ())
+
+    def test_input_output_body_and_skill_text(self):
+        before = pack.hash_of(pack.row("spec"))
+        given = {**pack.row("spec")["input"], "data": []}
+        self.core.agents.set_agent_field("spec", "input", given)
+        self.assertEqual(contracts.input_of("spec")["data"], [])
+        output = dict(pack.row("spec")["output"])
+        output["fields"] = {**output["fields"], "note?": "text"}
+        self.core.agents.set_agent_field("spec", "output", output)
+        self.assertIn("note", json.dumps(contracts.schema("spec")))
+        self.core.agents.set_agent_field("spec", "body", "Begin with MARKER-M4.")
+        agent = self.core.models.agent("spec", policy.row_for("spec"))
+        self.assertEqual(agent.system, "Begin with MARKER-M4.")
+        self.core.agents.set_agent_field("spec", "skill:write-spec", "# Write a spec\n\nShort.")
+        self.assertEqual(pack.skill("write-spec"), "# Write a spec\n\nShort.\n")
+        row = self._row(self.core.agents.agent_page(now=NOW), "spec")
+        self.assertNotEqual(row["row_hash"], before)
+        self.assertEqual(sorted(row["edited"]), ["body", "input", "output", "skill:write-spec"])
+        self.assertTrue(row["skills"][0]["edited"])
+        for field in ("input", "output", "body", "skill:write-spec"):
+            self.core.agents.set_agent_field("spec", field, None)
+        row = self._row(self.core.agents.agent_page(now=NOW), "spec")
+        self.assertEqual((row["edited"], row["row_hash"]), ([], before))
+
+    def test_the_trigger_is_shown_and_not_saved(self):
+        row = self._row(self.core.agents.agent_page(now=NOW), "intent")
+        self.assertEqual(row["row"]["trigger"], {"state": "intent"})
+        with self.assertRaises(Invalid):
+            self.core.agents.set_agent_field("intent", "trigger", {"state": "spec"})
 
 
 class ThePage(_WithAService):
@@ -156,28 +249,63 @@ class ThePage(_WithAService):
             self.assertNotIn("commands", row["row"], row["key"])
         self.assertNotIn("haiku", json.dumps(page).lower())
 
-    def test_the_others_are_estimate_and_leif(self):
+    def test_every_row_is_listed_in_its_group(self):
         page = self.core.agents.agent_page(now=NOW)
-        self.assertEqual(sorted(o["key"] for o in page["others"]), ["estimate", "leif"])
-
-    def test_runs_last_five_and_thirty_days(self):
-        self._seed(
-            [_end("spec", "done", d, cost=0.5, turns=7) for d in (40, 20, 10, 5, 3, 2, 1)]
-            + [_end("impl", "done", 2, cost=1.0), _end("impl", "failed", 1, cost=0.25)]
+        by = {r["key"]: r["group"] for r in page["rows"]}
+        self.assertEqual(
+            sorted(k for k, g in by.items() if g == "engine"), ["estimate", "integrate", "leif"]
         )
+        self.assertEqual(sorted(k for k, g in by.items() if g == "helper"), ["scout", "worker"])
+        self.assertEqual(by["impl"], "stage")
+
+    def test_runs_of_thirty_days_grouped_by_their_definition(self):
+        def start(days_ago, row_hash):
+            return {
+                "v": 1,
+                "kind": "start",
+                "workspace": "w",
+                "unit": "0001_u",
+                "stage": "spec",
+            } | {
+                "at": _at(days_ago),
+                "row_hash": row_hash,
+            }
+
+        seed = []
+        for d, h in ((40, "a"), (20, "a"), (10, "a"), (5, "b"), (3, "b")):
+            seed += [start(d, h), _end("spec", "done", d, cost=0.5, turns=7)]
+        setting = {"v": 1, "kind": "agent-setting", "workspace": "", "unit": "", "stage": ""}
+        setting |= {"at": _at(6), "agent": "spec", "field": "body", "old": "x", "new": "y"}
+        seed += [setting, _end("impl", "done", 2, cost=1.0), _end("impl", "failed", 1, cost=0.25)]
+        self._seed(sorted(seed, key=lambda r: r["at"]))
         page = self.core.agents.agent_page(now=NOW)
-        by = {r["key"]: r for r in page["rows"]}
-        spec = by["spec"]
-        self.assertEqual(len(spec["runs"]), 5)
-        self.assertEqual(spec["runs"][0]["at"], _at(1))
+        spec = self._row(page, "spec")
+        self.assertEqual([g["row_hash"] for g in spec["groups"]], ["b", "a"])
+        newest, older = spec["groups"]
+        self.assertEqual([s["field"] for s in newest["settings"]], ["body"])
+        self.assertEqual([r["at"] for r in newest["runs"]], [_at(3), _at(5)])
+        self.assertEqual((newest["cost_usd"], newest["turns"]), (1.0, 14))
+        self.assertEqual(len(older["runs"]), 2)
         # A run names its workspace, so a page over every workspace can tell whose unit it is.
-        self.assertEqual(spec["runs"][0]["workspace"], "w")
+        self.assertEqual(newest["runs"][0]["workspace"], "w")
         self.assertEqual((spec["last"]["outcome"], spec["last"]["turns"]), ("done", 7))
-        self.assertEqual((spec["runs_30d"], spec["cost_30d"]), (6, 3.0))
+        self.assertEqual((spec["runs_30d"], spec["cost_30d"]), (4, 2.0))
         self.assertEqual(spec["chip"], "ok")
-        self.assertEqual((by["impl"]["chip"], by["impl"]["cost_30d"]), ("failed", 1.25))
-        # A failed or costly row is listed first.
-        self.assertEqual(page["rows"][0]["key"], "impl")
+        impl = self._row(page, "impl")
+        self.assertEqual((impl["chip"], impl["cost_30d"]), ("failed", 1.25))
+
+    def test_a_setting_since_the_last_run_heads_a_group_of_no_run(self):
+        self.core.agents.set_agent_field("spec", "body", "New.")
+        [group] = self._row(self.core.agents.agent_page(), "spec")["groups"]
+        self.assertEqual((group["runs"], group["settings"][0]["new"]), ([], "New."))
+
+    def test_a_bad_owner_file_shows_its_problem(self):
+        path = pack.owner_dir() / "agents" / "spec.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('---\nmodel: "nope"\n---\n', encoding="utf-8")
+        row = self._row(self.core.agents.agent_page(now=NOW), "spec")
+        self.assertTrue(row["problems"])
+        self.assertNotIn("model", row["row"])
 
     def test_a_novel_run_is_costly_against_its_own_ceiling(self):
         def start(label, days_ago):

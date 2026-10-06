@@ -25,6 +25,7 @@ from coscc.agent.sessions import Sessions
 from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
 from tests.http.test_app import use_sessions, use_config
+from tests.agent.edit import whole
 
 
 class _Replies:
@@ -1067,9 +1068,9 @@ class Scripted(_Base):
         )
         self.assertEqual(self.core.autopilot.cap([], 100.0)["running"], need)
         # A raised dollar ceiling is what the queued step is held at from then on.
-        self.core.agents.set_agent_field("integrate", "budget", 30)
+        self.core.agents.set_agent_field("integrate", *whole("integrate", "ceilings.usd", 30))
         self.assertEqual(self.core.autopilot.cap([], 100.0)["running"], 30.0)
-        self.core.agents.set_agent_field("integrate", "budget", None)
+        self.core.agents.set_agent_field("integrate", *whole("integrate", "ceilings.usd", None))
         self.add("0002_b", "spec")
         self.listed()
         await self.pass_()

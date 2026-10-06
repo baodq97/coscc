@@ -94,7 +94,7 @@ DICT_ANY: set[str] = {
     "coscc.agent.agents:settings_json",
     "coscc.agent.agents:table",
     "coscc.agent.helpers:definitions",
-    "coscc.agent.models:part",
+    "coscc.agent.policy:part_of",
     "coscc.agent.pack:manifest",
     "coscc.agent.pack:owner_fields",
     "coscc.agent.pack:parse",

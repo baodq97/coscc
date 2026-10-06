@@ -25,6 +25,7 @@ from coscc.runner.prompt import compose_prompt
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner
 from coscc.runner.prompt import skill_for
+from tests.agent.edit import set_part
 from tests.units.test_submit import a_head, submits as _submits
 
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
@@ -1071,10 +1072,9 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
         )
 
     def test_the_other_rows_overrides_change_nothing(self):
-        from coscc.agent import models
 
-        models.set_field("impl", "turns", 30)
-        models.set_field("impl:novel", "turns", 40)
+        set_part("impl", "ceilings.turns", 30)
+        set_part("impl", "variants.novel.ceilings.turns", 40)
         with tempfile.TemporaryDirectory() as d:
             probe, _, stored = self.run_spec(d)
         self.assertEqual(probe.max_turns, row_for("spec").max_turns)

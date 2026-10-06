@@ -396,7 +396,7 @@ async def _compose(
         idea_note=idea_note,
         siblings_note=siblings_note,
         mentions_note=mentions_note,
-        runs_commands="Bash" in row.tools,
+        runs_commands="Bash" in row.tools and "Bash" not in row.asks,
         agent=agent,
         unit_meta=meta,
         state_file=state_file,
@@ -609,7 +609,7 @@ def _helpers_of(
     """This run's helpers, for a row that may start them (its hooks hold `Agent` and
     `SendMessage`), and the prompt blocks with `PROTOCOL` added. A step taken up again composes no
     prompt."""
-    if AGENT_TOOL not in row.tools:
+    if AGENT_TOOL not in row.tools or AGENT_TOOL in row.asks:
         return None, blocks
     ledger = Helpers(recorder.helper if recorder is not None else None)
     return ledger, blocks if resumed else (*blocks, ("helpers", PROTOCOL))
@@ -1256,6 +1256,7 @@ class Runner:
             held=tuple(t.name for t in self.hooks.held(row, workspace)),
             mcp=kernel.granted(tools),
             use=tuple((t.name, r) for t in tools if t.uses is not None for r in t.uses(asked)),
+            asks=kernel.granted(tuple(t for t in tools if t.name in row.asks)),
         )
         facts = replace(asked, grant=grant)
         ledger, blocks = _helpers_of(

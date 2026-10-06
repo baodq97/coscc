@@ -890,6 +890,41 @@ class _Unit(unittest.TestCase):
         return self.critical("Bash", {"command": command}, **kw)
 
 
+class ARowHoldingEveryToolStaysInsideTheCriticalCalls(_Unit):
+    """Whatever a row's tools say, the critical calls read only the grant: a row the owner gave
+    every built-in tool reaches no secret, writes nowhere outside, pushes only its branch and
+    starts no background command or nested helper."""
+
+    EVERY = Row(
+        tools=(*READ_TOOLS, *policy.WRITE_TOOLS, "Bash", policy.AGENT_TOOL, policy.SEND_MESSAGE),
+        helpers=("scout",),
+        submits=True,
+    )
+
+    def test_every_critical_call_is_still_refused(self):
+        places = self.places
+        said = [
+            self.critical("Read", {"file_path": f"{self.home}/.ssh/id"}, self.EVERY, places),
+            self.critical("Write", {"file_path": str(self.root / "x")}, self.EVERY, places),
+            self.critical("Bash", {"command": "git push origin main"}, self.EVERY, places),
+            self.critical("Bash", {"command": "ls", "run_in_background": True}, self.EVERY, places),
+            self.critical("Agent", {"subagent_type": "worker"}, self.EVERY, places),
+            self.critical("Agent", {"subagent_type": "scout"}, self.EVERY, places, agent_id="a"),
+            self.critical("mcp__other__x", {}, self.EVERY, places),
+        ]
+        self.assertTrue(all(said), said)
+
+    def test_a_tool_set_to_ask_is_refused_naming_it(self):
+        row = replace(self.EVERY, asks=("Grep",))
+        grant = replace(issued(row, **self.places), asks=("Grep", "mcp__vault__get"))
+        for tool in ("Grep", "mcp__vault__get"):
+            said = policy.critical(grant, tool, {"pattern": "x"}, None)
+            self.assertEqual(said.split(":")[0], policy.ASKS)
+            self.assertIn(tool, said)
+            self.assertEqual(policy.lacked(said), "asks-a-person")
+        self.assertEqual(policy.critical(grant, "Glob", {"pattern": "*.md"}, None), "")
+
+
 class AWriteOutsideTheUnitsPlacesIsRefused(_Unit):
     """The write tools reach the worktree, the unit's folder and, with Bash, the scratch."""
 

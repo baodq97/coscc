@@ -224,22 +224,26 @@ async def remove_workspace(name: str, request: Request) -> Any:
 
 @router.get("/api/agents")
 async def get_agents(request: Request) -> AgentPage:
-    """The eight agents: who each is, what it runs on and may do, how its runs went, its chip;
-    then `estimate` and `chat`, and what was wrong."""
-    return _core(request).agents.agent_page()
+    """Every agent, every part of its row as it stands and as built in, which keys the owner set,
+    its problems, skills, hash and runs grouped by definition; the tool catalog, each feature on
+    or off for `cwd`; what was wrong."""
+    return _core(request).agents.agent_page(cwd=_cwd(request))
 
 
 @router.post("/api/agents/field")
-async def set_agent_field(request: Request) -> Any:
-    """`{key, field, value}` saves one field of one row; no `value` (or `null`) resets it to
-    its default. Out of bounds is a 400 and nothing is written. No route writes a grant.
+async def set_agent_field(request: Request) -> AgentPage:
+    """`{key, field, value}` saves one part of one agent's row in the owner's layer: a frontmatter
+    key whole, `body`, or `skill:<name>`; `value` `null` puts the built-in's back. A row that would
+    not pass its checks is a 400 naming every reason, and nothing is written.
 
-    It decides what every step spends: whoever holds the password or a session can move any
-    agent's model or raise its ceilings. The trace is an `agent-setting` record in the run log.
+    Whoever holds the password or a session can give any agent another model, larger ceilings,
+    another prompt or more of the catalog's tools, never past the critical calls every session is
+    refused (`policy.critical`). The trace is an `agent-setting` record in the run log, and each
+    run's `row_hash` and `edited`.
     """
     body = await kernel.body(request)
     return _core(request).agents.set_agent_field(
-        body.get("key"), body.get("field"), body.get("value")
+        body.get("key"), body.get("field"), body.get("value"), cwd=str(body.get("cwd") or "")
     )
 
 

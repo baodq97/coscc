@@ -187,25 +187,47 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
         return r.json()
 
     async def test_set_then_reset(self):
-        body = {"key": "spec", "field": "turns", "value": 30}
+        body = {"key": "spec", "field": "ceilings", "value": {"turns": 30, "usd": 4.0}}
         r = await self.client.post("/api/agents/field", json=body)
         self.assertEqual(r.status_code, 200)
         spec = next(x for x in r.json()["rows"] if x["key"] == "spec")
         self.assertEqual(spec["config"]["ceilings"]["max_turns"], 30)
-        r = await self.client.post("/api/agents/field", json={"key": "spec", "field": "turns"})
+        self.assertEqual(spec["edited"], ["ceilings"])
+        r = await self.client.post("/api/agents/field", json={"key": "spec", "field": "ceilings"})
         self.assertEqual(r.status_code, 200)
         spec = next(x for x in r.json()["rows"] if x["key"] == "spec")
         self.assertEqual(spec["config"]["ceilings"]["max_turns_source"], "default")
+        self.assertEqual(spec["edited"], [])
+
+    async def test_the_page_carries_the_catalog_and_every_part(self):
+        page = await self.page()
+        catalog = {t["name"]: t for t in page["catalog"]}
+        self.assertEqual((catalog["Bash"]["effect"], catalog["Bash"]["tier"]), ("external", "high"))
+        self.assertEqual(catalog["vault"]["feature"], "vault")
+        self.assertNotIn("submit", catalog)
+        impl = next(x for x in page["rows"] if x["key"] == "impl")
+        self.assertEqual(impl["group"], "stage")
+        self.assertEqual(impl["row"]["tools"]["vault"], "allow")
+        self.assertTrue(impl["row"]["body"])
+        self.assertEqual([s["name"] for s in impl["skills"]], ["write-impl"])
+        self.assertEqual(len(impl["row_hash"]), 12)
+        groups = {x["key"]: x["group"] for x in page["rows"]}
+        self.assertEqual((groups["leif"], groups["scout"]), ("engine", "helper"))
 
     async def test_bad_requests_are_400_with_a_reason(self):
         for body in (
-            {"key": "bogus", "field": "model", "value": "m"},
-            {"key": "plan", "field": "model", "value": "  "},
-            {"key": "plan", "field": "effort", "value": "turbo"},
-            {"key": "chat", "field": "effort", "value": "low"},
-            {"key": "plan", "field": "turns", "value": 501},
-            {"key": "plan", "field": "budget", "value": 0.05},
+            {"key": "bogus", "field": "model", "value": {"id": "m"}},
+            {"key": "plan", "field": "model", "value": {"id": "  "}},
+            {"key": "plan", "field": "model", "value": {"id": "m", "effort": "turbo"}},
+            {"key": "chat", "field": "model", "value": {"id": "m"}},
+            {"key": "plan", "field": "ceilings", "value": {"turns": 501}},
+            {"key": "plan", "field": "ceilings", "value": {"usd": 0.05}},
             {"key": "review", "field": "name", "value": "two words"},
+            {"key": "plan", "field": "tools", "value": {"Nope": "allow"}},
+            {"key": "plan", "field": "tools", "value": {"submit": "allow"}},
+            {"key": "intent", "field": "tools", "value": {"Bash": "allow"}},
+            {"key": "plan", "field": "trigger", "value": {"state": "spec"}},
+            {"key": "plan", "field": "skill:write-intent", "value": "x"},
             {"field": "model", "value": "m"},
             [1, 2],
         ):
@@ -214,18 +236,15 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(r.json()["error"], body)
         r = await self.client.post("/api/agents/field", content=b"not json")
         self.assertEqual(r.status_code, 400)
+        self.assertEqual([x["edited"] for x in (await self.page())["rows"] if x["edited"]], [])
 
-    async def test_no_route_writes_a_grant(self):
-        # A row is shown, never written; a grant is the engine's, per run.
-        before = (await self.page())["rows"]
-        for field in ("tools", "commands", "mcp", "submits", "warning", "grant", "row"):
+    async def test_one_route_writes_a_row_and_none_writes_a_grant(self):
+        # A row's tools are the owner's to set; the grant is still the engine's, per run.
+        for field in ("commands", "mcp", "submits", "grant", "row"):
             r = await self.client.post(
                 "/api/agents/field", json={"key": "impl", "field": field, "value": ["Bash"]}
             )
             self.assertEqual(r.status_code, 400, field)
-        self.assertEqual(
-            [r["row"] for r in (await self.page())["rows"]], [r["row"] for r in before]
-        )
         writes = [
             route.path
             for route in self.app.routes
