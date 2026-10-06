@@ -1,5 +1,5 @@
 // The team: one card an agent, with what it does and how it has done for 30 days; one page an
-// agent, where what it runs on is changed. What it may do (its grant) is shown, never written.
+// agent, where what it runs on is changed. What it may hold (its row) is shown, never written.
 
 import { useState, type ReactNode } from "react";
 import type { AgentRow, ConfigRow } from "../api.gen";
@@ -110,7 +110,7 @@ export function AgentPage({ name }: { name: string }) {
       <Runs agent={a} names={Object.fromEntries((ws.data?.workspaces ?? []).map((w) => [w.path, w.name]))} />
 
       <div className="sec-h">What it may do</div>
-      <Grant agent={a} />
+      <Holds agent={a} />
     </div>
   );
 }
@@ -238,8 +238,8 @@ function Runs({ agent, names }: { agent: AgentRow; names: Record<string, string>
   );
 }
 
-function Grant({ agent }: { agent: AgentRow }) {
-  const g = agent.grant;
+function Holds({ agent }: { agent: AgentRow }) {
+  const g = agent.row;
   const list = (title: string, items: string[]) =>
     items.length > 0 && (
       <Field label={title}>
@@ -249,7 +249,6 @@ function Grant({ agent }: { agent: AgentRow }) {
   return (
     <div className="card card-b">
       {list("Tools", g.tools)}
-      {list("App tools", g.mcp)}
       <div className="faint" style={{ fontSize: 12.5, marginTop: 8 }}>
         {g.warning || "Set in the code, not here: widening what a step may do is a change reviewed like any other."}
       </div>

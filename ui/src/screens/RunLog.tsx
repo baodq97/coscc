@@ -166,7 +166,12 @@ function Line({ event: e, unit }: { event: StepEvent; unit: string }) {
   const who = e.agent_id ? <span className="faint">helper · </span> : null;
   switch (e.kind) {
     case "config":
-      return <div className="rl-l faint">opened with {[e.model, e.effort].filter(Boolean).join(" · ") || "the defaults"}</div>;
+      return (
+        <>
+          <div className="rl-l faint">opened with {[e.model, e.effort].filter(Boolean).join(" · ") || "the defaults"}</div>
+          <div className="rl-l faint">granted: {e.granted?.length ? e.granted.join(" · ") : "nothing beyond reading"}</div>
+        </>
+      );
     case "text":
       return e.role === "user" ? null : (
         <div className="rl-l rl-say">
@@ -186,7 +191,8 @@ function Line({ event: e, unit }: { event: StepEvent; unit: string }) {
     case "denied":
       return (
         <div className="rl-l mono rl-bad">
-          refused {e.tool}: {e.reason}
+          refused {e.tool}
+          {e.lacked ? (e.lacked === "never granted" ? " (never granted)" : ` (no ${e.lacked} grant)`) : ""}: {e.reason}
         </div>
       );
     case "result":
