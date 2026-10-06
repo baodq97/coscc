@@ -153,6 +153,8 @@ class AgentPage(TypedDict):
     catalog: list[CatalogTool]
     problems: list[str]
     cos_model: str | None
+    # Whose runs the counts and costs add up: `workspace` (the page has a `cwd`) or `all`.
+    scope: Literal["workspace", "all"]
 
 
 def chip_of(last: RunView | None, budget: float | None, runs_in_window: int) -> str:
@@ -365,6 +367,7 @@ class Agents:
             catalog=self.catalog(cwd),
             problems=table["problems"] + bad_runs,
             cos_model=self.config.model,
+            scope="all" if workspace is None else "workspace",
         )
 
     def _row(
@@ -463,7 +466,7 @@ class Agents:
                 )
             except (BadRecord, Busy) as e:
                 raise Invalid(f"the setting was saved but not logged: {e}") from e
-        return self.agent_page(cwd=cwd)
+        return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
 
 
 class Models:

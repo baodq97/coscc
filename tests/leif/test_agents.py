@@ -336,6 +336,22 @@ class ThePage(_WithAService):
                     Steps.refuse_unready(steps, "spec", Path(self._tmp.name), None)
                 self.assertEqual(caught.exception.reasons, ("agent-invalid",))
 
+    def test_the_page_says_whose_runs_it_adds_up(self):
+        self.assertEqual(self.core.agents.agent_page(now=NOW)["scope"], "all")
+        scoped = self.core.agents.agent_page(self.core.ws.key("w"), now=NOW, cwd="w")
+        self.assertEqual(scoped["scope"], "workspace")
+
+    def test_a_workspace_page_counts_only_that_workspaces_runs(self):
+        self._seed(
+            [
+                _end("spec", "done", 1, cost=1.0),
+                {**_end("spec", "done", 1, cost=2.0), "workspace": "other"},
+            ]
+        )
+        both = self._row(self.core.agents.agent_page(now=NOW), "spec")
+        mine = self._row(self.core.agents.agent_page("w", now=NOW), "spec")
+        self.assertEqual((both["runs_30d"], mine["runs_30d"], mine["cost_30d"]), (2, 1, 1.0))
+
     def test_a_novel_run_is_costly_against_its_own_ceiling(self):
         def start(label, days_ago):
             return {
