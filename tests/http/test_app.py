@@ -18,12 +18,18 @@ from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 from coscc.store.journal import totals_of
 from coscc.units.history import History
+from tests.units.test_meta import seed
 
 REPO = str(Path(__file__).resolve().parents[2])
 
 
 def create_sync(core: Core, *args):
     return asyncio.run(core.answers.create_unit(*args))
+
+
+def seed_unit(core: Core, cwd: str, unit: str, **kw) -> None:
+    """Test glue: `unit` of workspace `cwd` stated as rows in the core's database (see `seed`)."""
+    seed(core.ws.unit_meta(), core.ws.key(cwd), unit, **kw)
 
 
 def _core(**kw) -> Core:
@@ -159,8 +165,8 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             # fixture has to be built where the product looks.
             unit = units.unit_dir(workspace, "0009_a-test-unit", root / "data")
             unit.mkdir(parents=True)
-            (unit / "intent.md").write_text("Status: accepted.\nI", encoding="utf-8")
-            (unit / "spec.md").write_text("Status: accepted.\nS", encoding="utf-8")
+            (unit / "intent.md").write_text("I", encoding="utf-8")
+            (unit / "spec.md").write_text("S", encoding="utf-8")
 
             # A harness carrying no skills: the Board reads, every Run refuses.
             half = root / "half"
@@ -174,6 +180,12 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             )
             core = Core(config, Sessions(config))
             asyncio.run(core.ws.add("proj"))
+            seed_unit(
+                core,
+                str(workspace),
+                "0009_a-test-unit",
+                statuses={"intent.md": "accepted", "spec.md": "accepted"},
+            )
 
             originals = (harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS)
             harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")

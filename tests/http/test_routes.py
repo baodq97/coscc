@@ -17,7 +17,7 @@ import httpx
 from coscc.kernel import Feature
 from coscc.http.app import build
 from coscc.config import Config
-from tests.http.test_app import use_sessions
+from tests.http.test_app import seed_unit, use_sessions
 
 
 def _tmp_config(test: unittest.TestCase) -> Config:
@@ -465,7 +465,7 @@ if __name__ == "__main__":
 
 QUESTIONS = (
     "# Intent: q\n"
-    "Author: t. Type: feat. Status: accepted.\n\n"
+    "Author: t. Type: feat.\n\n"
     "## Problem\n\nx\n\n"
     "## Open questions\n\n"
     "1. One?\n"
@@ -503,6 +503,19 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.dir = Path(made["path"])
         self.intent = self.dir / "intent.md"
         self.intent.write_text(QUESTIONS, encoding="utf-8")
+        seed_unit(
+            self.app.state.core,
+            self.cwd,
+            self.unit,
+            statuses={"intent.md": "accepted"},
+            type="feat",
+        )
+        seed_unit(
+            self.app.state.core,
+            self.cwd,
+            self.unit,
+            questions={"intent.md": ["One?", "Two?", "Three?"]},
+        )
 
     async def asyncTearDown(self):
         await self.client.aclose()
@@ -604,14 +617,13 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.json()["answered_by"], "owner")
 
     async def test_a_closed_unit_is_refused(self):  # (f)
-        self.intent.write_text(
-            QUESTIONS.replace("Status: accepted", "Status: rejected"), encoding="utf-8"
-        )
+        seed_unit(self.app.state.core, self.cwd, self.unit, statuses={"intent.md": "rejected"})
         self.assertIn("closed", await self.refused())
 
     async def test_a_finished_unit_is_refused(self):  # (f)
-        (self.dir / "plan.md").write_text(
-            "# Plan\nIntent: intent.md. Status: done.\n", encoding="utf-8"
+        (self.dir / "plan.md").write_text("# Plan\nIntent: intent.md.\n", encoding="utf-8")
+        seed_unit(
+            self.app.state.core, self.cwd, self.unit, statuses={"plan.md": "accepted"}, shipped=True
         )
         self.assertIn("finished", await self.refused())
 
@@ -688,13 +700,21 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
         ).json()
         self.unit = made["unit"]
         unit_dir = Path(made["path"])
-        for stage in ("spec", "impl", "pr", "review", "ship"):
-            (unit_dir / f"{stage}.md").write_text(
-                f"# {stage}\nStatus: accepted.\n", encoding="utf-8"
-            )
-        (unit_dir / "plan.md").write_text("# plan\nStatus: done.\n", encoding="utf-8")
+        for stage in ("spec", "plan", "impl", "pr", "review", "ship"):
+            (unit_dir / f"{stage}.md").write_text(f"# {stage}\n", encoding="utf-8")
         self.intent = unit_dir / "intent.md"
         self.intent.write_text(QUESTIONS, encoding="utf-8")
+        seed_unit(
+            self.app.state.core,
+            self.cwd,
+            self.unit,
+            statuses=dict.fromkeys(
+                ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md", "review.md", "ship.md"),
+                "accepted",
+            ),
+            type="feat",
+            shipped=True,
+        )
 
     async def asyncTearDown(self):
         await self.client.aclose()
@@ -800,6 +820,36 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["idea.md"])
 
 
+def record_rounds(core, cwd: str, unit: str, rounds) -> None:
+    """Test glue: review rounds as rows, `(n, verdict, [(finding, state)])` each."""
+    meta = core.ws.unit_meta()
+    key = core.ws.key(cwd)
+    with meta.data.write() as conn:
+        for n, verdict, findings in rounds:
+            submitted = {
+                "n": n,
+                "run": f"r{n}",
+                "head": "aaaaaaa",
+                "object": {
+                    "verdict": verdict,
+                    "findings": [
+                        {
+                            "id": fid,
+                            "state": state,
+                            "fixed_in": "",
+                            "severity": "low",
+                            "rule": "",
+                            "path": "",
+                            "lines": "",
+                            "text": "a",
+                        }
+                        for fid, state in findings
+                    ],
+                },
+            }
+            meta.record_round(conn, key, unit, submitted)
+
+
 _ROUND_0028 = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
 REVIEW_STUCK = "# Review: q\nAuthor: t. Status: changes-requested.\n" + "".join(
     _ROUND_0028.format(n=i, v="changes-requested", f="- F1 [open] a") for i in (1, 2, 3)
@@ -819,22 +869,39 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         self.first = self._stuck("0101_first-stuck", REVIEW_STUCK)
         self.second = self._stuck("0102_second-stuck", REVIEW_STUCK)
 
-    def _stuck(self, name: str, review: str) -> Path:
+    def _stuck(self, name: str, review: str, rounds=(1, 2, 3)) -> Path:
         """A unit whose `review.md` is `review`; `REVIEW_STUCK` is three rounds, each asking for
         changes, at the limit of 3."""
         d = self.dir.parent / name
         d.mkdir()
-        (d / "intent.md").write_text(
-            "# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
-        )
+        (d / "intent.md").write_text("# I\nAuthor: t. Type: feat.\n", encoding="utf-8")
         for f in ("spec.md", "plan.md", "impl.md"):
-            (d / f).write_text("Status: accepted.\n", encoding="utf-8")
+            (d / f).write_text("# X\n", encoding="utf-8")
         (d / "pr.md").write_text(
-            f"# PR: feat({name[:4]}): x\nPR: https://github.com/o/r/pull/3. Status: accepted.\n",
-            encoding="utf-8",
+            f"# PR: feat({name[:4]}): x\nPR: https://github.com/o/r/pull/3.\n", encoding="utf-8"
         )
         (d / "review.md").write_text(review, encoding="utf-8")
+        seed_unit(
+            self.app.state.core,
+            self.cwd,
+            name,
+            statuses=dict.fromkeys(
+                ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md"), "accepted"
+            )
+            | {"review.md": "changes-requested"},
+            type="feat",
+        )
+        self.rounds(name, rounds)
         return d
+
+    def rounds(self, name: str, ns) -> None:
+        """Review rounds `ns`, each asking for changes on one open finding."""
+        record_rounds(
+            self.app.state.core,
+            self.cwd,
+            name,
+            [(n, "changes-requested", [("F1", "open")]) for n in ns],
+        )
 
     async def allow(self, **over):
         return await self.client.post(
@@ -846,7 +913,6 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         from datetime import date
 
         from coscc.units import board, more_rounds
-        from tests.units.test_meta import snapshot_of
 
         with mock.patch.dict(os.environ):
             os.environ.pop("COS_REVIEW_ROUNDS", None)
@@ -863,13 +929,19 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(second.read_bytes(), other)
             # The real the loop, no `--repo`: past the limit, the gate stops at the repository.
             allowed, said = await board.gate(
-                str(self.root), self.first.name, "review", state=snapshot_of(self.root)
+                str(self.root),
+                self.first.name,
+                "review",
+                state=self.app.state.core.ws.snapshot(self.cwd),
             )
             self.assertFalse(allowed)
             self.assertIn("no repository given", said)
             self.assertNotIn("needs a person", said)
             allowed, said = await board.gate(
-                str(self.root), self.second.name, "review", state=snapshot_of(self.root)
+                str(self.root),
+                self.second.name,
+                "review",
+                state=self.app.state.core.ws.snapshot(self.cwd),
             )
             self.assertFalse(allowed)
             self.assertIn("needs a person — review used 3 of 3", said)
@@ -885,13 +957,8 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         board = await self.app.state.core.board(self.cwd, "new")
         [row] = [u for u in board["units"] if u["name"] == self.first.name]
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (False, 1))
-        # A fourth round asking for changes, written above `## Answers` as the runner writes
-        # it, reaches the new limit, and a press is taken again.
-        head, answers = before.decode("utf-8").split("\n## Answers\n", 1)
-        round4 = _ROUND_0028.format(n=4, v="changes-requested", f="- F1 [open] a")
-        (self.first / "review.md").write_text(
-            f"{head}{round4}\n## Answers\n{answers}", encoding="utf-8"
-        )
+        # A fourth round asking for changes reaches the new limit, and a press is taken again.
+        self.rounds(self.first.name, [4])
         board = await self.app.state.core.board(self.cwd, "new")
         [row] = [u for u in board["units"] if u["name"] == self.first.name]
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (True, 1))
@@ -901,7 +968,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_a_refusal_is_400_and_writes_nothing(self):
-        not_yet = self._stuck("0103_not-yet", REVIEW_STUCK.split("\n## Round 2")[0])
+        not_yet = self._stuck("0103_not-yet", REVIEW_STUCK.split("\n## Round 2")[0], rounds=(1,))
         files = [d / "review.md" for d in (self.first, self.second, not_yet)]
         before = [f.read_bytes() for f in files]
         for over in (
@@ -932,14 +999,30 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         for name, text in {
-            "spec.md": "Status: accepted.\n",
-            "plan.md": "Status: accepted.\n",
-            "impl.md": "# Impl\nStatus: accepted.\n\n## Needs a person\n\n- F2: no budget\n- F3: no gh\n",
-            "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
+            "spec.md": "# Spec\n",
+            "plan.md": "# Plan\n",
+            "impl.md": "# Impl\n\n## Needs a person\n\n- F2: no budget\n- F3: no gh\n",
+            "pr.md": "PR: https://github.com/o/r/pull/3.\n",
             "review.md": REVIEW_CONFIRMED,
         }.items():
             (self.dir / name).write_text(text, encoding="utf-8")
         self.review = self.dir / "review.md"
+        seed_unit(
+            self.app.state.core,
+            self.cwd,
+            self.unit,
+            statuses=dict.fromkeys(("spec.md", "plan.md", "impl.md", "pr.md"), "accepted")
+            | {"review.md": "changes-requested"},
+        )
+        record_rounds(
+            self.app.state.core,
+            self.cwd,
+            self.unit,
+            [
+                (1, "changes-requested", [("F2", "open"), ("F3", "open")]),
+                (2, "needs-person", [("F2", "needs-person"), ("F3", "needs-person")]),
+            ],
+        )
 
     async def finding(self, **over):
         return await self.post(**{"artifact": "review.md", "question": "F2", **over})
@@ -979,7 +1062,12 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
         self.assertEqual((self.dir / "impl.md").read_bytes(), before)
 
     async def test_a_claim_no_review_has_confirmed_is_refused(self):
-        self.review.write_text(REVIEW_CLAIMED, encoding="utf-8")
+        record_rounds(
+            self.app.state.core,
+            self.cwd,
+            self.unit,
+            [(3, "changes-requested", [("F2", "open"), ("F3", "open")])],
+        )
         await self.refused_in_review()
 
 
@@ -1144,8 +1232,13 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
                 "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
             )
         ).json()
-        (Path(made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        (Path(made["path"]) / "intent.md").write_text("# Intent: a problem\n", encoding="utf-8")
+        seed_unit(
+            self.app.state.core,
+            self.cwd,
+            made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
         cut = await self.client.post(
             "/api/units/branch", json={"cwd": self.cwd, "unit": made["unit"]}
@@ -1725,14 +1818,28 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
         )
         front_dir = units.unit_dir(self.cwd["proj"], front.json()["unit"], data)
         (front_dir / "intent.md").write_text(
-            "# Intent: f\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: f\nAuthor: t. Type: feat.\n", encoding="utf-8"
         )
-        (front_dir / "spec.md").write_text("# S\nStatus: accepted.\n", encoding="utf-8")
-        (front_dir / "plan.md").write_text("# P\nStatus: accepted.\n", encoding="utf-8")
+        (front_dir / "spec.md").write_text("# S\n", encoding="utf-8")
+        (front_dir / "plan.md").write_text("# P\n", encoding="utf-8")
         (units.unit_dir(self.cwd["api"], back.json()["unit"], data) / "intent.md").write_text(
-            "# Intent: b\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: b\nAuthor: t. Type: feat.\n", encoding="utf-8"
         )
         core = self.app.state.core
+        seed_unit(
+            core,
+            self.cwd["proj"],
+            front.json()["unit"],
+            statuses=dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"),
+            type="feat",
+        )
+        seed_unit(
+            core,
+            self.cwd["api"],
+            back.json()["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
+        )
         self.assertEqual(
             sorted(core.ws.unit_meta().idea_units(idea["ref"])),
             sorted(
