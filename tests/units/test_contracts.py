@@ -8,7 +8,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import jsonschema
 
@@ -67,9 +67,24 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
                     f"contract-field-missing: {agent}.{field} (read by {reader})",
                 )
                 cases += 1
-        # judgement and questions for six artifacts, three review fields, and one field each
-        # for spec, spike, impl, integrate and estimate.
-        self.assertEqual(cases, 6 * 2 + 3 + 5)
+        # judgement and questions for six artifacts, three review fields, one field each for
+        # spec, spike, impl, integrate and estimate, then intent's type and fix and impl's
+        # left_lane.
+        self.assertEqual(cases, 6 * 2 + 3 + 5 + 3)
+
+    def test_the_intents_type_names_branch_for(self):
+        raw = _shipped()
+        del raw["agents"]["intent"]["output"]["fields"]["type"]
+        self.assertEqual(_refusal(raw), "contract-field-missing: intent.type (read by branch_for)")
+
+    def test_a_field_read_when_present_must_still_be_declared_optional(self):
+        raw = _shipped()
+        fields = raw["agents"]["intent"]["output"]["fields"]
+        fields["fix"] = fields.pop("fix?")
+        self.assertEqual(_refusal(raw), "contract-field-missing: intent.fix? (read by lane_of)")
+        raw = _shipped()
+        raw["agents"]["impl"]["output"]["fields"]["left_lane?"] = "number"
+        self.assertTrue(_refusal(raw).startswith("contract-bad-type: impl.left_lane: "))
 
     def test_spec_without_unmeasured_names_the_spike_rule(self):
         raw = _shipped()
@@ -169,11 +184,11 @@ class AnOptionalFieldIsNotRequired(unittest.TestCase):
 # changes its hash: bump its version, add the migration of the stored records, then pin both.
 PINNED = {
     "idea": (1, "608eff07e373"),
-    "intent": (1, "608eff07e373"),
+    "intent": (2, "bb733744ab18"),
     "spec": (1, "c50763129465"),
     "spike": (1, "f77fe54c7b07"),
     "plan": (1, "608eff07e373"),
-    "impl": (1, "947bed5afb16"),
+    "impl": (2, "010f750cb2c2"),
     "review": (1, "c88ced722098"),
     "integrate": (1, "9e29819d42c2"),
     "estimate": (1, "cd5fc053a8e3"),
@@ -277,3 +292,27 @@ class NoHandWrittenSchema(unittest.TestCase):
     def test_the_check_finds_a_planted_schema_and_passes_a_content_block(self):
         self.assertEqual(_schema_literals('S = {"type": "object"}\nT = {"enum": []}'), [1, 2])
         self.assertEqual(_schema_literals('C = {"type": "text", "text": "x"}'), [])
+
+
+class TheLoopsBranchTypesAreTheDeclaredEnum(unittest.TestCase):
+    def test_one_list_of_types(self):
+        from coscc.loop import BRANCH_TYPES
+
+        declared = contracts.output("intent")["fields"]["type"]
+        self.assertEqual(declared, {"enum": list(get_args(contracts.BranchType))})
+        self.assertEqual(BRANCH_TYPES, list(get_args(contracts.BranchType)))
+
+    def test_the_schema_asks_for_a_type_and_takes_a_fix(self):
+        schema = contracts.schema("intent")
+        self.assertIn("type", schema["required"])
+        self.assertNotIn("fix", schema["required"])
+        fix = {
+            "reproduction": "run x",
+            "expected": {"source": "coscc/a.py:1-2", "text": "t"},
+            "actual": "boom",
+        }
+        base = {"stage": "intent", "judgement": "ready", "questions": [], "type": "fix"}
+        jsonschema.validate({**base, "fix": fix}, schema)
+        bad = {**fix, "expected": {"source": "a b", "text": "t"}}
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate({**base, "fix": bad}, schema)

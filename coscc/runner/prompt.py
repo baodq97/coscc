@@ -974,6 +974,17 @@ def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
         "- `questions`: every item under `## Open questions` still waiting on a person, as "
         "`{n, text}` with the number the file gives it; `[]` when there is none.",
     ]
+    if stage == "intent":
+        fields.append(
+            "- `type`: the branch type of the unit (`feat`, `fix`, `docs`, `refactor`, `test`, "
+            "`chore`, `perf`, `build`, `ci` or `revert`)."
+        )
+        fields.append(
+            "- `fix`: only for a clear fix: `{reproduction, expected: {source, text}, actual}`, "
+            "the command that shows it, what the code in `source` (`path` or `path:L1-L2`, in "
+            "the repository) says should happen, and what happens instead. Leave it out when "
+            "any of the three is unknown; the unit then takes the full flow."
+        )
     if stage == "spec":
         fields.append(
             "- `unmeasured`: every `U<n>` id a `## Concerns` item opens with `[unmeasured]`; `[]` for none."
@@ -981,6 +992,11 @@ def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
     if stage == "spike":
         fields.append(
             "- `verdicts`: one `{id, verdict}` per `## U<n>` section, `verdict` being `holds` or `fails`."
+        )
+    if stage == "impl":
+        fields.append(
+            "- `left_lane`: only when this fix needs the full flow after all: why. The unit "
+            "then leaves the fast lane."
         )
     if stage == "impl":
         fields.append(

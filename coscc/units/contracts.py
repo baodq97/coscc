@@ -29,6 +29,13 @@ Verdict = Literal["pass", "changes-requested", "needs-person"]
 FindingState = Literal["open", "fixed", "needs-person", "claim-rejected", "answered"]
 Severity = Literal["high", "medium", "low"]
 SpikeVerdict = Literal["holds", "fails"]
+# A unit's branch type: the intent's `type`; the loop's `BRANCH_TYPES` is this list.
+BranchType = Literal[
+    "feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci", "revert"
+]
+# `fix.expected.source`: a path, and the lines cited when there are some. What it may name (no
+# absolute path, no `..`, not `.cos`) is the loop's rule, not the schema's.
+SOURCE = "[^\\s:]+(:[0-9]+-[0-9]+)?"
 
 # `artifact`: a stage's judgement of its file, one `outputs` row; `review`: a round, kept in
 # its own rows; `session`: the object handed to the code that opened the session.
@@ -67,7 +74,8 @@ def _enum(literal: object) -> FieldType:
 
 # Every field the engine decides on, by kind or by agent: `{field: (reader, type)}`. A reader
 # is a guard of `coscc/units/guards.py` or the function that reads the field. An object type
-# names only the fields the reader reads; the declaration may hold more.
+# names only the fields the reader reads; the declaration may hold more. A name ending in `?`
+# is read when present: the declaration must still hold it, as an optional field.
 READS: dict[str, dict[str, tuple[str, FieldType]]] = {
     "artifact": {
         "judgement": ("stage-result", _enum(Judgement)),
@@ -104,7 +112,18 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
     },
     "spec": {"unmeasured": ("spike-holds", {"list": _U})},
     "spike": {"verdicts": ("spike-holds", {"list": {"id": _U, "verdict": _enum(SpikeVerdict)}})},
-    "impl": {"needs_person": ("impl-claim", {"list": _F})},
+    "intent": {
+        "type": ("branch_for", _enum(BranchType)),
+        "fix?": (
+            "lane_of",
+            {
+                "reproduction": "text",
+                "expected": {"source": SOURCE, "text": "text"},
+                "actual": "text",
+            },
+        ),
+    },
+    "impl": {"needs_person": ("impl-claim", {"list": _F}), "left_lane?": ("lane_of", "text")},
     "integrate": {
         "needs_person": ("outcome_of_session", {"list": {"commit": "text", "why": "text"}})
     },
@@ -217,9 +236,9 @@ def check(agent: str, output: object) -> Output:
     have = _required(fields)
     for scope in dict.fromkeys((kind, agent)):
         for field, (reader, want) in READS.get(scope, {}).items():
-            if field not in have:
+            if field not in (fields if field.endswith("?") else have):
                 raise ContractError("contract-field-missing", f"{agent}.{field} (read by {reader})")
-            _covers(f"{agent}.{field}", reader, have[field], want)
+            _covers(f"{agent}.{field.rstrip('?')}", reader, fields[field], want)
     return Output(kind=kind, version=version, fields=fields)
 
 
@@ -280,7 +299,7 @@ def check_stored(agent: str, stored: int) -> None:
 def reads(agent: str, obj: dict[str, object]) -> dict[str, object]:
     """The fields of `obj` the engine decides on, and no other."""
     read = {**READS.get(output(agent)["kind"], {}), **READS.get(agent, {})}
-    return {k: v for k, v in obj.items() if k in read}
+    return {k: v for k, v in obj.items() if k in read or f"{k}?" in read}
 
 
 def fingerprint(out: Output) -> str:
