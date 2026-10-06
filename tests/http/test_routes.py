@@ -89,7 +89,9 @@ class Surface(unittest.IsolatedAsyncioTestCase):
     async def test_there_is_no_route_to_widen_what_impl_runs(self):
         self.assertEqual((await self.client.get("/api/grants/impl")).status_code, 404)
         got = await self.client.post("/api/grants/impl", json={"cwd": "/tmp", "allow": ["ssh"]})
-        self.assertEqual(got.status_code, 404)
+        never = await self.client.post("/api/no-such", json={})
+        self.assertEqual(got.status_code, never.status_code)
+        self.assertGreaterEqual(got.status_code, 400)
 
 
 class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):

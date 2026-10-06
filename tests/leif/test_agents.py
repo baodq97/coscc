@@ -149,7 +149,7 @@ class ThePage(_WithAService):
         page = self.core.agents.agent_page(now=NOW)
         for row in page["rows"]:
             self.assertNotIn("commands", row["grant"], row["key"])
-            self.assertNotIn("haiku", str(row["model"]).lower(), row["key"])
+        self.assertNotIn("haiku", json.dumps(page).lower())
 
     def test_runs_last_five_and_thirty_days(self):
         self._seed(
