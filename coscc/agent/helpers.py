@@ -29,11 +29,11 @@ import claude_agent_sdk as sdk
 from claude_agent_sdk import HookMatcher, tool
 from claude_agent_sdk.types import HookEvent, SyncHookJSONOutput
 
+from coscc.agent import pack
 from coscc.agent.policy import (
     BACKGROUND_REFUSAL,
     PEERS_TOOL,
     SEND_MESSAGE,
-    SUBAGENTS,
     GUARDED,
     WRITE_TOOLS,
     Grant,
@@ -82,11 +82,21 @@ The agents of this step talk through `SendMessage`, to `"main"` (the leading ses
   step names."""
 
 
-# `policy.SUBAGENTS` as the session gets them: `worker`'s prompt carries `PROTOCOL`.
-DEFINITIONS = {
-    **SUBAGENTS,
-    "worker": {**SUBAGENTS["worker"], "prompt": f"{SUBAGENTS['worker']['prompt']}\n\n{PROTOCOL}"},
-}
+def definitions(keys: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    """The helper rows `keys` as the session gets them (`AgentDefinition`): the row's body is its
+    prompt, and a helper that holds `SendMessage` is told `PROTOCOL` and handed `peers`."""
+    out: dict[str, dict[str, Any]] = {}
+    for key in keys:
+        found = pack.row(key) or {}
+        tools = list(pack.tools(found))
+        talks = SEND_MESSAGE in tools
+        out[key] = {
+            "description": str(found.get("description") or ""),
+            "prompt": str(found.get(pack.BODY) or "") + (f"\n\n{PROTOCOL}" if talks else ""),
+            "tools": tools + ([PEERS_TOOL] if talks else []),
+            "model": (found.get("model") or {}).get("id"),
+        }
+    return out
 
 
 def malformed(message: object) -> str:

@@ -536,7 +536,7 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
             "workspace": key,
             "age": door.get().can_encrypt(),
             "name_pattern": NAME_PATTERN,
-            "stages": list(vault.VAULT_AGENTS),
+            "stages": list(vault.vault_agents()),
             "modes": list(vault.MODES),
             "secrets": [_meta(s, key) for s in mine],
             "globals": [_meta(s, key) for s in others],

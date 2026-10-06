@@ -109,8 +109,9 @@ class EveryToolTakesTheDeclaredSchema(unittest.TestCase):
                 run="r", stage=stage, directory="/nonexistent", artifact="x.md", own=False
             )
             self.assertEqual(channel.schema, contracts.schema(stage), stage)
-        for kind in submit.SESSIONS:
-            self.assertEqual(submit.Collector(kind).schema, contracts.schema(kind), kind)
+        for kind, out in contracts.declarations().items():
+            if out["kind"] == "session":
+                self.assertEqual(submit.Collector(kind).schema, contracts.schema(kind), kind)
 
     def test_a_judgement_is_ready_or_not_ready_and_nothing_a_person_decides(self):
         schema = contracts.schema("intent")
@@ -373,7 +374,6 @@ class AFeatureAddsItsSession(unittest.TestCase):
 
     def tearDown(self):
         contracts.ADDED.pop("planted", None)
-        submit.SESSIONS.pop("planted", None)
 
     def test_the_collector_of_an_added_session_keeps_what_fits(self):
         submit.add_session("planted", self.OUTPUT, "Hand the app a number.")
@@ -391,7 +391,7 @@ class AFeatureAddsItsSession(unittest.TestCase):
         with self.assertRaises(ContractError) as e:
             submit.add_session("planted", {**self.OUTPUT, "fields": {"n": "integer"}}, "x")
         self.assertTrue(str(e.exception).startswith("contract-bad-type: planted.n: "))
-        self.assertNotIn("planted", submit.SESSIONS)
+        self.assertNotIn("planted", contracts.ADDED)
 
 
 if __name__ == "__main__":

@@ -1258,7 +1258,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         # A routine run asks for its arm's model; the Sonnet arm is `models.json`'s.
         with (
             mock.patch.object(board_reader, "gate", open_gate),
-            mock.patch.object(modeltrial, "arm", lambda unit: modeltrial.SONNET_ARM),
+            mock.patch.object(modeltrial, "arm", lambda unit, stage: "sonnet-5-5"),
         ):
             return asyncio.run(go())
 
@@ -1460,7 +1460,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         with (
             mock.patch.object(board_reader, "gate", open_gate),
             mock.patch.object(board_reader, "next_step", next_step),
-            mock.patch.object(modeltrial, "arm", lambda unit: arm),
+            mock.patch.object(modeltrial, "arm", lambda unit, stage: arm),
         ):
             return asyncio.run(go())
 
@@ -1469,11 +1469,9 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         return journal.records(self.core.ws.key(str(self.repo)), kind="start")
 
     def _prefs(self):
-        from coscc.agent import models
-        from coscc.store.db import Data
+        from coscc.agent import pack
 
-        data = Data(self.core.config.data_dir)
-        return {**data.pref_rows(models.PREFIX), **data.pref_rows(models.EFFORT_PREFIX)}
+        return pack.row("impl")["model"]
 
     def test_every_routine_impl_start_carries_arm_and_model(self):
         for arm, model in (("opus-5-5", self.OPUS), ("sonnet-5-5", self.SONNET)):
@@ -1492,8 +1490,14 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
     def test_an_override_keeps_the_arm_and_records_the_real_model(self):
         self._unit()
+        from coscc.agent import pack
+
+        # This app has no feature, so its catalog holds no `vault` or `codegraph`.
+        tools = {
+            t: p for t, p in pack.row("impl")["tools"].items() if t not in ("vault", "codegraph")
+        }
+        pack.write("impl", "tools", tools)
         self.core.agents.set_agent_field("impl", "model", "claude-other")
-        before = self._prefs()
         self._run(arm="opus-5-5")
         start = self._starts()[0]
         self.assertEqual((start["model"], start["model_source"]), ("claude-other", "override"))
@@ -1501,7 +1505,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
             start["model_trial"],
             {"arm": "opus-5-5", "requested": "claude-other", "model": "claude-other"},
         )
-        self.assertEqual(self._prefs(), before)
+        self.assertEqual(self._prefs()["id"], "claude-other")
         self._unit(model="from-env")
         self._run(arm="opus-5-5")
         start = self._starts()[0]

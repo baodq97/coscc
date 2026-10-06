@@ -1,25 +1,25 @@
 """What each agent hands back through `submit`: its output declaration, checked, and the schema
 generated from it.
 
-A declaration is `{kind, version, fields}`: an agent row's `output` in `coscc/agent/agents.json`,
-the estimate's under `sessions`, a feature session's `kernel.Session.output` (`add`). Field
+A declaration is `{kind, version, fields}` (and `purpose`, what `submit` says it is for): an agent
+row's `output` (`coscc/agent/pack.py`) of a kind `submit` takes, a feature session's
+`kernel.Session.output` (`add`). Field
 types: `text`, `number` (an integer), `{"enum": [...]}`, `{"list": <type>}`, an object
 `{name: type}`, and any other string as a pattern, anchored. A name ending in `?` may be left
 out. `READS` names every field the engine decides on, with the reader and the type it expects:
 a declaration that lacks one, or gives it another type, refuses the load with a named reason.
-The declarations are read and checked once a process first asks, and when the app is built.
+The declarations are read and checked when the rows change, and when the app is built.
 A row's `input` is what its stage is handed (`check_input`); the prompt is built from it alone.
 """
 
 import hashlib
 import json
 import re
-from functools import cache
 from pathlib import Path
 from collections.abc import Iterable, Mapping
-from typing import Any, Literal, TypedDict, get_args
+from typing import Any, Literal, NotRequired, TypedDict, get_args
 
-from coscc.agent.agents import DEFAULT_PATH
+from coscc.agent import pack
 from coscc.agent.policy import Label
 from coscc.units.states import STAGE_NAMES
 
@@ -47,7 +47,7 @@ Kind = Literal["artifact", "review", "session"]
 KINDS: tuple[Kind, ...] = get_args(Kind)
 
 # The field the engine adds to an artifact's object: who sent it.
-STAGE = "stage"
+SENDER = "stage"
 
 # A word or a pattern, `{"enum": [words]}`, `{"list": type}`, or an object `{name: type}`.
 type FieldType = str | list[str] | dict[str, FieldType]
@@ -57,6 +57,8 @@ class Output(TypedDict):
     kind: Kind
     version: int
     fields: dict[str, FieldType]
+    # What the `submit` tool tells a session that is no stage it is for; "" for a stage.
+    purpose: NotRequired[str]
 
 
 class PlanStep(TypedDict):
@@ -262,8 +264,8 @@ def check(agent: str, output: object) -> Output:
         raise _bad(f"{agent}.version", f"{version!r} is not a whole number from 1")
     if not isinstance(fields, dict):
         raise _bad(f"{agent}.fields", "the fields are an object {name: type}")
-    if kind == "artifact" and STAGE in {str(n).rstrip("?") for n in fields}:
-        raise _bad(f"{agent}.{STAGE}", "the engine adds who sent an artifact's object")
+    if kind == "artifact" and SENDER in {str(n).rstrip("?") for n in fields}:
+        raise _bad(f"{agent}.{SENDER}", "the engine adds who sent an artifact's object")
     for name, t in fields.items():
         _check_name(f"{agent}.{name}", name)
         _check_type(f"{agent}.{name.rstrip('?')}", t)
@@ -273,19 +275,18 @@ def check(agent: str, output: object) -> Output:
             if field not in (fields if field.endswith("?") else have):
                 raise ContractError("contract-field-missing", f"{agent}.{field} (read by {reader})")
             _covers(f"{agent}.{field.rstrip('?')}", reader, fields[field], want)
-    return Output(kind=kind, version=version, fields=fields)
+    return Output(
+        kind=kind, version=version, fields=fields, purpose=str(output.get("purpose") or "")
+    )
 
 
-def load(path: Path) -> dict[str, Output]:
-    """Every declaration of an `agents.json`: each agent row's `output`, then each session's,
-    checked; a row with none is refused, as a reader of a missing field is."""
-    raw = json.loads(path.read_text(encoding="utf-8"))
+def load(rows: Mapping[str, Mapping[str, object]]) -> dict[str, Output]:
+    """Every declaration of the rows: each `output` of a kind `submit` takes, checked."""
     out: dict[str, Output] = {}
-    for part in ("agents", "sessions"):
-        for agent, row in (raw.get(part) or {}).items():
-            if "output" not in row:
-                raise ContractError("contract-field-missing", f"{agent}.output (read by submit)")
-            out[agent] = check(agent, row["output"])
+    for agent, row in rows.items():
+        output = row.get("output")
+        if isinstance(output, dict) and output.get("kind") in KINDS:
+            out[agent] = check(agent, output)
     return out
 
 
@@ -333,15 +334,24 @@ def check_input(agent: str, raw: object, agents: Iterable[str]) -> Input:
     )
 
 
-def load_inputs(path: Path) -> dict[str, Input]:
-    """Every agent row's `input` of an `agents.json`, checked; a row with none declares none."""
-    rows = json.loads(path.read_text(encoding="utf-8")).get("agents") or {}
+def load_inputs(rows: Mapping[str, Mapping[str, object]]) -> dict[str, Input]:
+    """Every row's `input`, checked; a row with none declares none."""
     return {a: check_input(a, row["input"], rows) for a, row in rows.items() if "input" in row}
 
 
-@cache
+# The rows the declarations were last read from, and what was read: read again when they change.
+_READ: list[tuple[object, dict[str, Output], dict[str, Input]]] = []
+
+
+def _read() -> tuple[dict[str, Output], dict[str, Input]]:
+    rows = pack.rows()
+    if not _READ or _READ[0][0] is not rows:
+        _READ[:] = [(rows, load(rows), load_inputs(rows))]
+    return _READ[0][1], _READ[0][2]
+
+
 def _inputs() -> dict[str, Input]:
-    return load_inputs(DEFAULT_PATH)
+    return _read()[1]
 
 
 def input_of(agent: str) -> Input:
@@ -377,18 +387,13 @@ def missing(agent: str, directory: Path, unit_meta: Mapping[str, Any] | None) ->
     return out + [f"{n}'s record" for n in outputs if record(unit_meta, n) is None]
 
 
-@cache
-def _shipped() -> dict[str, Output]:
-    return load(DEFAULT_PATH)
-
-
 # A feature's sessions, added when the app is built.
 ADDED: dict[str, Output] = {}
 
 
 def declarations() -> dict[str, Output]:
-    """Every declaration this process knows: the shipped ones and the features'."""
-    return {**_shipped(), **ADDED}
+    """Every declaration this process knows: the rows' and the features'."""
+    return {**_read()[0], **ADDED}
 
 
 def add(kind: str, output: object) -> None:
@@ -458,7 +463,7 @@ def _object(fields: dict[str, FieldType], first: dict[str, dict[str, object]]) -
 
 def schema_of(agent: str, out: Output) -> dict[str, object]:
     """The JSON Schema `submit` checks `agent`'s object against; an artifact's names its sender."""
-    first = {STAGE: {"type": "string", "enum": [agent]}} if out["kind"] == "artifact" else {}
+    first = {SENDER: {"type": "string", "enum": [agent]}} if out["kind"] == "artifact" else {}
     return _object(out["fields"], first)
 
 

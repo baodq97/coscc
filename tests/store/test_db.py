@@ -662,7 +662,7 @@ class AV12DatabaseTakesOneStepTo13(unittest.TestCase):
             self._rows(conn)
             conn.execute("PRAGMA user_version=12")
         self.assertEqual(self.data.version(), SCHEMA_VERSION)
-        self.assertEqual(SCHEMA_VERSION, 14)
+        self.assertEqual(SCHEMA_VERSION, 15)
 
     def _rows(self, conn):
         for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):

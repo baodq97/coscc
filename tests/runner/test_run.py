@@ -222,7 +222,7 @@ class TheRunIsIssuedItsGrant(Base):
 
     def test_helpers_and_peers_come_only_with_agent_and_submit_with_an_output(self):
         g = run_mod.issue(self.IMPL, Fake(), cwd="/w")
-        self.assertEqual(g.helpers, tuple(policy.SUBAGENTS))
+        self.assertEqual(g.helpers, self.IMPL.helpers)
         self.assertEqual(g.mcp, (policy.SUBMIT_TOOL, policy.PEERS_TOOL))
         g = run_mod.issue(policy.row_for("review"), Fake(), cwd="/w")
         self.assertEqual((g.helpers, g.mcp), ((), (policy.SUBMIT_TOOL,)))

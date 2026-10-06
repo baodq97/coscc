@@ -50,7 +50,7 @@ def _files() -> list[Path]:
         p
         for p in sorted(ROOT.rglob("*.py"))
         if p != ROOT / "__init__.py"
-        and not {"_web", "_harness", "__pycache__"} & set(p.relative_to(ROOT).parts)
+        and not {"_web", "__pycache__"} & set(p.relative_to(ROOT).parts)
     ]
 
 

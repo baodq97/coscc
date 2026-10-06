@@ -54,6 +54,7 @@ Intent: intent.md. Author: <name>.
   of `submit`: a non-empty `unmeasured` sends the unit to `spike`, the line alone does not.
   The id is the question's identity: keep it across rewrites, never reuse or duplicate one.
   After a spike `fails`, drop that id and every requirement resting on it; if no direction holds, submit `not-ready` with the question.
+  When a `spike.md` is handed to you, rewrite the spec on its results; a new question takes a new `U<n>`.
 - `## Open questions`: a real question is an item `N. ` at column 0 whose first paragraph holds
   a `?`, and the same go into `questions` of `submit`: `text` only asks, `recommendation` is the
   answer you recommend and why. Anything else is a plain sentence. Keep the heading even when

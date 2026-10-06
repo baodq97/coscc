@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from coscc.agent import policy
+from coscc.agent import pack, policy
 from coscc.bus import Name
 from coscc.agent.sessions import Suspended
 from coscc.git.gitops import GitError
@@ -119,7 +119,8 @@ def add_sessions(core: Core, features: Sequence[Feature]) -> None:
 
 def hooks_of(features: Sequence[Feature], ctxs: dict[str, Ctx]) -> Hooks:
     """Every feature's agent parts, tagged with its name; a clash is a `ValueError` naming the
-    feature, and so is a row (`policy.ROWS`) naming a tool the catalog does not hold."""
+    feature, and so is an agent's row (`pack.check`) the catalog makes unusable: a tool it does not
+    hold, a tool beyond reading on a row whose artifact the app writes."""
     parts: list[tuple[str, Parts]] = []
     servers: dict[str, str] = {}
     builtin = {t.name for t in BUILTINS} | {"cos"}
@@ -150,11 +151,13 @@ def hooks_of(features: Sequence[Feature], ctxs: dict[str, Ctx]) -> Hooks:
     hooks = Hooks(
         parts=tuple(parts), enabled=lambda feature, cwd: ctxs[feature].settings.enabled(cwd)
     )
-    catalog = hooks.catalog()
-    for key, row in policy.ROWS.items():
-        unknown = [t for t in row.tools if t not in catalog]
-        if unknown:
-            raise ValueError(f"the row {key!r} names {', '.join(unknown)}: not in the catalog")
+    # The built-in rows: a bad one stops the build. A bad owner's file refuses its agent's runs.
+    effects = {n: t.effect for n, t in hooks.catalog().items()}
+    builtin = {k: r["builtin"] for k, r in pack.rows().items()}
+    for key, row in builtin.items():
+        bad = pack.check(row, effects, builtin)
+        if bad:
+            raise ValueError(f"the row {key!r} cannot be used: {'; '.join(bad)}")
     return hooks
 
 

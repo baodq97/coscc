@@ -539,13 +539,6 @@ def _why_empty(path: Path) -> str:
 # -- the state a card shows ------------------------------------------------------------
 
 
-# The one sentence beside each action whose effect leaves this machine. The full warnings stay in
-# `policy.py` and `.claude/rules/coscc-app.md`.
-CONSEQUENCE = {
-    "integrate": "Rebases this pull request with this machine's gh login; a conflict opens a paid session.",
-}
-
-
 def attention_reason(unit: dict[str, Any]) -> str:
     """What a unit waits on, `""` when it waits on nothing named here. The board's state is
     `unit_state`'s."""

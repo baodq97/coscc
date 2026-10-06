@@ -53,7 +53,7 @@ class ANameSaysWhichTierItIsIn(unittest.TestCase):
         made = self.store.create("global:jump", "", modes=("env",), broker=True)
         self.assertEqual(made.modes, ("ssh",))
         changed = self.store.set_policy("global:jump", "", ("impl", "spike"), ("env", "file"))
-        self.assertEqual((changed.modes, changed.stages), (("ssh",), ("impl", "spike")))
+        self.assertEqual((changed.modes, changed.stages), (("ssh",), ("spike", "impl")))
 
     def test_a_policy_names_only_stages_and_modes_that_exist(self):
         self.store.create("ws:db", "/a")

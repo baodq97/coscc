@@ -17,7 +17,6 @@ import inspect
 import json
 import logging
 import os
-import sqlite3
 import uuid
 from collections.abc import Mapping
 from dataclasses import replace
@@ -26,9 +25,9 @@ from typing import Any, AsyncIterator
 
 
 from coscc import kernel
-from coscc.agent import agents, instructions, models, modeltrial, steps, transcript
+from coscc.agent import agents, instructions, models, modeltrial, pack, steps, transcript
 from coscc.agent import sessions as sessions_mod
-from coscc.agent.helpers import DEFINITIONS, PROTOCOL, Denials, Gate, Helpers
+from coscc.agent.helpers import PROTOCOL, Denials, Gate, Helpers, definitions
 from coscc.store.journal import Journal, Outcome
 from coscc.units import scratch as scratch_mod
 from coscc.units import submit as submit_mod
@@ -36,12 +35,9 @@ from coscc.agent.policy import (
     AGENT_TOOL,
     Grant,
     Row,
-    beyond_reading,
-    is_prose_stage,
     record,
     row_for_step,
 )
-from coscc.store.db import Data, Unusable
 from coscc.units import guards
 from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
@@ -324,24 +320,14 @@ def _admitted(
     directory: str | Path,
     workspace: str,
     unit: str,
-    hooks: kernel.Hooks,
 ) -> Row:
-    """The stage's row, once the step may run at all: else `ValueError` or `RunError`."""
+    """The stage's row, once the step may run at all: else `ValueError` or `RunError`. Whether the
+    row itself may run (a prose stage holding only reading tools among them) is `pack.check`'s,
+    asked before the step (`agent-invalid`)."""
     check_started_by(started_by)
     row = row_for_step(stage, label)
     if not Path(directory).exists():
         raise RunError(f"no such work unit for {workspace}: {unit}")
-    if is_prose_stage(stage):
-        # Belt and braces against a future edit to the table: a prose stage that acquired the ability
-        # to write or run a command would stop being covered. Asks `beyond_reading`, not
-        # `opens_anything`, because `plan` holds `Read`, `Glob` and `Grep`; the guard's purpose is that
-        # the app writes a prose stage's artifact, so the stage must not be able to. Reading is a
-        # catalog entry whose effect is `read`, a feature's included; a name no catalog holds is
-        # never granted.
-        catalog = hooks.catalog()
-        beyond = beyond_reading(row, (*hooks.reads(), *(t for t in row.tools if t not in catalog)))
-        if beyond:
-            raise RunError(f"{stage} is a prose stage and must not carry {', '.join(beyond)}")
     return row
 
 
@@ -437,6 +423,7 @@ def _runs_as(
         effort=effort,
         settings=agents.settings_json(agent) if agent is not None else None,
         preset=row.opens_anything,
+        system=str((pack.row(stage) or {}).get(pack.BODY) or ""),
     )
 
 
@@ -485,34 +472,16 @@ def _channel_for(
     )
 
 
-def _ceiling_overrides(config: Any) -> tuple[dict[str, models.Value], dict[str, models.Value]]:
-    """`(turns, budget)` overrides stored in `cos.db`, by row. A store that cannot be read is no
-    override: a step never fails to start for it. A value out of bounds is skipped."""
-    try:
-        data = Data(config.data_dir)
-        turns = models.overrides_from(data.pref_rows(models.TURNS_PREFIX), models.TURNS_PREFIX)
-        budget = models.overrides_from(data.pref_rows(models.BUDGET_PREFIX), models.BUDGET_PREFIX)
-    except Unusable, sqlite3.Error, OSError:
-        log.exception("the ceiling overrides could not be read, so the defaults apply")
-        return {}, {}
-    return turns[0], budget[0]
-
-
 def with_ceilings(
-    row: Row,
-    stage: str,
-    label: str | None,
-    turns: Mapping[str, models.Value],
-    budget: Mapping[str, models.Value],
-    was: Mapping[str, Any],
+    row: Row, stage: str, label: str | None, was: Mapping[str, Any]
 ) -> tuple[Row, models.Ceilings]:
-    """`row` with its two ceilings as `models.ceilings` resolves them from the stored overrides,
-    and those ceilings with where each came from. Gebo's row is given the same way.
+    """`row` with its two ceilings as `models.ceilings` resolves them from the agent's row, and
+    those ceilings with where each came from. Gebo's row is given the same way.
 
     `was` is the owner of a step taken up again (`{}` for a first segment): it goes on under what
     its first segment ran under, as its owner kept it. An owner with none (an older build's)
     leaves them as resolved now."""
-    ceilings = models.ceilings(stage, label, turns, budget)
+    ceilings = models.ceilings(stage, label)
     if was.get("max_turns") is not None:
         ceilings = models.Ceilings(
             max_turns=int(was["max_turns"]),
@@ -1209,12 +1178,8 @@ class Runner:
     def _configured(
         self, row: Row, stage: str, label: str | None, was: Mapping[str, Any]
     ) -> tuple[Row, models.Ceilings]:
-        """`row` and its two ceilings with their sources, as `with_ceilings` resolves them from
-        a `turns:<row>` or `budget:<row>` override in `cos.db`, else the row's own, and with no
-        override for a stand-in `Sessions` with no config (a test's)."""
-        config = getattr(self.sessions, "config", None)
-        turns, budget = _ceiling_overrides(config) if config is not None else ({}, {})
-        return with_ceilings(row, stage, label, turns, budget, was)
+        """`row` and its two ceilings with their sources, as `with_ceilings` resolves them."""
+        return with_ceilings(row, stage, label, was)
 
     def _scratch(self, workspace: str, unit: str) -> tuple[Path, Path] | None:
         """The unit's `(ram, disk)` scratch directories, made if missing, or `None` for a stand-in
@@ -1425,7 +1390,7 @@ class Runner:
         was = dict((resume or {}).get("owner") or {})
         # A step taken up again goes on under the ceilings its owner kept.
         row, ceilings = self._configured(
-            _admitted(started_by, stage, label, directory, workspace, unit, self.hooks),
+            _admitted(started_by, stage, label, directory, workspace, unit),
             stage,
             label,
             was,
@@ -1787,6 +1752,8 @@ class Runner:
             grants=record(grant),
             blocks=blocks,
             max_turns=row.max_turns,
+            # Which row ran: its pack, its hash, the keys the owner's layer set.
+            **pack.stamp(stage),
             head=head,
             model=model,
             model_source=model_source,
@@ -1892,7 +1859,7 @@ class Runner:
             # Only a step with a channel.
             **servers,
             # Only a grant holding helpers gets them (impl); the gate holds their ledger.
-            **({"agents": DEFINITIONS} if gate.helpers is not None else {}),
+            **({"agents": definitions(gate.grant.helpers)} if gate.helpers is not None else {}),
             **({"unit_scratch": own} if own is not None else {}),
         )
 
@@ -1964,8 +1931,7 @@ class Runner:
             shutting_down = held is not None
         if (
             unopened is not None
-            and is_prose_stage(stage)
-            and row.app_writes_artifact
+            and row.prose
             and not watch
             and outcome == "failed"
             and not shutting_down

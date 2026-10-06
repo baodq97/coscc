@@ -240,7 +240,9 @@ class AFeatureHandsTheAgentItsParts(Setup):
 
     def test_a_row_naming_a_tool_no_catalog_holds_stops_the_build(self):
         ctx = {"fake": ctx_for()}
-        with self.assertRaisesRegex(ValueError, "the row 'impl' names vault, codegraph"):
+        with self.assertRaisesRegex(
+            ValueError, "the row 'spike' cannot be used: tools.vault: no such tool in the catalog"
+        ):
             hooks_of([fake_feature()], ctx)
         with rows_without_feature_tools():
             hooks_of([fake_feature()], ctx)

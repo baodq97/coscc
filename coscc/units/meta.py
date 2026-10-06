@@ -443,7 +443,7 @@ class UnitMeta:
                 "version": r["version"],
                 "at": r["at"],
                 "fields": {
-                    k: v for k, v in json.loads(r["object"]).items() if k != contracts.STAGE
+                    k: v for k, v in json.loads(r["object"]).items() if k != contracts.SENDER
                 },
             }
             for r in found

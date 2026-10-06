@@ -64,7 +64,7 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
     def held(self) -> list[dict]:
         """What the board shows as running in this workspace now, one row per attempt."""
         key = self.core.ws.key(str(self.repo))
-        running = self.core.boards.running_here(key, {})
+        running = self.core.boards.running_here(key)
         return [{**row, "unit": unit} for unit, rows in running.items() for row in rows]
 
     def _run(self, stage: str, stop_after: int | None = None, until_ended: bool = False):

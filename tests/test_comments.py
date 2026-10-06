@@ -4,7 +4,7 @@ or requirement made it.
 An id or a history note is read again on every turn of every session that opens the file, and
 new code copies the text around it. No file under `coscc/` or `tests/` carries one, in a comment,
 a docstring, a name or any string constant (the SQL schema comments are strings), and neither
-does a markdown file under `.claude/` or `coscc/features/`. Every string constant is read, not
+does a markdown file under `.claude/`, `coscc/features/` or `coscc/packs/`. Every string constant is read, not
 only SQL comment lines: outside the schema it raised no false match. Strings under `tests/` are
 fixture data (a unit directory name), so only `coscc/` strings are read."""
 
@@ -40,9 +40,9 @@ FIX = "say why, not which unit: drop the id, or the sentence if it only names th
 SKIPPED = ("worktrees", "testdata")
 ALLOWED = {
     ".claude/rules/ui-standard.md": re.compile(r"F\d"),
-    ".claude/skills/write-review/SKILL.md": re.compile(r"F\d"),
-    ".claude/skills/write-spike/SKILL.md": re.compile(r"U\d"),
-    ".claude/skills/write-spec/SKILL.md": re.compile(r"U\d"),
+    "coscc/packs/coscc-sdlc/skills/write-review/SKILL.md": re.compile(r"F\d"),
+    "coscc/packs/coscc-sdlc/skills/write-spike/SKILL.md": re.compile(r"U\d"),
+    "coscc/packs/coscc-sdlc/skills/write-spec/SKILL.md": re.compile(r"U\d"),
 }
 
 
@@ -103,7 +103,11 @@ def md_ids(path: Path, where: str | None = None) -> list[str]:
 
 
 def _markdown() -> list[Path]:
-    files = [*(REPO / ".claude").rglob("*.md"), *(REPO / "coscc" / "features").glob("*/README.md")]
+    files = [
+        *(REPO / ".claude").rglob("*.md"),
+        *(REPO / "coscc" / "features").glob("*/README.md"),
+        *(REPO / "coscc" / "packs").rglob("*.md"),
+    ]
     return sorted(p for p in files if not set(SKIPPED) & set(p.relative_to(REPO).parts))
 
 
@@ -112,7 +116,7 @@ def _files() -> list[Path]:
         p
         for top in ("coscc", "tests")
         for p in sorted((REPO / top).rglob("*.py"))
-        if not {"_web", "_harness"} & set(p.parts)
+        if "_web" not in p.parts
     ]
 
 

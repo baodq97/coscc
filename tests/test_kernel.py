@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from coscc import kernel
-from coscc.agent import policy
+from coscc.agent import pack, policy
 from coscc.kernel import Block, Grant, Hooks, Parts, Row, Tool
 
 
@@ -85,7 +85,8 @@ class TheCatalogHoldsTheBuiltinsAndEveryFeaturesTools(unittest.TestCase):
         self.assertEqual(catalog["vault"].effect, "external")
         self.assertEqual(catalog["codegraph"].names, ("find", "callers", "impact"))
         self.assertEqual(catalog["codegraph"].effect, "read")
-        for key, row in policy.ROWS.items():
+        for key in pack.rows():
+            row = policy.row_for(key)
             self.assertEqual([t for t in row.tools if t not in catalog], [], key)
 
 

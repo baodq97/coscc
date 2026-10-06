@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import ast
 import copy
-import json
-import tempfile
 import unittest
 from pathlib import Path
 from typing import Any, get_args
@@ -13,28 +11,21 @@ from unittest import mock
 
 import jsonschema
 
-from coscc.agent.agents import DEFAULT_PATH
+from coscc.agent import pack
 from coscc.units import contracts
 from coscc.units.contracts import ContractError
 
 
 def _shipped() -> dict[str, Any]:
-    return json.loads(DEFAULT_PATH.read_text(encoding="utf-8"))
+    return {"agents": copy.deepcopy(pack.rows())}
 
 
 def _load(raw: dict[str, Any]) -> dict[str, contracts.Output]:
-    with tempfile.TemporaryDirectory() as d:
-        path = Path(d) / "agents.json"
-        path.write_text(json.dumps(raw), encoding="utf-8")
-        return contracts.load(path)
+    return contracts.load(raw["agents"])
 
 
 def _output(raw: dict[str, Any], agent: str) -> dict[str, Any]:
-    return (
-        raw["agents"][agent]["output"]
-        if agent in raw["agents"]
-        else raw["sessions"][agent]["output"]
-    )
+    return raw["agents"][agent]["output"]
 
 
 def _refusal(raw: dict[str, Any]) -> str:
@@ -47,8 +38,15 @@ def _refusal(raw: dict[str, Any]) -> str:
 
 class TheShippedDeclarationsLoad(unittest.TestCase):
     def test_every_agent_row_and_the_estimate_declare_an_output(self):
-        declared = contracts.load(DEFAULT_PATH)
-        self.assertEqual(set(_shipped()["agents"]) | {"estimate"}, set(declared))
+        declared = contracts.load(pack.rows())
+        self.assertEqual(
+            {
+                k
+                for k, r in pack.rows().items()
+                if r.get("output", {}).get("kind") in contracts.KINDS
+            },
+            set(declared),
+        )
         self.assertEqual(declared["spec"]["kind"], "artifact")
         self.assertEqual(declared["review"]["kind"], "review")
         self.assertEqual(declared["integrate"]["kind"], "session")
@@ -56,7 +54,7 @@ class TheShippedDeclarationsLoad(unittest.TestCase):
 
 class RemovingAFieldRefusesTheLoad(unittest.TestCase):
     def test_each_field_the_engine_reads_names_its_reader(self):
-        declared = contracts.load(DEFAULT_PATH)
+        declared = contracts.load(pack.rows())
         cases = 0
         for agent, out in declared.items():
             read = {**contracts.READS.get(out["kind"], {}), **contracts.READS.get(agent, {})}
@@ -136,11 +134,6 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
                 agent,
             )
 
-    def test_a_row_with_no_output_is_refused(self):
-        raw = _shipped()
-        del raw["agents"]["plan"]["output"]
-        self.assertIn("contract-field-missing: plan.output", _refusal(raw))
-
     def test_a_sub_field_a_reader_names_is_missing(self):
         raw = _shipped()
         del raw["agents"]["spike"]["output"]["fields"]["verdicts"]["list"]["verdict"]
@@ -169,9 +162,9 @@ class AWrongTypeRefusesTheLoad(unittest.TestCase):
         raw = _shipped()
         raw["agents"]["plan"]["output"]["version"] = 0
         self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.version: "))
-        raw = _shipped()
-        raw["agents"]["plan"]["output"]["kind"] = "proposal"
-        self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.kind: "))
+        with self.assertRaises(ContractError) as e:
+            contracts.check("plan", {"kind": "proposal", "version": 1, "fields": {}})
+        self.assertTrue(str(e.exception).startswith("contract-bad-type: plan.kind: "))
 
     def test_an_artifact_does_not_declare_who_sent_it(self):
         raw = _shipped()
@@ -232,7 +225,7 @@ PINNED = {
 
 class AChangedDeclarationNeedsANewVersion(unittest.TestCase):
     def test_each_declaration_is_pinned_with_its_version(self):
-        declared = contracts.load(DEFAULT_PATH)
+        declared = contracts.load(pack.rows())
         now = {a: (o["version"], contracts.fingerprint(o)) for a, o in declared.items()}
         self.assertEqual(now, PINNED)
 
@@ -253,7 +246,7 @@ class TheBlockNamesEveryDeclaredField(unittest.TestCase):
     def test_the_prompt_teaches_each_field_the_schema_asks_for(self):
         from coscc.runner import prompt
 
-        for agent, out in contracts.load(DEFAULT_PATH).items():
+        for agent, out in contracts.load(pack.rows()).items():
             if out["kind"] == "artifact":
                 block = prompt.submit_block(agent, f"{agent}.md", writes_own=False)
             elif out["kind"] == "review":
@@ -305,7 +298,7 @@ class TheBlockIsTheDeclaration(unittest.TestCase):
         self.assertIn("may be left out", _describe({"a?": "text"}))
 
     def test_a_field_the_kind_requires_has_the_engines_sentence(self):
-        for agent, out in contracts.load(DEFAULT_PATH).items():
+        for agent, out in contracts.load(pack.rows()).items():
             if out["kind"] != "artifact":
                 continue
             block = self.block(agent)
@@ -323,7 +316,7 @@ class TheBlockIsTheDeclaration(unittest.TestCase):
     def test_no_block_names_a_status_line(self):
         from coscc.runner import prompt
 
-        for agent, out in contracts.load(DEFAULT_PATH).items():
+        for agent, out in contracts.load(pack.rows()).items():
             if out["kind"] == "artifact":
                 self.assertNotIn("Status:", self.block(agent), agent)
         self.assertNotIn("Status:", prompt.round_block())
@@ -422,10 +415,7 @@ class AnInputDeclarationIsChecked(unittest.TestCase):
     """Each stage's `input` names stages, agents and data sources there are, or the load refuses."""
 
     def inputs(self, raw: dict[str, Any]) -> dict[str, contracts.Input]:
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "agents.json"
-            path.write_text(json.dumps(raw), encoding="utf-8")
-            return contracts.load_inputs(path)
+        return contracts.load_inputs(raw["agents"])
 
     def test_every_stage_that_composes_a_prompt_declares_one(self):
         loaded = self.inputs(_shipped())

@@ -9,8 +9,6 @@ ends is in `tests/runner/test_step_ending.py`."""
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -19,7 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from coscc.agent import policy
+from coscc.agent import pack, policy
 from coscc.kernel import Facts, Hooks, Parts, Tool
 from coscc.store.journal import Journal
 from coscc.agent.policy import row_for
@@ -68,24 +66,24 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
     """
 
     def test_no_prose_stage_can_write_or_run(self):
-        """Was `..._in_either_mode`. The grant no longer depends on the mode, so there is one
-        grant per stage to check."""
+        """One grant per stage: `pack.check` with the catalog refuses a prose row that holds a tool
+        which is not a read."""
+        from coscc.kernel import BUILTINS
+
         # `codegraph` is a catalog entry whose effect is `read`.
-        reads = policy.READ_TOOLS + (policy.CODEGRAPH,)
-        for stage in policy.PROSE_STAGES:
-            grant = policy.row_for(stage)
-            self.assertEqual(
-                policy.beyond_reading(grant, reads), (), f"{stage} carries more than reading"
-            )
+        catalog = {**{t.name: t.effect for t in BUILTINS}, "codegraph": "read"}
+        for stage, row in pack.rows().items():
+            if policy.row_for(stage).prose:
+                self.assertEqual(pack.check(row["builtin"], catalog, pack.rows()), [], stage)
 
     def test_intent_spec_plan_and_review_read_and_idea_does_not(self):
         # All four only read, in any mode.
         readers = ("intent", "spec", "plan", "review")
         for reader in readers:
-            builtin = tuple(t for t in policy.row_for(reader).tools if t != policy.CODEGRAPH)
+            builtin = tuple(t for t in policy.row_for(reader).tools if t != "codegraph")
             self.assertEqual(builtin, policy.READ_TOOLS)
-        for stage in policy.PROSE_STAGES:
-            if stage not in readers:
+        for stage, row in pack.rows().items():
+            if policy.row_for(stage).prose and stage not in readers:
                 self.assertEqual(policy.row_for(stage).tools, (), f"{stage} carries tools")
 
     def test_the_guard_lets_the_plan_stage_through_with_its_read_tools(self):
@@ -216,40 +214,15 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
         self.assertEqual(grant.max_turns, 1)
         self.assertEqual(grant.max_budget_usd, 0.0)
 
-    def test_a_prose_stage_that_somehow_gained_tools_refuses_to_run(self):
-        """Belt and braces against a future edit to the grant table.
+    def test_a_prose_stage_that_somehow_gained_tools_is_refused_before_it_runs(self):
+        """A prose stage with tools would stop being covered without anything failing, so the row
+        is checked with the catalog (`agent-invalid`) rather than trusting the table."""
+        from coscc.kernel import BUILTINS
 
-        A prose stage with tools would stop being covered without anything
-        failing, so the runner checks rather than trusting the table it just read.
-        """
-        original = dict(policy.ROWS)
-        policy.ROWS["spec"] = policy.Row(tools=("Write",))
-        try:
-            with tempfile.TemporaryDirectory() as d:
-                make_unit(Path(d), intent_md="Status: accepted.\nI")
-                r = Runner(sessions=None, journal=None)
-
-                async def go():
-                    async for _ in r.run(
-                        workspace=d,
-                        directory=Path(d) / ".cos" / UNIT,
-                        journal_key=d,
-                        unit=UNIT,
-                        stage="spec",
-                        artifact="spec.md",
-                        mode="autonomous",
-                    ):
-                        pass
-
-                with self.assertRaises(RunError) as caught:
-                    asyncio.run(go())
-                # The refusal names what it refused, which the older message did not:
-                # "must not carry tools" said a prose stage may hold none, and since
-                # 2026-09-23 `plan` holds three.
-                self.assertIn("must not carry Write", str(caught.exception))
-        finally:
-            policy.ROWS.clear()
-            policy.ROWS.update(original)
+        catalog = {t.name: t.effect for t in BUILTINS}
+        row = {"builtin": {**pack.row("spec")["builtin"], "tools": {"Write": "allow"}}}
+        reasons = pack.check(row["builtin"], catalog, pack.rows())
+        self.assertTrue(any("only reading tools" in r for r in reasons), reasons)
 
 
 class AStepRecordsTheCommitItRanOn(unittest.TestCase):
@@ -997,15 +970,15 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
         "max_budget_source",
     }
 
-    def run_spec(self, d, prefs=None, break_store=False, **kw):
+    def run_spec(self, d, ceilings=None, **kw):
         from coscc.agent import steps
         from coscc.config import Config
         from coscc.store.db import Data
         from coscc.runlog import events
 
         config = Config(data_dir=str(Path(d) / "data"), config_home=str(Path(d) / "cfg"))
-        for key, value in (prefs or {}).items():
-            Data(config.data_dir).set_pref(key, value)
+        if ceilings:
+            pack.write("spec", "ceilings", {**pack.row("spec")["ceilings"], **ceilings})
 
         class Probe:
             def __init__(self):
@@ -1039,13 +1012,7 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
                 )
             ]
 
-        unreadable = (
-            mock.patch.object(Data, "pref_rows", side_effect=sqlite3.OperationalError("locked"))
-            if break_store
-            else contextlib.nullcontext()
-        )
-        with unreadable:
-            final = asyncio.run(go())[-1][1]
+        final = asyncio.run(go())[-1][1]
         stored, _ = Data(config.data_dir).step_events_page("r-1", None, 100)
         return probe, final, stored
 
@@ -1053,7 +1020,7 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             probe, final, stored = self.run_spec(
                 d,
-                {"turns:spec": 30},
+                {"turns": 30},
                 model="m",
                 model_source="override",
                 effort="high",
@@ -1087,7 +1054,7 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
 
     def test_an_overridden_budget_reaches_the_session(self):
         with tempfile.TemporaryDirectory() as d:
-            probe, _, stored = self.run_spec(d, {"budget:spec": 2.5})
+            probe, _, stored = self.run_spec(d, {"usd": 2.5})
         self.assertEqual(probe.budget, 2.5)
         self.assertEqual(
             (stored[0]["max_budget_usd"], stored[0]["max_budget_source"]), (2.5, "override")
@@ -1096,7 +1063,7 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
 
     def test_the_floor_of_a_step_that_submits_still_applies_to_an_override(self):
         with tempfile.TemporaryDirectory() as d:
-            probe, _, stored = self.run_spec(d, {"turns:spec": 1})
+            probe, _, stored = self.run_spec(d, {"turns": 1})
         self.assertEqual(probe.max_turns, policy.SUBMIT_TURNS)
         self.assertEqual(
             (stored[0]["max_turns"], stored[0]["max_turns_source"]),
@@ -1104,37 +1071,22 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
         )
 
     def test_the_other_rows_overrides_change_nothing(self):
+        from coscc.agent import models
+
+        models.set_field("impl", "turns", 30)
+        models.set_field("impl:novel", "turns", 40)
         with tempfile.TemporaryDirectory() as d:
-            probe, _, stored = self.run_spec(d, {"turns:impl": 30, "turns:impl:novel": 40})
+            probe, _, stored = self.run_spec(d)
         self.assertEqual(probe.max_turns, row_for("spec").max_turns)
         self.assertEqual(stored[0]["max_turns_source"], "default")
 
-    def test_a_bad_value_is_skipped_and_the_step_starts_on_the_default(self):
+    def test_a_bad_value_is_refused_and_nothing_is_written(self):
         for bad in ("many", 100000, 0, 2.5, None):
-            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as d:
-                probe, final, stored = self.run_spec(d, {"turns:spec": bad})
-                self.assertEqual(final["outcome"], "done", final)
-                self.assertEqual(probe.max_turns, row_for("spec").max_turns)
-                self.assertEqual(stored[0]["max_turns_source"], "default")
-
-    def test_a_store_that_cannot_be_read_is_no_override(self):
-        with tempfile.TemporaryDirectory() as d:
-            probe, final, stored = self.run_spec(d, {"turns:spec": 30}, break_store=True)
-        self.assertEqual(final["outcome"], "done", final)
-        self.assertEqual(probe.max_turns, row_for("spec").max_turns)
-        self.assertEqual(stored[0]["max_turns_source"], "default")
-
-    def test_with_no_config_the_ceilings_are_the_grants(self):
-        runner = Runner(sessions=object(), journal=None)
-        grant, ceilings = runner._configured(row_for("spec"), "spec", None, {})
-        self.assertEqual(
-            (grant.max_turns, grant.max_budget_usd),
-            (row_for("spec").max_turns, row_for("spec").max_budget_usd),
-        )
-        self.assertEqual(
-            (ceilings["max_turns"], ceilings["max_budget_usd"]),
-            (grant.max_turns, grant.max_budget_usd),
-        )
+            with self.subTest(bad=bad):
+                if bad is not None:
+                    with self.assertRaises(ValueError):
+                        pack.write("spec", "ceilings", {"turns": bad, "usd": 4.0})
+                self.assertFalse(pack.row("spec")["edited"])
 
 
 class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
@@ -1190,6 +1142,11 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
         _, final = asyncio.run(go())[-1]
         return probe, final
 
+    def preset_of(self, stage):
+        """The preset, with the row's body appended when it has one."""
+        body = pack.row(stage)["body"]
+        return {**self.PRESET, "append": body} if body else self.PRESET
+
     def test_every_stage_with_tools_gets_the_preset(self):
         with_tools = [s for s in STAGES if row_for(s).opens_anything]
         # Pinned, so a change to the grant table turns this red rather than quietly
@@ -1200,19 +1157,20 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
                 probe, _ = self.run_stage(d, stage)
                 # Asserted on what the session was handed, before the runner looks at
                 # the artifact, so the outcome is not what this depends on.
-                self.assertEqual(probe.kw.get("system_prompt"), self.PRESET)
-                self.assertNotIn("append", probe.kw["system_prompt"])
+                self.assertEqual(probe.kw.get("system_prompt"), self.preset_of(stage))
 
-    def test_a_stage_without_tools_gets_none(self):
+    def test_a_stage_without_tools_gets_its_body_as_a_custom_prompt(self):
         with tempfile.TemporaryDirectory() as d:
             probe, _ = self.run_stage(d, "idea")
             self.assertIsNotNone(probe.kw)
-            self.assertNotIn("system_prompt", probe.kw)
+            self.assertEqual(
+                probe.kw["system_prompt"], {"type": "custom", "prompt": pack.row("idea")["body"]}
+            )
 
     def test_the_read_only_stage_still_holds_only_its_read_tools(self):
         with tempfile.TemporaryDirectory() as d:
             probe, _ = self.run_stage(d, "spec")
-            self.assertEqual(probe.kw.get("system_prompt"), self.PRESET)
+            self.assertEqual(probe.kw.get("system_prompt"), self.preset_of("spec"))
             self.assertEqual(probe.kw["tools"], list(policy.READ_TOOLS))
             self.assertEqual(probe.kw["gate"].grant.tools, policy.READ_TOOLS)
 
@@ -1355,7 +1313,6 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
         )
 
     def test_the_spike_skill_carries_the_progress_file(self):
-        # Red too when a stale `coscc/_harness/` hides `.claude/`.
         self.assertIn("## The progress file", skill_for("spike"))
 
 
@@ -1801,10 +1758,10 @@ class AStepAnUpdatePaused(unittest.TestCase):
 
 
 def _rows_naming(test: unittest.TestCase, name: str, keys: tuple[str, ...]) -> None:
-    """`policy.ROWS` with `name` added to the rows of `keys`, for the test."""
-    rows = {k: policy.ROWS.get(k, policy.Row()) for k in keys}
+    """`policy.ADDED` with `name` added to the rows of `keys`, for the test."""
+    rows = {k: policy.row_for(k) for k in keys}
     patch = mock.patch.dict(
-        policy.ROWS, {k: replace(r, tools=(*r.tools, name)) for k, r in rows.items()}
+        policy.ADDED, {k: replace(r, tools=(*r.tools, name)) for k, r in rows.items()}
     )
     patch.start()
     test.addCleanup(patch.stop)

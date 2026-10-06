@@ -1,16 +1,9 @@
 from __future__ import annotations
 
-import json
-import tempfile
 import unittest
-from pathlib import Path
 
-from coscc.agent import agents
+from coscc.agent import agents, pack
 from coscc.agent.agents import agent_for
-
-
-def _pref(fields: dict) -> str:
-    return json.dumps(fields)
 
 
 class TheTableIsTheOneTheSpecChose(unittest.TestCase):
@@ -18,48 +11,31 @@ class TheTableIsTheOneTheSpecChose(unittest.TestCase):
         self.assertIsNone(agent_for("deploy"))
         self.assertIsNone(agent_for(""))
 
-    def test_a_broken_default_file_is_a_problem_not_a_raise(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            bad = Path(tmp) / "agents.json"
-            bad.write_text("{", encoding="utf-8")
-            self.assertEqual(agents.load_defaults(bad)[0], {})
-            self.assertIn("not JSON", agents.load_defaults(bad)[1][0])
-            bad.write_text(
-                json.dumps(
-                    {
-                        "agents": {
-                            "a": {"glyph": "x", "name": "Has space"},
-                            "b": {"glyph": "y", "name": "Fine", "role": "two\nlines"},
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-            rows, problems = agents.load_defaults(bad)
-            self.assertEqual(list(rows), ["b"])
-            self.assertEqual(rows["b"]["role"], "")
-            self.assertEqual(len(problems), 3, problems)
-            self.assertEqual(agents.load_defaults(Path(tmp) / "none.json")[0], {})
+    def test_a_shipped_row_is_every_field_by_default(self):
+        row = agent_for("review")
+        self.assertEqual((row["name"], row["glyph"]), ("Tiwaz", "ᛏ"))
+        self.assertEqual(set(row["source"].values()), {agents.DEFAULT})
+
+    def test_the_page_lists_the_stage_agents_and_gebo_not_the_helpers(self):
+        self.assertTrue(agents.shown("impl"))
+        self.assertTrue(agents.shown("integrate"))
+        self.assertFalse(agents.shown("scout"))
 
 
 class OverridesComeFirst(unittest.TestCase):
-    def test_an_override_wins_field_by_field_and_a_broken_one_falls_back(self):
-        overrides, problems = agents.overrides_from(
-            {
-                "agent:review": _pref({"name": "Judge", "glyph": "a b"}),
-                "agent:plan": "not json",
-                "agent:spec": _pref("Kenaz"),
-                "model:review": _pref("ignored, another prefix"),
-            }
-        )
-        self.assertEqual(overrides, {"review": {"name": "Judge"}})
-        self.assertEqual(len(problems), 3, problems)
-        row = agent_for("review", overrides)
+    def test_an_owner_field_wins_and_the_rest_stay_the_builtins(self):
+        pack.write("review", "name", "Judge")
+        row = agent_for("review")
         self.assertEqual(row["name"], "Judge")
         self.assertEqual(row["glyph"], "ᛏ")
         self.assertEqual(row["source"]["name"], agents.OVERRIDE)
         self.assertEqual(row["source"]["glyph"], agents.DEFAULT)
-        self.assertEqual(agent_for("plan", overrides)["name"], "Raidho")
+        self.assertEqual(agent_for("plan")["name"], "Raidho")
+
+    def test_putting_none_back_restores_the_builtin(self):
+        pack.write("review", "name", "Judge")
+        pack.write("review", "name", None)
+        self.assertEqual(agent_for("review")["source"]["name"], agents.DEFAULT)
 
     def test_every_rule_of_but_the_duplicate(self):
         ok = {"name": "Tiwaz-2", "glyph": "ᛏᛏ", "meaning": "x" * 60, "role": "y" * 200}

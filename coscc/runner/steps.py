@@ -15,7 +15,7 @@ from typing import Any, AsyncIterator, NotRequired, TypedDict
 from collections.abc import Awaitable, Callable, Coroutine
 
 from coscc import units
-from coscc.agent import models, modeltrial, transcript
+from coscc.agent import models, modeltrial, pack, transcript
 from coscc.agent import steps as steps_mod
 from coscc.agent.sessions import Sessions, Suspended
 from coscc.bus import Bus
@@ -883,13 +883,7 @@ class Steps:
                 rounds_before=rounds_before,
             )
             inputs.update(await self._link_kwargs(cwd, unit, stage))
-            lacks = missing(stage, directory, inputs.get("meta"))
-            if lacks:
-                raise Refused(
-                    f"{stage} cannot start: it needs {' and '.join(lacks)}, and this unit has "
-                    "none yet.",
-                    ("input-missing",),
-                )
+            self.refuse_unready(stage, directory, inputs.get("meta"))
             if asked_rerun:
                 self._record_rerun(cwd, unit, stage, stale)
             # Emptied before the step, whatever an earlier one left, and removed
@@ -1071,6 +1065,27 @@ class Steps:
         if tree.get("branch"):
             return tree.get("base")
         return await worktrees.refresh_base(cwd, unit, self.config.data_dir)
+
+    def refuse_unready(self, stage: str, directory: Path, meta: Any) -> None:
+        """`Refused` before any spend: `agent-invalid` when the stage's row cannot run (a bad
+        owner's file; an edited row `pack.check` refuses with the catalog, as a built-in one
+        would have stopped the build; a stage with no row opens no session), `input-missing`
+        when its declared input is not there yet."""
+        found = pack.row(stage)
+        effects = {n: t.effect for n, t in self.hooks.catalog().items()}
+        bad = pack.problems(stage, effects if found["edited"] else None) if found else []
+        if bad:
+            raise Refused(
+                f"{stage} cannot start: its agent's row cannot run: {'; '.join(bad)}",
+                ("agent-invalid",),
+            )
+        lacks = missing(stage, directory, meta)
+        if lacks:
+            raise Refused(
+                f"{stage} cannot start: it needs {' and '.join(lacks)}, and this unit has "
+                "none yet.",
+                ("input-missing",),
+            )
 
     def feature_refusal(self, facts: Facts) -> str:
         """`Hooks.refusal`: the first feature guard that denies the run, or `""`."""
@@ -1339,7 +1354,7 @@ class Steps:
             base=base,
             base_note=describe_base(base),
             screens_note=screens_note,
-            # The stage's row with today's overrides, read once
+            # The stage's row as it stands, read once
             # as the step starts: a rename later reaches the next step, not this one.
             agent=self.agent_of(stage),
             **inputs,

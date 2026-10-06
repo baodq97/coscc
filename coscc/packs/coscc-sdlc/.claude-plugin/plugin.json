@@ -1,0 +1,19 @@
+{
+  "name": "coscc-sdlc",
+  "version": "1.0.0",
+  "description": "coscc's software delivery agents: one row per agent, the stage skills beside them.",
+  "agents": [
+    "./agents/idea.md",
+    "./agents/intent.md",
+    "./agents/spec.md",
+    "./agents/spike.md",
+    "./agents/plan.md",
+    "./agents/impl.md",
+    "./agents/review.md",
+    "./agents/integrate.md",
+    "./agents/estimate.md",
+    "./agents/leif.md",
+    "./agents/scout.md",
+    "./agents/worker.md"
+  ]
+}
