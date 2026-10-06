@@ -126,7 +126,7 @@ function AgentLine({ a, rows }: { a: AgentRow; rows: AgentRow[] }) {
       <span className="cost">
         {a.runs_30d ? (
           <>
-            <b>{money(a.cost_30d)}</b> <span className="faint">· {a.runs_30d} runs</span>
+            <b>{money(a.cost_30d)}</b> <span className="faint">· {a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}</span>
           </>
         ) : (
           <span className="faint">no runs in 30 d</span>

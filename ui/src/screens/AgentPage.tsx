@@ -135,7 +135,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
         </div>
         <div className="agent-spend">
           <b>{money(a.cost_30d)}</b> <span className="faint">in 30 days</span>
-          <div className="faint" style={{ fontSize: 12 }}>{a.runs_30d} runs</div>
+          <div className="faint" style={{ fontSize: 12 }}>{a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}</div>
         </div>
       </div>
       {a.problems.length > 0 && (
@@ -226,7 +226,7 @@ function Text({ ctx, path, width = 260, placeholder }: { ctx: Ctx; path: string;
   return (
     <input
       className="input sm"
-      style={{ maxWidth: width }}
+      style={{ width, maxWidth: "100%" }}
       value={v == null ? "" : String(v)}
       placeholder={placeholder}
       disabled={!ctx.editable}
@@ -382,6 +382,9 @@ function Tools(ctx: Ctx) {
       <p className="muted" style={{ marginTop: 0 }}>
         Allow gives the tool to its runs; Ask offers it and refuses every call until a person can be asked; Off leaves it out. No setting here lifts the app's critical blocks.
       </p>
+      {(readsOnly || helper) && (
+        <p className="muted">{readsOnly ? "The app writes this agent's output from its reply, so it holds only reading tools." : "A helper starts no helper."}</p>
+      )}
       <div className="card">
         {page.catalog.map((t) => {
           const p = tools[t.name] ?? "off";
@@ -391,7 +394,7 @@ function Tools(ctx: Ctx) {
               <span className="tname">
                 <b className="mono">{t.name}</b>
                 {t.feature && (
-                  <span className="faint"> · {t.feature} {t.on ? "" : "(off in this workspace)"}</span>
+                  <span className="faint"> · {t.feature === t.name ? "feature" : `from ${t.feature}`}{t.on ? "" : ", off in this workspace"}</span>
                 )}
               </span>
               <span className="tmeta">
@@ -406,7 +409,6 @@ function Tools(ctx: Ctx) {
                   </button>
                 ))}
               </span>
-              {no && p === "off" && <span className="tool-why faint">{no}</span>}
               {t.name === "Agent" && p !== "off" && (
                 <span className="tool-why">
                   Starts:{" "}
