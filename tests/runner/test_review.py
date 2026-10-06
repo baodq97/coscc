@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import unittest
 
+from coscc.runner.review import closing_round_problem as closing_round_problem_of
 from coscc.runner.review import merge_review, render_round, replace_new_rounds
 from tests.runner.test_step import REVIEW_R1, incomplete_reply
 
@@ -124,6 +125,18 @@ class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
             with self.subTest(written=written):
                 self.assertIsNone(self.problem(incomplete_reply(self.HEAD).replace(line, written)))
         self.assertIsNotNone(self.problem(incomplete_reply("c" * 40)))
+
+    def test_the_round_comes_after_every_recorded_round_too(self):
+        # `review.md` holds Round 1 but the rows hold Rounds 1 and 2: Round 2 would take a
+        # recorded number, so the closing round is Round 3.
+        self.assertIsNotNone(
+            closing_round_problem_of(REVIEW_R1, incomplete_reply(self.HEAD), self.HEAD, (1, 2))
+        )
+        self.assertIsNone(
+            closing_round_problem_of(
+                REVIEW_R1, incomplete_reply(self.HEAD, number=3), self.HEAD, (1, 2)
+            )
+        )
 
     def test_a_round_with_no_status_line_passes(self):
         reply = incomplete_reply(self.HEAD).replace("Status: draft.", "").replace("Status: ", "")

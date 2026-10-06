@@ -906,6 +906,7 @@ async def _close_review(
     unit: str,
     stage: str,
     message: str,
+    rounds_known: tuple[int, ...] = (),
 ) -> tuple[
     str | None,
     str,
@@ -932,7 +933,7 @@ async def _close_review(
         if not steps.seal(running):
             review_md = "withheld"
         else:
-            number = _last_round(directory / artifact) + 1
+            number = max(_last_round(directory / artifact), *rounds_known, 0) + 1
             reply, done = await asyncio.wait_for(
                 _closing_turn(
                     sessions,
@@ -949,7 +950,7 @@ async def _close_review(
             closing, cost = _turn_cost(done, cost)
             # Judged on the text, never on `after`. No `await` from here to the write, as on the reply's
             # road.
-            problem = closing_round_problem(_read(directory / artifact), reply, head)
+            problem = closing_round_problem(_read(directory / artifact), reply, head, rounds_known)
             if problem:
                 review_md, said = (
                     "none",
@@ -2149,6 +2150,7 @@ class Runner:
                 unit,
                 stage,
                 message,
+                rounds_known,
             )
             shutting_down = held is not None
         if (

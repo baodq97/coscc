@@ -192,7 +192,9 @@ def closing_prompt(head: str, number: int) -> str:
     )
 
 
-def closing_round_problem(existing: str, reply: str, head: str) -> str | None:
+def closing_round_problem(
+    existing: str, reply: str, head: str, recorded: tuple[int, ...] = ()
+) -> str | None:
     """`None` when `reply` is a closing turn's round the app may write, else why not.
 
     Only an incomplete round, which the loop reads as "review again". A full round is refused:
@@ -207,9 +209,9 @@ def closing_round_problem(existing: str, reply: str, head: str) -> str | None:
     new = [r for r in _rounds(body) if _round_number(r) not in on_disk]
     if len(new) != 1:
         return f"it adds {len(new)} review rounds, not one"
-    # The number `closing_prompt` was given. `merge_review` keeps any number not on disk, and a
-    # round skipped or reused closes `ship` for good.
-    number = max(on_disk, default=0) + 1
+    # The number `closing_prompt` was given: after every round on disk and every round recorded,
+    # so the round's row never takes a recorded number.
+    number = max({*on_disk, *recorded}, default=0) + 1
     if _round_number(new[0]) != number:
         return f"{new[0].splitlines()[0]} is not ## Round {number}, the next round"
     meta = _INCOMPLETE_META.match(_first_line(new[0]).strip())
