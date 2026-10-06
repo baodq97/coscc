@@ -287,7 +287,7 @@ class Answers:
         ends as it ended, but a failure is not dropped: the `done` item carries `ingest_error`,
         and a `unit_unknowns` row tells the snapshot. A guard that closes is a failure here.
         """
-        submitted = done.get("submitted")
+        submitted: dict[str, Any] = done.get("submitted") or {}
         incomplete = done.get("incomplete_round")
         if not (wrote and ((done.get("outcome") == "done" and submitted) or incomplete)):
             return {}
@@ -296,10 +296,12 @@ class Answers:
         stage = str(done.get("stage") or "")
         try:
             if incomplete:
-                apply = self._apply_incomplete
+                await asyncio.to_thread(
+                    self._apply_incomplete, meta, workspace, unit, stage, wrote, done
+                )
             else:
                 apply = self._apply_round if stage == submit.ROUND else self._apply_result
-            await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
+                await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
             return {}
         except (BadTransition, Busy, sqlite3.Error) as e:
             # One fixed sentence on the card and the step, the error in the log: `Busy` carries
@@ -422,7 +424,6 @@ class Answers:
         unit: str,
         stage: str,
         artifact: str,
-        _submitted: dict[str, Any] | None,
         done: dict[str, Any],
     ) -> None:
         """The incomplete round a review's closing turn wrote, as `review.md` back to `draft`: one
