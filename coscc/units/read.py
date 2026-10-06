@@ -25,7 +25,7 @@ from coscc.config import Config
 from coscc.git import gitops
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, now
-from coscc.store.journal import last_runs, timelines_of, totals_of
+from coscc.store.journal import last_runs, paused_stage, timelines_of, totals_of
 from coscc.units import BadUnit, Invalid, backlog, contracts, scratch, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable, attention_reason, unit_state
@@ -125,6 +125,18 @@ class PullRequest(TypedDict):
     url: str
 
 
+class Paused(TypedDict):
+    """A run that stopped at a ceiling and kept its session: the `stage`, which `ceiling` it hit
+    (`turns` or `usd`), what it spent and both ceilings. The unit is held `budget-reached`."""
+
+    stage: str
+    ceiling: str
+    usd: float | None
+    max_usd: float | None
+    turns: int | None
+    max_turns: int | None
+
+
 class Card(TypedDict):
     """A unit as a list shows it: what it is, where it stands and what it cost. The whole unit
     is the board's (`Board.read`)."""
@@ -151,6 +163,8 @@ class Card(TypedDict):
     idea: str
     rank: int | None
     effort: str | None
+    # Set while the stage the unit is at waits on a raised ceiling.
+    paused: Paused | None
 
 
 class Cap(TypedDict):
@@ -271,6 +285,21 @@ def card(u: Mapping[str, Any]) -> Card:
         "idea": str(u.get("idea") or ""),
         "rank": backlog_.get("rank"),
         "effort": backlog_.get("effort"),
+        "paused": paused(u.get("paused")),
+    }
+
+
+def paused(p: Mapping[str, Any] | None) -> Paused | None:
+    """A timeline row's `paused` (`journal.paused_of`) with its stage, as a card carries it."""
+    if not p:
+        return None
+    return {
+        "stage": _text(p.get("stage")),
+        "ceiling": _text(p.get("ceiling")),
+        "usd": number(p.get("usd")),
+        "max_usd": number(p.get("max_usd")),
+        "turns": count(p.get("turns")),
+        "max_turns": count(p.get("max_turns")),
     }
 
 
@@ -379,6 +408,15 @@ class Dependency(TypedDict):
     merged: bool
 
 
+class RunPart(TypedDict):
+    """One part of a session that a ceiling paused and a raise went on from."""
+
+    run: str
+    ended: str
+    cost_usd: float | None
+    paused: Paused | None
+
+
 class UnitRun(TypedDict):
     """One run of a stage, from the run log; `ended` is empty while it runs."""
 
@@ -395,6 +433,11 @@ class UnitRun(TypedDict):
     run: str
     # The parts its prompt was handed (`start.envelope`), `[]` when it records none.
     envelope: list[str]
+    # Set while it waits on a raised ceiling.
+    paused: Paused | None
+    # The parts of this one session that ended at a ceiling before a raise went on, oldest first.
+    parts: list[RunPart]
+    raised_by: str
 
 
 class Worktree(TypedDict):
@@ -529,6 +572,21 @@ def detail(
                 else None,
                 "run": _text(r.get("run")),
                 "envelope": [str(p) for p in r.get("envelope") or []],
+                "paused": paused({**p, "stage": r.get("stage")})
+                if (p := r.get("paused"))
+                else None,
+                "parts": [
+                    {
+                        "run": _text(part.get("run")),
+                        "ended": _text(part.get("ended")),
+                        "cost_usd": number((part.get("cost") or {}).get("cost_usd")),
+                        "paused": paused({**pp, "stage": r.get("stage")})
+                        if (pp := part.get("paused"))
+                        else None,
+                    }
+                    for part in r.get("parts") or []
+                ],
+                "raised_by": _text(r.get("raised_by")),
             }
             for r in timeline
         ],
@@ -839,7 +897,11 @@ class Board:
         lap("integration")
         for unit in data["units"]:
             # From the timelines read above: no second scan of the run log.
-            ended = [r for r in timelines.get(unit["name"], []) if r.get("ended") is not None]
+            rows = timelines.get(unit["name"], [])
+            ended = [r for r in rows if r.get("ended") is not None]
+            # What waits on a raised ceiling: the unit's own stage, whose latest run ended there.
+            latest = paused_stage(rows, str(unit.get("at") or ""))
+            unit["paused"] = {**latest, "stage": unit["at"]} if latest else None
             unit["state"] = unit_state(
                 unit, ended[-1] if ended else None, unit.pop("ci_held", None)
             )

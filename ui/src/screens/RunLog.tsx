@@ -197,8 +197,8 @@ function Line({ event: e, unit }: { event: StepEvent; unit: string }) {
       );
     case "end":
       return (
-        <div className={`rl-l ${e.outcome === "done" ? "faint" : "rl-bad"}`}>
-          ended: {e.outcome}
+        <div className={`rl-l ${e.outcome === "done" ? "faint" : e.outcome === "paused-budget" ? "rl-warn" : "rl-bad"}`}>
+          ended: {e.outcome === "paused-budget" ? "paused at its ceiling" : e.outcome}
           {e.detail ? ` · ${e.detail}` : ""}
         </div>
       );

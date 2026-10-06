@@ -127,6 +127,7 @@ export type Card = {
   "idea": string;
   "rank": number | null;
   "effort": string | null;
+  "paused": Paused | null;
 };
 
 export type CardState = {
@@ -336,6 +337,15 @@ export type OutputRecord = {
   "fields": Record<string, unknown>;
 };
 
+export type Paused = {
+  "stage": string;
+  "ceiling": string;
+  "usd": number | null;
+  "max_usd": number | null;
+  "turns": number | null;
+  "max_turns": number | null;
+};
+
 export type Proposal = {
   "id": number;
   "run": number;
@@ -436,6 +446,13 @@ export type Run = {
   "rejected": string[];
   "stopped": boolean;
   "detail": string;
+};
+
+export type RunPart = {
+  "run": string;
+  "ended": string;
+  "cost_usd": number | null;
+  "paused": Paused | null;
 };
 
 export type RunView = {
@@ -578,6 +595,9 @@ export type UnitRun = {
   "turns": number | null;
   "run": string;
   "envelope": string[];
+  "paused": Paused | null;
+  "parts": RunPart[];
+  "raised_by": string;
 };
 
 export type UpNext = {

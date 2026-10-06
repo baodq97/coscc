@@ -193,37 +193,6 @@ def describe_attempt(found: dict[str, Any]) -> str:
                 f"{_fmt_num(e.get('turns'), ' turns')}, cost {_fmt_num(e.get('cost_usd'), ' USD')}"
             )
 
-    # A review that ran out of turns and left no round: what it had opened, read from its events
-    # by `Journal.failed_attempts`. Nothing of it is in `review.md`.
-    opened = found.get("opened")
-    if opened is not None:
-        lines.append("")
-        lines.append(
-            "That review ran out of turns, and "
-            + (
-                "the closing turn the app gave it wrote no round"
-                if opened.get("closing")
-                else "the app could not give it a closing turn"
-            )
-            + ": `review.md` holds nothing from it."
-        )
-        if opened.get("purged"):
-            lines.append(
-                "Which files it opened is not known: its recorded events have been purged."
-            )
-        elif opened.get("error"):
-            lines.append(
-                f"Which files it opened could not be read from its events: {opened['error']}"
-            )
-        elif opened.get("paths"):
-            lines.append(
-                "It opened these files, but no conclusion about any of them was written "
-                "down. Read them again where you need to; do not take them as reviewed:"
-            )
-            lines.extend(f"- {p}" for p in opened["paths"])
-        else:
-            lines.append("Its recorded events name no file it opened.")
-
     return "\n".join(lines)
 
 

@@ -251,21 +251,6 @@ class AStepsEvents(unittest.TestCase):
         self.assertEqual(self.data.step_turns("r"), 3)
         self.assertEqual(self.data.step_turns("nothing"), 0)
 
-    def test_tool_uses_are_that_runs_tool_use_events_in_order(self):
-        """Only `tool_use`, only this run, by `seq`."""
-        for run in ("r", "other"):
-            self.data.step_run_open(run, "/w", "/w/ws", "0001_a", "review", 1000)
-        kinds = ["turn", "tool_use", "tool_result", "tool_use", "text"]
-        self.data.step_events_add(
-            "r", [self.ev("r", n, kind=k, text=str(n)) for n, k in enumerate(kinds, 1)]
-        )
-        self.data.step_events_add("other", [self.ev("other", 1, kind="tool_use")])
-        self.assertEqual(
-            [(e["seq"], e["kind"]) for e in self.data.step_tool_uses("r")],
-            [(2, "tool_use"), (4, "tool_use")],
-        )
-        self.assertEqual(self.data.step_tool_uses("nothing"), [])
-
     def test_open_runs_leave_out_the_closed_and_the_purged(self):
         """Only a row nobody closed or purged, with its last event's `at`."""
         for run, started in (("open", 1000), ("empty", 2000), ("closed", 3000), ("purged", 500)):
@@ -677,7 +662,7 @@ class AV12DatabaseTakesOneStepTo13(unittest.TestCase):
             self._rows(conn)
             conn.execute("PRAGMA user_version=12")
         self.assertEqual(self.data.version(), SCHEMA_VERSION)
-        self.assertEqual(SCHEMA_VERSION, 13)
+        self.assertEqual(SCHEMA_VERSION, 14)
 
     def _rows(self, conn):
         for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):
@@ -807,6 +792,55 @@ class AV12DatabaseTakesOneStepTo13(unittest.TestCase):
                 "date, via, \"by\") VALUES ('/w', 'p', '0001_a', 'spec.md', '9', 't', "
                 "'n', 'd', 'v', 'agent')"
             )
+
+
+class AV13DatabaseTakesOneStepTo14(unittest.TestCase):
+    """A run that `exhausted` its ceiling is `failed` now: its session cannot be continued."""
+
+    def test_every_exhausted_end_is_failed_and_the_rest_stays(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.write() as conn:
+                for kind, record in (
+                    ("end", '{"kind": "end", "outcome": "exhausted", "status": "paused-budget"}'),
+                    ("end", '{"kind": "end", "outcome": "done", "status": "done"}'),
+                    ("attempt", '{"kind": "attempt", "outcome": "exhausted"}'),
+                ):
+                    conn.execute(
+                        "INSERT INTO runs (at, root, kind, record) VALUES ('t', '/w', ?, ?)",
+                        (kind, record),
+                    )
+                conn.execute(
+                    "INSERT INTO attempts (id, machine, workspace, unit) "
+                    "VALUES (1, 'step', '/w', 'u'), (2, 'step', '/w', 'u')"
+                )
+                conn.execute(
+                    "INSERT INTO attempt_moves (attempt, seq, moved_to, outcome, at) "
+                    "VALUES (1, 1, 'ended', 'exhausted', 't'), (2, 1, 'ended', 'done', 't')"
+                )
+                conn.execute("PRAGMA user_version=13")
+            data.step_run_open("r", "/w", "/w", "0001_a", "impl", 1)
+            data.step_events_add(
+                "r", [{"run": "r", "seq": 1, "at": 1, "kind": "end", "outcome": "exhausted"}]
+            )
+            with data.write() as conn:
+                conn.execute("PRAGMA user_version=13")
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                rows = conn.execute(
+                    "SELECT json_extract(record, '$.outcome'), json_extract(record, '$.status') "
+                    "FROM runs ORDER BY id"
+                ).fetchall()
+                moves = conn.execute(
+                    "SELECT outcome FROM attempt_moves ORDER BY attempt"
+                ).fetchall()
+                event = conn.execute("SELECT json_extract(event, '$.outcome') FROM step_events")
+                event = event.fetchone()[0]
+        self.assertEqual(
+            [tuple(r) for r in rows], [("failed", "failed"), ("done", "done"), ("failed", "failed")]
+        )
+        self.assertEqual([tuple(r) for r in moves], [("failed",), ("done",)])
+        self.assertEqual(event, "failed")
 
 
 if __name__ == "__main__":

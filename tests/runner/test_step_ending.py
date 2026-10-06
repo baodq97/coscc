@@ -28,7 +28,6 @@ from tests.runner.test_step import (
     UNIT,
     _git_repo,
     asks,
-    incomplete_reply,
     make_unit,
 )
 from coscc.agent import policy
@@ -139,9 +138,9 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
                 return out
 
             _, payload = asyncio.run(go())[-1]
-            self.assertEqual(payload["outcome"], "exhausted")
+            self.assertEqual(payload["outcome"], "paused-budget")
             self.assertIn("ceiling", payload["error"])
-            self.assertEqual(journal.timeline(d, UNIT)[0]["outcome"], "exhausted")
+            self.assertEqual(journal.timeline(d, UNIT)[0]["outcome"], "paused-budget")
 
     def test_an_ordinary_finish_is_not_mistaken_for_a_ceiling(self):
         class Normal:
@@ -388,10 +387,10 @@ class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
         self.assertEqual(final["outcome"], "failed")
         self.assertEqual(written, existing)
 
-    def test_at_the_ceiling_it_is_exhausted_never_done(self):
+    def test_at_the_ceiling_it_is_paused_never_done(self):
         final, end, written = self.go(self.Pieces(self.UNTITLED, blank=True, terminal="max_turns"))
-        self.assertEqual((final["outcome"], end["outcome"]), ("exhausted", "exhausted"))
-        self.assertIn("plan.md lacks its opening", end["detail"])
+        self.assertEqual((final["outcome"], end["outcome"]), ("paused-budget", "paused-budget"))
+        self.assertIn("stopped at the ceiling", end["detail"])
         self.assertIsNone(written)
 
 
@@ -467,7 +466,7 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
                 ]
 
             items = asyncio.run(go())
-            self.assertEqual(items[-1][1]["outcome"], "exhausted")
+            self.assertEqual(items[-1][1]["outcome"], "paused-budget")
 
             kinds = [r["kind"] for r in journal.records(d, UNIT)]
             self.assertEqual(kinds, ["start", "attempt", "end"])
@@ -552,9 +551,9 @@ class AFailedStepLeavesASnapshot(unittest.TestCase):
 
             with mock.patch.object(gitops, "log_range", side_effect=gitops.GitError("boom")):
                 items = asyncio.run(go())
-            self.assertEqual(items[-1][1]["outcome"], "exhausted")
+            self.assertEqual(items[-1][1]["outcome"], "paused-budget")
             [end] = journal.records(d, UNIT, kind="end")
-            self.assertEqual(end["outcome"], "exhausted")
+            self.assertEqual(end["outcome"], "paused-budget")
             self.assertEqual(end["turns"], 5)
             [attempt] = journal.records(d, UNIT, kind="attempt")
             self.assertIsNone(attempt["commits"])
@@ -755,7 +754,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
         self,
         progress=PROGRESS,
         reply="Tôi hết lượt ở U2.",
-        terminal="max_turns",
+        terminal="success",
         touch=None,
         raise_after=None,
         answers=None,
@@ -831,11 +830,19 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
             attempts = [x for x in journal.records() if x["kind"] == "attempt"]
             return final, written, end, attempts
 
-    def test_a_the_ceiling_writes_spike_md_from_the_progress_file(self):
+    def test_a_ceiling_pauses_the_spike_and_writes_nothing(self):
+        final, written, end, attempts = self.run_spike(terminal="max_turns")
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["outcome"]), ("paused-budget", "paused-budget"))
+        self.assertEqual((end["ceiling"], end["spike_md"]), ("turns", "none"))
+        self.assertEqual(end["session_id"], "s-spike")
+        self.assertIn("owner", end)
+
+    def test_a_the_unusable_reply_writes_spike_md_from_the_progress_file(self):
         final, written, end, attempts = self.run_spike()
         self.assertEqual(written, PROGRESS.encode("utf-8"))
-        self.assertEqual(final["outcome"], "exhausted")
-        self.assertEqual((end["outcome"], end["spike_md"]), ("exhausted", "progress"))
+        self.assertEqual(final["outcome"], "failed")
+        self.assertEqual((end["outcome"], end["spike_md"]), ("failed", "progress"))
         self.assertIsNone(end["artifact"])
         self.assertIn("spike.md written from the progress file", end["detail"])
         self.assertEqual(len(attempts), 1)
@@ -913,12 +920,12 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
     def test_d_no_progress_file_is_none(self):
         final, written, end, _ = self.run_spike(progress=None)
         self.assertIsNone(written)
-        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "none"))
+        self.assertEqual((final["outcome"], end["spike_md"]), ("failed", "none"))
 
     def test_e_a_progress_file_with_no_title_is_unusable(self):
         final, written, end, _ = self.run_spike(progress="## U1\n\nChưa đo.\n")
         self.assertIsNone(written)
-        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unusable"))
+        self.assertEqual((final["outcome"], end["spike_md"]), ("failed", "unusable"))
         self.assertIn("the progress file was not an artifact", end["detail"])
 
     def test_f_a_usable_reply_wins_over_the_progress_file(self):
@@ -940,7 +947,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
         # one `_from_progress` makes fails.
         final, written, end, _ = self.run_spike(tree_fails_from=3)
         self.assertIsNone(written)
-        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unchecked"))
+        self.assertEqual((final["outcome"], end["spike_md"]), ("failed", "unchecked"))
         self.assertIn(
             "spike.md not written from the progress file: could not read the worktree's state: git broke",
             end["detail"],
@@ -1166,7 +1173,7 @@ class AStoppedStepEndsStopped(unittest.TestCase):
 
 
 class ADeadStepKeepsItsTurns(unittest.TestCase):
-    """A step that dies after three turns ends `failed` or `exhausted` as before, with the turns its
+    """A step that dies after three turns ends `failed` or `paused-budget` as before, with the turns its
     recorder stored, and no `cost_usd` unless the CLI sent one."""
 
     class Dies:
@@ -1254,383 +1261,11 @@ class ADeadStepKeepsItsTurns(unittest.TestCase):
                 "cost": {"turns": 7, "cost_usd": 0.4},
             }
         )
-        self.assertEqual(end["outcome"], "exhausted")
+        self.assertEqual(end["outcome"], "paused-budget")
         self.assertEqual((end["turns"], end["cli_turns"], end["cost_usd"]), (3, 7, 0.4))
         self.assertNotIn("cost_unknown", end)
         self.assertEqual(attempt["turns"], 3)
         self.assertEqual(attempt["cost_usd"], 0.4)
-
-
-class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
-    """One more turn on the same session, with no tools, when a review's reply could not be written
-    because it hit its ceiling."""
-
-    class Closes:
-        def __init__(
-            self,
-            first="Tôi hết lượt.",
-            terminal="max_turns",
-            closing=None,
-            closing_terminal="completed",
-            closing_cost=1.40,
-            raises=None,
-            waits=False,
-            stop=None,
-        ):
-            self.calls = []
-            self.first, self.terminal = first, terminal
-            self.closing, self.closing_terminal, self.closing_cost = (
-                closing,
-                closing_terminal,
-                closing_cost,
-            )
-            self.raises, self.waits, self.stop = raises, waits, stop
-
-        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            import re
-
-            self.calls.append(
-                {"text": text, "session_id": session_id, "max_turns": max_turns, **kw}
-            )
-            if len(self.calls) == 1:
-                if self.stop is not None:
-                    self.stop.stop_requested, self.stop.stopped_by = True, "Lan"
-                yield ("chunk", self.first)
-                await _submits(kw)
-                yield (
-                    "done",
-                    {
-                        "session_id": "s1",
-                        "terminal_reason": self.terminal,
-                        "cost": {"turns": 41, "cost_usd": 1.00},
-                    },
-                )
-                return
-            if self.raises is not None:
-                raise self.raises
-            if self.waits:
-                await asyncio.Event().wait()
-            head = re.search(r"Reviewed: ([0-9a-f]{40})\. Verdict: incomplete", text).group(1)
-            yield ("chunk", self.closing(head) if self.closing else incomplete_reply(head))
-            await _submits(kw)
-            yield (
-                "done",
-                {
-                    "session_id": "s1",
-                    "terminal_reason": self.closing_terminal,
-                    "cost": {"turns": 1, "cost_usd": self.closing_cost},
-                }
-                if self.closing_terminal
-                else {"session_id": "s1", "cost": {}},
-            )
-
-    def run_review(self, sessions, stage="review", git=True, act=None, stop=False, resume=None):
-        from coscc.agent import steps
-
-        with tempfile.TemporaryDirectory() as ws:
-            tree = _git_repo(Path(ws)) if git else Path(ws)
-            head = (
-                subprocess.run(
-                    ["git", "rev-parse", "HEAD"], cwd=tree, capture_output=True, text=True
-                ).stdout.strip()
-                if git
-                else ""
-            )
-            directory = make_unit(
-                Path(ws) / "store",
-                intent_md="Status: accepted.\nI",
-                plan_md="Status: accepted.\nP",
-                impl_md="Status: accepted.\nI",
-                pr_md="Status: accepted.\nP",
-                review_md=REVIEW_R1,
-            )
-            running = steps.Running(ws, UNIT, stage, "")
-            if stop:
-                sessions.stop = running
-            journal = Journal(ws, ws)
-            r = Runner(sessions=sessions, journal=journal)
-            artifact = f"{stage}.md"
-
-            async def go():
-                out = []
-
-                async def drive():
-                    async for item in r.run(
-                        workspace=ws,
-                        directory=directory,
-                        journal_key=ws,
-                        unit=UNIT,
-                        stage=stage,
-                        artifact=artifact,
-                        mode="manual",
-                        cwd=str(tree),
-                        running=running,
-                        **({"resume": resume(head)} if resume is not None else {}),
-                    ):
-                        out.append(item)
-
-                running.task = asyncio.create_task(drive())
-                if act is not None:
-                    await act(running, sessions)
-                try:
-                    await running.task
-                except asyncio.CancelledError:
-                    out.append(("cancelled", None))
-                return out
-
-            out = asyncio.run(go())
-            ends = [x for x in journal.records() if x["kind"] == "end"]
-            return out, ends, (directory / "review.md").read_text(encoding="utf-8"), head, running
-
-    def test_a_turn_ceiling_reopens_the_session_once_with_no_tools(self):
-        sessions = self.Closes()
-        out, [end], review, head, running = self.run_review(sessions)
-        self.assertEqual(len(sessions.calls), 2)
-        first, closing = sessions.calls
-        self.assertIsNone(first["session_id"])
-        self.assertIs(first["step"], running.handle)
-        self.assertEqual(closing["session_id"], "s1")
-        self.assertEqual(closing["tools"], [])
-        self.assertEqual(closing["max_turns"], 1)
-        self.assertEqual(closing["gate"].grant, policy.Grant())
-        self.assertIsNot(closing["step"], running.handle)
-        self.assertIsNone(closing["step"].recorder)
-        self.assertIn(f"Reviewed: {head}. Verdict: incomplete.", closing["text"])
-        self.assertIn("## Round 2", closing["text"])
-        # The round is appended, and everything above it is byte for byte what it was.
-        self.assertTrue(review.startswith("# Review: x\nSpec: spec.md. Author: t.\n"))
-        self.assertIn(REVIEW_R1.split("\n\n", 1)[1].rstrip(), review)
-        self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: incomplete.", review)
-        self.assertEqual(out[-1][1]["outcome"], "exhausted")
-        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "incomplete"))
-        self.assertEqual(end["cost_usd"], 1.4)
-        self.assertEqual(end["closing"], {"terminal": "completed", "turns": 1, "cost_usd": 0.4})
-        self.assertIn("review.md: Round 2 incomplete, written by the closing turn", end["detail"])
-
-    def next_of(self, store: Path, meta, key: str) -> dict:
-        import json
-
-        from tests.units.test_meta import loop
-
-        snap = meta.snapshot(key, {"proj": key})
-        done = loop(
-            "--root", str(store), "--state", "-", "next", UNIT, input=json.dumps(snap), check=False
-        )
-        return json.loads(done.stdout)
-
-    def test_the_incomplete_round_sends_the_unit_to_write_review_again(self):
-        # From the closing turn to `next`: the round the closing turn wrote is recorded as the
-        # review going back to draft, so the loop asks for the review again and not for impl.
-        from coscc.agent.sessions import Sessions
-        from coscc.config import Config
-        from coscc.http.app import Core
-        from tests.units.test_meta import seed
-
-        out, [end], review, head, running = self.run_review(self.Closes())
-        self.assertEqual(end["review_md"], "incomplete")
-        done = out[-1][1]
-        self.assertEqual((done["outcome"], done["incomplete_round"]), ("exhausted", 2))
-        with tempfile.TemporaryDirectory() as d:
-            store = Path(d) / "store"
-            make_unit(
-                store,
-                intent_md="# Intent: x\n",
-                spec_md="# Spec: x\n",
-                plan_md="# Plan: x\n",
-                impl_md="# Impl: x\n",
-                pr_md="# PR: fix(0009): x\n",
-                review_md=review,
-            )
-            config = Config(
-                workspaces=(), working_dir=str(Path(d) / "work"), data_dir=str(Path(d) / "data")
-            )
-            core = Core(config, Sessions(config))
-            meta, key = core.ws.unit_meta(), str(Path(d) / "work" / "proj")
-            seed(
-                meta,
-                key,
-                UNIT,
-                {
-                    "intent.md": "accepted",
-                    "spec.md": "accepted",
-                    "plan.md": "accepted",
-                    "impl.md": "accepted",
-                    "pr.md": "accepted",
-                    "review.md": "changes-requested",
-                },
-                type="fix",
-            )
-            # Round 1 asked for changes; the closing turn's round 2 becomes a row on ingest.
-            meta.history.record(
-                key,
-                UNIT,
-                "pr.md",
-                "accepted",
-                source="prmachine:open",
-                guard="branch-named",
-                authority="code",
-                inputs={"number": 9, "url": "https://github.com/o/r/pull/9", "head": head},
-            )
-            with meta.data.write() as conn:
-                meta.record_round(
-                    conn,
-                    key,
-                    UNIT,
-                    {"n": 1, "run": "r", "head": head, "object": {"verdict": "changes-requested"}},
-                )
-            self.assertNotIn("review-incomplete", self.next_of(store, meta, key)["reasons"])
-            self.assertEqual(asyncio.run(core.answers.ingest(key, UNIT, done, "review.md")), {})
-            [row] = meta.history.transitions(key, UNIT, "review.md")[-1:]
-            self.assertEqual(
-                (row["to_state"], row["guard"], row["authority"], row["source"]),
-                ("draft", "incomplete-round", "code", "run:review"),
-            )
-            with meta.data.connect() as conn:
-                last = conn.execute(
-                    "SELECT n, head, verdict FROM review_rounds ORDER BY id DESC LIMIT 1"
-                ).fetchone()
-            self.assertEqual(tuple(last), (2, done["head"], "incomplete"))
-            after = self.next_of(store, meta, key)
-            self.assertEqual(after["reasons"], ["review-incomplete"])
-            self.assertIn("review round 2 is incomplete — write-review again", after["action"])
-
-    def test_a_review_that_wrote_no_incomplete_round_is_not_moved(self):
-        from coscc.agent.sessions import Sessions
-        from coscc.config import Config
-        from coscc.http.app import Core
-
-        with tempfile.TemporaryDirectory() as d:
-            config = Config(
-                workspaces=(), working_dir=str(Path(d) / "work"), data_dir=str(Path(d) / "data")
-            )
-            core = Core(config, Sessions(config))
-            key = str(Path(d) / "work" / "proj")
-            done = {"outcome": "exhausted", "stage": "review", "unit": UNIT}
-            self.assertEqual(asyncio.run(core.answers.ingest(key, UNIT, done, "review.md")), {})
-            self.assertEqual(core.ws.unit_meta().history.transitions(key, UNIT, "review.md"), [])
-
-    def test_a_resumed_closing_turn_resumes_that_turn_not_the_step(self):
-        # An update paused the closing turn. The main reply is not asked again; the turn goes on
-        # from its safe point with the message, and the step ends once.
-        sessions = self.Closes()
-        sessions.calls.append({"text": "the main reply, before the update"})
-
-        # A closing turn comes only after a ceiling, so its row has used both of them up, and the
-        # turn is taken up all the same, with no spent budget passed.
-        def resume(head):
-            return {
-                "suspend_id": "c1",
-                "session_id": "s1",
-                "safe_uuid": "u7",
-                "message": f"MSG Reviewed: {head}. Verdict: incomplete",
-                "pieces": ["Tôi hết lượt."],
-                "api_calls": 500,
-                "spent_usd": 50.0,
-                "owner": {
-                    "kind": "closing",
-                    "start_at": "t0",
-                    "head": head,
-                    "main_terminal": "max_turns",
-                    "main_cost": {"turns": 41, "cost_usd": 1.0},
-                },
-            }
-
-        out, [end], review, head, _ = self.run_review(sessions, resume=resume)
-        [closing] = sessions.calls[1:]
-        self.assertEqual((closing["session_id"], closing["resume_at"]), ("s1", "u7"))
-        self.assertEqual(closing["max_turns"], 1)
-        self.assertIsNone(closing["max_budget_usd"])
-        self.assertTrue(closing["text"].startswith("MSG "))
-        self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: incomplete.", review)
-        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "incomplete"))
-        self.assertNotIn("was not reached again", end["detail"])
-        self.assertNotIn("not resumed", end["detail"])
-        self.assertIn("review.md: Round 2 incomplete, written by the closing turn", end["detail"])
-
-    def test_the_closing_turns_gate_grants_nothing(self):
-        sessions = self.Closes()
-        self.run_review(sessions)
-        gate = sessions.calls[1]["gate"]
-        self.assertEqual(gate.grant, policy.Grant())
-        self.assertIn(policy.HELD, asyncio.run(asks(gate, "mcp__cos__submit", {})))
-
-    def test_a_budget_ceiling_on_the_closing_turn_still_writes_a_round(self):
-        _, [end], review, _, _ = self.run_review(
-            self.Closes(terminal="budget_exhausted", closing_terminal="budget_exhausted")
-        )
-        self.assertEqual(end["review_md"], "incomplete")
-        self.assertEqual(end["closing"]["terminal"], "budget_exhausted")
-        self.assertIn("Verdict: incomplete.", review)
-
-    def test_a_review_that_finished_gets_no_closing_turn(self):
-        sessions = self.Closes(first=incomplete_reply("a" * 40, verdict="pass"), terminal="success")
-        _, [end], _, _, _ = self.run_review(sessions)
-        self.assertEqual(len(sessions.calls), 1)
-        self.assertEqual((end["outcome"], end["review_md"]), ("done", "round"))
-        self.assertNotIn("closing", end)
-
-    def test_a_stop_gets_no_closing_turn(self):
-        sessions = self.Closes()
-        _, [end], review, _, _ = self.run_review(sessions, stop=True)
-        self.assertEqual(len(sessions.calls), 1)
-        self.assertEqual((end["outcome"], end["review_md"]), ("stopped", "withheld"))
-        self.assertEqual(review, REVIEW_R1)
-
-    def test_another_stage_gets_no_closing_turn(self):
-        sessions = self.Closes()
-        _, [end], _, _, _ = self.run_review(sessions, stage="plan")
-        self.assertEqual(len(sessions.calls), 1)
-        self.assertEqual(end["outcome"], "exhausted")
-        self.assertNotIn("review_md", end)
-        self.assertNotIn("closing", end)
-
-    def test_no_head_gets_no_closing_turn(self):
-        sessions = self.Closes()
-        _, [end], review, _, _ = self.run_review(sessions, git=False)
-        self.assertEqual(len(sessions.calls), 1)
-        self.assertEqual(end["review_md"], "none")
-        self.assertEqual(review, REVIEW_R1)
-
-    def test_a_full_round_from_the_closing_turn_is_not_written(self):
-        sessions = self.Closes(closing=lambda head: incomplete_reply(head, verdict="pass"))
-        _, [end], review, _, _ = self.run_review(sessions)
-        self.assertEqual(review, REVIEW_R1)
-        self.assertEqual(end["review_md"], "none")
-        self.assertIn("closing", end)
-        self.assertIn("does not open with `Reviewed: ", end["detail"])
-
-    def test_a_closing_turn_that_breaks_still_leaves_an_end(self):
-        sessions = self.Closes(raises=RuntimeError("the CLI died"))
-        _, [end], review, _, _ = self.run_review(sessions)
-        self.assertEqual(review, REVIEW_R1)
-        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "none"))
-        self.assertTrue(end["closing"]["cost_unknown"])
-        self.assertEqual(end["cost_usd"], 1.0)
-
-    def test_a_closing_turn_with_no_result_keeps_the_main_cost(self):
-        _, [end], _, _, _ = self.run_review(self.Closes(closing_terminal=""))
-        self.assertEqual(end["review_md"], "incomplete")
-        self.assertEqual(end["closing"], {"cost_unknown": True})
-        self.assertEqual(end["cost_usd"], 1.0)
-
-    def test_a_closing_turn_that_hangs_is_cut_at_the_timeout(self):
-        with mock.patch("coscc.runner.step.CLOSING_TIMEOUT", 0.05):
-            _, [end], review, _, _ = self.run_review(self.Closes(waits=True))
-        self.assertEqual(end["review_md"], "none")
-        self.assertTrue(end["closing"]["cost_unknown"])
-        self.assertEqual(review, REVIEW_R1)
-
-    def test_the_app_going_down_during_the_closing_turn_writes_no_end(self):
-        async def cancel_in_closing(running, sessions):
-            while len(sessions.calls) < 2:
-                await asyncio.sleep(0)
-            await asyncio.sleep(0)
-            running.task.cancel()
-
-        out, ends, review, _, _ = self.run_review(self.Closes(waits=True), act=cancel_in_closing)
-        self.assertEqual(out[-1], ("cancelled", None))
-        self.assertEqual(ends, [])
-        self.assertEqual(review, REVIEW_R1)
 
 
 REPAIRED_PLAN = (
@@ -1846,18 +1481,8 @@ class TheOtherTwoWritesAreCheckedTheSame(unittest.TestCase):
         untitled = PROGRESS.split("\n", 1)[1]
         final, written, end, _ = ASpikeLeavesWhatItMeasured.run_spike(self, progress=untitled)
         self.assertIsNone(written)
-        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unusable"))
+        self.assertEqual((final["outcome"], end["spike_md"]), ("failed", "unusable"))
         self.assertIn("spike.md lacks its opening: no `# Spike:` title", end["detail"])
-
-    def test_a_closing_round_with_no_title_is_not_written(self):
-        def untitled(head):
-            return incomplete_reply(head).split("\n", 1)[1]
-
-        closes = AReviewThatRunsOutGetsAClosingTurn.Closes(closing=untitled)
-        _, [end], review, _, _ = AReviewThatRunsOutGetsAClosingTurn.run_review(self, closes)
-        self.assertEqual(review, REVIEW_R1)
-        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "none"))
-        self.assertIn("review.md lacks its opening: no `# Review:` title", end["detail"])
 
     def test_a_refused_write_leaves_the_file_and_its_answers_byte_for_byte(self):
         from coscc.runner.attempt import _write_artifact
@@ -1878,8 +1503,7 @@ class TheOtherTwoWritesAreCheckedTheSame(unittest.TestCase):
 
 
 class AnAnswerCutAtItsCeilingIsNotWritten(unittest.TestCase):
-    """A session that wrote a title and a header, called a tool and ran out of turns left a draft,
-    or the first of its pieces."""
+    """A session that hit its ceiling pauses, and writes nothing of what it had not finished."""
 
     class Cut:
         def __init__(self, *said, terminal="max_turns"):
@@ -1891,19 +1515,11 @@ class AnAnswerCutAtItsCeilingIsNotWritten(unittest.TestCase):
             await _submits(kw)
             yield ("done", {"session_id": "s-1", "terminal_reason": self.terminal, "cost": {}})
 
-    class DraftsThenRunsOut(AReviewThatRunsOutGetsAClosingTurn.Closes):
-        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            async for kind, payload in super().stream(cwd, text, session_id, max_turns, **kw):
-                yield (kind, payload)
-                if kind == "chunk" and len(self.calls) == 1:
-                    yield ("tool", "Read")
-
     def test_a_titled_piece_before_the_last_tool_call_is_not_written(self):
         cut = self.Cut(("chunk", AnAnswerInPiecesIsWrittenWhole.HEAD), ("tool", "Read"))
         final, end, written = AnAnswerInPiecesIsWrittenWhole.go(self, cut)
-        self.assertEqual((final["outcome"], end["outcome"]), ("exhausted", "exhausted"))
-        # Nothing followed the last call, so the reason is the one `main` gave.
-        self.assertIn("the session returned nothing", end["detail"].splitlines()[0])
+        self.assertEqual((final["outcome"], end["outcome"]), ("paused-budget", "paused-budget"))
+        self.assertIn("stopped at the ceiling", end["detail"])
         self.assertIsNone(written)
 
     def test_the_same_pieces_below_the_ceiling_are_written(self):
@@ -1917,22 +1533,14 @@ class AnAnswerCutAtItsCeilingIsNotWritten(unittest.TestCase):
         self.assertEqual(final["outcome"], "done")
         self.assertIn("PHẦN-ĐẦU\nPHẦN-ĐUÔI\n", written.decode("utf-8"))
 
-    def test_a_whole_answer_after_the_last_tool_call_is_still_written(self):
+    def test_a_whole_answer_after_the_last_tool_call_is_not_written_either(self):
         cut = self.Cut(
             ("chunk", "Đọc thêm."), ("tool", "Read"), ("chunk", AnAnswerInPiecesIsWrittenWhole.HEAD)
         )
         final, _, written = AnAnswerInPiecesIsWrittenWhole.go(self, cut)
-        self.assertEqual(final["outcome"], "exhausted")
-        self.assertEqual(written.decode("utf-8"), AnAnswerInPiecesIsWrittenWhole.HEAD)
-
-    def test_a_drafted_round_leaves_the_review_its_closing_turn(self):
-        draft = incomplete_reply("c" * 40, verdict="pass")
-        sessions = self.DraftsThenRunsOut(first=draft)
-        _, [end], review, head, _ = AReviewThatRunsOutGetsAClosingTurn.run_review(self, sessions)
-        self.assertEqual(len(sessions.calls), 2)
-        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "incomplete"))
-        self.assertNotIn("Verdict: pass", review)
-        self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: incomplete.", review)
+        self.assertEqual(final["outcome"], "paused-budget")
+        # Nothing it had not finished is written: the session is kept for a raise.
+        self.assertIsNone(written)
 
 
 class ABackgroundRunIsRefusedAndCounted(unittest.TestCase):

@@ -12,7 +12,7 @@ import { Link } from "../lib/router";
 import { Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 const WASTE: Record<string, string> = {
-  "exhausted-or-failed": "Runs that failed or ran out",
+  failed: "Runs that failed",
   "run-again": "Stages run again",
   "changes-requested": "Review rounds that asked for changes",
   "integrate-conflict": "Integrations with a conflict",

@@ -15,7 +15,7 @@ from typing import Any, AsyncIterator, NotRequired, TypedDict
 from collections.abc import Awaitable, Callable, Coroutine
 
 from coscc import units
-from coscc.agent import modeltrial
+from coscc.agent import models, modeltrial, transcript
 from coscc.agent import steps as steps_mod
 from coscc.agent.sessions import Sessions, Suspended
 from coscc.bus import Bus
@@ -30,7 +30,7 @@ from coscc.runner.run import LIVE
 from coscc.runner.step import Runner, check_started_by
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, Data, now as _now
-from coscc.store.journal import NOT_STEPS, BadRecord, Journal
+from coscc.store.journal import NOT_STEPS, BadRecord, Journal, paused_stage
 from coscc.units import backlog, mentions, planmap, retake, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
@@ -156,15 +156,12 @@ def _rounds_before(found: dict[str, Any], row: dict[str, Any]) -> set[Any] | Non
 def _round_kwargs(
     found: dict[str, Any], row: dict[str, Any], stage: str, rounds_before: set[Any] | None
 ) -> dict[str, Any]:
-    """From the same board: a last round the loop read as unfinished, and the ids it dropped,
-    or as incomplete, and its text, for the review that runs again. Whether it counts is not
-    asked here."""
+    """From the same board: a last round the loop read as unfinished, and the ids it dropped, for
+    the review that runs again. Whether it counts is not asked here."""
     last_round = (found.get("rounds") or [None])[-1] if row["file"] == "review.md" else None
     kw: dict[str, Any] = {}
     if last_round and last_round.get("unfinished"):
         kw["unfinished_round"] = {"n": last_round["n"], "dropped": list(last_round["dropped"])}
-    if last_round and last_round.get("verdict") == "incomplete":
-        kw["incomplete_round"] = {"n": last_round["n"], "text": last_round.get("text") or ""}
     # The findings the last round left open, which an `impl` may claim only a
     # person can close: guard `impl-claim` reads them when its object arrives.
     if rounds_before:
@@ -251,6 +248,85 @@ NextStep = TypedDict(
         "reasons": list[str],
     },
 )
+
+
+RAISED = (
+    "A person raised your ceiling, to {ceiling}. You stopped at it with the work unfinished; "
+    "carry on with it."
+)
+
+
+def _raised(end: dict[str, Any], ceilings: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`(record, raised)` to take up the session a `paused-budget` `end` kept under `ceilings`
+    (`{usd?, turns?}`), shaped like a `suspend` row so `resume_step` takes it up; `raised` is
+    what the `raise` row says. The ceiling the run hit must be higher than it was."""
+    given = ceilings if isinstance(ceilings, dict) else {}
+    old = {"usd": end.get("max_budget_usd"), "turns": end.get("max_turns")}
+    new = dict(old)
+    for field, name in (("usd", "budget"), ("turns", "turns")):
+        if given.get(field) is not None:
+            new[field], why = models.check(name, given[field])
+            if why:
+                raise Invalid(why)
+    hit = str(end.get("ceiling") or "")
+    if hit not in new or float(new[hit] or 0) <= float(old[hit] or 0):
+        word = "$ ceiling" if hit == "usd" else "turn ceiling"
+        raise Invalid(f"raise the {word} it hit: it paused at {old.get(hit)}")
+    sid, cwd = str(end.get("session_id") or ""), str(end.get("cwd") or "")
+    path = transcript.path_for(cwd, sid)
+    if not sid or not path.is_file():
+        raise Invalid(f"its session cannot be taken up: its transcript is not in {path.parent}")
+    try:
+        edge = transcript.boundary(path)
+        found = transcript.cut(path, edge)
+    except (transcript.Unreadable, OSError) as e:
+        raise Invalid(
+            f"its session cannot be taken up: its transcript could not be read: {e}"
+        ) from e
+    if not found["safe_uuid"]:
+        raise Invalid("its session cannot be taken up: its transcript holds no point to go on from")
+    if hit == "turns" and int(new["turns"] or 0) <= found["api_calls"]:
+        raise Invalid(f"raise the turn ceiling above the {found['api_calls']} turns it used")
+    spent = end.get("session_cost_usd", end.get("cost_usd"))
+    if hit == "usd" and spent is not None and float(new["usd"] or 0) <= float(spent):
+        raise Invalid(f"raise the $ ceiling above the ${float(spent):g} it spent")
+    sources = {
+        f"max_{name}_source": "raise"
+        for name, field in (("budget", "usd"), ("turns", "turns"))
+        if given.get(field) is not None
+    }
+    owner = {
+        **(end.get("owner") or {}),
+        "max_turns": new["turns"],
+        "max_budget_usd": new["usd"],
+        **sources,
+    }
+    said = ", ".join(
+        f"${new['usd']:g}" if k == "usd" else f"{new['turns']} turns"
+        for k in ("usd", "turns")
+        if given.get(k) is not None
+    )
+    record = {
+        "owner": owner,
+        "cwd": cwd,
+        "session_id": sid,
+        "model": end.get("model"),
+        "start_at": owner.get("start_at"),
+        "boundary": edge,
+        "safe_uuid": found["safe_uuid"],
+        "dropped": [],
+        "api_calls": found["api_calls"],
+        "pieces": found["pieces"],
+        "message": RAISED.format(ceiling=said),
+        "raised": True,
+        **({"spent_usd": float(spent)} if spent is not None else {"cost_unknown": True}),
+    }
+    return record, {
+        "from_usd": old["usd"],
+        "from_turns": old["turns"],
+        "max_budget_usd": new["usd"],
+        "max_turns": new["turns"],
+    }
 
 
 class Steps:
@@ -529,6 +605,63 @@ class Steps:
         ):
             yield item
 
+    async def raise_step(
+        self,
+        cwd: str,
+        unit: str,
+        stage: str,
+        ceilings: Any,
+        started_by: str = "person",
+    ) -> AsyncIterator[tuple[str, Any]]:
+        """Go on with the session `unit`'s `stage` paused at a ceiling, under the raised ceilings
+        `{usd?, turns?}`: the same session, with the new ceiling less what it spent. Only a
+        person raises one; the autopilot never does. The ceiling it hit must be raised."""
+        try:
+            check_started_by(started_by)
+        except ValueError as e:
+            raise Invalid(str(e)) from e
+        if started_by != "person":
+            raise Refused("a ceiling is raised only by a person", ("rerun-by-person",))
+        self.ws.check(cwd)
+        self.refuse_updating()
+        journal = self.ws.journal()
+        if journal is None:
+            raise Refused(
+                "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR",
+                ("no-run-log",),
+            )
+        await self._find_stage(cwd, unit, stage)  # refuses a held unit
+        key = self.ws.key(cwd)
+        rows = await asyncio.to_thread(journal.records, key, unit, kinds=("start", "end", "raise"))
+        last = next((r for r in reversed(rows) if r.get("stage") == stage), None)
+        if last is None or last.get("kind") != "end" or last.get("outcome") != "paused-budget":
+            raise Invalid(
+                f"{unit}'s {stage} is not paused at a ceiling, so there is nothing to raise"
+            )
+        record, raised = _raised(last, ceilings)
+        directory = self.ws.unit_dir(cwd, unit)
+        owner = record["owner"]
+        refusal = self.feature_refusal(
+            facts_of(
+                workspace=cwd,
+                workspace_key=key,
+                unit=unit,
+                stage=stage,
+                run="",
+                cwd=str(owner.get("scratch") or owner.get("tree") or cwd),
+                watch=owner.get("watch"),
+                directory=directory,
+                resumed=True,
+            )
+        )
+        if refusal:
+            raise Refused(refusal, ("feature-refused",))
+        running = self.resume_step(record, {**raised, "by": OWNER})
+        queue: asyncio.Queue = asyncio.Queue()
+        running.listeners.add(queue)
+        async for item in self._follow(running, queue):
+            yield item
+
     def enqueue_step(self, cwd: str, unit: str, stage: str, note: str = "") -> int:
         """The autopilot's step: `run_step`'s first half with no reader. An attempt in `queued`,
         `started_by=autopilot`, its id returned at once; the scheduler launches `_prepare`,
@@ -675,7 +808,21 @@ class Steps:
                 )
             # Refuse, or find what the step runs on: nothing is spent until the gate is open.
             data, found, row = await self._find_stage(cwd, unit, stage)
-            stale = await self._ask_rerun(cwd, unit, stage, started_by, note) if rerun else {}
+            # A stage held at a ceiling runs from scratch only on a person's rerun; there is no
+            # accepted artifact to make stale, so the loop is not asked.
+            paused = paused_stage(await asyncio.to_thread(journal.timeline, key, unit), stage)
+            if paused is not None and not rerun:
+                raise Refused(
+                    f"{unit}'s {stage} paused at its ceiling: raise it to go on, or rerun it "
+                    "from scratch",
+                    ("budget-reached",),
+                )
+            asked_rerun = rerun and paused is None
+            stale = (
+                await self._ask_rerun(cwd, unit, stage, started_by, note, paused is None)
+                if rerun
+                else {}
+            )
             tree, work = await self._open_tree(cwd, unit, stage)
             base = await self._tree_base(cwd, unit, tree)
             answer = await self._ask_gate(cwd, unit, stage, work)
@@ -737,7 +884,7 @@ class Steps:
                     "none yet.",
                     ("input-missing",),
                 )
-            if rerun:
+            if asked_rerun:
                 self._record_rerun(cwd, unit, stage, stale)
             # Emptied before the step, whatever an earlier one left, and removed
             # after it however it ends -- in `drive`, so a client that drops the stream does
@@ -830,12 +977,9 @@ class Steps:
             )
         return data, found, row
 
-    async def _ask_rerun(
-        self, cwd: str, unit: str, stage: str, started_by: str, note: str
-    ) -> dict[str, int]:
-        """`{file: record}` running `stage` again makes stale, asked before a worktree is opened
-        or the gate asked. Whether `stage` may run again, and what it makes stale, are the
-        loop's; its refusal is passed on."""
+    @staticmethod
+    def _check_rerun(started_by: str, note: str) -> None:
+        """A rerun is a person's, and its note is short."""
         if started_by != "person":
             raise Refused(
                 "a stage is run again only by a person, from the board, never by the autopilot",
@@ -845,6 +989,17 @@ class Steps:
             raise Invalid(
                 f"the note is {len(note)} characters, over the {RERUN_NOTE_MAX} a rerun takes"
             )
+
+    async def _ask_rerun(
+        self, cwd: str, unit: str, stage: str, started_by: str, note: str, ask: bool = True
+    ) -> dict[str, int]:
+        """`{file: record}` running `stage` again makes stale, asked before a worktree is opened
+        or the gate asked. Whether `stage` may run again, and what it makes stale, are the
+        loop's; its refusal is passed on. A stage held at a ceiling has no accepted artifact to make
+        stale, so with `ask` false only the person and the note are checked."""
+        self._check_rerun(started_by, note)
+        if not ask:
+            return {}
         try:
             asked = await board_reader.rerun(
                 self.ws.units_root(cwd), unit, stage, state=self.ws.snapshot(cwd, [unit])
@@ -1447,7 +1602,7 @@ class Steps:
                     task,
                 )
             try:
-                if scratch is not None and not suspended:
+                if scratch is not None and not suspended and outcome != "paused-budget":
                     shutil.rmtree(scratch, ignore_errors=True)
                 if not going_down:
                     # Ended before the board read `after_end` costs, so the pass it wakes and
@@ -1581,10 +1736,14 @@ class Steps:
             return int(row["id"])
         return int(self.holds.attempts.open(machine, key, unit, stage, state="running")["id"])
 
-    def resume_step(self, record: dict[str, Any]) -> steps_mod.Running:
+    def resume_step(
+        self, record: dict[str, Any], raised: dict[str, Any] | None = None
+    ) -> steps_mod.Running:
         """A board step, as `run_step` hands one to `drive`: the unit claimed, a new
         recorder and `run`, and `Runner.run` with the row instead of a prompt. Synchronous up
-        to the task, so the unit is held when this returns."""
+        to the task, so the unit is held when this returns. `raised` is what a person's raise
+        of a ceiling says (`by`, the old and the new ceilings): one `raise` row names the new
+        `run`, so the run log shows one session in two parts."""
         owner = record["owner"]
         key, cwd = str(owner["workspace"]), str(owner["workspace_dir"])
         unit, stage, artifact = str(owner["unit"]), str(owner["stage"]), str(owner["artifact"])
@@ -1605,6 +1764,10 @@ class Steps:
         running.run, running.handle.recorder = run, recorder
         LIVE[run] = recorder
         self.holds.attempts.set_run(attempt, run)
+        if raised is not None:
+            journal.raised(
+                key, unit, stage, run=run, session_id=str(record.get("session_id") or ""), **raised
+            )
         rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
         extra = {
             k: owner.get(k)

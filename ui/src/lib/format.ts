@@ -1,5 +1,7 @@
 // How numbers, times and names read on screen: no raw ids, no model strings.
 
+import type { Paused } from "../api.gen";
+
 export function money(x: number | null | undefined, digits = 2): string {
   if (x == null) return "—";
   return "$" + x.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -61,4 +63,9 @@ export function unitCode(workspace: string, number: number | string): string {
 export function unitTitle(slug: string): string {
   const words = slug.replace(/^\d+_/, "").replace(/-/g, " ");
   return words ? words[0].toUpperCase() + words.slice(1) : slug;
+}
+
+/** What a card says of a run held at a ceiling: `Paused at $1.00 of $2.00`, or `Paused at 40 of 40 turns`. */
+export function pausedAt(p: Paused): string {
+  return p.ceiling === "turns" ? `Paused at ${p.turns ?? "?"} of ${p.max_turns ?? "?"} turns` : `Paused at ${money(p.usd)} of ${money(p.max_usd)}`;
 }

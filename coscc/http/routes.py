@@ -632,19 +632,22 @@ async def set_board_mode(request: Request) -> Any:
 
 @router.post("/api/board/run")
 async def run_step(request: Request) -> Any:
-    """Streams NDJSON: chunks, then one done.
+    """Streams NDJSON: chunks, then one done. `raise: {usd?, turns?}` goes on with the session a
+    ceiling paused, under the higher ceiling; a person's request only, never the autopilot's.
 
     Anything decidable before output is a status code; a refusal after streaming starts
     arrives as an `error` line.
     """
     body = await kernel.body(request)
+    cwd, unit, stage = (str(body.get(k, "")) for k in ("cwd", "unit", "stage"))
+    steps = _core(request).steps
+    if "raise" in body:
+        # A stage paused at a ceiling goes on in its own session: `raise: {usd?, turns?}`.
+        return await kernel.ndjson(steps.raise_step(cwd, unit, stage, body["raise"]), "the step")
     # `rerun` only when the body says `true` itself.
     rerun = body.get("rerun") is True
     extra = {"rerun": True, "note": str(body.get("note") or "")} if rerun else {}
-    stream = _core(request).steps.run_step(
-        str(body.get("cwd", "")), str(body.get("unit", "")), str(body.get("stage", "")), **extra
-    )
-    return await kernel.ndjson(stream, "the step")
+    return await kernel.ndjson(steps.run_step(cwd, unit, stage, **extra), "the step")
 
 
 @router.post("/api/board/stop")

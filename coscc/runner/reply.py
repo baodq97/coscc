@@ -30,7 +30,7 @@ REPLY_KEPT = 2000
 
 
 # # Characters of transcript kept for a failed attempt. Chosen, and too short: the earliest
-# # relevant tool output in exhausted transcripts started 88k-102k characters from the end.
+# # relevant tool output in a run that hit its ceiling started 88k-102k characters from the end.
 ATTEMPT_EXCERPT = 8000
 
 
@@ -147,13 +147,3 @@ def _joined(pieces: list[str], artifact: str | None = None) -> str:
     for piece in pieces:
         text = _after_tool(text) + (_unwrapped(piece, artifact) if artifact else piece)
     return text
-
-
-# # How the SDK says a turn ran out of room. `terminal_reason` carries it; older CLIs leave it
-# # unset and put a hint in `subtype`, so both are folded into one string.
-CEILING_MARKERS = ("max_turns", "max_budget", "budget")
-
-
-def _hit_ceiling(terminal: str) -> bool:
-    text = (terminal or "").lower()
-    return any(marker in text for marker in CEILING_MARKERS)

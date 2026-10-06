@@ -25,7 +25,7 @@ from coscc.units import worktrees
 from coscc.units.workspaces import Workspaces
 
 # The kinds `Sessions.stream`'s `owner` names, and which of them hold a unit.
-STEP_KINDS = ("step", "opening", "closing")
+STEP_KINDS = ("step", "opening")
 KINDS = STEP_KINDS + ("integrate", "estimate", "chat")
 
 # How often `settle_after_suspend` looks again.

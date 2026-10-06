@@ -642,13 +642,28 @@ class TheStateOfAUnit(unittest.TestCase):
         # 7/8: in the window and missing is awaiting, not ready.
         self.assertEqual(self._is(self._unit(at="review", between_pr_and_ship=True)), "awaiting")
 
+    def test_a_stage_held_at_a_ceiling_needs_you_and_says_how_much_was_spent(self):
+        usd = {"stage": "impl", "ceiling": "usd", "usd": 8.0, "max_usd": 8.0}
+        turns = {"stage": "impl", "ceiling": "turns", "turns": 250, "max_turns": 250}
+        got = unit_state(self._unit(paused=usd), None, None)
+        self.assertEqual((got["state"], got["label"]), ("needs-you", "Paused at $8.00 of $8.00"))
+        self.assertEqual(
+            unit_state(self._unit(paused=turns), None, None)["label"], "Paused at 250 of 250 turns"
+        )
+        # A hold a person set comes first: a dropped unit is dropped.
+        dropped = self._unit(paused=usd, hold={"state": "dropped"})
+        self.assertEqual(self._is(dropped), "dropped")
+
     def test_each_cause_of_error(self):
         # (a)
         self.assertEqual(self._is(self._unit(problems=["x"])), "error")
         self.assertEqual(self._is(self._unit(why="unreadable")), "error")
         # (b)
         self.assertEqual(self._is(self._unit(), {"stage": "plan", "outcome": "failed"}), "error")
-        self.assertEqual(self._is(self._unit(), {"stage": "plan", "outcome": "exhausted"}), "error")
+        # A run held at a ceiling waits on a person, and is no error.
+        self.assertEqual(
+            self._is(self._unit(), {"stage": "plan", "outcome": "paused-budget"}), "ready"
+        )
         # (c)
         window = self._unit(at="review", between_pr_and_ship=True)
         self.assertEqual(

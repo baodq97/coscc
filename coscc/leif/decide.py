@@ -137,28 +137,12 @@ def _listed(questions: Iterable[dict[str, Any]]) -> str:
     return ", ".join(f"{q.get('artifact')} question {q.get('n')}" for q in questions)
 
 
-def skips_exhausted(nxt: Mapping[str, Any], last: dict[str, Any] | None, recorded: bool) -> bool:
-    """A `ship` that ran out of turns is no stop when `next` names a `ship` that only records
-    the merge, unless the step that ran out was itself one (`recorded`)."""
-    last = last or {}
-    return (
-        last.get("kind") == "end"
-        and last.get("stage") == "ship"
-        and last.get("outcome") == "exhausted"
-        and nxt.get("stage") == "ship"
-        and is_recording_ship(nxt)
-        and not recorded
-    )
-
-
 def stop_for(
     unit_row: dict[str, Any],
     nxt: Mapping[str, Any],
     last: dict[str, Any] | None,
     may_ship: bool,
-    exhausted: int = 0,
     unopened: int = 0,
-    recorded: bool = False,
     shipping: bool = False,
 ) -> dict[str, str] | None:
     """The first stop that holds for one unit, as `{kind, reason}`, or `None`.
@@ -166,10 +150,8 @@ def stop_for(
     `unit_row` is the unit as `Core.board` has it; `nxt` is `Steps.next_step`'s answer;
     `last` the unit's latest `end`, `integration`, `screens` or `prmachine.RECORD_KIND` record, or
     `None`. `None` back means no stop, which is not the same as something to run.
-    `exhausted` and `unopened` are how many steps of `last`'s stage ended `exhausted` or
-    `failed` for their reply's opening; at 0 such a step stops at once. `recorded` is whether
-    the step that wrote `last` was a `ship` that only records. `shipping` is whether a `ship`
-    attempt of the unit has not ended.
+    `unopened` is how many steps of `last`'s stage ended `failed` for their reply's opening; at 0
+    such a step stops at once. `shipping` is whether a `ship` attempt of the unit has not ended.
     """
     stage = str(nxt.get("stage") or "")
     action = str(nxt.get("action") or "")
@@ -198,24 +180,19 @@ def stop_for(
     if kind == "integration" and outcome == "needs-person":
         said = "; ".join(str(x) for x in seen.get("needs_person") or []) or "no reason given"
         return _stop("d", f"the last integration needs a person: {said}")
-    # e. The unit's last step did not end `done`. The first time a stage other than `ship` ends
-    # `exhausted` is no stop: it runs again once, and the second time stops; `ship` stops the
-    # first time. The same holds, on its own count, for a prose stage that ended `failed`
-    # because its reply lacked its opening. Otherwise no retry: `failed`, `cancelled`,
-    # `stopped`, an integration that failed or that the autopilot started and was refused for
-    # anything but a state with nothing to integrate, and a `ship` that ran out before `next`
-    # names one that only records the merge. An integration refused with nothing to integrate is
-    # no last word: what follows is decided as if it had not run.
-    ran_out_once = outcome == "exhausted" and seen.get("stage") != "ship" and exhausted == 1
-    unopened_once = _unopened(last) and unopened == 1
-    skipped = skips_exhausted(nxt, last, recorded)
-    if (
-        kind == "end"
-        and outcome != "done"
-        and not ran_out_once
-        and not unopened_once
-        and not skipped
-    ):
+    # e. The unit's last step did not end `done`. A step that paused at a ceiling stops with its
+    # own code: only a person raises the ceiling or reruns it. The first time a prose stage ends
+    # `failed` because its reply lacked its opening is no stop: it runs again once. Otherwise no
+    # retry: `failed`, `cancelled`, `stopped`, an integration that failed or that the autopilot
+    # started and was refused for anything but a state with nothing to integrate. An
+    # integration refused with nothing to integrate is no last word: what follows is decided as
+    # if it had not run.
+    if kind == "end" and outcome == "paused-budget":
+        return {
+            **_stop("e", f"the last {seen.get('stage')} step paused at its ceiling"),
+            "code": "budget-reached",
+        }
+    if kind == "end" and outcome != "done" and not (_unopened(last) and unopened == 1):
         return _stop(
             "e", f"the last {seen.get('stage')} step ended {outcome or 'without an outcome'}"
         )
@@ -300,16 +277,13 @@ def after_own_integration(
     last_integration: dict[str, Any] | None,
     after: list[dict[str, Any]] | None,
     nxt: Mapping[str, Any],
-    exhausted: int = 0,
 ) -> tuple[str, dict[str, str] | None] | None:
     """What follows CI red on the autopilot's own pushed integration.
 
     `integration` is the board's integration block of the unit, `last_integration` its latest
     `integration` record, `after` what `since_integration` returns, `nxt` `next`'s answer.
     `("impl", None)` runs the `impl` `next` names, once; `("", stop)` is a stop `e`; `None`
-    leaves the unit to the rest of the pass. Gebo is never started again. `exhausted` is how
-    many `impl` steps of the unit ended `exhausted`: while it is 1, the one that ran out is
-    not the one `impl`, which runs once more.
+    leaves the unit to the rest of the pass. Gebo is never started again.
     """
     last_integration = last_integration or {}
     if started_by(last_integration) != "autopilot" or last_integration.get("outcome") != "pushed":
@@ -320,17 +294,13 @@ def after_own_integration(
     again = _stop("e", "CI is still red after the autopilot's last integration")
     if after is None:
         return ("", again) if red_state else None
-    ran, short, by = 0, 0, ""
+    ran, by = 0, ""
     for r in after:
         if r.get("stage") != "impl":
             continue
         if r.get("kind") == "start":
             by = started_by(r)
             ran += 1 if by == "autopilot" else 0
-        elif r.get("kind") == "end" and r.get("outcome") == "exhausted" and by == "autopilot":
-            short += 1
-    if exhausted == 1:
-        ran -= min(short, 1)
     if ran >= IMPL_PER_INTEGRATION and (red_state or red_next):
         return ("", _stop("e", STILL_RED))
     if red_state and fixing:
@@ -611,20 +581,6 @@ def reruns_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stag
     return count
 
 
-def exhausted_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
-    """How many steps of `stage` on `unit` ended `exhausted`, whoever started them and over the whole run log."""
-    return sum(
-        1
-        for r in records
-        if r.get("kind") == "end"
-        and r.get("outcome") == "exhausted"
-        and is_step(r)
-        and r.get("workspace") == workspace
-        and r.get("unit") == unit
-        and r.get("stage") == stage
-    )
-
-
 def _lacks_opening(record: dict[str, Any]) -> bool:
     """The `detail` `opening_reason` opens with (`coscc/runner/reply.py`), for the record's own
     stage; a repair turn that failed too keeps it on the first line."""
@@ -646,7 +602,7 @@ def _unopened(last: dict[str, Any] | None) -> bool:
 
 def unopened_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
     """How many steps of `stage` on `unit` ended `failed` because their reply lacked its
-    opening, counted as `exhausted_of` counts; the two counts are apart."""
+    opening, over the whole run log, whoever started them."""
     return sum(
         1
         for r in records

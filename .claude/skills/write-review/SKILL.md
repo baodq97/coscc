@@ -29,9 +29,7 @@ non-zero. Read the changed files, not the whole tree.
    blocking. Lowering an earlier round's `high`/`medium` is not a fix.
 4. Verdict: any blocking finding not closed, `changes-requested`; otherwise `pass`, which opens
    `ship`. An `[open]` `low` does not block. If every blocking one is `[needs-person]`, `needs-person`.
-5. Never write `Verdict: incomplete` (only the app's closing turn does) and never merge. After
-   an `incomplete` round, read its *What was not reviewed* first, then write a full round for
-   this head, carrying every finding forward.
+5. Never write `Verdict: incomplete` and never merge.
 
 **Claims.** For each open finding impl claimed only a person can close (its `needs_person`,
 with why under `impl.md ## Needs a person`), label it: `[needs-person]` (the grant really lacks it or it costs money), or `[claim-rejected]`

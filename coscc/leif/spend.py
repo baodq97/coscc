@@ -24,11 +24,11 @@ TOKENS_PER_TURN_MIN_STEPS = 5
 # How many of an agent's latest runs the screen lists. Chosen.
 RUNS_SHOWN = 10
 
-FAILED = ("exhausted", "failed")
+FAILED = ("failed",)
 CHANGES_REQUESTED = "changes-requested"
 
 WASTE_KINDS = (
-    "exhausted-or-failed",
+    "failed",
     "run-again",
     "integrate-conflict",
     "integrate-other",
@@ -244,7 +244,7 @@ def model(  # noqa: PLR0915 - still to split
     requested_row["count"] = round_count
 
     waste = [
-        _waste_row("exhausted-or-failed", failed),
+        _waste_row("failed", failed),
         _waste_row("run-again", again),
         _waste_row("integrate-conflict", integrate["conflicting"]),
         _waste_row("integrate-other", integrate["other"]),

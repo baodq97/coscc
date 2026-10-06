@@ -52,7 +52,7 @@ describe("unit state", () => {
   const base: Unit = {
     name: "0001_x", number: 1, slug: "x", type: "fix", phase: "started", next_stage: "spec", why: "", open: 0,
     state: { state: "ready", label: "Ready", color: "gray" }, hold: null, pr: null, cost_usd: 0, at: "", updated: "",
-    attention_reason: "", missing: [], idea: "", rank: null, effort: null,
+    attention_reason: "", missing: [], idea: "", rank: null, effort: null, paused: null,
   };
 
   it("reads a paused hold as paused", () => {
@@ -65,6 +65,12 @@ describe("unit state", () => {
 
   it("says what the next stage lacks, under Needs you", () => {
     expect(unitState({ ...base, next_stage: "review", missing: ["impl.md"] })).toEqual({ group: "Needs you", label: "Needs impl.md" });
+  });
+
+  it("says a run held at its ceiling is paused at how much of it, under Needs you", () => {
+    const at = { stage: "impl", ceiling: "usd", usd: 8, max_usd: 8, turns: 61, max_turns: 250 };
+    expect(unitState({ ...base, paused: at })).toEqual({ group: "Needs you", label: "Paused at $8.00 of $8.00" });
+    expect(unitState({ ...base, paused: { ...at, ceiling: "turns", turns: 250 } }).label).toBe("Paused at 250 of 250 turns");
   });
 
   it("reads a finished unit as shipped and a pre-intent one as an idea", () => {

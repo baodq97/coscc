@@ -1241,7 +1241,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
                 {"session_id": "sess-i", "cost": {}, "terminal_reason": self.test.terminal},
             )
 
-    def _run(self):
+    def _run(self, rerun: bool = False):
         from coscc.units import board as board_reader
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
@@ -1249,7 +1249,10 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
 
         async def go():
             return [
-                i async for i in self.core.steps.run_step(str(self.repo), self.made["unit"], "impl")
+                i
+                async for i in self.core.steps.run_step(
+                    str(self.repo), self.made["unit"], "impl", **({"rerun": True} if rerun else {})
+                )
             ]
 
         # A routine run asks for its arm's model; the Sonnet arm is `models.json`'s.
@@ -1308,25 +1311,22 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         )
         self.assertEqual(start["max_turns"], 250)
 
-    def test_a_routine_run_escalates_after_a_max_turns_stop_and_counts_its_runs(self):
+    def test_a_routine_run_that_hit_a_ceiling_keeps_its_label_and_counts_its_runs(self):
         self._plan("coscc/units/board.py")
         self.terminal = "max_turns"
         self._run()
         self.terminal = None
-        self._run()
+        # A plain run of a paused stage is refused; a person's rerun starts it again.
+        self._run(rerun=True)
         first, second = self._starts()[-2:]
-        self.assertEqual(
-            (first["label"], first["label_source"], first["model"], first["effort"]),
-            ("routine", "declared", "claude-sonnet-5-5[1m]", "medium"),
-        )
-        self.assertEqual(
-            (second["label"], second["label_source"], second["model"]),
-            ("novel", "escalated", "claude-opus-5-5[1m]"),
-        )
+        for start in (first, second):
+            self.assertEqual(
+                (start["label"], start["label_source"], start["model"], start["effort"]),
+                ("routine", "declared", "claude-sonnet-5-5[1m]", "medium"),
+            )
         self.assertEqual((first["impl_run"], second["impl_run"]), (1, 2))
-        # The rerun also gets the ceilings it was escalated for.
         ceilings = [(kw["max_turns"], kw.get("max_budget_usd")) for kw in self.seen[-2:]]
-        self.assertEqual(ceilings, [(120, 8.0), (250, 16.0)])
+        self.assertEqual(ceilings, [(120, 8.0), (120, 8.0)])
 
 
 class TheGatesLaneReachesThePrompt(unittest.TestCase):
@@ -1427,7 +1427,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
                 plan={"impl": "routine", "files": [plan]},
             )
 
-    def _run(self, stage: str = "impl", arm: str = "opus-5-5"):
+    def _run(self, stage: str = "impl", arm: str = "opus-5-5", rerun: bool = False):
         from coscc.units import board as board_reader
         from coscc.agent import modeltrial
 
@@ -1449,7 +1449,10 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
         async def go():
             return [
-                i async for i in self.core.steps.run_step(str(self.repo), self.made["unit"], stage)
+                i
+                async for i in self.core.steps.run_step(
+                    str(self.repo), self.made["unit"], stage, **({"rerun": True} if rerun else {})
+                )
             ]
 
         with (
@@ -1511,16 +1514,16 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         self.assertEqual((start["model"], start["model_source"]), (self.OPUS, "default"))
         self.assertNotIn("model_trial", start)
 
-    def test_an_escalated_impl_leaves_the_trial(self):
+    def test_an_impl_that_hit_a_ceiling_stays_in_the_trial(self):
         self._unit()
         self.terminal = "max_turns"
         self._run(arm="sonnet-5-5")
         self.terminal = None
-        self._run(arm="sonnet-5-5")
+        self._run(arm="sonnet-5-5", rerun=True)
         first, second = self._starts()
         self.assertEqual(first["model_trial"]["arm"], "sonnet-5-5")
-        self.assertEqual((second["label"], second["label_source"]), ("novel", "escalated"))
-        self.assertNotIn("model_trial", second)
+        self.assertEqual((second["label"], second["label_source"]), ("routine", "declared"))
+        self.assertEqual(second["model_trial"]["arm"], "sonnet-5-5")
 
     # -- the CI question, now asked of every routine impl ---------------------
 
@@ -1724,7 +1727,7 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
             yield ("done", {"session_id": "sess-spike", "cost": {}})
 
     class RunsOut:
-        """Keeps its progress file in `cwd`, then stops at the turn ceiling."""
+        """Keeps its progress file in `cwd`, then ends with no usable reply."""
 
         bus = Bus()
 
@@ -1737,12 +1740,12 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
             (Path(cwd) / "spike.md").write_text(self.PROGRESS, encoding="utf-8")
             yield ("chunk", "Tôi hết lượt.")
             await _submits(kw)
-            yield ("done", {"session_id": "sess-spike", "terminal_reason": "max_turns", "cost": {}})
+            yield ("done", {"session_id": "sess-spike", "terminal_reason": "completed", "cost": {}})
 
     def test_the_progress_file_is_read_before_the_scratch_is_removed(self):
         core = self._core(self.RunsOut())
         out = self._run(core)
-        self.assertEqual(out[-1][1]["outcome"], "exhausted", out[-1])
+        self.assertEqual(out[-1][1]["outcome"], "failed", out[-1])
         written = Path(core.ws.unit_dir(str(self.repo), self.unit)) / "spike.md"
         self.assertEqual(written.read_text(encoding="utf-8"), self.RunsOut.PROGRESS)
         self.assertFalse(self.scratch.exists())

@@ -12,6 +12,11 @@ Read this before changing the timeline, stop, the running list or a step's endin
   attribute: an SDK that renames it loses this silently. The step ends `stopped`, writes no
   artifact, and keeps whatever it committed or pushed. A step already writing its artifact
   refuses it.
-- A repair or closing turn (an exhausted review, a prose reply without its opening) runs past
-  `max_budget_usd`, because the CLI compares cost only after the turn; Stop is refused
-  meanwhile. Its cost is recorded apart from the step's.
+- A repair turn (a prose reply without its opening) runs past `max_budget_usd`, because the CLI
+  compares cost only after the turn; Stop is refused meanwhile. Its cost is recorded apart from the
+  step's.
+- A turn or $ ceiling ends the step `paused-budget`: nothing it had not finished is written, and
+  its session and worktree are kept. The unit reads held `budget-reached` from the run log (no
+  hold row), and a plain Run of that stage is refused. A person's `raise: {usd?, turns?}` on
+  `POST /api/board/run` goes on in the same session under the higher ceiling less what it spent;
+  a rerun starts the stage from scratch. The autopilot stops there and never raises.

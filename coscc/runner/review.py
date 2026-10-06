@@ -1,6 +1,5 @@
 """A review's rounds as `review.md` holds them: merging a round into it, rendering a round from
-its object, and checking a closing round. Which findings are open is read from `cos.db`'s
-rounds, never from this file.
+its object. Which findings are open is read from `cos.db`'s rounds, never from this file.
 """
 
 from __future__ import annotations
@@ -8,12 +7,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from coscc.runner.reply import RunError, unfence
-
-# A closing round's header line, read leniently: case and a missing full stop aside.
-_INCOMPLETE_META = re.compile(
-    r"^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*incomplete\.?$", re.A | re.I
-)
+from coscc.runner.reply import RunError
 
 
 def _sections(text: str) -> list[tuple[int, str]]:
@@ -147,79 +141,3 @@ def replace_new_rounds(text: str, before: set[int], rendered: str) -> str:
     if not placed:
         out = out.rstrip() + "\n\n" + rendered + "\n"
     return out.rstrip() + "\n"
-
-
-# # The three sections of a round the closing turn writes, in this order.
-INCOMPLETE_SECTIONS = ("### Reviewed so far", "### Findings", "### What was not reviewed")
-
-
-def _first_line(section: str) -> str:
-    """A round's first non-blank line after its heading."""
-    return next((line.strip() for line in section.splitlines()[1:] if line.strip()), "")
-
-
-def _headings_in_order(section: str, headings: tuple[str, ...]) -> bool:
-    lines = [line.rstrip() for line in section.splitlines()]
-    at = 0
-    for heading in headings:
-        try:
-            at = lines.index(heading, at) + 1
-        except ValueError:
-            return False
-    return True
-
-
-def closing_prompt(head: str, number: int) -> str:
-    """What the app sends when it reopens a review that ran out of turns. English: an
-    instruction to the model.
-    """
-    return (
-        "You have run out of turns. You have no tools now; do not try to call one. Write "
-        "down what this review has established so far, so the next review can go on from "
-        "it instead of starting again.\n\n"
-        "Reply with the title, the header line and one new round only, and nothing else — "
-        "no preamble, no code fence. The earlier rounds of `review.md` are the app's to "
-        "keep; do not copy them. Exactly this shape:\n\n"
-        f"- `## Round {number}`.\n"
-        f"- Its first line is exactly `Reviewed: {head}. Verdict: incomplete.`\n"
-        "- Then three sections, in this order: `### Reviewed so far` (every file you "
-        "opened and what you concluded about it), `### Findings` (every finding you have, "
-        "in the usual `- F<k> [open] path:line — severity — text` form, and every finding "
-        "an earlier round raised, carried forward with its id and label), and "
-        "`### What was not reviewed` (what you did not reach, and what to read first).\n\n"
-        "Never write `Verdict: pass` or `Verdict: changes-requested` here: a round the app "
-        "cannot read as incomplete is not written at all."
-    )
-
-
-def closing_round_problem(
-    existing: str, reply: str, head: str, recorded: tuple[int, ...] = ()
-) -> str | None:
-    """`None` when `reply` is a closing turn's round the app may write, else why not.
-
-    Only an incomplete round, which the loop reads as "review again". A full round is refused:
-    it would open or close `ship` on a review that did not finish. `merge_review` decides the
-    rest when the round is written.
-    """
-    try:
-        body = unfence(reply)
-    except RunError as e:
-        return str(e)
-    on_disk = {_round_number(r) for r in _rounds(existing)}
-    new = [r for r in _rounds(body) if _round_number(r) not in on_disk]
-    if len(new) != 1:
-        return f"it adds {len(new)} review rounds, not one"
-    # The number `closing_prompt` was given: after every round on disk and every round recorded,
-    # so the round's row never takes a recorded number.
-    number = max({*on_disk, *recorded}, default=0) + 1
-    if _round_number(new[0]) != number:
-        return f"{new[0].splitlines()[0]} is not ## Round {number}, the next round"
-    meta = _INCOMPLETE_META.match(_first_line(new[0]).strip())
-    if not meta or meta.group(1).lower() != head.lower():
-        return (
-            f"{new[0].splitlines()[0]} does not open with "
-            f"`Reviewed: {head}. Verdict: incomplete.`, the head this step ran on"
-        )
-    if not _headings_in_order(new[0], INCOMPLETE_SECTIONS):
-        return f"{new[0].splitlines()[0]} lacks {', '.join(INCOMPLETE_SECTIONS)}, in that order"
-    return None

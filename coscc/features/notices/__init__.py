@@ -56,7 +56,7 @@ WORKSPACE_F = "it could not look at the workspace"
 # How an `end` that is not `done` is said (`journal.OUTCOMES`).
 ENDED = {
     "failed": "failed",
-    "exhausted": "ran out of turns",
+    "paused-budget": "paused at its ceiling",
     "stopped": "was stopped",
     "cancelled": "was cancelled",
 }
