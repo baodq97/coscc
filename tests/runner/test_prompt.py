@@ -82,6 +82,56 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
             self.assertIn("Write a spec", prompt)
 
 
+class TheFastLaneBlockReachesImplAndReview(unittest.TestCase):
+    """The block names the source and the expected result the intent's record gave."""
+
+    META = {
+        "artifacts": {
+            "intent.md": {
+                "result": {
+                    "fix": {
+                        "reproduction": "r",
+                        "expected": {"source": "coscc/a.py:3-9", "text": "THE-EXPECTED-WORDS"},
+                        "actual": "a",
+                    }
+                }
+            }
+        }
+    }
+
+    def prompt(self, d, stage, lane):
+        make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
+        return compose_prompt(
+            d,
+            Path(d) / ".cos" / UNIT,
+            UNIT,
+            stage,
+            STAGES,
+            f"{stage}.md",
+            lane=lane,
+            unit_meta=self.META,
+        )
+
+    def test_impl_and_review_get_it_with_the_record_and_the_way_out(self):
+        with tempfile.TemporaryDirectory() as d:
+            for stage in ("impl", "review"):
+                prompt, included, _ = self.prompt(d, stage, "fast")
+                self.assertIn("# The fast lane", prompt, stage)
+                self.assertIn("`coscc/a.py:3-9`", prompt, stage)
+                self.assertIn("THE-EXPECTED-WORDS", prompt, stage)
+                self.assertIn("fast-lane", included, stage)
+            impl = self.prompt(d, "impl", "fast")[0]
+            self.assertIn("not-ready", impl)
+            self.assertIn("`left_lane`", impl)
+
+    def test_a_full_lane_unit_and_the_other_stages_get_no_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            for stage, lane in (("impl", "full"), ("spec", "fast"), ("plan", "fast")):
+                prompt, included, _ = self.prompt(d, stage, lane)
+                self.assertNotIn("# The fast lane", prompt, (stage, lane))
+                self.assertNotIn("fast-lane", included, (stage, lane))
+
+
 class ThePromptSaysTheGateWasAlreadyAsked(unittest.TestCase):
     """Every stage's skill opens by telling it to run `coscc.loop gate` and stop on non-zero.
     The four toolless prose stages can never run it, and `ship` responded the only honest

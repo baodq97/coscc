@@ -413,6 +413,17 @@ class TheGateHandsOnACleanRebase(unittest.TestCase):
         self.assertIsNone(_board.Gate(True, "open").rebased)
 
 
+class TheGateHandsOnTheLane(unittest.TestCase):
+    """`gate --json`'s `lane` reaches the app: `fast` only when the loop says so."""
+
+    def test_the_lane_is_fast_only_when_the_loop_says_fast(self):
+        self.assertEqual(_board._lane({"lane": "fast"}), "fast")
+        for bad in ({}, {"lane": None}, {"lane": "full"}, {"lane": "slow"}, {"lane": 1}):
+            self.assertEqual(_board._lane(bad), "full", bad)
+        self.assertEqual(_board.Gate(True, "open", (), None, "fast").lane, "fast")
+        self.assertEqual(_board.Gate(True, "open").lane, "full")
+
+
 class TheStateOfAUnit(unittest.TestCase):
     """One state per unit, the first rule that matches deciding it."""
 
