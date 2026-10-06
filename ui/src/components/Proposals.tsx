@@ -94,7 +94,7 @@ function Row({ p, open, onToggle, busy, act, cwd }: { p: ProposalRow; open: bool
         <span className="t">{p.title}</span>
         <span className="meta">
           <span>{p.agent_name}</span>
-          <span>{p.type}</span>
+          <span className="wide">{p.type}</span>
           <span>{ago(p.at)}</span>
         </span>
       </div>
