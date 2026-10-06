@@ -1196,6 +1196,17 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
             self.assertEqual(by_stage["impl"]["system_prompt"], "claude_code")
             self.assertEqual(by_stage["idea"]["system_prompt"], "")
 
+    def test_the_start_record_names_the_units_process_and_its_hash(self):
+        with tempfile.TemporaryDirectory() as d:
+            journal = Journal(d, d)
+            self.run_stage(d, "impl", journal)
+            [start] = journal.records(d, kind="start")
+        self.assertEqual(
+            (start["process"], start["process_hash"]),
+            (pack.DEFAULT_PROCESS, pack.process_hash(pack.DEFAULT_PROCESS)),
+        )
+        self.assertEqual(start["pack"], "coscc-sdlc@1.1.0")
+
 
 def _git_repo(root: Path) -> Path:
     repo = root / "repo"
@@ -1848,7 +1859,7 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
         return probe, final
 
     def test_the_features_get_the_plan_record_the_step_was_handed(self):
-        record = {"impl": "routine", "files": ["a.py"], "steps": [], "rests_on": []}
+        record = {"variant": "routine", "files": ["a.py"], "steps": [], "rests_on": []}
         with tempfile.TemporaryDirectory() as d:
             self._run(d, self._hooks(), "impl", plan=record)
         self.assertEqual(self.made[0].plan, record)

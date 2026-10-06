@@ -33,7 +33,7 @@ def _filled(channel: Channel | submit.Collector, fields: dict[str, Any]) -> dict
     if channel.stage == "spike":
         obj["verdicts"] = []
     if channel.stage == "plan":
-        obj.update(impl="novel", files=[], steps=[], rests_on=[])
+        obj.update(variant="novel", files=[], steps=[], rests_on=[])
     return {**obj, **fields}
 
 

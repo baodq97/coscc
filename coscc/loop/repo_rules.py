@@ -17,6 +17,7 @@ from coscc.loop.model import (
     not_a_work_branch,
     out_of_rounds,
     person_answers,
+    pr_of,
     read_unit,
     review_limit,
     review_of,
@@ -247,7 +248,7 @@ def review_needs(unit, probe, limit, said=None):
     `unreadable` or `green`."""
     said = {} if said is None else said
     need = []
-    pr = nullish(dig(unit, "artifacts", "pr.md", "pr"))
+    pr = pr_of(unit)
     if not pr:
         need.append("no pull request is recorded — the pr stage opens one")
     if out_of_rounds(unit, limit):
@@ -441,7 +442,7 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - `shipNeeds` kep
         return [NO_REPO]
     if not unit.get("branch"):
         return ["the unit has no branch — intent.md must declare a Type"]
-    pr = nullish(dig(unit, "artifacts", "pr.md", "pr"))
+    pr = pr_of(unit)
     if not pr:
         return ["no pull request is recorded — nothing says what ship would merge"]
     # the pull request is read before the branch is looked for — after

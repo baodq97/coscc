@@ -1,23 +1,19 @@
-"""The set of states a unit can be in, read from the packaged `states.json` rather than written here.
+"""The set of states a unit can be in, read from the pack's processes rather than written here.
 
-Nothing else may name a state. `absent` is a state so a transition log can record a move out
+Every state of every process is a stage here, its artifact `<state>.md` and its statuses what
+`pack.statuses` derives. `absent` is a state so a transition log can record a move out
 of nothing; it is a member of no stage's `statuses`, so nothing may write it as a destination.
 Which transitions are allowed is not decided here; only that a stage can carry the state.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from functools import lru_cache
 from collections.abc import Mapping
-from typing import Any, Literal, get_args
+from typing import Any
 
-from coscc.agent import harness
-
-
-StageName = Literal["idea", "impl", "intent", "plan", "pr", "review", "ship", "spec", "spike"]
-STAGE_NAMES: tuple[StageName, ...] = get_args(StageName)
+from coscc.agent import pack
 
 
 @dataclass(frozen=True)
@@ -104,42 +100,25 @@ class Machine:
 
 @lru_cache(maxsize=1)
 def default() -> Machine:
-    """The packaged set, read once. Callers that take a `Machine | None` default to this."""
-    return Machine.of(json.loads(harness.STATES_PATH.read_text(encoding="utf-8")))
-
-
-@dataclass(frozen=True)
-class Lane:
-    name: str
-    path: tuple[tuple[str, str], ...]
-    end: str
-    guards: dict[str, dict[str, str]]
-
-    def guard_for(self, machine: str, transition: str) -> str:
-        return self.guards[machine][transition]
-
-
-@dataclass(frozen=True)
-class Lanes:
-    lanes: dict[str, Lane]
-    ci_poll_seconds: float
-
-    def lane(self, name: str = "full") -> Lane:
-        return self.lanes[name]
-
-
-@lru_cache(maxsize=1)
-def default_lanes() -> Lanes:
-    raw = json.loads(harness.LANES_PATH.read_text(encoding="utf-8"))
-    return Lanes(
-        lanes={
-            name: Lane(
-                name,
-                tuple((step["stage"], step["when"]) for step in lane["path"]),
-                lane["end"],
-                lane["guards"],
-            )
-            for name, lane in raw["lanes"].items()
-        },
-        ci_poll_seconds=float(raw["params"]["ci_poll_seconds"]),
+    """The built-in pack's set, read once: every state of its processes, in the order first seen.
+    Callers that take a `Machine | None` default to this."""
+    rows = pack.builtin_rows()
+    stages: dict[str, list[str]] = {}
+    optional: set[str] = set()
+    for p in pack.processes().values():
+        for name, st in p["states"].items():
+            have = stages.setdefault(name, [])
+            have += [x for x in pack.statuses(st, rows) if x not in have]
+            if st.get("optional"):
+                optional.add(name)
+    return Machine.of(
+        {
+            "name": pack.manifest()["name"],
+            "absent": "not started",
+            "settled": ["accepted", "skipped"],
+            "stages": [
+                {"name": n, "artifact": f"{n}.md", "statuses": ss, "optional": n in optional}
+                for n, ss in stages.items()
+            ],
+        }
     )

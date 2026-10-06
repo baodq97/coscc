@@ -875,7 +875,6 @@ class Steps:
                 journal=journal,
                 unit=unit,
                 stage=stage,
-                stages=data["stages"],
                 found=found,
                 row=row,
                 tree=tree,
@@ -909,6 +908,7 @@ class Steps:
                 screens_note=screens_note,
                 rounds_before=rounds_before,
                 inputs=inputs,
+                process=str(found.get("process") or pack.DEFAULT_PROCESS),
                 branch=await self._unit_branch(cwd, unit) if stage == "impl" and tree else "",
             )
 
@@ -1191,7 +1191,6 @@ class Steps:
         journal: Journal,
         unit: str,
         stage: str,
-        stages: list[str],
         found: dict[str, Any],
         row: dict[str, Any],
         tree: dict[str, Any] | None,
@@ -1208,7 +1207,7 @@ class Steps:
         except (Busy, ContractError) as e:
             raise Refused(str(e), ("unavailable",)) from e
         config, failed = await self._stage_config(
-            cwd, key, journal, unit, stage, stages, plan, work
+            cwd, key, journal, unit, stage, str(found.get("process") or ""), plan, work
         )
         integration_note = self.integration_note(journal, key, unit) if stage == "review" else ""
         plan_drift = await _plan_drift(journal, key, unit, stage, plan, tree)
@@ -1237,7 +1236,7 @@ class Steps:
         journal: Journal,
         unit: str,
         stage: str,
-        stages: list[str],
+        process: str,
         plan: Plan | None,
         work: str,
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -1246,7 +1245,7 @@ class Steps:
         `impl`, which run this is, read before any money is spent. `Runner` does not read the
         run log itself; `build_prompt` only places what it is handed, the same as `base_note`."""
         try:
-            config = self.stage_config(stage, list(stages), plan, journal, key, unit)
+            config = self.stage_config(stage, process, plan, journal, key, unit)
             failed = journal.failed_attempts(key, unit, stage)
         except Busy as e:
             raise Refused(str(e), ("unavailable",)) from e
@@ -1335,6 +1334,7 @@ class Steps:
         screens_note: str,
         rounds_before: set[Any] | None,
         inputs: dict[str, Any],
+        process: str,
         app_note: str = "",
         branch: str = "",
     ) -> dict[str, Any]:
@@ -1354,9 +1354,10 @@ class Steps:
             base=base,
             base_note=describe_base(base),
             screens_note=screens_note,
-            # The stage's row as it stands, read once
-            # as the step starts: a rename later reaches the next step, not this one.
-            agent=self.agent_of(stage),
+            # The row the unit's process binds the state to, as it stands, read once as the step
+            # starts: a rename later reaches the next step, not this one.
+            agent=self.agent_of(pack.agent_for(process, stage) or ""),
+            process=process,
             **inputs,
             # Only named for a spike, so a stand-in `run` without it keeps working.
             **({"watch": work} if scratch is not None else {}),
@@ -1813,6 +1814,8 @@ class Steps:
                 pid=os.getpid(),
             )
         rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
+        # The process the first start recorded; one from before units recorded theirs is the default.
+        process = str(record.get("process") or pack.DEFAULT_PROCESS)
         extra = {
             k: owner.get(k)
             for k in (
@@ -1836,7 +1839,8 @@ class Steps:
             model=record.get("model"),
             effort=owner.get("effort"),
             label=owner.get("label"),
-            agent=self.agent_of(stage),
+            agent=self.agent_of(pack.agent_for(process, stage) or ""),
+            process=process,
             resume=record,
             owner_extra=extra,
             **({"watch": owner["watch"]} if owner.get("watch") else {}),

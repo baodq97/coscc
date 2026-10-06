@@ -80,14 +80,14 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
         raw = _shipped()
         fields = raw["agents"]["intent"]["output"]["fields"]
         fields["fix"] = fields.pop("fix?")
-        self.assertEqual(_refusal(raw), "contract-field-missing: intent.fix? (read by lane_of)")
+        self.assertEqual(_refusal(raw), "contract-field-missing: intent.fix? (read by fast-lane)")
         raw = _shipped()
         raw["agents"]["impl"]["output"]["fields"]["left_lane?"] = "number"
         self.assertTrue(_refusal(raw).startswith("contract-bad-type: impl.left_lane: "))
 
     def test_the_plans_fields_name_their_readers(self):
         for field, reader in (
-            ("impl", "label_of"),
+            ("variant", "label_of"),
             ("files", "label_of"),
             ("steps", "render"),
             ("rests_on", "evaluate"),
@@ -104,7 +104,7 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
         from coscc.agent import policy
 
         self.assertEqual(
-            _shipped()["agents"]["plan"]["output"]["fields"]["impl"],
+            _shipped()["agents"]["plan"]["output"]["fields"]["variant"],
             {"enum": list(get_args(policy.Label))},
         )
 
@@ -215,7 +215,7 @@ PINNED = {
     "intent": (3, "ca57a2f691e3"),
     "spec": (2, "aea0a6c62a73"),
     "spike": (2, "95f4668e18e5"),
-    "plan": (3, "ad5956be3844"),
+    "plan": (4, "f49d1faf3b5f"),
     "impl": (3, "0e0331fd23e0"),
     "review": (1, "c88ced722098"),
     "integrate": (1, "9e29819d42c2"),

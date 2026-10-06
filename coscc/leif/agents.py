@@ -220,11 +220,16 @@ _TYPES: dict[str, type | tuple[type, ...]] = {
 
 
 def _fields_of(found: dict[str, Any]) -> RowFields:
-    """`found`'s frontmatter and body, each value of the type `RowFields` gives it."""
+    """`found`'s frontmatter and body, each value of the type `RowFields` gives it. A row a process
+    state runs shows where as its trigger, `{state: "impl in full, short"}`: the process binds
+    it, the row names no state."""
     out: dict[str, Any] = {}
     for k in (*pack.KEYS, pack.BODY):
         if k in found and isinstance(found[k], _TYPES.get(k, str)):
             out[k] = found[k]
+    where = pack.states_of(str(found.get("key") or ""))
+    if where and "trigger" not in out:
+        out["trigger"] = {"state": where}
     return RowFields(**out)
 
 
@@ -233,7 +238,7 @@ def _group_of(found: dict[str, Any]) -> Group:
     base = found.get("builtin") or found
     if (base.get("output") or {}).get("kind") == "helper":
         return "helper"
-    return "stage" if "state" in (base.get("trigger") or {}) else "engine"
+    return "stage" if pack.states_of(str(found.get("key") or "")) else "engine"
 
 
 def _skills(found: dict[str, Any]) -> list[SkillText]:
@@ -417,8 +422,7 @@ class Agents:
         `field` is a frontmatter key (`pack.KEYS`), `body`, or `skill:<name>`, its value the whole
         key as the row file holds it. The row as it would then stand must pass `pack.check` with
         the app's catalog, its `input` and `output` `contracts`; else a 400 naming every reason and
-        nothing is written. `trigger` is shown and not saved: a step still runs the row named after
-        its stage.
+        nothing is written. `trigger` is shown and not saved: the process names the state's agent.
 
         **Behind the password like every route here**: whoever holds it or a live session can give
         any agent another model, larger ceilings, another prompt or more of the catalog's tools,
@@ -429,7 +433,7 @@ class Agents:
             raise Invalid(f"no such agent: {key} (use one of {', '.join(pack.rows())})")
         field = str(field)
         if field == "trigger":
-            raise Invalid("trigger is read-only: a step still runs the agent named after its stage")
+            raise Invalid("trigger is read-only: the process names which agent a state runs")
         if value == "":
             value = None
         try:
@@ -509,7 +513,7 @@ class Models:
     def stage_config(
         self,
         stage: str,
-        stages: list[str],
+        process: str | None,
         plan: Plan | None,
         journal: Journal,
         key: str,
@@ -526,7 +530,7 @@ class Models:
         ran is filled in once its `init` names it. Any other step has no `trial_record` key.
         """
         history = [r for r in journal.records(key, unit) if r.get("stage") == "impl"]
-        label_declared, label, label_source = models.label_of(stage, stages, plan)
+        label_declared, label, label_source = models.label_of(stage, process, plan)
         arm = modeltrial.arm(unit, stage) if modeltrial.applies(stage, label) else None
         trial_model = modeltrial.model_for(stage, label, arm) if arm else None
         model, model_source, effort, effort_source = models.resolve(

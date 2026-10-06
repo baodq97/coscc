@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "processes": {
+    "full": {
+      "start": "idea",
+      "end": "shipped",
+      "states": {
+        "idea": {"agent": "idea", "optional": true, "hint": "write-idea", "next": [{"to": "intent"}]},
+        "intent": {
+          "agent": "intent",
+          "rerun": ["fresh", "answers"],
+          "hint": "write-intent — the unit has no intent.md",
+          "next": [{"to": "impl", "when": {"guard": "fast-lane"}}, {"to": "spec"}]
+        },
+        "spec": {
+          "agent": "spec",
+          "skip": "skip-decision",
+          "rerun": ["fresh", "answers"],
+          "hint": "write-spec — it assesses whether to skip first",
+          "next": [{"to": "spike", "when": {"field": "unmeasured", "is": "non-empty"}}, {"to": "plan"}]
+        },
+        "spike": {
+          "agent": "spike",
+          "rerun": ["fresh", "answers"],
+          "hint": "write-spike — spec.md has [unmeasured] items",
+          "next": [{"to": "plan", "when": {"guard": "spike-holds"}}, {"to": "spec"}]
+        },
+        "plan": {
+          "agent": "plan",
+          "rerun": ["fresh", "answers"],
+          "hint": "write-plan",
+          "next": [{"to": "impl", "when": {"guard": "dependency-merged"}}]
+        },
+        "impl": {
+          "agent": "impl",
+          "rerun": ["answers"],
+          "hint": "write-impl — implementation starts",
+          "next": [
+            {"to": "spec", "when": {"field": "left_lane", "is": "non-empty"}},
+            {"to": "pr", "when": {"field": "judgement", "is": "ready"}}
+          ]
+        },
+        "pr": {"action": "open-pr", "rerun": ["fresh"], "hint": "pr", "next": [{"to": "review"}]},
+        "review": {
+          "agent": "review",
+          "hint": "write-review",
+          "next": [
+            {"to": "impl", "when": {"field": "verdict", "is": "changes-requested"}},
+            {"to": "ship", "when": {"field": "verdict", "is": "pass"}}
+          ]
+        },
+        "ship": {"action": "merge", "hint": "ship", "when": {"guard": "ship-ready"}}
+      }
+    },
+    "short": {
+      "start": "intent",
+      "end": "shipped",
+      "states": {
+        "intent": {
+          "agent": "intent",
+          "rerun": ["fresh", "answers"],
+          "hint": "write-intent — the unit has no intent.md",
+          "next": [{"to": "impl", "when": [{"field": "judgement", "is": "ready"}, {"guard": "dependency-merged"}]}]
+        },
+        "impl": {
+          "agent": "impl",
+          "rerun": ["answers"],
+          "hint": "write-impl — implementation starts",
+          "next": [{"to": "pr", "when": {"field": "judgement", "is": "ready"}}]
+        },
+        "pr": {"action": "open-pr", "rerun": ["fresh"], "hint": "pr", "next": [{"to": "review"}]},
+        "review": {
+          "agent": "review",
+          "hint": "write-review",
+          "next": [
+            {"to": "impl", "when": {"field": "verdict", "is": "changes-requested"}},
+            {"to": "ship", "when": {"field": "verdict", "is": "pass"}}
+          ]
+        },
+        "ship": {"action": "merge", "hint": "ship", "when": {"guard": "ship-ready"}}
+      }
+    }
+  }
+}

@@ -1,14 +1,15 @@
 """Every guard of the three machines (unit, run, pull request), as pure functions.
 
 Each transition is decided by exactly one guard, with a fixed id and a one-sentence English
-label; the lane config chooses a guard for each transition from `TRANSITIONS`, never switches
-one off. A guard reads structured input (rows of `cos.db`, a read of git or `gh`) and never
+label: `TRANSITIONS` names it for each machine transition, and a pack's process names the ones
+its transitions ask (`pack.PROCESS_GUARDS`). A guard reads structured input (rows of `cos.db`, a read of git or `gh`) and never
 opens a file an agent wrote. `REASONS` is the one definition of the reason codes: a guard
 that answers a code not in it is refused at the answer.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -234,6 +235,52 @@ def ship_ready(inputs: Mapping[str, Any]) -> Verdict:
     return _closed(*reasons) if reasons else OPEN
 
 
+_SOURCE = re.compile(r"([^\s:]+)(?::(\d+)-(\d+))?", re.ASCII)
+
+
+def _said(x: Any) -> bool:
+    return isinstance(x, str) and x.strip() != ""
+
+
+def _cited(expected: Any) -> bool:
+    """Whether `expected` says something and names one relative path outside `.cos`, with its
+    lines in order when it gives lines."""
+    if not isinstance(expected, dict) or not _said(expected.get("text")):
+        return False
+    m = _SOURCE.fullmatch(str(expected.get("source") or ""))
+    if not m:
+        return False
+    path, start, end = m[1], m[2], m[3]
+    if (
+        path.startswith("/")
+        or path == ".cos"
+        or path.startswith(".cos/")
+        or ".." in path.split("/")
+    ):
+        return False
+    return start is None or (int(start) >= 1 and int(end) >= int(start))
+
+
+def fast_lane_marks(inputs: Mapping[str, Any]) -> dict[str, bool]:
+    """`type`, the unit's; `fix`, the record's `{reproduction, expected, actual}`; `bypassed`,
+    whether a state the branch passes over is there or an output sends the unit back to one.
+    `a`-`d` say the fix entered the lane, `e` that it stays in it."""
+    given = inputs.get("fix")
+    fix: Mapping[str, Any] = given if isinstance(given, Mapping) else {}
+    return {
+        "a": inputs.get("type") == "fix",
+        "b": _said(fix.get("reproduction")),
+        "c": _cited(fix.get("expected")),
+        "d": _said(fix.get("actual")),
+        "e": not inputs.get("bypassed"),
+    }
+
+
+def fast_lane(inputs: Mapping[str, Any]) -> Verdict:
+    """A fix with its reproduction, a cited expected result and the actual one goes straight on."""
+    return OPEN if all(fast_lane_marks(inputs).values()) else _closed("not-in-lane")
+
+
 def run_submitted(inputs: Mapping[str, Any]) -> Verdict:
     """`submitted`: whether the `submit` handler accepted an object during the run."""
     return OPEN if inputs.get("submitted") else _closed("no-submission")
@@ -295,7 +342,7 @@ GUARDS: dict[str, Guard] = {
         ),
         Guard(
             "skip-decision",
-            "Spec or plan is skipped only on a person's decision.",
+            "A state is skipped only on a person's decision.",
             skip_decision,
         ),
         Guard(
@@ -312,6 +359,11 @@ GUARDS: dict[str, Guard] = {
             "ship-ready",
             "Ship opens only on green CI and a passing review of the head being merged, or of one it is a clean rebase of.",
             ship_ready,
+        ),
+        Guard(
+            "fast-lane",
+            "A fix that carries its reproduction, a cited expected result and the actual one skips the states between.",
+            fast_lane,
         ),
         Guard(
             "run-submitted",
@@ -346,29 +398,26 @@ GUARDS: dict[str, Guard] = {
     )
 }
 
-# Each machine's transitions and the guards the lane config may choose from; a config must name one for every transition.
-TRANSITIONS: dict[str, dict[str, tuple[str, ...]]] = {
+# Each machine's transitions and the one guard that decides each.
+TRANSITIONS: dict[str, dict[str, str]] = {
     "unit": {
-        "create": ("unit-created",),
-        "result": ("stage-result",),
-        "round": ("review-round",),
-        "claim": ("impl-claim",),
-        "incomplete": ("incomplete-round",),
-        "skip": ("skip-decision",),
-        "plan": ("spike-holds",),
-        "impl": ("dependency-merged",),
-        "ship": ("ship-ready",),
+        "create": "unit-created",
+        "result": "stage-result",
+        "round": "review-round",
+        "claim": "impl-claim",
+        "incomplete": "incomplete-round",
+        "skip": "skip-decision",
     },
     "run": {
-        "submitted": ("run-submitted",),
+        "submitted": "run-submitted",
     },
     "pr": {
-        "open": ("branch-named",),
-        "ci": ("ci-at-head",),
-        "merge-requested": ("ship-ready",),
-        "merged": ("merge-read",),
-        "refused": ("merge-refused",),
-        "closed": ("close-read",),
+        "open": "branch-named",
+        "ci": "ci-at-head",
+        "merge-requested": "ship-ready",
+        "merged": "merge-read",
+        "refused": "merge-refused",
+        "closed": "close-read",
     },
 }
 

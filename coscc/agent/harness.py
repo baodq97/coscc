@@ -1,4 +1,4 @@
-"""Where the rules this app runs live (`states.json`, the lanes, the agents' pack), the
+"""Where the rules this app runs live (the agents' pack and its processes), the
 environment the loop child gets, and what a runnable wheel must carry. The loop that decides on
 them is `coscc.loop`, code of the package itself; the agents and their skills are package data
 (`coscc/agent/pack.py`). Nothing here looks inside a workspace.
@@ -17,10 +17,6 @@ from coscc.agent import pack
 
 # The package root, `coscc/`.
 _HERE = Path(coscc.__file__).resolve().parent
-
-# The unit state set and its lanes, inside the package so a wheel carries them.
-STATES_PATH = _HERE / "units" / "states.json"
-LANES_PATH = _HERE / "units" / "lanes.json"
 
 
 def child_env() -> dict[str, str]:
@@ -78,7 +74,7 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     """Everything wrong with `wheel`, as sentences. Empty means it would run.
 
     Each entry names a wheel that installs cleanly and then fails differently: no studio
-    (no page), no agent rows or skills, no `states.json`, no build stamp with a 40-hex commit.
+    (no page), no agent rows or skills, no `process.json`, no build stamp with a 40-hex commit.
     The stamp is checked though committed: whether a file arrives by `git` or by a copy step is
     invisible to the installed copy. Rows and skills are counted, not listed by name.
     """
@@ -91,7 +87,6 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
 
     index = _posix("_studio", "index.html")
     pack_prefix = _posix(pack.BUILTIN.relative_to(_HERE)) + "/"
-    state_set = _posix(STATES_PATH.relative_to(_HERE))
 
     out = []
     if index not in names:
@@ -105,12 +100,9 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     manifest = pack_prefix + pack.MANIFEST.as_posix()
     if manifest not in names:
         out.append(f"no {manifest} — no agent would run")
-    if state_set not in names:
-        out.append(f"no {state_set} — no transition could be read or written")
-    # Without it no guard is chosen for any transition.
-    lanes = _posix(LANES_PATH.relative_to(_HERE))
-    if lanes not in names:
-        out.append(f"no {lanes} — no transition could be guarded")
+    processes = pack_prefix + pack.PROCESS_FILE
+    if processes not in names:
+        out.append(f"no {processes} — no unit could take a step")
     # Without it the board shows `commit unknown`.
     stamp = _posix(BUILD_STAMP)
     if stamp not in names:

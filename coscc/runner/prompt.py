@@ -16,22 +16,22 @@ from coscc.runner.review import finding_line
 from coscc.runner.reply import RunError
 
 
-def skill_for(stage: str) -> str:
-    """The rules for a stage: the text of each skill its row names (`pack.skill`, the owner's copy
-    first). None stops the step.
+def skill_for(key: str) -> str:
+    """The rules for a step: the text of each skill its agent's row `key` names (`pack.skill`, the
+    owner's copy first). None stops the step.
 
     A step run without its rules spends quota and records the same `included` as a full one,
     so absence is fatal. It refuses with `RunError`: the routes map this module's refusals with
     one `except RunError` into a 400 that names the problem; another exception type would surface
     as a 500.
     """
-    names = list((pack.row(stage) or {}).get("skills") or [])
+    names = list((pack.row(key) or {}).get("skills") or [])
     if not names:
-        raise RunError(f"no rules for the {stage} stage: its row names no skill")
+        raise RunError(f"no rules for the {key} stage: its row names no skill")
     try:
         return "\n\n".join(pack.skill(n) for n in names)
     except LookupError as e:
-        raise RunError(f"no rules for the {stage} stage: {e}") from e
+        raise RunError(f"no rules for the {key} stage: {e}") from e
 
 
 def _read(path: Path) -> str:
@@ -222,7 +222,9 @@ def _app_note_block(note: str) -> str:
 def _opening(stage: str, agent: dict[str, Any] | None) -> list[str]:
     """The rules of the stage, and above them who the session is."""
     # Outside any `try`: a missing rule set stops the step before any request.
-    blocks = [f"# The rules for this stage\n\n{skill_for(stage)}"]
+    # The row the process binds the state to, when the step was handed it (`pack.agent_for`).
+    key = str(agent.get("key") or stage) if agent is not None else stage
+    blocks = [f"# The rules for this stage\n\n{skill_for(key)}"]
     # Who the session is, before its rules; no row adds nothing.
     if agent is not None:
         blocks.insert(0, agents.identity_section(agent))

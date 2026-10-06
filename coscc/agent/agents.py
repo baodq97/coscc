@@ -43,9 +43,10 @@ def agent_for(key: str) -> dict[str, Any] | None:
 
 
 def shown(key: str) -> bool:
-    """Whether the Agents page lists `key` as an agent: a row a state or Gebo's integration opens."""
+    """Whether the Agents page lists `key` as an agent: a row a process state or Gebo's integration
+    opens."""
     trigger = (pack.row(key) or {}).get("trigger") or {}
-    return "state" in trigger or trigger.get("engine") == "integrate"
+    return bool(pack.states_of(key)) or trigger.get("engine") == "integrate"
 
 
 def table() -> dict[str, Any]:

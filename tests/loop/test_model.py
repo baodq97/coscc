@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from coscc.loop import BRANCH_TYPES, STAGE_NAMES
+from coscc.loop import BRANCH_TYPES, proc_of
 from coscc.loop.branch import (
     VERSION_SOURCE,
     is_prerelease,
@@ -34,6 +34,8 @@ from coscc.loop.run import ask
 from coscc.loop.model import review_from, review_rounds
 from coscc.loop import REVIEW_ROUNDS
 from tests.loop.conftest import finding_row, pr_row, python, round_row
+
+STAGE_NAMES = proc_of(None).names
 
 # --- the suite's glue -------------------------------------------------------------------
 
@@ -215,9 +217,9 @@ FULL = {"intent.md": art("accepted"), "spec.md": art("accepted"), "plan.md": art
 
 
 def test_implement_gate_needs_the_whole_chain_accepted():
-    assert check_gate(unit(FULL), "implement")["ok"] is True
-    assert check_gate(unit({**FULL, "plan.md": art("draft")}), "implement")["ok"] is False
-    assert check_gate(unit({**FULL, "intent.md": art("draft")}), "implement")["ok"] is False
+    assert check_gate(unit(FULL), "impl")["ok"] is True
+    assert check_gate(unit({**FULL, "plan.md": art("draft")}), "impl")["ok"] is False
+    assert check_gate(unit({**FULL, "intent.md": art("draft")}), "impl")["ok"] is False
 
 
 def test_an_unknown_stage_is_refused():
@@ -820,7 +822,6 @@ def test_a_review_md_with_no_rounds_cannot_ship():
 # --- 0024: the stage a run button offers ---------------------------------------------------
 
 HEAD2 = "e" * 40
-FULL_LANE = {"lane": "full", "enteredFast": False, "laneMissing": []}
 
 
 def asked(*rounds):
@@ -1203,7 +1204,7 @@ def test_the_plans_impl_label_opens_and_closes_no_gate_and_moves_no_next(tmp_pat
         said = "" if label is None else f" Impl: {label}."
         (d / "plan.md").write_text(f"# X\nStatus: accepted.{said}\n")
         rows = {"0001_same": known(dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"))}
-        gate = cli("gate", "0001_same", "implement", "--root", str(root), units=rows)
+        gate = cli("gate", "0001_same", "impl", "--root", str(root), units=rows)
         nxt = cli("next", "0001_same", "--root", str(root), units=rows)
         return gate.code, gate.out, json.loads(nxt.out)
 

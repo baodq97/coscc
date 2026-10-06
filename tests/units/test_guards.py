@@ -8,7 +8,8 @@ from pathlib import Path
 
 from coscc.runner.queue import Refused
 from coscc.runner.queue import Updating
-from coscc.units import guards, states
+from coscc.agent import pack
+from coscc.units import guards
 from coscc.units.guards import OPEN, BadVerdict, Verdict
 
 REPO = Path(__file__).resolve().parents[2]
@@ -27,10 +28,12 @@ def loop_lines() -> list[str]:
 class EveryGuardIsNamed(unittest.TestCase):
     def test_every_transition_can_be_decided_by_a_guard_that_exists(self):
         for machine, table in guards.TRANSITIONS.items():
-            for transition, allowed in table.items():
-                self.assertTrue(allowed, f"{machine}.{transition}")
-                for gid in allowed:
-                    self.assertIn(gid, guards.GUARDS, f"{machine}.{transition}")
+            for transition, gid in table.items():
+                self.assertIn(gid, guards.GUARDS, f"{machine}.{transition}")
+
+    def test_every_guard_a_process_may_ask_exists(self):
+        for gid in pack.PROCESS_GUARDS:
+            self.assertIn(gid, guards.GUARDS, gid)
 
 
 class AUnitOpensAcceptedOnlyFromABrief(unittest.TestCase):
@@ -43,10 +46,8 @@ class AUnitOpensAcceptedOnlyFromABrief(unittest.TestCase):
             self.assertFalse(verdict.open)
             self.assertEqual(verdict.reasons, ("no-brief",))
 
-    def test_the_lane_names_it_for_the_create_transition(self):
-        self.assertEqual(guards.TRANSITIONS["unit"]["create"], ("unit-created",))
-        lane = states.default_lanes().lane("full")
-        self.assertEqual(lane.guard_for("unit", "create"), "unit-created")
+    def test_the_table_names_it_for_the_create_transition(self):
+        self.assertEqual(guards.TRANSITIONS["unit"]["create"], "unit-created")
 
 
 class AReviewGoesBackToDraftOnlyOnItsIncompleteRound(unittest.TestCase):
@@ -57,9 +58,8 @@ class AReviewGoesBackToDraftOnlyOnItsIncompleteRound(unittest.TestCase):
             self.assertFalse(verdict.open)
             self.assertEqual(verdict.reasons, ("no-round",))
 
-    def test_the_lane_names_it_for_the_incomplete_transition(self):
-        lane = states.default_lanes().lane("full")
-        self.assertEqual(lane.guard_for("unit", "incomplete"), "incomplete-round")
+    def test_the_table_names_it_for_the_incomplete_transition(self):
+        self.assertEqual(guards.TRANSITIONS["unit"]["incomplete"], "incomplete-round")
 
 
 class TheReasonTableIsClosed(unittest.TestCase):
@@ -278,20 +278,24 @@ class TheGuards(unittest.TestCase):
         self.assertEqual(guards.close_read({"state": "OPEN"}).reasons, ("not-closed",))
 
 
-class ThePackagedLaneUsesEveryGuardAMachineNeeds(unittest.TestCase):
-    def test_lane_full_picks_a_guard_for_every_transition(self):
-        lane = states.default_lanes().lane("full")
-        for machine, table in guards.TRANSITIONS.items():
-            for transition in table:
-                self.assertIn(lane.guard_for(machine, transition), guards.GUARDS)
+class TheFullProcessRunsIdeaIntentImplAndReviewAlways(unittest.TestCase):
+    def test_every_way_from_the_start_to_the_end_passes_them(self):
+        # The four no branch may pass over: every path through `full` holds them.
+        full = pack.process("coscc-sdlc/full")
+        states_ = full["states"]
 
-    def test_lane_full_runs_idea_intent_impl_and_review_always(self):
-        # The four the lane may never pass over.
-        lane = states.default_lanes().lane("full")
-        always = {stage for stage, when in lane.path if when == "always"}
-        self.assertEqual(always, {"idea", "intent", "impl", "review"})
-        self.assertEqual(dict(lane.path)["spike"], "if-unmeasured")
-        self.assertEqual(lane.end, "shipped")
+        def paths(at, seen):
+            ways = [w["to"] for w in states_[at].get("next") or [] if w["to"] not in seen]
+            if not states_[at].get("next"):
+                yield [*seen, at]
+            for to in ways:
+                yield from paths(to, [*seen, at])
+
+        found = list(paths(full["start"], []))
+        self.assertTrue(found)
+        for path in found:
+            self.assertLessEqual({"idea", "intent", "impl", "review"}, set(path), path)
+        self.assertEqual(full["end"], "shipped")
 
 
 if __name__ == "__main__":

@@ -64,7 +64,7 @@ class Gate(tuple):
 
 
 def _lane(data: dict[str, Any]) -> str:
-    return "fast" if data.get("lane") == "fast" else "full"
+    return "fast" if "fast-lane" in (data.get("via") or ()) else "full"
 
 
 def _rebased(data: dict[str, Any]) -> dict[str, str] | None:
@@ -178,6 +178,8 @@ async def read(
             "name": u.get("name", ""),
             "number": u.get("number"),
             "slug": u.get("slug"),
+            # The process the unit walks, `<pack>/<name>`, as its row records it.
+            "process": str(u.get("process") or ""),
             "stages": _stage_rows(stages, u.get("artifacts") or {}),
             # Carried through rather than recomputed.
             "next": (u.get("next") or {}).get("action", ""),

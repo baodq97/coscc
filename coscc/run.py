@@ -74,12 +74,15 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def served():
-    """What uvicorn serves: the app behind the login guard, which sees every scope."""
+    """What uvicorn serves: the app behind the login guard, which sees every scope. A built-in
+    pack whose rows or processes cannot run stops it here, with every reason (`pack.PackError`)."""
+    from coscc.agent import pack
     from coscc.http.app import build
     from coscc.http.auth import Guard
     from coscc.config import from_env
     from coscc.store.db import Data
 
+    pack.processes()
     config = from_env()
     return Guard(build(config, starting=True), Data(config.data_dir))
 

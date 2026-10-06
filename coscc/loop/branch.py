@@ -15,6 +15,7 @@ from collections.abc import Callable
 
 from coscc.loop import (
     JS_SPACE,
+    proc_of,
     checkout,
     dig,
     js,
@@ -225,10 +226,11 @@ def cmd_unit_branch(unit_name, cos_dir, state, out, err):
     if not unit_name:
         err("usage: python -m coscc.loop unit-branch <NNNN_slug>")
         return 2
-    if not os.path.exists(_join(cos_dir, unit_name, "intent.md")):
+    known = entry_of(state, dig(state, "workspace"), unit_name)
+    opener = proc_of(nullish(dig(known, "process")))
+    if not os.path.exists(_join(cos_dir, unit_name, opener.file(opener.opener))):
         err(f"No such work unit: {unit_name}")
         return 2
-    known = entry_of(state, dig(state, "workspace"), unit_name)
     made = branch_for(unit_name, nullish(dig(known, "type"), None))
     if made.get("error"):
         err(made["error"])

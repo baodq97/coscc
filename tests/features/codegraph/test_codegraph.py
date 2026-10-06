@@ -121,7 +121,7 @@ class TheImplMapAsksForThePlanRecordsFiles(Setup):
             mock.patch.object(codegraph, "impl_map", lambda *a: asked.append(a[3]) or "map"),
         ):
             plan = {
-                "impl": "routine",
+                "variant": "routine",
                 "files": ["b.py", "a.py", "b.py"],
                 "steps": [],
                 "rests_on": [],

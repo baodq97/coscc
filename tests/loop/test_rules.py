@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from coscc.loop import STAGE_NAMES
+from coscc.loop import proc_of
 from coscc.loop.model import read_unit
 from coscc.loop.rules import gate_answer, next_answer
 from tests.loop.conftest import (
@@ -31,6 +31,8 @@ from tests.loop.conftest import (
     rerun_row,
     round_row,
 )
+
+STAGE_NAMES = proc_of(None).names
 
 KIND = {
     "idea.md": "Idea",
