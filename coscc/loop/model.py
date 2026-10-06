@@ -669,87 +669,13 @@ def review_from(rows, parsed):
     )
 
 
-def parse_needs_person(text):
-    lines = split_lines(text)
-    stop = _find(lines, lambda l: trim_end(l) == "## Answers")
-    own = section("\n".join(lines if stop == -1 else lines[:stop]), "Needs a person")
-    if own is None:
-        return []
-    claims = []
-    for line in own:
-        m = re.match(r"^- (F\d+):\s*(\S[^\n\r  ]*)$", line, A)
-        if m:
-            claims.append({"id": m[1], "reason": trim(m[2])})
-    return claims
-
-
 # --- the questions a spec could not answer, and what a spike measured -----------------
-
-
-def parse_unmeasured(text):
-    lines = nullish(section(text, "Concerns"), [])
-    ids = []
-    problems = []
-    for line in lines:
-        m = re.match(r"^(?:[-*]|\d+\.)\s+\[unmeasured\]([^\n\r  ]*)$", line, A)
-        if not m:
-            continue
-        found = re.match(r"\s(U\d+)\b", m[1], A)
-        id_ = found[1] if found else None
-        if not id_:
-            problems.append(f'spec.md: an [unmeasured] item carries no U<n>: "{trim(line)}"')
-        elif id_ in ids:
-            problems.append(f"spec.md: {id_} is marked [unmeasured] twice")
-        else:
-            ids.append(id_)
-    return {"ids": ids, "problems": problems}
 
 
 def _header_line(own):
     first = _find(own, lambda l: l.startswith("## "))
     head = own if first == -1 else own[:first]
     return next((l for l in head if re.search(r"\bStatus:", l, A)), None)
-
-
-def parse_spike(text):
-    lines = split_lines(text)
-    stop = _find(lines, lambda l: trim_end(l) == "## Answers")
-    own = lines if stop == -1 else lines[:stop]
-    header = _header_line(own)
-    round_ = re.search(r"\bRound:\s*(\d+)", header, A) if header is not None else None
-    items: dict[str, Any] = {}
-    at: Any = None
-    fence = None
-    for line in own:
-        if fence is None and line.startswith("## "):
-            head = re.match(r"^## (U\d+)\s*$", line, A)
-            if head:
-                item: dict[str, Any] = {"verdict": None, "hasBlock": False, "_body": False}
-                at = items[head[1]] = item
-            else:
-                at = None
-            continue
-        if not at:
-            continue
-        if fence is not None:
-            if trim(line).startswith(fence):
-                if at["_body"]:
-                    at["hasBlock"] = True
-                fence = None
-            elif trim(line) != "":
-                at["_body"] = True
-            continue
-        opened = re.match(r"(`{3,}|~{3,})", trim(line))
-        if opened:
-            fence = opened[1]
-            at["_body"] = False
-            continue
-        v = re.match(r"^Verdict:\s*(holds|fails)\.?\s*$", line, A | re.I)
-        if v:
-            at["verdict"] = v[1].lower()
-    for item in items.values():
-        del item["_body"]
-    return {"round": int(round_[1]) if round_ else None, "items": items}
 
 
 def parse_ship(text):
@@ -1063,7 +989,7 @@ def missing(u, f):
 
 
 def unmeasured_of(u):
-    return nullish(dig(u, "artifacts", "spec.md", "unmeasured"), {"ids": [], "problems": []})
+    return nullish(dig(u, "artifacts", "spec.md", "unmeasured"), {"ids": []})
 
 
 LANE_FULL = re.compile(r"\bLane:\s*full\b", A)
@@ -1154,17 +1080,10 @@ def spike_findings(unit):
         item = dig(spike, "items", id_)
         if not item:
             missing_ids.append(id_)
-            reasons.append(f"{id_}: spike.md has no ## {id_}")
+            reasons.append(f"{id_}: the spike record does not measure {id_}")
         elif dig(item, "verdict") is None:
             missing_ids.append(id_)
-            reasons.append(
-                f"{id_}: spike.md ## {id_} has no readable Verdict: holds. or Verdict: fails."
-            )
-        elif not item.get("hasBlock"):
-            missing_ids.append(id_)
-            reasons.append(
-                f"{id_}: spike.md ## {id_} carries no fenced block with the command and what it printed"
-            )
+            reasons.append(f"{id_}: the spike record gives no verdict for {id_}")
         elif item["verdict"] == "fails":
             fails.append(id_)
             reasons.append(
@@ -1179,7 +1098,7 @@ def spike_findings(unit):
 
 
 def spike_needs(unit):
-    need = list(unmeasured_of(unit)["problems"])
+    need = []
     if not required(unit, SPIKE):
         return need
     status = status_of(unit, "spike.md")
@@ -1296,11 +1215,10 @@ def person_findings(unit):
 
     if not all(closed(f) for f in last["findings"]):
         return None
-    claims = needs_person_claims(unit)
     return [
         {
             "id": f["id"],
-            "reason": next((c["reason"] for c in claims if c["id"] == f["id"]), None),
+            "reason": f["text"],
             "answered": f["id"] in answered,
         }
         for f in last["findings"]
@@ -1420,40 +1338,22 @@ def _artifact(unit, known, file, text):
         if more["granted"] > 0:
             a["roundsGranted"] = more["granted"]
         unit["problems"].extend(f"review.md: {p}" for p in more["problems"])
-    if file == "impl.md":
-        said = parse_needs_person(text)
-        claimed = dig(known, "artifacts", file, "result", "needs_person")
-        a["needsPerson"] = (
-            [
-                {"id": i, "reason": next((c["reason"] for c in said if c["id"] == i), None)}
-                for i in claimed
-            ]
-            if isinstance(claimed, list)
-            else said
-        )
     result = nullish(dig(known, "artifacts", file, "result"))
-    if file == "spec.md" and truthy(result):
+    if file == "impl.md":
+        # Only the ids: a claim's sentence quotes its finding (`person_findings`).
+        a["needsPerson"] = [{"id": i} for i in nullish(dig(result, "needs_person"), [])]
+    if file == "spec.md":
         ids = list(nullish(dig(result, "unmeasured"), []))
         if ids:
-            a["unmeasured"] = {"ids": ids, "problems": []}
-    elif file == "spec.md":
-        unmeasured = parse_unmeasured(text)
-        if unmeasured["ids"] or unmeasured["problems"]:
-            a["unmeasured"] = unmeasured
-            unit["problems"].extend(unmeasured["problems"])
+            a["unmeasured"] = {"ids": ids}
     if file == "spike.md":
-        parsed = parse_spike(text)
-        a["spike"] = (
-            {
-                "round": parsed["round"],
-                "items": {
-                    js(dig(v, "id")): {"verdict": dig(v, "verdict"), "hasBlock": True}
-                    for v in nullish(dig(result, "verdicts"), [])
-                },
-            }
-            if truthy(result)
-            else parsed
-        )
+        a["spike"] = {
+            "round": nullish(dig(known, "artifacts", file, "round")),
+            "items": {
+                js(dig(v, "id")): {"verdict": dig(v, "verdict")}
+                for v in nullish(dig(result, "verdicts"), [])
+            },
+        }
     if file == "ship.md":
         ship = parse_ship(text)
         if ship["round"] is not None or ship["refused"] is not None:

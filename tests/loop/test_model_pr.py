@@ -88,10 +88,8 @@ def test_a_needs_person_round_beside_an_open_low_is_still_a_wait_for_a_person(tm
     u = tree_after_round_two(tmp_path, review)
     n = next_action(u)
     assert n["waiting"] == ["F2", "F3"]
-    assert re.search(
-        r"^needs a person — F2: the grant holds no budget for --paid; F3: the grant holds no gh",
-        n["action"],
-    )
+    # Each claim with what its finding says in the last round: `b` and `c`.
+    assert re.search(r"^needs a person — F2: b; F3: c", n["action"])
     assert [p["id"] for p in u["personFindings"]] == ["F2", "F3"]
     assert [f["id"] for f in u["nonBlocking"]] == ["F4"]
 

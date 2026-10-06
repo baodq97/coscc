@@ -39,11 +39,17 @@ AWAITING_PERSON = {
     "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
     "spec.md": "Status: accepted.\n",
     "plan.md": "Status: accepted.\n",
-    "impl.md": "# Impl\nStatus: accepted.\n\n## Needs a person\n\n- F2: no budget for --paid\n- F3: no gh\n",
+    "impl.md": "# Impl\nStatus: accepted.\n",
     "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
     "review.md": "# R\nStatus: changes-requested.\n"
-    + _ROUND.format(n=1, v="changes-requested", f="- F2 [open] b\n- F3 [open] c")
-    + _ROUND.format(n=2, v="needs-person", f="- F2 [needs-person] b\n- F3 [needs-person] c")
+    + _ROUND.format(
+        n=1, v="changes-requested", f="- F2 [open] no budget for --paid\n- F3 [open] no gh"
+    )
+    + _ROUND.format(
+        n=2,
+        v="needs-person",
+        f="- F2 [needs-person] no budget for --paid\n- F3 [needs-person] no gh",
+    )
     + "\n## Answers\n\n### F2\nAnswered by: P. Date: 2026-09-24. Via: product.\n\nran it\n",
 }
 

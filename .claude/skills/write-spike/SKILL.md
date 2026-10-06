@@ -39,7 +39,7 @@ Keeps what you measured if the step runs out of turns or budget.
 
 ````markdown
 # Spike: <title>
-Spec: spec.md. Author: <name>. Round: <N>. Status: accepted.
+Spec: spec.md. Author: <name>. Status: accepted.
 
 ## U1
 
@@ -53,15 +53,11 @@ $ <the command, exactly as run>
 ```
 ````
 
-## Lines the loop reads
+## What the record carries
 
-- One `## U<n>` per id the spec carries now, headed exactly so; `verdicts` of `submit` holds
-  one `{id, verdict}` for each.
-- Each has a line `Verdict: holds.` or `Verdict: fails.` and at least one fenced block with a
-  command that was run and what it printed. No block means missing. `holds`: the assumption
-  stood. `fails`: it did not, or could not be measured (say why).
-- `Round:` is 1, or the previous spike's round plus one when it had a `fails`; it stops the
-  loop for a person at a second failing round.
+- `verdicts` of `submit` holds one `{id, verdict}` for each `U<n>` the spec carries now; the loop
+  reads them, never this file. `holds`: the assumption stood. `fails`: it did not, or could not be
+  measured (say why). Each `## U<n>` keeps the command that was run and what it printed.
 - Every figure names the command that printed it; never answer a question the spec did not ask.
 
 ## Done when
