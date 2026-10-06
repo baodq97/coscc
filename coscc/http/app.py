@@ -108,7 +108,6 @@ class Core:
             ci_red=self.models.ci_red,
             findings_added=self.models.findings_added,
             worktree=self.answers.worktree,
-            append_to_answers=self.answers.append_to_answers,
             ingest=self.answers.ingest,
             post_new_rounds=self.answers.post_new_rounds,
             sync_pr=self.answers.sync_pr,

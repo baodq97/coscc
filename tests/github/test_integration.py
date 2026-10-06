@@ -65,15 +65,24 @@ def a_unit_at_pr(core, cwd, unit, directory):
     """The unit's files as prose, and its state, intent to pr accepted, as rows."""
     for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
         (directory / name).write_text("# X: fixture\nAuthor: t.\n", encoding="utf-8")
-    (directory / "pr.md").write_text(
-        f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}.\n", encoding="utf-8"
-    )
+    (directory / "pr.md").write_text("# PR: fixture\n", encoding="utf-8")
     seed(
         core.ws.unit_meta(),
         core.ws.key(cwd),
         unit,
-        statuses={f"{n}.md": "accepted" for n in ("intent", "spec", "plan", "impl", "pr")},
+        statuses={f"{n}.md": "accepted" for n in ("intent", "spec", "plan", "impl")},
         type="feat",
+    )
+    # The pull request is the PR machine's `open` row.
+    core.ws.unit_meta().history.record(
+        core.ws.key(cwd),
+        unit,
+        "pr.md",
+        "accepted",
+        source="prmachine:open",
+        guard="branch-named",
+        authority="code",
+        inputs={"number": PR, "url": f"https://github.com/o/r/pull/{PR}", "head": "a" * 40},
     )
 
 
@@ -785,10 +794,16 @@ class AStaleOriginMain(unittest.TestCase):
         before and after, the calls, and the stops the pass left."""
         head = self.remote_head()
         (self.core.ws.unit_dir(self.cwd, self.unit) / "review.md").write_text(
-            f"# Review: fixture\nAuthor: t.\n\n## Round 1\n\nReviewed: {head}. Verdict: pass.\n\n"
-            "### Findings\n\n### What was not reviewed\n\nnothing\n",
-            encoding="utf-8",
+            "# Review: fixture\nAuthor: t.\n", encoding="utf-8"
         )
+        meta, key = self.core.ws.unit_meta(), self.core.ws.key(self.cwd)
+        with meta.data.write() as conn:
+            meta.record_round(
+                conn,
+                key,
+                self.unit,
+                {"n": 1, "run": "r", "head": head, "object": {"verdict": "pass"}},
+            )
         seed(
             self.core.ws.unit_meta(),
             self.core.ws.key(self.cwd),

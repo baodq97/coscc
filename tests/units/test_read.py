@@ -405,6 +405,11 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
             type="feat",
         )
         (directory / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
+        self.core.ws.unit_meta().history.record(
+            self.key, self.unit, "pr.md", "accepted", source="prmachine:opened",
+            guard="branch-named", authority="code",
+            inputs={"number": PR, "url": f"https://github.com/o/r/pull/{PR}", "head": "a" * 40},
+        )  # fmt: skip
         self.hang = False
         self.calls: list[list[str]] = []
         patch = mock.patch.object(integrate, "_gh", self._gh)
@@ -512,6 +517,53 @@ class TheUnitPageCarriesItsOutputs(unittest.TestCase):
         self.assertEqual(got["outputs"], outputs)
 
 
+class TheUnitPageCarriesItsDecisions(unittest.TestCase):
+    UNIT = {
+        "name": "0001_x",
+        "number": 1,
+        "slug": "x",
+        "state": {"state": "ready", "label": "Ready", "color": "gray"},
+    }
+
+    def test_each_decision_reads_as_a_sentence_oldest_first(self):
+        from coscc.units.read import detail
+
+        rows = [
+            {
+                "kind": "rerun",
+                "fields": {"stage": "spec", "stale": {}},
+                "by": "owner",
+                "date": "d1",
+            },
+            {"kind": "more-rounds", "fields": {"rounds": 1}, "by": "owner", "date": "d2"},
+            {"kind": "outcome", "fields": {"result": "met"}, "by": "Leif", "date": "d3"},
+        ]
+        got = detail(self.UNIT, [], [], rows)
+        self.assertEqual(
+            got["decisions"],
+            [
+                {"kind": "rerun", "by": "owner", "date": "d1", "text": "asked spec to run again"},
+                {
+                    "kind": "more-rounds",
+                    "by": "owner",
+                    "date": "d2",
+                    "text": "allowed one more review round",
+                },
+                {
+                    "kind": "outcome",
+                    "by": "Leif",
+                    "date": "d3",
+                    "text": "recorded the outcome: met",
+                },
+            ],
+        )
+
+    def test_a_unit_with_none_has_an_empty_list(self):
+        from coscc.units.read import detail
+
+        self.assertEqual(detail(self.UNIT, [], [])["decisions"], [])
+
+
 class AUnitPageShowsItsRuns(unittest.TestCase):
     def test_a_run_whose_cost_was_never_reported_says_unknown_not_zero(self):
         from coscc.units.read import detail
@@ -527,8 +579,8 @@ class AUnitPageShowsItsRuns(unittest.TestCase):
                     "artifact": "spec.md",
                     "n": 1,
                     "text": "This one",
-                    "by": "Leif",
-                    "authority": "agent",
+                    "by": "delegated",
+                    "name": "Leif",
                 }
             ],
             "worktree": {"branch": "fix/x", "path": "/w/x", "prepare": None},
@@ -548,5 +600,7 @@ class AUnitPageShowsItsRuns(unittest.TestCase):
         got = detail(unit, timeline, [])
         self.assertEqual((got["runs"][0]["cost_usd"], got["runs"][0]["turns"]), (None, 3))
         self.assertEqual(got["runs"][1]["ended"], "")
-        self.assertEqual(got["answers"][0]["authority"], "agent")
+        self.assertEqual(
+            (got["answers"][0]["by"], got["answers"][0]["name"]), ("delegated", "Leif")
+        )
         self.assertEqual(got["worktree"], {"branch": "fix/x", "path": "/w/x"})

@@ -56,6 +56,7 @@ REASONS = (
     "no-submission",
     "bad-branch",
     "not-merged",
+    "no-refusal",
     "not-closed",
     "no-brief",
     "no-round",
@@ -251,6 +252,11 @@ def merge_read(inputs: Mapping[str, Any]) -> Verdict:
     return OPEN if str(inputs.get("merge_commit") or "") else _closed("not-merged")
 
 
+def merge_refused(inputs: Mapping[str, Any]) -> Verdict:
+    """`refused`, what `gh pr merge` or the read after it said when GitHub made no merge."""
+    return OPEN if str(inputs.get("refused") or "") else _closed("no-refusal")
+
+
 def close_read(inputs: Mapping[str, Any]) -> Verdict:
     """`state`, as `gh pr view` gave it."""
     return OPEN if inputs.get("state") == "CLOSED" else _closed("not-closed")
@@ -325,6 +331,11 @@ GUARDS: dict[str, Guard] = {
             merge_read,
         ),
         Guard(
+            "merge-refused",
+            "A merge GitHub did not make is recorded only with what refused it.",
+            merge_refused,
+        ),
+        Guard(
             "close-read",
             "A pull request is closed only on a read that says it is closed.",
             close_read,
@@ -353,6 +364,7 @@ TRANSITIONS: dict[str, dict[str, tuple[str, ...]]] = {
         "ci": ("ci-at-head",),
         "merge-requested": ("ship-ready",),
         "merged": ("merge-read",),
+        "refused": ("merge-refused",),
         "closed": ("close-read",),
     },
 }

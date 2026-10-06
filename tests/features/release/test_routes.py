@@ -187,15 +187,28 @@ class Fixture:
             made = await service.answers.create_unit(self.cwd, slug, "fixture")
             directory = Path(made["path"])
             (directory / "intent.md").write_text(f"# Intent: {slug}\n", encoding="utf-8")
-            (directory / "pr.md").write_text(
-                f"# PR: {slug}\nPR: https://github.com/o/r/pull/{pr}.\n", encoding="utf-8"
-            )
+            (directory / "pr.md").write_text(f"# PR: {slug}\n", encoding="utf-8")
             seed_unit(
                 service,
                 self.cwd,
                 made["unit"],
-                statuses={"intent.md": "accepted", "pr.md": "accepted"},
+                statuses={"intent.md": "accepted"},
                 type=kind,
+            )
+            # The pull request is the PR machine's `open` row.
+            service.ws.unit_meta().history.record(
+                service.ws.key(self.cwd),
+                made["unit"],
+                "pr.md",
+                "accepted",
+                source="prmachine:open",
+                guard="branch-named",
+                authority="code",
+                inputs={
+                    "number": pr,
+                    "url": f"https://github.com/o/r/pull/{pr}",
+                    "head": "a" * 40,
+                },
             )
 
     def gh_state(self) -> dict:

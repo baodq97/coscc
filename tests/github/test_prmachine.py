@@ -194,6 +194,50 @@ class PrIsMechanical(Fixture):
         self.assertEqual((self.pushed, gh.calls, self.rows("pr.md")), ([], [], []))
 
 
+class APrRunAgainRecordsItsOpenMove(Fixture):
+    def test_a_run_again_on_an_open_pull_request_records_open_again(self):
+        gh = FakeGh()
+        m = self.opened(gh)
+        out = run(m.open_pr(self.unit(), again=True))
+        self.assertEqual((out.result, out.number), ("already", 7))
+        self.assertEqual(gh.count("pr", "create"), 1)
+        rows = self.rows("pr.md")
+        self.assertEqual([r["guard"] for r in rows], ["branch-named", "branch-named"])
+        first, second = (json.loads(r["inputs"]) for r in rows)
+        for key in ("number", "url", "head"):
+            self.assertEqual(first[key], second[key])
+        self.assertGreater(rows[1]["id"], rows[0]["id"])
+        self.assertEqual(prmachine.state(self.history, WS, NAME)["state"], "open")
+
+
+class ARefusedMergeIsATransition(Fixture):
+    def test_a_refused_merge_is_a_transition_before_the_file(self):
+        gh = FakeGh(merge_code=1)
+        m = self.opened(gh)
+        self.a_round()
+        seen: list[bool] = []
+        real = m._apply
+
+        def apply(u, transition, *a, **kw):
+            if transition == "refused":
+                seen.append(
+                    (self.directory / "ship.md").read_text(encoding="utf-8").count("Refused")
+                )
+            return real(u, transition, *a, **kw)
+
+        m._apply = apply
+        run(m.ship(self.unit()))
+        self.assertEqual(seen, [0], "the row is written before ship.md says what was refused")
+        rows = self.rows("ship.md")
+        self.assertEqual((rows[-1]["to_state"], rows[-1]["guard"]), ("draft", "merge-refused"))
+        inputs = json.loads(rows[-1]["inputs"])
+        self.assertEqual(
+            (inputs["number"], inputs["head"], inputs["round"], inputs["refused"]),
+            (7, HEAD, 1, "Pull request is not mergeable"),
+        )
+        self.assertEqual(prmachine.state(self.history, WS, NAME)["state"], "merge-requested")
+
+
 class ShipIsMechanical(Fixture):
     def test_a_pass_on_green_ci_merges_pinned_to_the_head_it_read(self):
         gh = FakeGh()
@@ -211,9 +255,7 @@ class ShipIsMechanical(Fixture):
             [("draft", "ship-ready"), ("accepted", "merge-read")],
         )
         self.assertEqual(prmachine.state(self.history, WS, NAME)["state"], "merged")
-        self.assertIn(
-            "Status: accepted. Round: 1", (self.directory / "ship.md").read_text(encoding="utf-8")
-        )
+        self.assertIn("Round: 1.", (self.directory / "ship.md").read_text(encoding="utf-8"))
         [(name, payload)] = self.shipped
         self.assertEqual(
             (name, payload["workspace"], payload["unit"], payload["sha"]),
@@ -305,7 +347,7 @@ class ShipIsMechanical(Fixture):
         out = run(m.ship(self.unit()))
         self.assertEqual(out.result, "failed")
         text = (self.directory / "ship.md").read_text(encoding="utf-8")
-        self.assertIn("Status: draft. Round: 1", text)
+        self.assertIn("Round: 1.", text)
         self.assertIn("Refused: Pull request is not mergeable", text)
         self.assertEqual(prmachine.state(self.history, WS, NAME)["state"], "merge-requested")
 
@@ -412,7 +454,7 @@ class TheReaderRecordsWhatChanged(Fixture):
         self.assertEqual(self.read(m).moved, [(NAME, "merged")])
         self.assertEqual(prmachine.state(self.history, WS, NAME)["state"], "merged")
         self.assertEqual(gh.count("pr", "merge"), 0)
-        self.assertIn("Status: accepted", (self.directory / "ship.md").read_text(encoding="utf-8"))
+        self.assertTrue((self.directory / "ship.md").exists())
         self.assertEqual(prmachine.open_prs(self.history, WS), [])
         calls = len(gh.calls)
         self.assertEqual(

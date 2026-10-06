@@ -9,7 +9,7 @@ import logging
 import os
 import shutil
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, NotRequired, TypedDict
 from collections.abc import Awaitable, Callable, Coroutine
@@ -275,7 +275,6 @@ class Steps:
         ci_red: Callable[[str, str, str], Awaitable[bool | None]],
         findings_added: Callable[[str, str, set[Any]], Awaitable[dict[str, Any]]],
         worktree: Callable[..., Awaitable[dict[str, Any] | None]],
-        append_to_answers: Callable[[Path, str, str], Awaitable[Any]],
         ingest: Callable[[str, str, dict[str, Any], str], Awaitable[dict[str, Any]]],
         post_new_rounds: Callable[[str, str, set[Any]], Awaitable[Any]],
         sync_pr: Callable[..., Awaitable[Any]],
@@ -294,7 +293,6 @@ class Steps:
         self.ci_red = ci_red
         self.findings_added = findings_added
         self.worktree = worktree
-        self.append_to_answers = append_to_answers
         self.ingest = ingest
         self.post_new_rounds = post_new_rounds
         self.sync_pr = sync_pr
@@ -503,8 +501,8 @@ class Steps:
         autopilot's is refused.
 
         `rerun` runs an accepted stage again, with a person's `note`. Whether the
-        stage may, and the `### Rerun` block appended to `intent.md` before the session
-        starts, are `coscc.loop rerun`'s. Refused for the autopilot and for a note over
+        stage may, and the records it makes stale (a `rerun` row written before the session
+        starts), are `coscc.loop rerun`'s. Refused for the autopilot and for a note over
         `RERUN_NOTE_MAX`; an empty note is not refused.
         """
         try:
@@ -681,7 +679,7 @@ class Steps:
                 )
             # Refuse, or find what the step runs on: nothing is spent until the gate is open.
             data, found, row = await self._find_stage(cwd, unit, stage)
-            rerun_block = await self._ask_rerun(cwd, unit, stage, started_by, note) if rerun else ""
+            stale = await self._ask_rerun(cwd, unit, stage, started_by, note) if rerun else {}
             tree, work = await self._open_tree(cwd, unit, stage)
             base = await self._tree_base(cwd, unit, tree)
             answer = await self._ask_gate(cwd, unit, stage, work)
@@ -708,7 +706,7 @@ class Steps:
                 self.holds.attempts.move(running.attempt, "running")
                 self.holds.attempts.move(running.attempt, "ending")
                 done = await self._run_mechanical(
-                    cwd, key, unit, stage, tree, started_by, rerun, rerun_block, answer
+                    cwd, key, unit, stage, tree, started_by, rerun, stale, answer
                 )
                 self.tell(running, ("done", done))
                 handed = True
@@ -744,7 +742,7 @@ class Steps:
                     ("input-missing",),
                 )
             if rerun:
-                await self.append_to_answers(directory / "intent.md", "\n" + rerun_block, "a rerun")
+                self._record_rerun(cwd, unit, stage, stale)
             # Emptied before the step, whatever an earlier one left, and removed
             # after it however it ends -- in `drive`, so a client that drops the stream does
             # not decide when.
@@ -836,10 +834,12 @@ class Steps:
             )
         return data, found, row
 
-    async def _ask_rerun(self, cwd: str, unit: str, stage: str, started_by: str, note: str) -> str:
-        """The `### Rerun` block for running `stage` again, asked before a worktree is opened or
-        the gate asked. Whether `stage` may run again, and the block that says so, are
-        the loop's; its refusal is passed on."""
+    async def _ask_rerun(
+        self, cwd: str, unit: str, stage: str, started_by: str, note: str
+    ) -> dict[str, int]:
+        """`{file: record}` running `stage` again makes stale, asked before a worktree is opened
+        or the gate asked. Whether `stage` may run again, and what it makes stale, are the
+        loop's; its refusal is passed on."""
         if started_by != "person":
             raise Refused(
                 "a stage is run again only by a person, from the board, never by the autopilot",
@@ -857,7 +857,20 @@ class Steps:
             raise Refused(str(e), ("unavailable",)) from e
         if "error" in asked:
             raise Invalid(str(asked["error"]))
-        return str(asked.get("block") or "")
+        return dict(asked.get("stale") or {})
+
+    def _record_rerun(self, cwd: str, unit: str, stage: str, stale: dict[str, int]) -> None:
+        """The person's rerun, one `rerun` row, written where the step starts: the loop reads
+        each artifact it names as stale while it holds the same record."""
+        self.ws.unit_meta().add_decision(
+            self.ws.key(cwd),
+            unit,
+            "rerun",
+            {"stage": stage, "stale": stale},
+            OWNER,
+            date.today().isoformat(),
+            "product",
+        )
 
     async def _open_tree(
         self, cwd: str, unit: str, stage: str
@@ -949,16 +962,14 @@ class Steps:
         tree: dict[str, Any] | None,
         started_by: str,
         rerun: bool,
-        rerun_block: str,
+        stale: dict[str, int],
         answer: board_reader.Gate,
     ) -> dict[str, Any]:
         """One `pr` or `ship` through the PR machine, and the `done` item it ends with.
-        A `pr` run again has its block appended as any rerun, and the note reaches
-        no prompt: the app writes `pr.md` again from the unit's metadata."""
+        A `pr` run again records its rerun as any other, and the note reaches no prompt: the
+        PR machine records `open` again and writes `pr.md` from the unit's metadata."""
         if rerun:
-            await self.append_to_answers(
-                self.ws.unit_dir(cwd, unit) / "intent.md", "\n" + rerun_block, "a rerun"
-            )
+            self._record_rerun(cwd, unit, stage, stale)
         return await self.mechanical(
             cwd,
             key,
@@ -1104,8 +1115,8 @@ class Steps:
         """The keyword arguments the database and the unit's idea add to the prompt."""
         # The answers and holds the prompt renders, from the database.
         link_kw: dict[str, Any] = {"meta": self.ws.meta_of(cwd, unit)}
-        # The snapshot a step that runs the loop itself hands `--state` (the `pr` step's
-        # `pr-text`, the `ship` step's gate), which refuse to decide without one. Written as the
+        # The snapshot a step that runs the loop itself hands `--state` (the `ship` step's
+        # gate), which refuses to decide without one. Written as the
         # step begins, under the data root beside `spikes/`, and replaced by the next step of
         # the unit. Left out when it could not be written: the step still runs.
         path = Data(self.config.data_dir).root / "state" / units.slot(cwd) / f"{unit}.json"

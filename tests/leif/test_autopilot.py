@@ -102,12 +102,12 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         return made["unit"]
 
     def rows(self, unit: str) -> list[tuple]:
-        """The answers `cos.db` holds for `unit`, `(artifact, ref, answered_by, via, text)`."""
+        """The answers `cos.db` holds for `unit`, `(artifact, ref, name, via, text)`."""
         with self.core.ws.unit_meta().data.connect() as conn:
             return [
                 tuple(r)
                 for r in conn.execute(
-                    "SELECT artifact, ref, answered_by, via, text FROM unit_answers WHERE unit = ? ORDER BY id",
+                    "SELECT artifact, ref, name, via, text FROM unit_answers WHERE unit = ? ORDER BY id",
                     (unit,),
                 )
             ]
@@ -263,9 +263,9 @@ class OnTheRealLoop(_Base):
 
     async def test_each_block_writes_an_answer_record_and_only_the_last_completes(self):
         unit = await self.unit("asked", "draft", ("Một?", "Hai?"))
-        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "person")
         self.assertEqual([r["completes"] for r in self.answers()], [False])
-        await self.core.answers.answer(self.ws, unit, "intent.md", 2, "hai", "")
+        await self.core.answers.answer(self.ws, unit, "intent.md", 2, "hai", "person")
         first, last = self.answers()
         self.assertEqual(
             {
@@ -309,7 +309,7 @@ class OnTheRealLoop(_Base):
         [stop] = (await self.core.board(self.ws))["autopilot"]["stops"]
         self.assertEqual(stop["kind"], "a")
         # The loop's next poll is 300 s away: only the pass the answer wakes can start it.
-        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "person")
         await self.until(lambda: self.starts(), "the rerun's start")
         await self.settled()
         self.assertEqual(
@@ -339,7 +339,7 @@ class OnTheRealLoop(_Base):
         self.listed(unit)
         self.core.autopilot.set_setting(self.ws, "autopilot", True)
         await self.settled()
-        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "person")
         await self.until(lambda: self.starts(), "the rerun's start")
         await self.settled()
         self.assertEqual((await self.core.steps.next_step(self.ws, unit))["rerun"], "intent")
@@ -379,7 +379,9 @@ class OnTheRealLoop(_Base):
         d = self.core.ws.unit_dir(self.ws, unit)
         before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
         (d / "impl.md").write_text(before, encoding="utf-8")
-        await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "Leif")
+        await self.core.answers.answer(
+            self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "delegated", "Leif"
+        )
         # A row, and not one byte of `impl.md`.
         self.assertEqual((d / "impl.md").read_text(encoding="utf-8"), before)
         self.assertEqual(self.rows(unit), [("impl.md", "1", "Leif", "product", "Đã chạy, ra 0.")])
@@ -391,6 +393,7 @@ class OnTheRealLoop(_Base):
         self.assertEqual(
             (record["stage"], record["artifact"], record["completes"]), ("impl", "impl.md", True)
         )
+        self.assertEqual(record["by"], "delegated")
 
     async def impl_asks(self, slug: str) -> tuple[str, Path, str]:
         unit = await self.unit(
@@ -412,13 +415,13 @@ class OnTheRealLoop(_Base):
         with self.assertRaisesRegex(
             Invalid, r"^impl\.md cannot be answered while the impl step that writes it is running"
         ):
-            await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
+            await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "person")
         self.assertEqual((d / "impl.md").read_text(encoding="utf-8"), before)
         self.assertEqual(self.answers(), [])
         # Another artifact of the same unit is not the step's to write.
-        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "person")
         self.core.attempts.move(row["id"], "ended", "done")
-        await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
+        await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "person")
         self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md", "impl.md"])
 
     async def test_a_prose_step_does_not_refuse_an_answer_to_its_artifact(self):
@@ -427,7 +430,7 @@ class OnTheRealLoop(_Base):
         unit, d, before = await self.impl_asks("intent-busy")
         row = self.core.attempts.open("step", self.key, unit, "intent", state="running")
         try:
-            await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
+            await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "person")
         finally:
             self.core.attempts.move(row["id"], "ended", "done")
         self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md"])
@@ -439,7 +442,9 @@ class _Intents:
     def __init__(self, asks: str = "", questions: tuple = ()):
         self.asks = asks
         # The questions the object hands back, which the app reads; `asks` is prose.
-        self.questions = [{"n": n, "text": t} for n, t in questions]
+        self.questions = [
+            {"n": n, "text": t, "recommendation": "Take the first."} for n, t in questions
+        ]
 
     async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
         yield (

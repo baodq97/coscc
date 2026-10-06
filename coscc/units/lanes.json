@@ -34,6 +34,7 @@
           "ci": "ci-at-head",
           "merge-requested": "ship-ready",
           "merged": "merge-read",
+          "refused": "merge-refused",
           "closed": "close-read"
         }
       }

@@ -1,4 +1,4 @@
-"""The pure half of allowing one more review round: the block and the refusals."""
+"""The pure half of allowing one more review round: the refusals."""
 
 from __future__ import annotations
 
@@ -8,16 +8,6 @@ from coscc.units import more_rounds
 from coscc.runner.queue import describe
 
 STUCK = {"name": "0001_q", "more_rounds": True}
-
-
-class TheBlock(unittest.TestCase):
-    def test_the_block_is_the_bytes_the_loop_reads(self):
-        # The same bytes `tests/loop/test_model_rebase.py` `MORE` holds, so the two sides cannot
-        # drift apart.
-        self.assertEqual(
-            more_rounds.block("owner", "2026-09-27"),
-            "\n### More rounds\nDecided by: owner. Date: 2026-09-27. Via: product.\nRounds: 1\n",
-        )
 
 
 class TheRefusals(unittest.TestCase):
@@ -34,7 +24,7 @@ class TheRefusals(unittest.TestCase):
         said = more_rounds.refusal({"name": "0001_q"}, "#x\ny", busy)
         self.assertIn("0001_q has not used all its review rounds", said)
         self.assertEqual(more_rounds.refusal(STUCK, "a\nb", busy), "the name must be one line")
-        self.assertEqual(more_rounds.refusal(STUCK, " # a", busy), "the name may not start with #")
+        self.assertTrue(more_rounds.refusal(STUCK, " # a", busy).startswith("0001_q is busy"))
         said = more_rounds.refusal(STUCK, "owner", busy)
         self.assertTrue(said.startswith("0001_q is busy: a review step is running"), said)
         self.assertTrue(said.endswith("; allowing a round does not stop anything itself"), said)

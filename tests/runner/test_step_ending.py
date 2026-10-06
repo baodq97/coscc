@@ -1438,7 +1438,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                 spec_md="# Spec: x\n",
                 plan_md="# Plan: x\n",
                 impl_md="# Impl: x\n",
-                pr_md="# PR: fix(0009): x\nPR: https://github.com/o/r/pull/9\n",
+                pr_md="# PR: fix(0009): x\n",
                 review_md=review,
             )
             config = Config(
@@ -1460,6 +1460,25 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                 },
                 type="fix",
             )
+            # The rounds as rows: the first asked for changes, the closing turn's second is incomplete.
+            meta.history.record(
+                key,
+                UNIT,
+                "pr.md",
+                "accepted",
+                source="prmachine:open",
+                guard="branch-named",
+                authority="code",
+                inputs={"number": 9, "url": "https://github.com/o/r/pull/9", "head": head},
+            )
+            with meta.data.write() as conn:
+                for n, verdict in ((1, "changes-requested"), (2, "incomplete")):
+                    meta.record_round(
+                        conn,
+                        key,
+                        UNIT,
+                        {"n": n, "run": "r", "head": head, "object": {"verdict": verdict}},
+                    )
             self.assertNotIn("review-incomplete", self.next_of(store, meta, key)["reasons"])
             self.assertEqual(asyncio.run(core.answers.ingest(key, UNIT, done, "review.md")), {})
             [row] = meta.history.transitions(key, UNIT, "review.md")[-1:]

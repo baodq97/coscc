@@ -527,7 +527,8 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
             "artifact": "intent.md",
             "question": 2,
             "answer": "Tách ra. MARK-0016",
-            "answered_by": "Phong",
+            "by": "person",
+            "name": "Phong",
             **over,
         }
 
@@ -535,7 +536,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         return await self.client.post("/api/units/answer", json=self.body(**over))
 
     def rows(
-        self, table: str = "unit_answers", columns: str = "artifact, ref, answered_by, via, text"
+        self, table: str = "unit_answers", columns: str = "artifact, ref, name, via, text"
     ) -> list[tuple]:
         """What the database holds for this unit, where the file's block once was."""
         from coscc.store.db import Data
@@ -611,10 +612,41 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.refused(answer="   \n  ")
 
     async def test_an_answer_with_no_name_is_recorded_as_owner(self):
-        await self.refused(answered_by="A\nStatus: rejected")
-        got = await self.post(answered_by="  ")
+        await self.refused(name="A\nStatus: rejected")
+        got = await self.post(name="  ")
         self.assertEqual(got.status_code, 200, got.text)
-        self.assertEqual(got.json()["answered_by"], "owner")
+        self.assertEqual((got.json()["by"], got.json()["name"]), ("person", "owner"))
+
+    async def test_an_answer_without_by_is_refused_naming_both_values(self):
+        body = self.body()
+        del body["by"]
+        before = self.intent.read_bytes()
+        got = await self.client.post("/api/units/answer", json=body)
+        self.assertEqual(got.status_code, 400, got.text)
+        self.assertIn("person", got.json()["error"])
+        self.assertIn("delegated", got.json()["error"])
+        self.assertEqual((self.rows(), self.intent.read_bytes()), ([], before))
+
+    async def test_an_answer_by_an_agent_is_refused(self):
+        got = await self.post(by="agent")
+        self.assertEqual(got.status_code, 400, got.text)
+        self.assertIn("delegated", got.json()["error"])
+        self.assertEqual(self.rows(), [])
+
+    async def test_a_person_without_a_name_is_a_row_by_person_named_owner(self):
+        body = self.body()
+        del body["name"]
+        got = await self.client.post("/api/units/answer", json=body)
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(self.rows(columns='"by", name'), [("person", "owner")])
+
+    async def test_the_answer_returns_by_and_name_and_a_delegated_row_keeps_both(self):
+        got = await self.post(by="delegated", name="Leif")
+        self.assertEqual(got.status_code, 200, got.text)
+        said = got.json()
+        self.assertEqual((said["by"], said["name"]), ("delegated", "Leif"))
+        self.assertNotIn("answered_by", said)
+        self.assertEqual(self.rows(columns='"by", name'), [("delegated", "Leif")])
 
     async def test_a_closed_unit_is_refused(self):  # (f)
         seed_unit(self.app.state.core, self.cwd, self.unit, statuses={"intent.md": "rejected"})
@@ -651,7 +683,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(self.intent.read_bytes(), before)
         self.assertEqual(
-            self.rows(columns="artifact, ref, answered_by, date, via, text"),
+            self.rows(columns="artifact, ref, name, date, via, text"),
             [
                 (
                     "intent.md",
@@ -675,8 +707,41 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class AQuestionCarriesItsRecommendationToTheUnitPage(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = AnsweringAQuestionOverHttp.asyncSetUp
+    asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
+
+    async def test_the_recommendation_an_agent_handed_back_reaches_the_page(self):
+        core = self.app.state.core
+        meta, key = core.ws.unit_meta(), core.ws.key(self.cwd)
+        asked = [
+            {"n": 1, "text": "One?", "recommendation": "Take the first: it is the cheaper."},
+            {"n": 2, "text": "Two?", "recommendation": ""},
+        ]
+        with meta.data.write() as conn:
+            meta.record_result(
+                conn,
+                key,
+                self.unit,
+                "intent",
+                "intent.md",
+                {
+                    "run": "r",
+                    "revision": "h",
+                    "object": {"judgement": "not-ready", "type": "feat", "questions": asked},
+                },
+            )
+        got = await self.client.get(f"/api/units/{self.unit}", params={"cwd": self.cwd})
+        self.assertEqual(got.status_code, 200, got.text)
+        questions = got.json()["questions"]
+        self.assertEqual(
+            [(q["n"], q["recommendation"]) for q in questions],
+            [(1, "Take the first: it is the cheaper."), (2, "")],
+        )
+
+
 class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
-    """The route appends one `### Outcome` block or writes nothing at all; what it refuses is
+    """The route writes one `outcome` row or nothing at all; what it refuses is
     `Answers.record_outcome`'s decision, tested there."""
 
     async def asyncSetUp(self):
@@ -730,16 +795,24 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
             **over,
         }
 
-    async def test_a_valid_outcome_is_appended_and_the_board_shows_it(self):
-        before = self.intent.read_bytes()
+    def files(self):
+        return {p.name: p.read_bytes() for p in self.intent.parent.iterdir()}
+
+    def decisions(self):
+        core = self.app.state.core
+        return core.ws.unit_meta().decisions(core.ws.key(self.cwd), self.unit)
+
+    async def test_a_valid_outcome_is_a_row_and_no_file_moves(self):
+        before = self.files()
         got = await self.client.post("/api/units/outcome", json=self.body())
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual((got.json()["result"], got.json()["recorded_by"]), ("trượt", "Phong"))
-        after = self.intent.read_bytes()
-        self.assertTrue(after.startswith(before))
-        self.assertIn("### Outcome", after[len(before) :].decode("utf-8"))
-        board = await self.app.state.core.board(self.cwd, "new")
-        self.assertEqual(board["units"][0]["outcome"]["result"], "missed")
+        self.assertEqual(self.files(), before)
+        [row] = self.decisions()
+        self.assertEqual((row["kind"], row["by"]), ("outcome", "Phong"))
+        self.assertEqual(
+            (row["fields"]["result"], row["fields"]["source"]), ("missed", "board, 2026-10-08")
+        )
 
     async def test_a_refusal_is_a_400_and_writes_nothing(self):
         before = self.intent.read_bytes()
@@ -820,6 +893,20 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["idea.md"])
 
 
+def open_pr(core, cwd: str, unit: str, number: int = 3) -> None:
+    """Test glue: the PR machine's `open` row, the unit's pull request."""
+    core.ws.unit_meta().history.record(
+        core.ws.key(cwd),
+        unit,
+        "pr.md",
+        "accepted",
+        source="prmachine:open",
+        guard="branch-named",
+        authority="code",
+        inputs={"number": number, "url": f"https://github.com/o/r/pull/{number}", "head": "a" * 40},
+    )
+
+
 def record_rounds(core, cwd: str, unit: str, rounds) -> None:
     """Test glue: review rounds as rows, `(n, verdict, [(finding, state)])` each."""
     meta = core.ws.unit_meta()
@@ -857,8 +944,8 @@ REVIEW_STUCK = "# Review: q\nAuthor: t. Status: changes-requested.\n" + "".join(
 
 
 class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`POST /api/units/more-rounds` appends one block to the one unit named, or answers 400 and
-    writes nothing; the loop reads the block, and only it."""
+    """`POST /api/units/more-rounds` writes one row for the one unit named, or answers 400 and
+    writes nothing; the loop reads the row, and only it. No file moves."""
 
     _answering_setup = AnsweringAQuestionOverHttp.asyncSetUp
     asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
@@ -877,20 +964,17 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         (d / "intent.md").write_text("# I\nAuthor: t. Type: feat.\n", encoding="utf-8")
         for f in ("spec.md", "plan.md", "impl.md"):
             (d / f).write_text("# X\n", encoding="utf-8")
-        (d / "pr.md").write_text(
-            f"# PR: feat({name[:4]}): x\nPR: https://github.com/o/r/pull/3.\n", encoding="utf-8"
-        )
+        (d / "pr.md").write_text(f"# PR: feat({name[:4]}): x\n", encoding="utf-8")
         (d / "review.md").write_text(review, encoding="utf-8")
         seed_unit(
             self.app.state.core,
             self.cwd,
             name,
-            statuses=dict.fromkeys(
-                ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md"), "accepted"
-            )
+            statuses=dict.fromkeys(("intent.md", "spec.md", "plan.md", "impl.md"), "accepted")
             | {"review.md": "changes-requested"},
             type="feat",
         )
+        open_pr(self.app.state.core, self.cwd, name)
         self.rounds(name, rounds)
         return d
 
@@ -903,6 +987,13 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
             [(n, "changes-requested", [("F1", "open")]) for n in ns],
         )
 
+    def files(self) -> dict[str, bytes]:
+        return {str(p): p.read_bytes() for p in self.dir.parent.rglob("*.md")}
+
+    def decisions(self, name: str) -> list:
+        core = self.app.state.core
+        return core.ws.unit_meta().decisions(core.ws.key(self.cwd), name)
+
     async def allow(self, **over):
         return await self.client.post(
             "/api/units/more-rounds",
@@ -910,23 +1001,20 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_one_unit_is_given_a_round_and_the_other_still_needs_a_person(self):
-        from datetime import date
-
-        from coscc.units import board, more_rounds
+        from coscc.units import board
 
         with mock.patch.dict(os.environ):
             os.environ.pop("COS_REVIEW_ROUNDS", None)
-            first, second = self.first / "review.md", self.second / "review.md"
-            before, other = first.read_bytes(), second.read_bytes()
+            before = self.files()
             got = await self.allow()
             self.assertEqual(got.status_code, 200, got.text)
             self.assertEqual((got.json()["by"], got.json()["rounds"]), ("owner", 1))
-            after = first.read_bytes()
-            self.assertTrue(after.startswith(before))
-            added = more_rounds.block("owner", date.today().isoformat())
-            # `append_to_answers` opens the section first when the file has none.
-            self.assertEqual(after[len(before) :].decode("utf-8"), "\n## Answers\n" + added)
-            self.assertEqual(second.read_bytes(), other)
+            self.assertEqual(self.files(), before)
+            [row] = self.decisions(self.first.name)
+            self.assertEqual(
+                (row["kind"], row["by"], row["fields"]), ("more-rounds", "owner", {"rounds": 1})
+            )
+            self.assertEqual(self.decisions(self.second.name), [])
             # The real the loop, no `--repo`: past the limit, the gate stops at the repository.
             allowed, said = await board.gate(
                 str(self.root),
@@ -949,11 +1037,11 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_second_press_is_refused_until_the_unit_is_out_of_rounds_again(self):
         self.assertEqual((await self.allow()).status_code, 200)
-        before = (self.first / "review.md").read_bytes()
+        before = self.files()
         got = await self.allow()
         self.assertEqual(got.status_code, 400)
         self.assertIn("has not used all its review rounds", got.json()["error"])
-        self.assertEqual((self.first / "review.md").read_bytes(), before)
+        self.assertEqual((self.files(), len(self.decisions(self.first.name))), (before, 1))
         board = await self.app.state.core.board(self.cwd, "new")
         [row] = [u for u in board["units"] if u["name"] == self.first.name]
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (False, 1))
@@ -964,7 +1052,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((row["more_rounds"], row["rounds_granted"]), (True, 1))
         self.assertEqual((await self.allow()).status_code, 200)
         self.assertEqual(
-            (self.first / "review.md").read_text(encoding="utf-8").count("### More rounds"), 2
+            [d["kind"] for d in self.decisions(self.first.name)], ["more-rounds", "more-rounds"]
         )
 
     async def test_a_refusal_is_400_and_writes_nothing(self):
@@ -1002,7 +1090,7 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
             "spec.md": "# Spec\n",
             "plan.md": "# Plan\n",
             "impl.md": "# Impl\n\n## Needs a person\n\n- F2: no budget\n- F3: no gh\n",
-            "pr.md": "PR: https://github.com/o/r/pull/3.\n",
+            "pr.md": "# PR\n",
             "review.md": REVIEW_CONFIRMED,
         }.items():
             (self.dir / name).write_text(text, encoding="utf-8")
@@ -1011,9 +1099,10 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
             self.app.state.core,
             self.cwd,
             self.unit,
-            statuses=dict.fromkeys(("spec.md", "plan.md", "impl.md", "pr.md"), "accepted")
+            statuses=dict.fromkeys(("spec.md", "plan.md", "impl.md"), "accepted")
             | {"review.md": "changes-requested"},
         )
+        open_pr(self.app.state.core, self.cwd, self.unit)
         record_rounds(
             self.app.state.core,
             self.cwd,
@@ -1075,11 +1164,7 @@ class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
     """The route posts a round once; a second press finds it and says so."""
 
     PR_URL = "https://github.com/o/r/pull/7"
-    REVIEW = (
-        "# Review: a problem\nAuthor: t. Status: changes-requested.\n\n"
-        "## Round 1\n\nReviewed: abcdef1. Verdict: changes-requested.\n\n"
-        "### Findings\n\n- F1 [open] a thing\n"
-    )
+    REVIEW = "# Review: a problem\nAuthor: t.\n"
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1102,8 +1187,11 @@ class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         ).json()
         self.unit = made["unit"]
         d = Path(made["path"])
-        (d / "pr.md").write_text(f"# PR\nStatus: accepted.\nPR: {self.PR_URL}\n", encoding="utf-8")
+        (d / "pr.md").write_text("# PR\n", encoding="utf-8")
         (d / "review.md").write_text(self.REVIEW, encoding="utf-8")
+        core = self.app.state.core
+        open_pr(core, self.cwd, self.unit, 7)
+        record_rounds(core, self.cwd, self.unit, [(1, "changes-requested", [("F1", "open")])])
         self.calls: list[list[str]] = []
         self.comments: list[dict] = []
 
@@ -1344,8 +1432,7 @@ class IntegratingOverHttp(PostingAReviewRoundOverHttp):
 
     async def test_a_unit_outside_the_window_is_a_400_and_leaves_a_record(self):
         # A draft pr.md: the loop says the unit is not between pr and ship, so no gh is asked.
-        pr_md = Path(self.app.state.core.ws.unit_dir(self.cwd, self.unit)) / "pr.md"
-        pr_md.write_text(f"# PR\nStatus: draft.\nPR: {self.PR_URL}\n", encoding="utf-8")
+        seed_unit(self.app.state.core, self.cwd, self.unit, statuses={"pr.md": "draft"})
         got = await self.client.post(
             "/api/units/integrate", json={"cwd": self.cwd, "unit": self.unit}
         )

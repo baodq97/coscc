@@ -29,7 +29,8 @@ from coscc.store.journal import last_runs, timelines_of, totals_of
 from coscc.units import BadUnit, Invalid, backlog, contracts, scratch, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable, attention_reason, unit_state
-from coscc.units.meta import OutputRecord
+from coscc.units.meta import By, DecisionKind, OutputRecord
+from coscc.units.meta import Decision as DecisionRow
 from coscc.units.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
@@ -325,8 +326,12 @@ class Question(TypedDict):
     artifact: str
     n: int
     text: str
+    # The answer the agent that asked recommends, `""` when it gave none.
+    recommendation: str
     answered: bool
+    # The `by` and `name` of the answer in force, `""` while unanswered.
     by: str
+    name: str
 
 
 class Answer(TypedDict):
@@ -334,11 +339,30 @@ class Answer(TypedDict):
     n: int
     question: str
     text: str
-    by: str
-    # Who decided: `person` or `agent-inferred`.
-    authority: str
+    # Whose decision: `person` (a person's press) or `delegated` (decided for them), as sent.
+    by: By
+    # The name the answer was sent with: a claim, not an identity.
+    name: str
     via: str
     date: str
+
+
+class Decision(TypedDict):
+    """A person's rerun, more rounds or outcome, as the unit's history shows it."""
+
+    kind: DecisionKind
+    by: str
+    date: str
+    text: str
+
+
+def _decision_text(d: DecisionRow) -> str:
+    fields = d["fields"]
+    if d["kind"] == "rerun":
+        return f"asked {fields.get('stage')} to run again"
+    if d["kind"] == "more-rounds":
+        return "allowed one more review round"
+    return f"recorded the outcome: {fields.get('result')}"
 
 
 class Round(TypedDict):
@@ -394,6 +418,8 @@ class Detail(TypedDict):
     hold_moves: list[str]
     # What each agent last handed back, with the contract version it was written to.
     outputs: list[OutputRecord]
+    # A person's reruns, more rounds and outcomes, oldest first.
+    decisions: list[Decision]
 
 
 def _text(v: Any) -> str:
@@ -411,10 +437,13 @@ def count(v: Any) -> int | None:
 
 
 def detail(
-    unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]], outputs: list[OutputRecord]
+    unit: Mapping[str, Any],
+    timeline: Sequence[Mapping[str, Any]],
+    outputs: list[OutputRecord],
+    decisions: Sequence[DecisionRow] = (),
 ) -> Detail:
-    """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`) and its `outputs`
-    (`UnitMeta.outputs`) as a page shows it."""
+    """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`), its `outputs`
+    (`UnitMeta.outputs`) and its `decisions` (`UnitMeta.decisions`) as a page shows it."""
 
     def last(r: Mapping[str, Any] | None) -> LastRun | None:
         if not r:
@@ -444,8 +473,10 @@ def detail(
                 "artifact": _text(q.get("artifact")),
                 "n": int(q.get("n") or 0),
                 "text": _text(q.get("text")),
+                "recommendation": _text(q.get("recommendation")),
                 "answered": bool(q.get("answered")),
                 "by": _text(q.get("by")),
+                "name": _text(q.get("name")),
             }
             for q in unit.get("questions") or []
         ],
@@ -455,8 +486,8 @@ def detail(
                 "n": int(a.get("n") or 0),
                 "question": _text(a.get("question")),
                 "text": _text(a.get("text")),
-                "by": _text(a.get("by")),
-                "authority": _text(a.get("authority")),
+                "by": "person" if a.get("by") == "person" else "delegated",
+                "name": _text(a.get("name")),
                 "via": _text(a.get("via")),
                 "date": _text(a.get("date")),
             }
@@ -506,6 +537,10 @@ def detail(
         else None,
         "hold_moves": [str(m) for m in unit.get("hold_moves") or []],
         "outputs": outputs,
+        "decisions": [
+            {"kind": d["kind"], "by": d["by"], "date": d["date"], "text": _decision_text(d)}
+            for d in decisions
+        ],
     }
 
 

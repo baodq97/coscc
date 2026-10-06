@@ -197,7 +197,7 @@ async def read(
             "answers": _answers_of(u),
             "open": int(u.get("open") or 0),
             "counted": u.get("counted") or "",
-            # The pull request `pr.md` names and the rounds `review.md` holds, verbatim, so the round a comment carries is the one the gate counted.
+            # The pull request the app recorded and the review rounds, verbatim, so the round a comment carries is the one the gate counted.
             "pr": _pr_of(u),
             "rounds": _rounds_of(u),
             # The findings the last review round confirmed need a person, each `{id, reason, answered}`.
@@ -206,8 +206,6 @@ async def read(
             "between_pr_and_ship": bool(u.get("betweenPrAndShip")),
             # The ids `next` says a person is awaited on.
             "waiting": [str(x) for x in ((u.get("next") or {}).get("waiting") or [])],
-            # The outcome deadline and the last valid `### Outcome` block, as the loop's `unitOutcome` read them.
-            "outcome": _outcome_of(u),
             # The hold a person set (`{state, reason, by, date}`, or None) and the moves allowed from it.
             "hold": u.get("hold") or None,
             "hold_moves": [str(x) for x in u.get("holdMoves") or []],
@@ -391,37 +389,6 @@ async def screens(
         raise Unavailable(f"the loop did not return JSON: {e}") from e
 
 
-async def pr_text(
-    units_root: str | Path, unit: str, timeout: float = TIMEOUT, state: dict[str, Any] | None = None
-) -> dict[str, Any]:
-    """Ask the loop's `pr-text` for the title and body `unit`'s `pr.md` puts on its pull request.
-
-    Returns `{unit, title, body, url, scope, status}` on exit 0, and
-    `{"error": <what the loop said>, "code": n}` otherwise (exit 1 is an answer, not a failure).
-    Raises `Unavailable` as `read` does.
-    """
-    path = Path(units_root)
-    try:
-        source, stdin = _source(state)
-        code, out_text, err_text = await _ask(
-            ["--root", str(path), *source, "pr-text", unit], timeout, stdin
-        )
-    except TimeoutError:
-        raise Unavailable(f"reading pr.md timed out after {timeout:.0f}s") from None
-    except (OSError, ValueError) as e:
-        raise Unavailable(f"could not run coscc.loop: {e}") from e
-
-    if code != 0:
-        return {
-            "error": (err_text or out_text).strip() or f"the loop exited {code}",
-            "code": code,
-        }
-    try:
-        return json.loads(out_text)
-    except (json.JSONDecodeError, ValueError) as e:
-        raise Unavailable(f"the loop did not return JSON: {e}") from e
-
-
 async def rerun(
     units_root: str | Path,
     unit: str,
@@ -430,9 +397,9 @@ async def rerun(
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask the loop's `rerun` which accepted stages of `unit` may run again, or, with `stage`,
-    for the `### Rerun` block to append before running it.
+    which records running it makes stale.
 
-    Returns `{unit, offers, why}` without `stage`, `{unit, stage, later, block}` with one, and
+    Returns `{unit, offers, why}` without `stage`, `{unit, stage, later, stale}` with one, and
     `{"error": <what the loop said>, "code": n}` when it exits non-zero (exit 1 is "not
     offered", an answer). Takes no `--repo`. Raises `Unavailable` as `read` does.
     """
@@ -465,19 +432,27 @@ def _answer_of(unit: dict[str, Any], artifact: str, n: Any) -> dict[str, Any] | 
 
 
 def _questions_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """`questions` as the loop sent them, each with `by` added: who gave the answer in force, `""` when none."""
+    """`questions` as the loop sent them, each with the answer in force's `by` and `name`, `""`
+    when none."""
     out = []
     for q in unit.get("questions") or []:
         if not isinstance(q, dict):
             continue
-        answer = _answer_of(unit, str(q.get("artifact") or ""), q.get("n"))
-        out.append({**q, "by": str((answer or {}).get("by") or "")})
+        answer = _answer_of(unit, str(q.get("artifact") or ""), q.get("n")) or {}
+        out.append(
+            {
+                **q,
+                "recommendation": str(q.get("recommendation") or ""),
+                "by": str(answer.get("by") or ""),
+                "name": str(answer.get("name") or ""),
+            }
+        )
     return out
 
 
 def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """`[{artifact, n, question, by, date, via, text, authority}]`, one per question with an
-    answer in force, in the order of `artifacts`. `authority` is the app's; `""` where it gave none."""
+    """`[{artifact, n, question, by, name, date, via, text}]`, one per question with an answer in
+    force, in the order of `artifacts`. `by` is `person` or `delegated`, as the answer was sent."""
     out = []
     for artifact, a in (unit.get("artifacts") or {}).items():
         for q in (a or {}).get("questions") or []:
@@ -490,10 +465,10 @@ def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
                     "n": q.get("n"),
                     "question": str(q.get("text") or ""),
                     "by": str(answer.get("by") or ""),
+                    "name": str(answer.get("name") or ""),
                     "date": str(answer.get("date") or ""),
                     "via": str(answer.get("via") or ""),
                     "text": str(answer.get("text") or ""),
-                    "authority": str(answer.get("authority") or ""),
                 }
             )
     return out
@@ -515,33 +490,8 @@ def _person_findings_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-_OUTCOME_FIELDS = (
-    ("deadline", "deadline"),
-    ("result", "result"),
-    ("by", "by"),
-    ("date", "date"),
-    ("measured_by", "measuredBy"),
-    ("source", "source"),
-    ("reason", "reason"),
-    ("note", "note"),
-)
-
-
-def _outcome_of(unit: dict[str, Any]) -> dict[str, Any] | None:
-    """The loop's `unitOutcome`, keys in this file's snake_case, or None when it sent none."""
-    o = unit.get("outcome")
-    if not isinstance(o, dict):
-        return None
-    out: dict[str, Any] = {
-        mine: (str(o[theirs]) if o.get(theirs) is not None else None)
-        for mine, theirs in _OUTCOME_FIELDS
-    }
-    out["invalid"] = int(o.get("invalid") or 0)
-    return out
-
-
 def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
-    """`{url, number}` from `pr.md`'s `PR:` line as the loop's `parsePr` read it, or None."""
+    """`{url, number}` of the pull request the app recorded, as the loop read it, or None."""
     pr = ((unit.get("artifacts") or {}).get("pr.md") or {}).get("pr")
     if not isinstance(pr, dict) or not pr.get("url"):
         return None
@@ -549,10 +499,10 @@ def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each round of `review.md`: its number, verdict and text, as the loop split them.
+    """Each review round: its number, verdict and text, as the loop built them from the rows.
 
-    `findings` and `findings_open` are counted off `parseReview`'s own list; `dropped` and
-    `unfinished` are carried as it set them.
+    `findings` and `findings_open` are counted off the round's own list; `dropped` and
+    `unfinished` are carried as the loop set them.
     """
     review = ((unit.get("artifacts") or {}).get("review.md") or {}).get("review") or {}
     out = []

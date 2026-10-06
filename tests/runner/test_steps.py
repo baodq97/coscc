@@ -14,7 +14,7 @@ from unittest import mock
 from coscc.bus import Bus
 from coscc import units
 from coscc.agent import modeltrial
-from coscc.github import prmachine, prscope
+from coscc.github import prmachine
 from coscc.git import fetches
 from coscc.units import worktrees
 from coscc.config import Config
@@ -518,7 +518,10 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
     ASKS = "# Spec: a problem\nAuthor: t. Status: draft.\n\n## Body\n\n## Open questions\n\n1. Which one?\n"
     # What the session hands back beside `ASKS`; the questions are the object's.
-    ASKED = {"judgement": "not-ready", "questions": [{"n": 1, "text": "Which one?"}]}
+    ASKED = {
+        "judgement": "not-ready",
+        "questions": [{"n": 1, "text": "Which one?", "recommendation": "The first."}],
+    }
 
     def replies(self, text: str, outcome: dict | None = None, **fields):
         class Replies:
@@ -1992,25 +1995,21 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
     _git = AUnitsBaseIsTheRemoteTrunk._git
     _typed_unit = AUnitsBaseIsTheRemoteTrunk._typed_unit
 
-    TITLE = "a problem, fixed"
-    BODY = "## Where\n\nhttps://github.com/o/r/pull/7, checks pending.\n"
-    ACCEPTED = f"# PR: {TITLE}\nIntent: intent.md. PR: https://github.com/o/r/pull/7. Author: t. Status: accepted.\n\n{BODY}"
+    TITLE = "fix(0001): a problem"
+    URL = "https://github.com/o/r/pull/7"
 
     class Replies:
-        """A session that writes `pr.md` itself; with `hold`, it then waits to be stopped."""
+        """A session that writes nothing itself; with `hold`, it waits to be stopped."""
 
         bus = Bus()
 
-        def __init__(self, text: str | None = None, hold: bool = False):
-            self.text, self.hold = text, hold
-            self.directory: Path | None = None
+        def __init__(self, hold: bool = False):
+            self.hold = hold
             self.reply = "working"
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             step = kw.get("step")
             try:
-                if self.text is not None:
-                    (self.directory / "pr.md").write_text(self.text, encoding="utf-8")
                 yield ("chunk", self.reply)
                 if self.hold:
                     await asyncio.sleep(10)
@@ -2030,10 +2029,9 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             body: str = "temporary",
             fail=None,
             raise_=None,
-            scope=None,
         ):
             self.listed, self.title, self.body = listed, title, body
-            self.fail, self.raise_, self.scope = fail, raise_, scope
+            self.fail, self.raise_ = fail, raise_
             self.calls: list[tuple[list[str], str | None]] = []
 
         async def __call__(self, argv, cwd, stdin=None):
@@ -2060,8 +2058,6 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                 return 1, "", "HTTP 422: Validation Failed"
             if argv[:2] == ["pr", "view"] and argv[-1] == "comments":
                 return 0, json.dumps({"comments": []}), ""
-            if argv[:2] == ["pr", "view"] and argv[-1] == prscope.FIELDS:
-                return 0, json.dumps(self.scope or {}), ""
             if argv[:2] == ["pr", "view"]:
                 return 0, json.dumps({"title": self.title, "body": self.body}), ""
             if argv[:2] == ["pr", "edit"]:
@@ -2079,27 +2075,45 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                 if c[0][:2] == ["pr", sub] and (json_ is None or c[0][-1] == json_)
             ]
 
-    def _run(self, text, gh, stage="pr", hold=False, prepare=None, gate=None, via_step=False):
-        """A `pr` step writes `pr.md` itself and runs no session, so a `pr.md` of any other words --
-        `text` -- reaches `sync_pr` only by calling it as the step does, with what the PR machine
-        found. `via_step` runs the step itself."""
+    def _open(self, unit, state="open"):
+        """The PR machine's rows: `open` on pr.md, and `merge-read` after it for `merged`."""
+        history = self.core.ws.unit_meta().history
+        key = self.core.ws.key(str(self.repo))
+        history.record(
+            key,
+            unit,
+            "pr.md",
+            "accepted",
+            source="prmachine:open",
+            guard="branch-named",
+            authority="code",
+            inputs={"number": 7, "url": self.URL, "head": "a" * 40},
+        )
+        if state == "merged":
+            history.record(
+                key,
+                unit,
+                "ship.md",
+                "accepted",
+                source="prmachine:merged",
+                guard="merge-read",
+                authority="code",
+                inputs={"merge_commit": "m" * 40},
+            )
+
+    def _run(self, gh, stage="pr", opened="open", gate=None, via_step=False):
+        """A `pr` step runs no session, so what `sync_pr` is given reaches it only by calling it as
+        the step does, with what the PR machine found. `via_step` runs the step itself. `opened`
+        is the machine's row (`open`, `merged`) or `None` for none."""
         from coscc.units import board as board_reader
         from coscc.github import integrate
 
         unit = self._typed_unit()
         self._git("branch", "fix/a-problem")
         directory = self.core.ws.unit_dir(str(self.repo), unit)
-        if prepare:
-            prepare(directory)
-        # The file's header, as the row the app holds: the PR step reads the state, not the file.
-        written = text or ""
-        if (directory / "pr.md").exists():
-            written = (directory / "pr.md").read_text(encoding="utf-8")
-        for word in ("accepted", "draft"):
-            if f"Status: {word}" in written:
-                state_of(self.core, str(self.repo), unit, statuses={"pr.md": word})
-        replies = self.Replies(text, hold)
-        replies.directory = directory
+        if opened:
+            self._open(unit, opened)
+        replies = self.Replies()
         use_sessions(self.core, replies)
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
@@ -2109,13 +2123,11 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
         async def go():
             if stage == "pr" and not via_step:
-                if text is not None:
-                    (directory / "pr.md").write_text(text, encoding="utf-8")
                 await self.core.answers.ingest(
                     str(self.repo), unit, {"outcome": "done", "stage": "pr"}, "pr.md"
                 )
                 # What the PR machine hands on: no answer, no pull request, or its URL.
-                url = "https://github.com/o/r/pull/7" if gh.listed else ""
+                url = self.URL if gh.listed else ""
                 before = None if gh.fail == "list" else url
                 return [
                     (
@@ -2140,101 +2152,55 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         rows = self.core.ws.journal().records(
             self.core.ws.key(str(self.repo)), unit, kind="pr-sync"
         )
-        return out[-1][1], rows, directory
+        return out[-1][1], rows, directory, unit
 
     def test_a_pull_request_that_existed_gets_the_title_and_body(self):
         gh = self.Gh(listed=True)
-        done, [row], _ = self._run(self.ACCEPTED, gh)
+        done, [row], _, unit = self._run(gh)
+        body = prmachine.body_of(unit)
         [(argv, stdin)] = gh.of("edit")
         self.assertEqual(
-            argv,
-            [
-                "pr",
-                "edit",
-                "https://github.com/o/r/pull/7",
-                f"--title={self.TITLE}",
-                "--body-file",
-                "-",
-            ],
+            argv, ["pr", "edit", self.URL, f"--title={self.TITLE}", "--body-file", "-"]
         )
-        self.assertEqual(stdin, self.BODY)
-        self.assertEqual((gh.title, gh.body), (self.TITLE, self.BODY))
-        self.assertEqual(
-            (row["outcome"], row["existed"], row["pr"]),
-            ("updated", True, "https://github.com/o/r/pull/7"),
-        )
+        self.assertEqual(stdin, body)
+        self.assertEqual((gh.title, gh.body), (self.TITLE, body))
+        self.assertEqual((row["outcome"], row["existed"], row["pr"]), ("updated", True, self.URL))
         self.assertNotIn("detail", row)
+        self.assertNotIn("scope", row)
         self.assertEqual(done["pr_sync"]["outcome"], "updated")
 
     def test_a_pr_step_that_fails_calls_nothing_and_writes_no_row(self):
         gh = self.Gh(listed=True, fail="list")
-        done, rows, _ = self._run(None, gh, via_step=True)
+        done, rows, _, _ = self._run(gh, opened=None, via_step=True)
         self.assertEqual(done["outcome"], "failed")
         self.assertEqual((gh.of("view"), gh.of("edit"), rows), ([], [], []))
         self.assertNotIn("pr_sync", done)
 
-    def test_a_draft_or_a_missing_url_is_skipped_without_gh(self):
-        for text in (
-            self.ACCEPTED.replace("Status: accepted", "Status: draft"),
-            self.ACCEPTED.replace("PR: https://github.com/o/r/pull/7. ", ""),
-        ):
-            with self.subTest(text=text.splitlines()[1]):
+    def test_a_pull_request_not_open_is_skipped_without_gh(self):
+        for opened in (None, "merged"):
+            with self.subTest(opened=opened):
                 self.setUp()
                 gh = self.Gh(listed=True)
-                done, [row], _ = self._run(text, gh)
+                done, [row], _, _ = self._run(gh, opened=opened)
                 self.assertEqual((gh.of("view"), gh.of("edit")), ([], []))
                 self.assertEqual(row["outcome"], "skipped")
                 self.assertTrue(row["detail"])
 
     def test_a_refusal_leaves_the_step_done_and_pr_md_as_it_was(self):
         gh = self.Gh(listed=True, fail="edit")
-        done, [row], directory = self._run(self.ACCEPTED, gh)
+        done, [row], directory, _ = self._run(gh)
         self.assertEqual(done["outcome"], "done")
         self.assertEqual((row["outcome"], row["detail"]), ("failed", "HTTP 422: Validation Failed"))
-        self.assertEqual((directory / "pr.md").read_text(encoding="utf-8"), self.ACCEPTED)
+        self.assertFalse((directory / "pr.md").exists())
 
     def test_a_timeout_is_failed_and_says_so(self):
         gh = self.Gh(listed=True, raise_=asyncio.TimeoutError())
-        done, [row], _ = self._run(self.ACCEPTED, gh)
+        done, [row], _, _ = self._run(gh)
         self.assertEqual(done["outcome"], "done")
         self.assertEqual(row["outcome"], "failed")
         self.assertIn("timed out", row["detail"])
 
-    SCOPED = f"{ACCEPTED}\n## Scope of the diff\n\n2 files, +10/-3\n- `a.py`\n- `b.py`\n"
-    GH_SCOPE = {
-        "changedFiles": 2,
-        "additions": 10,
-        "deletions": 3,
-        "files": [{"path": "a.py"}, {"path": "b.py"}],
-    }
-
-    def test_a_mismatch_leaves_the_step_done_and_pr_md_as_it_was(self):
-        gh = self.Gh(
-            listed=True,
-            scope={
-                **self.GH_SCOPE,
-                "changedFiles": 3,
-                "files": [{"path": "a.py"}, {"path": "c.py"}],
-            },
-        )
-        done, [row], directory = self._run(self.SCOPED, gh)
-        self.assertEqual(done["outcome"], "done")
-        self.assertEqual(row["outcome"], "updated")
-        self.assertEqual(
-            {k: row["scope"][k] for k in ("verdict", "differ", "only_in_pr_md", "only_on_github")},
-            {
-                "verdict": "mismatch",
-                "differ": ["files"],
-                "only_in_pr_md": ["b.py"],
-                "only_on_github": ["c.py"],
-            },
-        )
-        self.assertEqual((directory / "pr.md").read_text(encoding="utf-8"), self.SCOPED)
-
-    def _pr_md(self, text):
-        return lambda d: (d / "pr.md").write_text(text, encoding="utf-8")
-
-    def test_a_ship_step_puts_pr_md_up_before_the_gate_is_asked(self):
+    def test_a_ship_step_puts_the_title_up_before_the_gate_is_asked(self):
         gh = self.Gh(listed=True, title="changed on GitHub")
         seen: list[str] = []
 
@@ -2242,16 +2208,11 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             seen.append(gh.title)
             return True, f"open: {stage} may proceed"
 
-        _, rows, _ = self._run(
-            None, gh, stage="ship", prepare=self._pr_md(self.ACCEPTED), gate=gate
-        )
+        _, rows, _, unit = self._run(gh, stage="ship", gate=gate)
         self.assertEqual(seen, [self.TITLE])
-        self.assertEqual((gh.title, gh.body), (self.TITLE, self.BODY))
+        self.assertEqual((gh.title, gh.body), (self.TITLE, prmachine.body_of(unit)))
         [row] = rows
-        self.assertEqual(
-            (row["stage"], row["outcome"], row["pr"]),
-            ("ship", "updated", "https://github.com/o/r/pull/7"),
-        )
+        self.assertEqual((row["stage"], row["outcome"], row["pr"]), ("ship", "updated", self.URL))
         self.assertNotIn("existed", row)
 
     def test_a_failed_sync_still_asks_the_gate_and_a_closed_gate_refuses(self):
@@ -2263,7 +2224,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             return False, 'blocked: ship cannot proceed\n  - #7 carries the title "temporary"'
 
         with self.assertRaises(Invalid) as refused:
-            self._run(None, gh, stage="ship", prepare=self._pr_md(self.ACCEPTED), gate=closed)
+            self._run(gh, stage="ship", gate=closed)
         self.assertIn("carries the title", str(refused.exception))
         self.assertEqual(asked, ["ship"])
         [row] = self.core.ws.journal().records(self.core.ws.key(str(self.repo)), kind="pr-sync")
@@ -2271,7 +2232,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             (row["stage"], row["outcome"], row["detail"]),
             ("ship", "failed", "HTTP 422: Validation Failed"),
         )
-        self.assertEqual(len(gh.of("edit")), 1, "the scope read writes nothing of its own")
+        self.assertEqual(len(gh.of("edit")), 1)
 
 
 class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):

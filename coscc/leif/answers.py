@@ -18,11 +18,11 @@ from coscc.git import gh, gitops
 from coscc.units import hold as hold_rules
 from coscc.units import more_rounds as more_rounds_rules
 from coscc.agent import agents, policy
-from coscc.github import prcomment, prscope, prsync
+from coscc.github import prcomment, prmachine, prsync
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
-from coscc.units.meta import UnitMeta
+from coscc.units.meta import By, UnitMeta
 from coscc.store.journal import BadRecord, Journal
 from coscc.store.db import Busy
 from coscc.units import submit
@@ -44,20 +44,10 @@ from coscc.bus import Bus
 
 log = logging.getLogger(__name__)
 
-# The three results a `### Outcome` block may carry, as a person types them, and the word
-# the loop's `parseOutcome` reads each one as.
+# The three results an outcome may carry, as a person types them, and the word each is kept as.
 OUTCOME_RESULTS = {"đạt": "met", "trượt": "missed", "không đo được": "unmeasurable"}
-
-
-def opens_with(by: Any, names: Any) -> bool:
-    """`by` opens with one of `names`, case aside, and the name ends there or at a character
-    that is not a letter: `Leif (CoS)` does, `Leifson` does not."""
-    b = str(by or "").strip().casefold()
-    for n in names:
-        n = str(n or "").strip().casefold()
-        if n and b.startswith(n) and (len(b) == len(n) or not b[len(n)].isalpha()):
-            return True
-    return False
+# Whose decision an answer is: the two values `by` takes.
+BY: tuple[By, ...] = ("person", "delegated")
 
 
 def _to_send(found: dict[str, Any]) -> str:
@@ -220,41 +210,35 @@ class Answers:
     async def sync_pr(
         self, cwd: str, unit: str, pr_before: str | None, stage: str = "pr"
     ) -> dict[str, Any]:
-        """Put `pr.md`'s title and body onto its pull request. Never raises.
+        """Put the unit's title and body onto its pull request. Never raises.
 
         Called by `drive` after a `pr` step that was not stopped, and by `run_step` before
-        it asks the gate of a `ship` step; `stage` names which. The words are `coscc.loop
-        pr-text`'s; `prsync` compares and writes. A `pr.md` that is not accepted or names no
-        pull request is `skipped` with no `gh` call. One `pr-sync` row says how it went
-        (`existed` is `None` when the lookup before a `pr` step could not answer). After a
-        `pr` step `prscope` reads the pull request's own counts into the row as `scope`;
-        no gate reads it. `pr.md` is never touched.
+        it asks the gate of a `ship` step; `stage` names which. The pull request is the PR
+        machine's row, the title `pr_title`, the body `body_of`; `prsync` compares and writes.
+        One with no pull request `open` or `merge-requested` is `skipped` with no `gh` call. One
+        `pr-sync` row says how it went (`existed` is `None` when the lookup before a `pr` step
+        could not answer). `pr.md` is never touched.
         """
         url, outcome, detail = "", "failed", ""
-        scope: dict[str, Any] | None = None
         try:
-            text = await board_reader.pr_text(
-                self.ws.units_root(cwd), unit, state=self.ws.snapshot(cwd, [unit])
+            key = self.ws.key(cwd)
+            now = prmachine.state(self.ws.unit_meta().history, key, unit)
+            url = str(now.get("url") or "")
+            snap = self.ws.snapshot(cwd, [unit])
+            type_ = ((snap.get("units") or {}).get(f"{snap.get('workspace')}/{unit}") or {}).get(
+                "type"
             )
-            url = str(text.get("url") or "")
-            if "error" in text:
-                outcome, detail = "skipped", str(text["error"])
-            elif text.get("status") != "accepted":
-                outcome, detail = (
-                    "skipped",
-                    f"pr.md is {text.get('status') or 'without a status'}, not accepted",
-                )
+            if now["state"] not in prmachine.WATCHED:
+                outcome, detail = "skipped", f"the pull request is {now['state']}, not open"
             elif not url or not gh.PR_URL_RE.match(url):
-                outcome, detail = "skipped", f"pr.md names no pull request URL: {url!r}"
+                outcome, detail = "skipped", f"no pull request URL is recorded: {url!r}"
             else:
                 where = str(Path(cwd).expanduser().resolve())
                 result = await prsync.sync(
-                    url, text.get("title"), str(text.get("body") or ""), where
+                    url, units.pr_title(unit, type_), prmachine.body_of(unit), where
                 )
                 outcome, detail = result.state, result.reason
-                if stage == "pr":
-                    scope = await prscope.read(url, text.get("scope"), where)
-        except Unavailable as e:
+        except (Invalid, Unavailable) as e:
             detail = str(e)
         except Exception as e:
             # The step is done whatever this does.
@@ -266,8 +250,6 @@ class Answers:
         record["outcome"] = outcome
         if outcome in ("failed", "skipped"):
             record["detail"] = detail
-        if scope is not None:
-            record["scope"] = scope
         journal = self.ws.journal()
         if journal is not None:
             try:
@@ -579,26 +561,32 @@ class Answers:
         artifact: str,
         question: Any,
         answer: str,
-        answered_by: str,
+        by: Any,
+        name: str = "",
     ) -> dict[str, Any]:
-        """A person answers one item under an artifact's `## Open questions`.
+        """One answer to an open question of an artifact.
 
         The answer is a row in `cos.db`; the artifact is not touched. What counts as a
         question and whether it is answered is the loop's decision, read through one board
         read. Not an approval; it starts nothing itself, though with the autopilot on the
-        pass it nudges may start the next stage. `answered_by` is whatever name the caller
-        typed: a claim, not an identity.
+        pass it nudges may start the next stage. `by` is whose decision it is, `person` (a
+        person's press) or `delegated` (decided for them), and is required: an answer without
+        it is refused, never taken as a person's. `name` is whatever name the caller typed,
+        `owner` when none: a claim, not an identity. No gate reads either.
 
         `question` may be `"F<n>"`, a finding the loop lists in the unit's `personFindings`;
         then `artifact` must be `review.md`. That row is read by `coscc.loop next` and the
         `ship` gate.
         """
         self.ws.check(cwd)
-        name = str(answered_by or "").strip() or OWNER
+        if by not in BY:
+            raise Invalid(f"say whose decision the answer is: by is {' or '.join(BY)}, got {by!r}")
+        name = str(name or "").strip() or OWNER
         done = await self._append_answers(
             cwd,
             unit,
             [(artifact, question, answer)],
+            by,
             name,
             "product",
         )
@@ -609,7 +597,8 @@ class Answers:
             "unit": unit,
             "artifact": written["artifact"],
             "question": written["question"],
-            "answered_by": name,
+            "by": by,
+            "name": name,
             "date": done["date"],
         }
 
@@ -618,12 +607,13 @@ class Answers:
         cwd: str,
         unit: str,
         items: list[tuple[str, Any, str]],
-        answered_by: str,
+        by: By,
+        name: str,
         via: str,
     ) -> dict[str, Any]:
         """The one place that records an answer: `items` is `[(artifact, question, text)]`, all
         checked and written under one hold of `_answer_lock` and one board read. A refusal
-        raises. Returns `{written: [{artifact, question}], date}`. Each row is a `person`'s.
+        raises. Returns `{written: [{artifact, question}], date}`. Each row carries `by`.
         """
         today = date.today().isoformat()
         written: list[dict[str, Any]] = []
@@ -646,11 +636,11 @@ class Answers:
                     artifact,
                     question,
                     str(answer or "").strip("\n"),
-                    answered_by,
+                    name,
                 )
                 written.append({"artifact": artifact, "question": finding or number})
                 texts.append(text)
-            self._record_answers(cwd, unit, found, written, texts, answered_by, today, via)
+            self._record_answers(cwd, unit, found, written, texts, by, name, today, via)
 
         return {"written": written, "date": today}
 
@@ -661,6 +651,7 @@ class Answers:
         found: dict[str, Any],
         written: list[dict[str, Any]],
         texts: list[str],
+        by: By,
         name: str,
         today: str,
         via: str,
@@ -684,11 +675,11 @@ class Answers:
                     w["artifact"],
                     w["question"],
                     text,
+                    by,
                     name,
                     today,
                     via,
                     conn=conn,
-                    authority="person",
                 )
 
         journal = self.ws.journal()
@@ -715,7 +706,7 @@ class Answers:
                         "artifact": artifact,
                         "question": w["question"],
                         "via": via,
-                        "authority": "person",
+                        "by": by,
                         "status": row.get("status", ""),
                         "completes": decide.answer_completes(found, artifact, given[artifact]),
                         "autopilot": on,
@@ -804,7 +795,7 @@ class Answers:
                 )
         return number, finding, text.strip()
 
-    async def record_outcome(  # noqa: PLR0915 - still to split
+    async def record_outcome(
         self,
         cwd: str,
         unit: str,
@@ -815,11 +806,8 @@ class Answers:
         note: str = "",
         recorded_by: str = "",
     ) -> dict[str, Any]:
-        """Record whether a finished unit met its intent's outcome.
-
-        Same lock, board read and refusal when a section follows `## Answers` as `answer()`,
-        and appended, so every byte above the block stays as the stage left it. The block is
-        `### Outcome` under `intent.md`'s `## Answers`; the loop reads whether it is valid.
+        """Record whether a finished unit met its intent's outcome: one `outcome` row in
+        `unit_decisions`, under the same lock and board read as `answer()`. No file is touched.
 
         Not an approval; no gate reads it. `recorded_by` and `measured_by` are names somebody
         typed, so both are claims. `source` is not checked against anything.
@@ -860,46 +848,21 @@ class Answers:
                 raise Invalid("the result needs a source: where the figure it rests on came from")
             if kind == "unmeasurable" and not why:
                 raise Invalid("the result needs a reason: why it could not be measured")
-            # As in `answer()`: a heading would end this block early or open another.
-            if any(line.lstrip().startswith("#") for line in [src, why, *text.splitlines()]):
-                raise Invalid("no line of an outcome may start with #")
-
-            path = self.ws.unit_dir(cwd, unit) / "intent.md"
-            try:
-                existing = path.read_text(encoding="utf-8")
-            except OSError as e:
-                raise Invalid(f"could not read intent.md: {e}") from e
-            lines = existing.splitlines()
-            heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
-            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1 :]):
-                raise Invalid(
-                    "intent.md has a section after its ## Answers, so a block appended at "
-                    "the end would not be read as an outcome"
-                )
-
             today = date.today().isoformat()
-            block = ""
-            if existing and not existing.endswith("\n"):
-                block += "\n"
-            if heading is None:
-                block += "\n## Answers\n"
-            block += (
-                "\n### Outcome\n"
-                f"Answered by: {name}. Date: {today}. Via: product.\n\n"
-                f"Result: {word}\n"
-                f"Measured by: {measurer}\n"
-            )
-            if src:
-                block += f"Source: {src}\n"
-            if why:
-                block += f"Reason: {why}\n"
-            if text.strip():
-                block += f"\n{text}\n"
+            fields = {
+                "result": kind,
+                "measured_by": measurer,
+                "source": src,
+                "reason": why,
+                "note": text.strip(),
+            }
             try:
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(block)
-            except OSError as e:
-                raise Invalid(f"could not write intent.md: {e}") from e
+                self.ws.unit_meta().add_decision(
+                    self.ws.key(cwd), unit, "outcome", fields, name, today, "product"
+                )
+            except (Busy, sqlite3.Error, OSError) as e:
+                log.warning("the outcome of %s was not recorded: %s", unit, e)
+                raise Invalid("the outcome was not recorded") from e
 
         return {
             "unit": unit,
@@ -908,36 +871,6 @@ class Answers:
             "recorded_by": name,
             "date": today,
         }
-
-    async def append_to_answers(self, path: Path, block: str, what: str) -> None:
-        """Append `block` to the end of `path`, under its `## Answers`, opening that section
-        when the file has none; never rewrites a byte above it. Under `_answer_lock`.
-        `what` names the block in the refusal when a section follows `## Answers`, where an
-        appended block would not be read."""
-        name = path.name
-        async with self._answer_lock:
-            try:
-                existing = path.read_text(encoding="utf-8")
-            except OSError as e:
-                raise Invalid(f"could not read {name}: {e}") from e
-            lines = existing.splitlines()
-            heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
-            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1 :]):
-                raise Invalid(
-                    f"{name} has a section after its ## Answers, so a block appended at "
-                    f"the end would not be read as {what}"
-                )
-            text = ""
-            if existing and not existing.endswith("\n"):
-                text += "\n"
-            if heading is None:
-                text += "\n## Answers\n"
-            text += block
-            try:
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(text)
-            except OSError as e:
-                raise Invalid(f"could not write {name}: {e}") from e
 
     async def hold(self, cwd: str, unit: str, to: str, reason: str, by: str) -> dict[str, Any]:
         """A person pauses, drops or resumes a unit (`to`: paused, dropped, active).
@@ -1048,8 +981,8 @@ class Answers:
     async def more_rounds(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """A person allows one more review round to a unit that used all of its.
 
-        Appends one `### More rounds` block under `review.md ## Answers`, never rewriting a
-        byte above it. Whether the unit is out of rounds is the loop's `moreRounds`. Not an
+        Records one `more-rounds` row in `unit_decisions`; no file is touched. Whether the unit
+        is out of rounds is the loop's `moreRounds`. Not an
         approval; it starts nothing and does not wake the autopilot. `by` is `owner` when
         none. Refused while a step or an integration of this unit runs; it holds that same
         mark itself while it writes.
@@ -1058,7 +991,7 @@ class Answers:
         if not unit:
             raise Invalid("name a work unit")
         by = str(by or "").strip() or OWNER
-        directory = self.ws.unit_dir(cwd, unit)
+        self.ws.unit_dir(cwd, unit)
         key = self.ws.key(cwd)
         # Checked and taken in one transaction, as in `hold`.
         held, mark = self._short_attempt("rounds", key, unit)
@@ -1073,9 +1006,13 @@ class Answers:
             if said:
                 raise Invalid(said)
             today = date.today().isoformat()
-            await self.append_to_answers(
-                directory / "review.md", more_rounds_rules.block(by, today), "a round"
-            )
+            try:
+                self.ws.unit_meta().add_decision(
+                    key, unit, "more-rounds", {"rounds": 1}, by, today, "product"
+                )
+            except (Busy, sqlite3.Error, OSError) as e:
+                log.warning("the round for %s was not recorded: %s", unit, e)
+                raise Invalid("the round was not recorded") from e
             outcome = "done"
         finally:
             if mark is not None:
