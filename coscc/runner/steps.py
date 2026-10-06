@@ -18,7 +18,7 @@ from coscc import units
 from coscc.agent import modeltrial
 from coscc.agent import steps as steps_mod
 from coscc.agent.sessions import Sessions, Suspended
-from coscc.bus import Bus, Event
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.git import drift, fetches, gitops
 from coscc.kernel import OWNER, Facts, Hooks, Invalid, facts as facts_of
@@ -511,7 +511,7 @@ class Steps:
             raise Invalid(str(e)) from e
         except Busy as e:
             raise Invalid(str(e)) from e
-        self.bus.publish(Event("mode.set", self.ws.key(cwd), unit))
+        self.bus.publish("mode.set", {"workspace": self.ws.key(cwd), "unit": unit})
         return {"cwd": cwd, "unit": unit, "stage": stage, "mode": mode}
 
     async def run_step(
@@ -1354,7 +1354,7 @@ class Steps:
                 raise
             finally:
                 self.retakes.pop(rid, None)
-                self.bus.publish(Event("retake.ended", key, unit))
+                self.bus.publish("retake.ended", {"workspace": key, "unit": unit})
         ok, detail = retake.judge(result)
         try:
             journal.append(retake.record(key, unit, old, result, ok, detail, started_by))

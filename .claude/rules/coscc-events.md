@@ -1,6 +1,7 @@
 ---
 paths:
   - "coscc/runlog/events.py"
+  - "coscc/bus.py"
 ---
 
 # Things that break here
@@ -13,3 +14,5 @@ paths:
   prepending rewrites rows in place.
 - A second copy of the app on one data root writes the same tables and reads this copy's live
   steps as ended.
+- A bus payload reaches the page as it is (`/api/stream`): a subject declares its fields, and
+  `publish` refuses any other, so no secret or prose rides an event.

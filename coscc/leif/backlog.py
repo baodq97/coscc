@@ -28,7 +28,7 @@ from coscc.update.updater import refuse_while_updating
 from coscc.kernel import OWNER
 from coscc.kernel import Invalid, Submitted
 
-from coscc.bus import Bus, Event
+from coscc.bus import Bus
 from coscc.config import Config
 
 from coscc.units.workspaces import Workspaces
@@ -197,7 +197,7 @@ class Backlog:
                 backlog.estimates_of(rows),
             ),
         )
-        self.bus.publish(Event("shortlist.saved", key))
+        self.bus.publish("shortlist.saved", {"workspace": key})
         return {"recorded": recorded}
 
     async def propose_estimates(  # noqa: PLR0915 - still to split

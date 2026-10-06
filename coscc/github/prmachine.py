@@ -5,7 +5,7 @@ transition through `transitions.apply`, on the artifact the loop already reads i
 
 - `open` is `pr.md: accepted`, guard `branch-named`;
 - `merge-requested` is `ship.md: draft`, guard `ship-ready`;
-- `merged` is `ship.md: accepted`, guard `merge-read`.
+- `merged` is `ship.md: accepted`, guard `merge-read`; the bus then hears `unit.shipped`.
 
 Where the machine stands is a fold over those rows (`state`), never a column. `pr.md` and
 `ship.md` are written by the app from the same values after the transition; nothing reads
@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, TypedDict, get_args
 
+from coscc.bus import Bus
 from coscc.store.db import now as _now
 from coscc.git import gh, gitops
 from coscc.store.journal import Journal
@@ -396,7 +397,7 @@ class Machine:
     """`pr`, `ship` and the reconcile after a restart, for one working folder.
 
     `gh`, `push` and `head` default to the real calls and are looked up at call time, so a test
-    hands in fakes; `notify` goes to `transitions.apply`.
+    hands in fakes; `notify` goes to `transitions.apply`; `bus` hears each merge recorded.
     """
 
     def __init__(
@@ -409,6 +410,7 @@ class Machine:
         head: Head | None = None,
         notify: Callable[[transitions.Applied], None] | None = None,
         files: Callable[[str, str], Awaitable[list[str] | None]] | None = None,
+        bus: Bus | None = None,
     ):
         self.history = history
         self.journal = journal
@@ -417,6 +419,7 @@ class Machine:
         self._head_of = head
         self._files = files
         self.notify = notify
+        self.bus = bus
 
     async def gh(self, argv: list[str], cwd: str) -> tuple[int, str, str]:
         got = await gh.call(self._gh or gh.run, argv, cwd)
@@ -764,6 +767,11 @@ class Machine:
             ),
             encoding="utf-8",
         )
+        if self.bus is not None:
+            self.bus.publish(
+                "unit.shipped",
+                {"workspace": u.workspace, "unit": u.name, "sha": commit, "at": _now()},
+            )
         return Outcome(
             result,
             number,

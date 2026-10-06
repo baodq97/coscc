@@ -182,7 +182,7 @@ recommend   options with the one Leif would pick and why; the owner's choice, an
 
 - **Typed routes.** Every route takes and returns a Pydantic model. The ceiling on `dict[str, Any]` in route signatures is 0.
 - **Generated types.** `npm --prefix ui run api` writes `ui/src/api.gen.ts` from FastAPI's OpenAPI. A test fails when the file is stale, so a change to the backend breaks the page's type check, not the screen.
-- **One stream.** `GET /api/stream` (SSE, same login cookie) forwards bus events as `{subject, workspace, unit}`. The studio's `useResource` names the subjects that make it read again. No screen polls. Server-side polls (autopilot 300 s, integrate 2 s, CI) stay.
+- **One stream.** `GET /api/stream` (SSE, same login cookie) forwards bus events as `{subject, ...payload}`, each payload the `TypedDict` its subject declares (`coscc/bus.py` `SCHEMAS`, checked at `publish`; `unit.shipped{workspace, unit, sha, at}` once a merge is read). The studio's `useResource` names the subjects that make it read again. No screen polls. Server-side polls (autopilot 300 s, integrate 2 s, CI) stay.
 - **Routes by area:** `workspaces`, `board`, `units`, `steps`, `leif`, `agents`, `settings`, `update`, and each feature under `/api/<name>/`. Routes that only the Reflex page has today are added with their screen: watch/events, rerun offers, the idea page, chat, decisions, activity and cost, editing and removing a workspace, and backlog history.
 
 ## 7. The studio

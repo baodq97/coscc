@@ -664,12 +664,13 @@ def agent(ctx: Ctx) -> Parts:
         return create_sdk_mcp_server(NAME, "1.0.0", build_tools(ctx, facts))
 
     def ended(event: Event) -> None:
+        workspace = event.payload.get("workspace", "")
         with ctx.store.connect() as conn:
             found = conn.execute(
-                "SELECT path FROM codegraph_index WHERE workspace = ?", (event.workspace,)
+                "SELECT path FROM codegraph_index WHERE workspace = ?", (workspace,)
             ).fetchone()
         if found and ctx.settings.enabled(found[0]):
-            _indexes(ctx).schedule(event.workspace)
+            _indexes(ctx).schedule(workspace)
 
     ctx.bus.subscribe("integration.ended", ended)
     return Parts(

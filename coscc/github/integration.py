@@ -21,7 +21,7 @@ from coscc.agent import agents, harness
 from coscc.agent import steps as steps_mod
 from coscc.agent.policy import grant_for
 from coscc.agent.sessions import Sessions, Suspended
-from coscc.bus import Bus, Event
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.git import fetches, gitops
 from coscc.git.gitops import GitError
@@ -668,7 +668,7 @@ class Integration:
             self.holds.attempts.set_road(running.attempt, "gebo")
             # An update waits for a mechanical integration, and a Gebo session is
             # paused instead, so one waiting on this can go ahead.
-            self.bus.publish(Event("integration.escalated", key, unit))
+            self.bus.publish("integration.escalated", {"workspace": key, "unit": unit})
         async for item in self.integrate_gebo(
             cwd,
             key,
@@ -1103,7 +1103,9 @@ class Integration:
         """The PR machine over the same history and run log as every other transition."""
         meta = self.ws.unit_meta()
         return prmachine.Machine(
-            meta.history, self.ws.journal() or Journal(meta.root, self.config.data_dir)
+            meta.history,
+            self.ws.journal() or Journal(meta.root, self.config.data_dir),
+            bus=self.bus,
         )
 
     async def mechanical(

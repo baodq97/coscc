@@ -7,7 +7,7 @@ import unittest
 from types import SimpleNamespace
 
 from coscc.http import routes as api
-from coscc.bus import Bus, Event
+from coscc.bus import Bus
 
 
 class TheStreamForwardsTheBus(unittest.IsolatedAsyncioTestCase):
@@ -20,12 +20,21 @@ class TheStreamForwardsTheBus(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.media_type, "text/event-stream")
         body = response.body_iterator
         self.assertEqual(await anext(body), "retry: 1000\n: open\n\n")
-        bus.publish(Event("step.ended", "/w/coscc", "0001_x"))
+        bus.publish(
+            "unit.shipped",
+            {"workspace": "/w/coscc", "unit": "0001_x", "sha": "abc", "at": "t"},
+        )
         line = await anext(body)
         self.assertTrue(line.startswith("data: ") and line.endswith("\n\n"))
         self.assertEqual(
             json.loads(line[6:]),
-            {"subject": "step.ended", "workspace": "/w/coscc", "unit": "0001_x"},
+            {
+                "subject": "unit.shipped",
+                "workspace": "/w/coscc",
+                "unit": "0001_x",
+                "sha": "abc",
+                "at": "t",
+            },
         )
         await body.aclose()
         self.assertEqual(bus._watchers, [])

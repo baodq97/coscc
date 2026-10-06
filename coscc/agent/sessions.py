@@ -40,7 +40,7 @@ from coscc import config as cfg
 from coscc.agent import harness, instructions, transcript
 from coscc.agent.helpers import Gate
 from coscc.agent.policy import Grant, Places, protected_paths
-from coscc.bus import Bus, Event
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.store.db import Data
 from coscc.store.journal import TOKEN_FIELDS
@@ -865,7 +865,7 @@ class Sessions:
                 raise
             finally:
                 self._turns.pop(turn["id"], None)
-                self.bus.publish(Event("chat-turn.ended"))
+                self.bus.publish("chat-turn.ended", {"session": str(turn["session_id"] or "")})
             return
         self._steps.add(flow)
         try:

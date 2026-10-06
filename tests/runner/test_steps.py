@@ -700,7 +700,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         """`enqueue_step` opens no reader; the step's own task still ends the attempt,
         publishes `step.ended` and runs `after_end`."""
         ended: list[str] = []
-        self.core.bus.subscribe("step.ended", lambda e: ended.append(e.unit))
+        self.core.bus.subscribe("step.ended", lambda e: ended.append(e.payload["unit"]))
         real = self.core.steps.after_end
         after: list[str] = []
 
