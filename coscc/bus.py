@@ -46,8 +46,6 @@ Name = Literal[
     "estimate.running",
     "estimate.ended",
     "estimate.refused",
-    # A feature's session (`kernel.Session`) moves as `<kind>.queued`, `.running`, `.ended` and
-    # `.refused` too; its kind is not known here.
     "integration.escalated",
     "retake.ended",
     "chat-turn.ended",
@@ -93,7 +91,7 @@ class Shipped(TypedDict):
 
 Payload = Moved | OfUnit | OfWorkspace | ChatTurn | Shipped
 
-# The states an attempt moves to; a feature's session kind moves through them too.
+# The states an attempt moves to.
 MOVES = ("queued", "preparing", "running", "ending", "ended", "refused", "stop-asked")
 SCHEMAS: dict[str, type] = {
     "integration.escalated": OfUnit,
@@ -108,8 +106,10 @@ SCHEMAS: dict[str, type] = {
 
 
 @cache
-def _fields(name: str) -> dict[str, Any]:
-    schema = SCHEMAS.get(name) or (Moved if name.rpartition(".")[2] in MOVES else None)
+def fields_of(name: str) -> dict[str, Any]:
+    schema = SCHEMAS.get(name) or (
+        Moved if name in NAMES and name.rpartition(".")[2] in MOVES else None
+    )
     if schema is None:
         raise ValueError(f"{name} is no bus subject")
     return get_type_hints(schema)
@@ -118,7 +118,7 @@ def _fields(name: str) -> dict[str, Any]:
 def check(name: str, payload: Payload) -> None:
     """Raises `ValueError` unless `payload` holds exactly the fields `name` declares, each of
     its type."""
-    fields, got = _fields(name), dict(payload)
+    fields, got = fields_of(name), dict(payload)
     if set(got) != set(fields):
         raise ValueError(f"{name} carries {sorted(fields)}, not {sorted(got)}")
     for key, kind in fields.items():

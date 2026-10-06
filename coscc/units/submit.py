@@ -39,14 +39,6 @@ ROUND_STATES = {
 }
 
 
-def add_session(kind: str, output: object, purpose: str) -> None:
-    """A feature's session (`kernel.Session`), added when the app is built: its declaration, with
-    what its tool says it is for, is checked (`ContractError`), and taking a name another holds is
-    a `ValueError`. A row's own says it in `output.purpose`; the estimate's fields are checked by
-    `backlog.parse_proposal`: the declaration holds types, the app its rules."""
-    contracts.add(kind, {**output, "purpose": purpose} if isinstance(output, dict) else output)
-
-
 def round_problem(obj: Mapping[str, Any]) -> str:
     """What a review round says that its schema cannot rule out, `""` when nothing: an id
     given twice, or a `fixed` with no commit, which the loop would read as neither."""
@@ -256,7 +248,7 @@ class Channel:
 
 
 class Collector:
-    """The `submit` of a session that is no stage: Gebo, an estimate.
+    """The `submit` of a session that is no stage: Gebo, an estimate, a triggered row.
 
     No artifact to hash and no unit run to match: it checks the schema alone (the SDK does
     that) and keeps the last object handed in. What of it is written is the caller's to decide.

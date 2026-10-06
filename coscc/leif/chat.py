@@ -13,6 +13,7 @@ from coscc.agent.sessions import Sessions
 from coscc.config import Config
 from coscc.kernel import Invalid, Run
 from coscc.runner import run as run_mod
+from coscc.units.submit import SERVER
 from coscc.units.workspaces import Workspaces
 
 # Leif's row, and what its turns are recorded under: the engine that opens them.
@@ -56,12 +57,15 @@ class Chat:
         sessions: Sessions,
         refuse_updating: Callable[[], None],
         agent_for: Callable[[str, Row], run_mod.Agent],
+        leif_server: Callable[[str], Any] | None = None,
     ) -> None:
         self.config = config
         self.ws = ws
         self.sessions = sessions
         self.refuse_updating = refuse_updating
         self.agent_for = agent_for
+        # The `cos` server holding `run_agent`, made per workspace (`triggers.leif_server`).
+        self.leif_server = leif_server
 
     # -- sessions -----------------------------------------------------------
 
@@ -129,6 +133,14 @@ class Chat:
                 session_id=session_id,
                 keep=True,
                 resume=resume,
+                **(
+                    {
+                        "servers": {SERVER: self.leif_server(cwd)},
+                        "mcp": (policy.RUN_AGENT_TOOL,),
+                    }
+                    if self.leif_server is not None
+                    else {}
+                ),
             ),
             ctx=run_mod.Ctx(self.sessions, self.ws.journal(), self.config.data_dir),
         ):

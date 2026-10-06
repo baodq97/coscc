@@ -38,8 +38,9 @@ from typing import Any, Iterator
 # 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped;
 # 13: idea 0006 M2 in one step, `_before_13` and `_after_13`; 14: `exhausted` ends are `failed`;
 # 15: the agent prefs move into the owner's layer of the agents' pack, `_to_15`; 16: a unit
-# records its process, `unit_meta.process`, and plan's `impl` is `variant`, `_to_16`).
-SCHEMA_VERSION = 16
+# records its process, `unit_meta.process`, and plan's `impl` is `variant`, `_to_16`; 17: the scan
+# feature's tables and prefs become `proposals` and `agents.state`, `_to_17`).
+SCHEMA_VERSION = 17
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -317,6 +318,38 @@ CREATE TABLE IF NOT EXISTS outputs (
     object    TEXT NOT NULL
 )""",
     """CREATE INDEX IF NOT EXISTS outputs_scope ON outputs (root, workspace, unit, id)""",
+    """-- Work an agent proposed for the Backlog (`coscc/units/proposals.py`): `unit` the unit it is
+-- about ('' for none), `run` the run that made it, `sources` JSON, `made` the unit accepting it
+-- made. Only the owner's press moves `state` on.
+CREATE TABLE IF NOT EXISTS proposals (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace TEXT NOT NULL,
+    agent     TEXT NOT NULL,
+    unit      TEXT NOT NULL DEFAULT '',
+    run       TEXT NOT NULL DEFAULT '',
+    type      TEXT NOT NULL,
+    slug      TEXT NOT NULL,
+    title     TEXT NOT NULL,
+    problem   TEXT NOT NULL,
+    sources   TEXT NOT NULL,
+    state     TEXT NOT NULL DEFAULT 'pending',
+    made      TEXT NOT NULL DEFAULT '',
+    by        TEXT NOT NULL DEFAULT '',
+    at        TEXT NOT NULL,
+    decided   TEXT NOT NULL DEFAULT '',
+    reason    TEXT NOT NULL DEFAULT ''
+)""",
+    """CREATE INDEX IF NOT EXISTS proposals_scope ON proposals (workspace, id)""",
+    """-- A run an event asked for after a delay (`coscc/runner/triggers.py`): due at `due_at`,
+-- kept across a restart until the tick runs it.
+CREATE TABLE IF NOT EXISTS trigger_due (
+    workspace TEXT NOT NULL,
+    agent     TEXT NOT NULL,
+    unit      TEXT NOT NULL DEFAULT '',
+    due_at    TEXT NOT NULL,
+    event     TEXT NOT NULL,
+    PRIMARY KEY (workspace, agent, unit)
+)""",
     """-- One review round. `head` is the SHA the app recorded when the run opened, never
 -- one the model wrote; `screens` is the JSON list of images the round looked at.
 CREATE TABLE IF NOT EXISTS review_rounds (
@@ -686,6 +719,7 @@ class Data:
                 if found:
                     self._to_15(conn)
                     self._to_16(conn)
+                    self._to_17(conn)
                 for table, column, declaration in _COLUMNS:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
@@ -773,6 +807,59 @@ class Data:
             "UPDATE outputs SET version = 4, object = json_remove(json_set(object, '$.variant', "
             "json_extract(object, '$.impl')), '$.impl') WHERE agent = 'plan' AND version = 3"
         )
+
+    @staticmethod
+    def _to_17(conn: sqlite3.Connection) -> None:
+        """17: the scan feature is a row of the pack (`agents/scan.md`). Its proposals move into
+        `proposals` under the agent `scan`; whether it was on in a workspace moves from
+        `features.state` (a schedule of `0` hours is off) into `agents.state`; its cursor lands as
+        `data_until` on its last `end` there; `features.schedule` and its tables go."""
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "scan_proposals" in tables:
+            conn.execute(
+                "INSERT INTO proposals (workspace, agent, unit, run, type, slug, title, problem, "
+                "sources, state, made, by, at, decided, reason) SELECT workspace, 'scan', '', '', "
+                "type, slug, title, problem, sources, state, unit, by, at, decided, reason "
+                "FROM scan_proposals ORDER BY id"
+            )
+        if "scan_cursor" in tables:
+            for workspace, after in conn.execute("SELECT workspace, after FROM scan_cursor"):
+                conn.execute(
+                    "UPDATE runs SET record = json_set(record, '$.data_until', ?) WHERE id = "
+                    "(SELECT id FROM runs WHERE workspace = ? AND kind = 'end' AND stage = 'scan' "
+                    "ORDER BY id DESC LIMIT 1)",
+                    (after, workspace),
+                )
+        prefs = dict(conn.execute("SELECT key, value FROM prefs").fetchall())
+
+        def read(key: str) -> dict[str, Any]:
+            try:
+                got = json.loads(prefs.get(key) or "{}")
+            except ValueError:
+                return {}
+            return got if isinstance(got, dict) else {}
+
+        states, hours = read("features.state"), read("features.schedule")
+        chosen = states.pop("scan", None)
+        moved = {
+            ws: "off" if state == "off" or hours.get("scan", {}).get(ws) == 0 else "on"
+            for ws, state in (chosen if isinstance(chosen, dict) else {}).items()
+        }
+        if moved:
+            agents = read("agents.state")
+            agents["scan"] = {**(agents.get("scan") or {}), **moved}
+            conn.execute(
+                "INSERT INTO prefs (key, value) VALUES ('agents.state', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (json.dumps(agents),),
+            )
+        if chosen is not None:
+            conn.execute(
+                "UPDATE prefs SET value = ? WHERE key = 'features.state'", (json.dumps(states),)
+            )
+        conn.execute("DELETE FROM prefs WHERE key = 'features.schedule'")
+        for table in ("scan_proposals", "scan_runs", "scan_cursor"):
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
 
     @staticmethod
     def _after_13(conn: sqlite3.Connection) -> None:

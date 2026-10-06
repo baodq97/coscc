@@ -61,9 +61,10 @@ class APayloadOutsideItsSchemaIsRefused(unittest.TestCase):
             publish(name, MOVED)
         self.assertIn("step.ended", moves)
 
-    def test_a_feature_sessions_move_carries_the_moves_payload(self):
+    def test_a_move_of_a_machine_no_name_declares_is_refused(self):
         publish: Any = Bus().publish
-        publish("scan.ended", MOVED)
+        with self.assertRaisesRegex(ValueError, "no bus subject"):
+            publish("scan.ended", MOVED)
 
     def test_a_missing_an_extra_or_a_mistyped_field_is_refused_before_any_handler(self):
         for name, payload, says in (

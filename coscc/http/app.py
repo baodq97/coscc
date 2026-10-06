@@ -39,6 +39,7 @@ from coscc.leif.chat import Chat
 from coscc.leif.insights import Activity
 from coscc.runner.queue import Attempts, Holds, Updating
 from coscc.runner.resume import Resume
+from coscc.runner import triggers
 from coscc.runner.steps import Steps
 from coscc.runner.watch import Watch
 from coscc.store.db import Data
@@ -54,6 +55,8 @@ from coscc.update.updater import (
 
 log = logging.getLogger(__name__)
 
+# How often the triggers are asked for what is due (`triggers.tick`). Chosen, not measured.
+TICK_SECONDS = 300.0
 # How long `shutdown` waits for what it cancelled. Chosen, not measured: past it a step's
 # thread is left running rather than an update held up.
 SHUTDOWN_WITHIN = 10.0
@@ -88,6 +91,7 @@ class Core:
             self.sessions,
             lambda: refuse_while_updating(self.updater),
             self.models.agent,
+            lambda cwd: triggers.leif_server(self, cwd),
         )
         self.ideas = Ideas(self.config, self.ws)
         self.backlog = Backlog(
@@ -366,8 +370,8 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
     async def schedules() -> None:
         # The first round waits one period, so a start spends nothing at once.
         while True:
-            await asyncio.sleep(plugin.TICK_SECONDS)
-            await plugin.tick(core, ctxs, features.FEATURES)
+            await asyncio.sleep(TICK_SECONDS)
+            await triggers.tick(core)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -379,6 +383,7 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
         yield
         for task in tasks:
             task.cancel()
+        await triggers.stop()
         # Steps first: each is a task that would otherwise write its `end` after its client
         # was closed. `shutdown` writes none, on purpose.
         await core.shutdown()
@@ -387,7 +392,8 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
     # The routes themselves, not `include_router`, which keeps them behind one entry of `routes`.
     # Read now, so a test can patch `features.FEATURES`.
     ctxs = {f.name: plugin.ctx_of(core, f) for f in features.FEATURES}
-    plugin.add_sessions(core, features.FEATURES)
+    plugin.check_declarations()
+    triggers.listen(core)
     core.steps.hooks = plugin.hooks_of(features.FEATURES, ctxs)
     # Checked now, created when the app starts: `typescript()` and the tests build an app
     # that never opens the database.

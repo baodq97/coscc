@@ -13,6 +13,7 @@
     "./agents/integrate.md",
     "./agents/estimate.md",
     "./agents/leif.md",
+    "./agents/scan.md",
     "./agents/scout.md",
     "./agents/worker.md"
   ]
