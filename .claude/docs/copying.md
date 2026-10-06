@@ -4,6 +4,8 @@ Read this before copying `.claude/` elsewhere.
 
 - Copy `.claude/`: it is the whole harness, and Claude Code loads `.claude/CLAUDE.md` with no
   import or root file. Put the repository's own build and test commands under `## Commands`.
+  The agents and their stage skills are not in it: they are the app's pack, which every
+  workspace the app runs uses.
 - What enforces does not travel: CI (`.github/workflows/`) and the host's ruleset, the only thing
   that stops a push. The `review` and `ship` gates need `git`, a logged-in `gh` and required
   checks: with none, `review` never opens.

@@ -19,7 +19,7 @@ from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITra
 
 from coscc.agent import sessions
 from coscc.agent.helpers import Denials, Gate, Helpers
-from coscc.agent.policy import SUBAGENTS, Grant
+from coscc.agent.policy import Grant
 from coscc.config import PROTECTED_DB_VAR, Config
 from coscc.store.db import Data
 from coscc.agent.sessions import (
@@ -431,14 +431,14 @@ class OptionsCarryTheKnobs(unittest.TestCase):
     def test_options_are_built_only_in_one_place(self):
         # Chat, a board step, Gebo and an estimate all reach the SDK through `_options`; a second
         # `ClaudeAgentOptions(` anywhere else in the package would be a session without the ceiling.
-        # `_harness/` and `_web/` are built, not committed.
+        # `_web/` is built, not committed.
         import ast
 
         package = Path(sessions.__file__).parents[1]
         found = []
         for path in sorted(package.rglob("*.py")):
             relative = path.relative_to(package)
-            if path.name.endswith("_test.py") or relative.parts[0] in ("_harness", "_web"):
+            if path.name.endswith("_test.py") or relative.parts[0] == "_web":
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
@@ -492,7 +492,7 @@ class EverySessionRunsAuto(unittest.TestCase):
 
     def test_the_apps_own_mcp_tools_are_allowed_by_name_and_no_command_is(self):
         grant = _grant(
-            helpers=tuple(SUBAGENTS),
+            helpers=("scout", "worker"),
             mcp=("mcp__cos__submit", "mcp__cos__peers", "mcp__vault__vault_exec"),
         )
         options = _options(Config(), "/p", None, gate=Gate(grant))

@@ -148,7 +148,7 @@ class Bed(unittest.IsolatedAsyncioTestCase):
             return base
         # What `issue` gives the run: the secrets listed for its agent, when its row holds the
         # vault; a push for the PR machine's steps and Gebo's.
-        holds = stage in vault.VAULT_AGENTS
+        holds = stage in vault.vault_agents()
         use = feature._usable(lambda: self.store, base) if holds else ()
         branch = "feat/x" if stage in ("pr", "ship", "integrate") else ""
         return dataclasses.replace(

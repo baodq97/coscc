@@ -585,7 +585,7 @@ class NoPromptNamesAPlanSection(unittest.TestCase):
         note = drift.describe(
             {"checked": True, "files": ["a.py"], "plan_sha": "a" * 40, "main_sha": "b" * 40}
         )
-        worker = policy.SUBAGENTS["worker"]
+        worker = helpers.definitions(("worker",))["worker"]
         for said in (
             prompt.PLAN_MAP_ADVICE,
             note,
@@ -595,3 +595,52 @@ class NoPromptNamesAPlanSection(unittest.TestCase):
         ):
             self.assertNotIn("Files that change", said)
             self.assertNotIn("Parallelization", said)
+
+
+class EveryStagesPromptIsTheOneBeforeTheAgentsBecameRows(unittest.TestCase):
+    """`fixtures/m4-prompts.json` is every stage's prompt on the golden unit, rules and identity
+    included, dumped before the tables moved into the pack. The only change since: the words a
+    spec was told beside a spike moved into its skill."""
+
+    BESIDE = (
+        "A spike ran on the spec before this one. Rewrite the spec on these results: a question "
+        "whose verdict is `fails` does not hold, so drop its `U<n>` and every requirement that "
+        "rested on it. A new question takes a new `U<n>`.\n\n"
+    )
+
+    def test_each_stage(self):
+        import json
+
+        from coscc.agent import agents
+        from tests.agent.test_pack import SPEC_ADDED, SPEC_LINE
+
+        want = json.loads((Path(__file__).parent / "fixtures" / "m4-prompts.json").read_text())
+        for stage, text in want.items():
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
+                directory = _golden_unit(Path(d))
+                row = policy.row_for_step(stage, "routine")
+                prompt, included = compose_prompt(
+                    d,
+                    directory,
+                    UNIT,
+                    stage,
+                    f"{stage}.md",
+                    writes_own=not row.app_writes_artifact,
+                    gate_said=f"open: {stage} may proceed",
+                    head="0123456789abcdef0123456789abcdef01234567",
+                    base_note="BASE-NOTE",
+                    last_attempt="LAST-ATTEMPT",
+                    integration_note="# INTEGRATION\n\nINTEGRATION-NOTE",
+                    drift_note="DRIFT-NOTE",
+                    worktree="/wt" if stage == "spike" else "",
+                    ceilings=(row.max_turns, row.max_budget_usd),
+                    agent=agents.agent_for(stage),
+                    mentions_note="MENTIONS-NOTE",
+                    idea_note="IDEA-NOTE",
+                )
+                got = prompt + "\n\nINCLUDED: " + ",".join(included)
+                for root in sorted({d, str(Path(d).resolve())}, key=len, reverse=True):
+                    got = got.replace(root, "<ROOT>")
+                if stage == "spec":
+                    text = text.replace(self.BESIDE, "").replace(SPEC_LINE, SPEC_LINE + SPEC_ADDED)
+                self.assertEqual(got, text)

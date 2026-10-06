@@ -1,11 +1,12 @@
-"""Each agent's row (its tools and ceilings), the per-run `Grant`, and the critical calls.
+"""Each agent's row as the engine holds it (its tools and ceilings), the per-run `Grant`, and the
+critical calls.
 
-- `ROWS` is agent data: the catalog tools (`coscc/kernel.py`) each agent holds and its two
-  ceilings. Deny by default: a key the table does not name gets `Row()`: no tools, one turn, no
-  budget.
+- `row_for` builds a `Row` from the agent's row of the pack (`coscc/agent/pack.py`): the tools it
+  allows, its ceilings, who writes its artifact, its warning. Deny by default: a key no row names
+  gets `Row()`: no tools, one turn, no budget.
 - A `Grant` is what one run may do, issued by the engine as the run opens
   (`coscc/runner/run.py`'s `issue`) and gone with it. `critical` reads only it.
-- Pure: nothing here reads the environment, the store or a request.
+- Nothing here reads the environment, the store or a request.
 
 `Row.tools` is not the whole enforcement: a list handed to the SDK covers the built-in set
 only and MCP tools walk past `tools=[]`. Every session runs Claude Code's `auto` mode, and what
@@ -18,32 +19,27 @@ from __future__ import annotations
 import functools
 import re
 from dataclasses import dataclass, replace
-from typing import Literal, get_args
+from typing import Any, Literal
+
+from coscc.agent import pack
 
 
-# How a plan rates its work (its record's `impl`): `novel` runs under `NOVEL_CEILINGS` and the
-# `<stage>:novel` model rows, `routine` in the model trial.
+# How a plan rates its work (its record's `impl`): `novel` runs under the row's `novel` variant,
+# `routine` in the model trial.
 Label = Literal["routine", "novel"]
 ROUTINE: Label = "routine"
 NOVEL: Label = "novel"
 
-# Stages whose artifact is prose. The app writes these from the text the session returns, so
-# the session needs no ability to write. `ship` is not one: it runs `gh pr merge`.
-ProseStage = Literal["idea", "intent", "spec", "plan", "review"]
-PROSE_STAGES: tuple[ProseStage, ...] = get_args(ProseStage)
-
 
 @dataclass(frozen=True)
 class Row:
-    """One agent's data: the catalog tools it holds and its ceilings. The default is the locked
-    position. Not a permission: what a run may do is the `Grant` issued from this."""
+    """One agent's data as a run uses it: the catalog tools it holds and its ceilings. The default
+    is the locked position. Not a permission: what a run may do is the `Grant` issued from this."""
 
     tools: tuple[str, ...] = ()
-    # Chosen, not measured: they turn a loop that will not end into a named failure.
     max_turns: int = 1
     max_budget_usd: float = 0.0
-    # Whether the app writes the artifact from the reply (prose stages) or the session writes it
-    # itself (stages that touch code).
+    # Whether the app writes the artifact from the reply or the session writes it itself.
     app_writes_artifact: bool = True
     # Shown on the page before the step is started: a capability from the machine's own
     # configuration is invisible in an app, so it is said where the button is.
@@ -51,6 +47,10 @@ class Row:
     # Whether the run is handed `submit` (`coscc/units/submit.py`). It writes nothing and runs
     # nothing, and is not in `tools`: the kernel's own, issued with the grant.
     submits: bool = False
+    # The app writes the artifact from the reply of a row that only reads (`output.by: app`).
+    prose: bool = False
+    # The helper rows `Agent` may start, when the row holds it.
+    helpers: tuple[str, ...] = ()
 
     @property
     def opens_anything(self) -> bool:
@@ -65,10 +65,10 @@ SUBMIT_TOOL = "mcp__cos__submit"
 MCP_NAME = re.compile(r"mcp__([a-z][a-z0-9-]*)__[a-z][a-z0-9_]*")
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 EXEC_TOOLS = ("Bash",)
-# Hands work to one of `SUBAGENTS` inside the same session. Every tool call a helper makes
+# Hands work to one of the row's helpers inside the same session. Every tool call a helper makes
 # reaches the same gate and grant as the session's own, with its `agent_id`, and its spend is in
 # the session's cost.
-AGENT_TOOL = "Agent"
+AGENT_TOOL = pack.AGENT_TOOL
 # The same tool under its older name.
 TASK_TOOL = "Task"
 # The SDK's own message between the agents of one session; the same hook holds where it goes.
@@ -81,45 +81,6 @@ LIST_AGENTS = "ListAgents"
 HANDBACK = "SubagentHandback"
 # The only `git` subcommands a helper may run: only the leading session commits.
 HELPER_GIT = ("status", "diff", "log", "show", "blame")
-# The catalog entries of two features (`coscc/features/`), as a row names them.
-VAULT = "vault"
-CODEGRAPH = "codegraph"
-# Named helpers with a bounded report, so big reads and test output stay out of the main
-# context. `sessions._options` turns each into an `AgentDefinition`. A helper gets only the
-# built-in tools its session's grant holds, so the grant carrying `Agent` lists `worker`'s.
-SUBAGENTS = {
-    "scout": {
-        "description": "Maps where things are in the named files. Read-only.",
-        "prompt": (
-            "You are given files and a question. Answer with a short map of `path:line` "
-            "entries, one per line, each with a few words on what is there; at most 30 "
-            'lines. Write "unsure" beside anything you did not confirm. Never edit.'
-        ),
-        "tools": list(READ_TOOLS),
-        "model": "sonnet",
-    },
-    "worker": {
-        "description": (
-            "Does one parallel step of the plan: edits only that step's paths, runs "
-            "only its tests, never commits."
-        ),
-        "prompt": (
-            "You are given one step of the plan: its name, its paths and what to report. Edit "
-            "only those paths and run only the tests of that step; the leading session runs the "
-            "plan's verification. Run git only to read (status, diff, log, show, blame): the "
-            "leading session commits."
-        ),
-        "tools": list(READ_TOOLS + ("Write", "Edit") + EXEC_TOOLS + (SEND_MESSAGE, PEERS_TOOL)),
-        "model": "sonnet",
-    },
-}
-
-INTEGRATE_WARNING = (
-    "Integrating runs `git` and `gh` with the GitHub login already on this machine, and "
-    "force-pushes (with a lease) to this unit's branch. That login reaches every repository "
-    "its account can reach, not just this workspace. What it resolves is an agent's word, "
-    "not a person's approval."
-)
 
 # An alias or an included config file made during the step renames `push` into a word
 # `_may_be_push` never sees (`git -c alias.p=push p`, `git config alias.p push`, or the same
@@ -129,147 +90,14 @@ _GIT_CONFIG_ROAD = re.compile(
     r"(?:^|[\s='\"])(?:alias|include|includeif)\.|\bGIT_CONFIG", re.IGNORECASE
 )
 
-SPIKE_WARNING = (
-    "This step runs arbitrary code (`python`, `node`, `npm`, `uv`) under this process's "
-    "user, in a throwaway directory the app deletes afterwards. Nothing is a sandbox: Claude "
-    "Code's auto mode and the app's few hard blocks hold the session, and what they miss is "
-    "not undone."
-)
-
-# Said on the Backlog panel above the button, before it is pressed.
-ESTIMATE_WARNING = (
-    "Proposing estimates opens one paid session (1 turn, $2.00 ceiling) on the model of the "
-    "Agents page row `estimate`. Whoever holds the password or a live session can press it, and "
-    "can rewrite any estimate, relation or the shortlist under any name they type."
-)
-
-# Only agents that appear here get anything. The rest (`idea`, any stage invented later) falls
-# through to `Row()`. Keyed by agent alone. Each `tools` names catalog entries
-# (`coscc/kernel.py`); one the catalog does not hold stops the app's build.
-ROWS: dict[str, Row] = {
-    # The one entry whose ceilings are measured rather than chosen. Fifty turns ended three of
-    # four `impl` steps mid-work (51/50 turns, $1.8-2.5, no `impl.md`); the one that finished did
-    # so because earlier runs had done the work. 120 is about twice the highest real attempt,
-    # and the budget goes with it: at the measured $0.047/turn a 120-turn step lands near $5.6,
-    # so a $5 cap would only move the same premature stop to the other ceiling.
-    "impl": Row(
-        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS + (AGENT_TOOL, SEND_MESSAGE, VAULT, CODEGRAPH),
-        max_turns=120,
-        max_budget_usd=8.0,
-        app_writes_artifact=False,
-    ),
-    # `plan` reads, and only reads: `write-plan` requires every path its record's `files` names
-    # to be verified before it is written down, and without read tools a plan names paths it
-    # never saw. No write tools and no Bash: the app still writes `plan.md` from the reply,
-    # which stops a plan authoring itself, and `beyond_reading` keeps that true if this widens.
-    "plan": Row(
-        tools=READ_TOOLS,
-        # Chosen, not measured: 20 cut a plan mid-read at the ceiling ($1.08, nothing returned)
-        # as what it had to read grew. The `turns` the app records is not the counter `max_turns`
-        # stops on, so there is no number to set this from. Forty doubles the ceiling that was
-        # hit; the budget moves with it so the other limit does not become the real one.
-        max_turns=40,
-        max_budget_usd=4.0,
-    ),
-    # `spec` reads, and only reads, for the reason `plan` does: `write-spec` requires every
-    # figure to name its source and every citation a path and line range. No write tools and no
-    # Bash; the app writes `spec.md` from the reply. Both ceilings are `plan`'s, not measured.
-    "spec": Row(
-        tools=READ_TOOLS,
-        max_turns=40,
-        max_budget_usd=4.0,
-    ),
-    # `intent` reads, and only reads: `write-intent` checks the idea's problem against the
-    # worktree's code before `## Problem` is written, and without read tools it restates the idea
-    # about code it never opened. No write tools and no Bash; the app writes `intent.md` from
-    # the reply. Both ceilings are `spec`'s, chosen, not measured.
-    "intent": Row(
-        tools=READ_TOOLS,
-        max_turns=40,
-        max_budget_usd=4.0,
-    ),
-    # The first grant that both holds Bash and has the app write its artifact from the reply.
-    # `beyond_reading` guards only `PROSE_STAGES`, which this is not. Writing is held to the
-    # session's `cwd`, a throwaway directory `runner.steps.Steps.run_step` makes and removes.
-    #
-    # Ceilings chosen, not measured. Spikes that finished were recorded at 36-44 turns and 40
-    # turns / $4.0 stopped several before writing `spike.md`. The recorded `turns` is not the
-    # counter `max_turns` stops on (see `plan`), so 80 doubles the ceiling that was hit. Runs
-    # cost $0.032-0.055 a recorded turn, so 80 turns is about $2.6-4.4, and $4 would stop the
-    # dearer ones before the turn ceiling; $8.0 is `impl`'s.
-    "spike": Row(
-        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS + (VAULT,),
-        max_turns=80,
-        max_budget_usd=8.0,
-        app_writes_artifact=True,
-        warning=SPIKE_WARNING,
-    ),
-    # A separate agent session reviews the open pull request, before the merge. It reads and
-    # only reads, like `plan`: the app still writes `review.md` from the reply. It cannot run
-    # `git diff`, so it sees the working tree and `impl.md`, not the diff.
-    "review": Row(
-        tools=READ_TOOLS + (CODEGRAPH,),
-        # Chosen, not measured: 20/$2.0 stopped review sessions before they wrote a round. One that
-        # still stops at it pauses, and a person's raise goes on in its session.
-        max_turns=40,
-        max_budget_usd=4.0,
-    ),
-    # No `pr` and no `ship` entry: both are the PR machine's, with no session
-    # (`coscc/github/prmachine.py`), so a step of either falls through to the locked `Row()`.
-    # Gebo's ceilings are chosen, not measured: impl's (120 turns, $8), to lower once real runs
-    # are recorded.
-    "integrate": Row(
-        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
-        max_turns=120,
-        max_budget_usd=8.0,
-        app_writes_artifact=False,
-        warning=INTEGRATE_WARNING,
-    ),
-    # Not a stage either: the backlog's *Propose estimates* button, one session per press. No
-    # tools, like `idea`; it hands its estimate back through
-    # `submit` (`SUBMITTING_SESSIONS`) and the reply is not read. Ceilings chosen, not measured.
-    "estimate": Row(
-        max_turns=1,
-        max_budget_usd=2.0,
-        warning=ESTIMATE_WARNING,
-    ),
-}
-
-# The ceilings a step gets when its plan's label is `novel` (`models.label_of`), as
-# `(max_turns, max_budget_usd)`; everything else about the grant stays the stage's own. A stage
-# not named here runs the same grant whatever its label.
-#
-# 250 is chosen, not measured, and $16 is 2 x $8.0. The dearest turn measured $0.0419 across
-# `novel` runs (250 turns, $10.48) and $0.0568 across all `impl` runs ($14.21), so $16 leaves a
-# thin margin.
-NOVEL_CEILINGS: dict[str, tuple[int, float]] = {
-    "impl": (250, 16.0),
-}
-
-
-def beyond_reading(row: Row, reads: tuple[str, ...] = READ_TOOLS) -> tuple[str, ...]:
-    """What a row carries that a prose stage may not: anything beyond reading. `reads` are the
-    catalog names whose effect is `read` (`kernel.Hooks.reads`).
-
-    A prose stage's artifact is written by **the app** from the reply. A step holding write
-    tools could write its own artifact behind the app's back, and one holding Bash is not
-    a prose stage at all; reading is neither. The guard in `coscc/runner/step.py` asks
-    this rather than whether the row is empty ("no tools" is not "no capability").
-    """
-    return tuple(t for t in row.tools if t not in reads)
-
-
-# The stages whose run hands back an object through `submit`: a stage result, or `review`'s
-# round. `coscc/units/submit.py` holds the same stages as `STAGE_RESULT` and `ROUND`;
-# `policy_test` pins the two. A set, not the loop's order: that is the loop's alone.
-SUBMITTING = ("idea", "impl", "intent", "plan", "review", "spec", "spike")
+# The `output.kind`s whose run hands back an object through `submit`.
+SUBMIT_KINDS = ("artifact", "review", "session")
 # The fewest turns such a step gets: a call to `submit` ends a turn, and a refused object is
 # submitted again after one more turn, so four holds a call, a refusal, a second call and the
 # reply. Chosen, not measured.
 SUBMIT_TURNS = 4
-# The sessions that are no stage and hand back an object through `submit`: Gebo, the
-# estimate, and each feature's (`add_session`); `coscc/units/submit.py`'s `SESSIONS`.
-SUBMITTING_SESSIONS = {"estimate", "integrate"}
+# A feature's session rows (`kernel.Session.row`), added when the app is built: no pack row yet.
+ADDED: dict[str, Row] = {}
 # The sessions whose own `max_turns` holds below `SUBMIT_TURNS`, because one more turn could
 # pass their budget: a refused object is not submitted again.
 OWN_TURNS: set[str] = set()
@@ -278,49 +106,74 @@ OWN_TURNS: set[str] = set()
 def add_session(kind: str, row: Row, own_turns: bool) -> None:
     """A feature's session (`kernel.Session`), added when the app is built; adding the same
     one again changes nothing, and taking a name another row holds is a `ValueError`."""
-    if ROWS.get(kind, row) != row:
+    row = replace(row, submits=True)
+    if pack.row(kind) is not None or ADDED.get(kind, row) != row:
         raise ValueError(f"the row {kind!r} is taken")
-    ROWS[kind] = row
-    SUBMITTING_SESSIONS.add(kind)
+    ADDED[kind] = row
     if own_turns:
         OWN_TURNS.add(kind)
 
 
-def row_for(key: str) -> Row:
-    """The row of one agent. A key the table does not name is locked, not open.
+def _ceilings(found: dict[str, Any], label: str | None) -> dict[str, Any]:
+    """The row's ceilings, its `novel` variant's laid over them for a `novel` step."""
+    own = dict(found.get("ceilings") or {})
+    if label == NOVEL:
+        own.update(((found.get("variants") or {}).get(NOVEL) or {}).get("ceilings") or {})
+    return own
 
-    A stage in `SUBMITTING` or a session in `SUBMITTING_SESSIONS` gets `submits`, and at least
-    `SUBMIT_TURNS` turns, unless it is one of `OWN_TURNS`.
-    """
-    row = ROWS.get(key, Row())
-    if key not in SUBMITTING and key not in SUBMITTING_SESSIONS:
-        return row
-    return replace(row, submits=True, max_turns=turns_floor(key, row.max_turns))
+
+def _row(key: str, label: str | None) -> Row:
+    if key in ADDED:
+        return ADDED[key]
+    found = pack.row(key)
+    if found is None:
+        return Row()
+    output = found.get("output") or {}
+    ceilings = _ceilings(found, label)
+    return Row(
+        tools=pack.tools(found),
+        max_turns=int(ceilings.get("turns") or 1),
+        max_budget_usd=float(ceilings.get("usd") or 0.0),
+        app_writes_artifact=output.get("by") != "session",
+        warning=str(found.get("warning") or ""),
+        submits=output.get("kind") in SUBMIT_KINDS,
+        prose=output.get("by") == "app",
+        helpers=tuple(found.get("helpers") or ()),
+    )
+
+
+def row_for(key: str) -> Row:
+    """The row of one agent. A key no row names is locked, not open. A row that submits gets
+    at least `SUBMIT_TURNS` turns, unless it is one of `OWN_TURNS`."""
+    row = _row(key, None)
+    return replace(row, max_turns=turns_floor(key, row.max_turns)) if row.submits else row
 
 
 def turns_floor(stage: str, turns: int) -> int:
-    """`turns`, raised to `SUBMIT_TURNS` for a stage or session that submits, unless it is one
-    of `OWN_TURNS`. A person's override of the ceiling gets the same floor."""
-    if stage in OWN_TURNS or (stage not in SUBMITTING and stage not in SUBMITTING_SESSIONS):
+    """`turns`, raised to `SUBMIT_TURNS` for a row that submits, unless it is one of `OWN_TURNS`.
+    A person's ceiling gets the same floor."""
+    if stage in OWN_TURNS or not _row(stage, None).submits:
         return turns
     return max(turns, SUBMIT_TURNS)
 
 
 def row_for_step(stage: str, label: str | None) -> Row:
-    """The row for one step run under a plan's effective label.
-
-    Only the exact `novel` label, on a stage `NOVEL_CEILINGS` names, changes anything, and
-    only the two ceilings: the tools are `row_for(stage)`'s.
-    """
+    """The row for one step run under a plan's effective label: a `novel` step takes the ceilings
+    of its row's `novel` variant where it has them; the tools are `row_for(stage)`'s."""
     row = row_for(stage)
-    if label == NOVEL and stage in NOVEL_CEILINGS:
-        turns, budget = NOVEL_CEILINGS[stage]
-        return replace(row, max_turns=turns, max_budget_usd=budget)
-    return row
+    variant = (((pack.row(stage) or {}).get("variants") or {}).get(NOVEL)) or {}
+    if label != NOVEL or "ceilings" not in variant:
+        return row
+    novel = _row(stage, NOVEL)
+    return replace(
+        row, max_turns=turns_floor(stage, novel.max_turns), max_budget_usd=novel.max_budget_usd
+    )
 
 
-def is_prose_stage(stage: str) -> bool:
-    return stage in PROSE_STAGES
+def helper_tools(kind: str) -> tuple[str, ...]:
+    """The tools a helper row allows; none for a key that is no helper row."""
+    found = pack.row(kind) or {}
+    return pack.tools(found) if (found.get("output") or {}).get("kind") == "helper" else ()
 
 
 # The app's database file in its data root, `coscc/store/db.py`'s `DB_FILENAME`; spelled here so
@@ -1300,7 +1153,7 @@ class Grant:
     # `--force-with-lease=<branch>:<lease>`; "" refuses the flag.
     branch: str = ""
     lease: str = ""
-    # The helper types `Agent` may start (`SUBAGENTS`), only for a run whose row holds `Agent`.
+    # The helper rows `Agent` may start (the row's `helpers`), only for a run whose row holds `Agent`.
     helpers: tuple[str, ...] = ()
     # Full names of the MCP tools it holds: `submit`, `peers` with helpers, and the catalog tools
     # its row lists and whose `when` admitted the run.
@@ -1376,7 +1229,7 @@ def critical(
 ) -> str:
     """ "" unless the call is one every session is refused, else why, opening with its item.
 
-    `agent_id` is the CLI's, set when one of `SUBAGENTS` made the call, and `kind` that helper's
+    `agent_id` is the CLI's, set when one of the run's helpers made the call, and `kind` that helper's
     type: a helper holds no MCP tool but `PEERS_TOOL`, and writes or runs a command only when its
     kind's own tools list the tool (a `scout` neither). Reads only the run's grant: no command list
     and no read boundary; what is not here is for `auto` to judge.
@@ -1418,7 +1271,7 @@ def _helper_tool_refused(tool: str, kind: str) -> str:
     """Why a helper of `kind` may not call `tool`, beyond the grant it shares with its session."""
     if tool.startswith("mcp__"):
         return "" if tool == PEERS_TOOL else f"{HELD}: a helper holds only {PEERS_TOOL}"
-    if tool in WRITE_TOOLS + EXEC_TOOLS and tool not in SUBAGENTS.get(kind, {}).get("tools", ()):
+    if tool in WRITE_TOOLS + EXEC_TOOLS and tool not in helper_tools(kind):
         return f"{HELPERS}: a {kind or 'helper of no known kind'} may not use {tool}"
     return ""
 

@@ -16,7 +16,7 @@ from typing import Any, AsyncIterator
 from collections.abc import Callable, Mapping
 
 from coscc import units
-from coscc.agent import agents, harness
+from coscc.agent import agents, pack
 from coscc.agent import steps as steps_mod
 from coscc.agent.policy import row_for
 from coscc.agent.sessions import Sessions
@@ -38,7 +38,7 @@ from coscc.store.journal import BadRecord, Journal
 from coscc.units import submit as submit_mod, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
-from coscc.units.board import CONSEQUENCE, Unavailable
+from coscc.units.board import Unavailable
 from coscc.units.read import younger_than
 from coscc.units.workspaces import Workspaces
 from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK
@@ -84,8 +84,6 @@ class Integration:
         steps: Steps,
         bus: Bus,
         *,
-        agent_overrides: Callable[[], dict[str, dict[str, str]]],
-        config_overrides: Callable[[], tuple[dict[str, dict[str, Any]], list[str]]],
         config_for: Callable[[str], tuple[str | None, str, str | None, str]],
     ) -> None:
         self.config = config
@@ -94,8 +92,6 @@ class Integration:
         self.sessions = sessions
         self.steps = steps
         self.bus = bus
-        self.agent_overrides = agent_overrides
-        self.config_overrides = config_overrides
         self.config_for = config_for
         # One lock per workspace held across an integration's check-and-mark.
         self._integrate_locks: dict[str, asyncio.Lock] = {}
@@ -113,7 +109,7 @@ class Integration:
         since = integration_since_review(journal, key, unit)
         if not since:
             return ""
-        return integrate.describe_for_review(since, self.agent_overrides())
+        return integrate.describe_for_review(since)
 
     async def attach_integration(
         self,
@@ -343,7 +339,7 @@ class Integration:
                 fallback=fallback,
                 name=(self.steps.agent_of("integrate") or {}).get("name", ""),
             ),
-            "consequence": CONSEQUENCE["integrate"],
+            "consequence": str((pack.row("integrate") or {}).get("consequence") or ""),
         }
 
     async def integrate(
@@ -819,15 +815,7 @@ class Integration:
         agent = self.steps.agent_of("integrate")
         # Gebo runs no `Runner`, so its row takes its two ceilings here,
         # the ceilings by the function the runner asks: one taken up again keeps its owner's.
-        overrides, _ = self.config_overrides()
-        row, ceilings = with_ceilings(
-            row_for("integrate"),
-            "integrate",
-            None,
-            overrides["turns"],
-            overrides["budget"],
-            was,
-        )
+        row, ceilings = with_ceilings(row_for("integrate"), "integrate", None, was)
         name = agent["name"] if agent is not None else ""
         start: dict[str, Any] = {}
         if resume is None:
@@ -840,8 +828,10 @@ class Integration:
                 if path.exists():
                     own[artifact] = path
             try:
-                skill = harness.read_skill("integrate")
-            except harness.MissingRules as e:
+                skill = "\n\n".join(
+                    pack.skill(n) for n in (pack.row("integrate") or {}).get("skills") or []
+                )
+            except LookupError as e:
                 raise Invalid(f"the integrate skill could not be read: {e}") from e
             prompt = integrate.build_prompt(
                 skill=skill,
@@ -894,6 +884,7 @@ class Integration:
                 name=name,
                 settings=agents.settings_json(agent) if agent is not None else None,
                 preset=True,
+                system=str((pack.row("integrate") or {}).get(pack.BODY) or ""),
             ),
             run_mod.Input(
                 str(tree),

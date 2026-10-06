@@ -1,248 +1,131 @@
-"""Which model, and which effort, a stage or chat runs on, resolved in one place.
+"""Which model, which effort and which two ceilings a run of an agent gets, resolved in one place
+from its row (`coscc/agent/pack.py`): the row's `model`, its `novel` variant's for a `novel` step,
+its `ceilings` likewise. Each says where it came from: `override` when the owner's layer changed it,
+`default` when it is the built-in's. With no model the row's `COS_MODEL` (`Config.model`, handed
+in; this module never reads the environment) applies, and with neither the SDK default.
 
-Each row (every stage the loop names, then `chat`) resolves override first (a `model:<name>`
-row in `prefs`), then default (`models.json`, shipped with the package; no `chat` key), then
-`COS_MODEL` (`Config.model`, handed in; this module never reads the environment). If none
-answers the model is `None` and the SDK default applies.
-
-Effort is overridden under `effort:<name>` with no environment fallback. A stage after `plan`
-may have a `<stage>:novel` row, used when the plan's effective label is `novel`; model and
-effort are looked up separately, variant first. `max` is taken only from an override.
-
-`resolve` may be handed a `trial_model`: lookup is then override, `COS_MODEL`, trial, default.
-Only a routine `impl` board step hands one in; `table` never does. Gebo (`integrate`) is no
-stage: with nothing of its own it runs `impl`'s base row (`FALLS_BACK`).
+`resolve` may be handed a `trial_model`: lookup is then the owner's model, `COS_MODEL`, the trial,
+the row's own. Only a routine step of a row with `model.trial` hands one in.
 
 A step's two ceilings resolve in `ceilings`, the one place the Agents page and the runner both
-ask: override (`turns:<row>`, `budget:<row>`), then the grant's own (`coscc/agent/policy.py`),
-the `SUBMIT_TURNS` floor applied after either. `check` holds the bounds every override keeps.
-
-The list of stages is the loop's and the caller passes it in; a key here that the loop does
-not name is reported as a problem. Bad data never raises: it is skipped and named in `problems`.
+ask, the `SUBMIT_TURNS` floor applied after either. `check` reads a value the page sends.
 """
 
 from __future__ import annotations
 
-import json
 import math
-from pathlib import Path
-from typing import Any, Iterable, Mapping, TypedDict
+from typing import Any, Mapping, TypedDict
 
-from coscc.agent import policy
+from coscc.agent import pack, policy
 
-DEFAULT_PATH = Path(__file__).resolve().parent / "models.json"
-
-CHAT = "chat"
-# The backlog's proposal session: a row of its own, shown just before `chat`.
-ESTIMATE = "estimate"
-PREFIX = "model:"
-EFFORT_PREFIX = "effort:"
-TURNS_PREFIX = "turns:"
-BUDGET_PREFIX = "budget:"
 NOVEL_SUFFIX = ":novel"
-# Gebo is no stage and has no row in `models.json`: it runs `impl`'s base row unless its own
-# key is overridden.
-FALLS_BACK = {"integrate": "impl"}
-
-# What the CLI's `--effort` accepts. `max` only from an override.
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
-OVERRIDE_ONLY = "max"
-
-# The bounds an override keeps. Chosen, not measured: 500 turns is twice the `novel`
-# ceiling, $50 about three times its $16.
-MODEL_MAX = 100
-TURNS_MIN, TURNS_MAX = 1, 500
-BUDGET_MIN, BUDGET_MAX = 0.10, 50.00
-# An override as stored: a model or an effort, a number of turns, dollars.
-Value = str | int | float
-# The prefix each field of `check` is stored under.
-FIELD_PREFIX = {
-    "model": PREFIX,
-    "effort": EFFORT_PREFIX,
-    "turns": TURNS_PREFIX,
-    "budget": BUDGET_PREFIX,
+# The fields of a row the Agents page sets, and where each lives in the row: `(key, sub-key)`.
+FIELDS = {
+    "model": ("model", "id"),
+    "effort": ("model", "effort"),
+    "turns": ("ceilings", "turns"),
+    "budget": ("ceilings", "usd"),
 }
+# An override as the page sends it: a model or an effort, a number of turns, dollars.
+Value = str | int | float
 
 OVERRIDE = "override"
-# The model came from the trial, between `COS_MODEL` and the default.
+# The model came from the trial, between `COS_MODEL` and the row's.
 TRIAL = "trial"
 DEFAULT = "default"
 ENV = "COS_MODEL"
 NONE = "none"
 
 
-def load_defaults(
-    path: str | Path | None = None,
-) -> tuple[dict[str, dict[str, str | None]], list[str]]:
-    """The shipped defaults, `{name: {"model", "effort"}}`, and what was wrong with them.
-
-    A bare string means that model, no effort. Never raises.
-    """
-    where = Path(path) if path is not None else DEFAULT_PATH
-    try:
-        raw = json.loads(where.read_text(encoding="utf-8"))
-    except OSError as e:
-        return {}, [f"{where.name} could not be read: {e}"]
-    except ValueError as e:
-        return {}, [f"{where.name} is not JSON: {e}"]
-    rows = raw.get("models") if isinstance(raw, dict) else None
-    if not isinstance(rows, dict):
-        return {}, [f'{where.name} has no "models" object']
-    out: dict[str, dict[str, str | None]] = {}
-    problems: list[str] = []
-    for name, entry in rows.items():
-        if isinstance(entry, str):
-            entry = {"model": entry}
-        if not isinstance(entry, dict):
-            problems.append(f"{where.name}: {name!r} is not a model entry: {entry!r}")
-            continue
-        model = entry.get("model")
-        if not (isinstance(model, str) and model.strip()):
-            problems.append(f"{where.name}: {name!r} has no model name: {model!r}")
-            model = None
-        effort = entry.get("effort")
-        if effort is not None and effort not in EFFORTS:
-            problems.append(
-                f"{where.name}: {name!r} effort {effort!r} is not one of {', '.join(EFFORTS)}, ignored"
-            )
-            effort = None
-        if effort == OVERRIDE_ONLY:
-            problems.append(
-                f"{where.name}: {name!r} effort 'max' is taken only from an override, ignored"
-            )
-            effort = None
-        if model is None and effort is None:
-            continue
-        out[str(name)] = {"model": model.strip() if model else None, "effort": effort}
-    return out, problems
-
-
 def check(field: str, value: Any) -> tuple[Any, str]:
     """`(value as stored, "")`, or `(None, why)` when `value` is out of `field`'s bounds.
 
-    A model is trimmed text of 1 to `MODEL_MAX` characters; an effort one of `EFFORTS` (`max`
-    included: only an override may name it); turns a whole number `TURNS_MIN`-`TURNS_MAX`; a
-    budget a number of dollars `BUDGET_MIN`-`BUDGET_MAX`, rounded to the cent.
+    A model is trimmed text of 1 to `pack.MODEL_MAX` characters; an effort one of `pack.EFFORTS`;
+    turns a whole number in `pack`'s bounds; a budget a number of dollars in them, rounded to the
+    cent.
     """
     if field == "model":
         if not isinstance(value, str) or not value.strip():
             return None, "model must be a name"
-        if len(value.strip()) > MODEL_MAX:
-            return None, f"model must be at most {MODEL_MAX} characters"
+        if len(value.strip()) > pack.MODEL_MAX:
+            return None, f"model must be at most {pack.MODEL_MAX} characters"
         return value.strip(), ""
     if field == "effort":
-        if value not in EFFORTS:
-            return None, f"effort must be one of {', '.join(EFFORTS)}"
+        if value not in pack.EFFORTS:
+            return None, f"effort must be one of {', '.join(pack.EFFORTS)}"
         return value, ""
     if field == "turns":
         if isinstance(value, str) and value.strip().isdigit():
             value = int(value.strip())
         if isinstance(value, bool) or not isinstance(value, int):
-            return None, f"turns must be a whole number from {TURNS_MIN} to {TURNS_MAX}"
-        if not TURNS_MIN <= value <= TURNS_MAX:
-            return None, f"turns must be from {TURNS_MIN} to {TURNS_MAX}"
+            return None, f"turns must be a whole number from {pack.TURNS_MIN} to {pack.TURNS_MAX}"
+        if not pack.TURNS_MIN <= value <= pack.TURNS_MAX:
+            return None, f"turns must be from {pack.TURNS_MIN} to {pack.TURNS_MAX}"
         return value, ""
     if field == "budget":
+        dollars = f"${pack.BUDGET_MIN:.2f} to ${pack.BUDGET_MAX:.2f}"
         if isinstance(value, str):
             try:
                 value = float(value.strip().lstrip("$"))
             except ValueError:
-                return (
-                    None,
-                    f"budget must be a number of dollars, ${BUDGET_MIN:.2f} to ${BUDGET_MAX:.2f}",
-                )
+                return None, f"budget must be a number of dollars, {dollars}"
         if (
             isinstance(value, bool)
             or not isinstance(value, (int, float))
             or not math.isfinite(value)
         ):
-            return (
-                None,
-                f"budget must be a number of dollars, ${BUDGET_MIN:.2f} to ${BUDGET_MAX:.2f}",
-            )
+            return None, f"budget must be a number of dollars, {dollars}"
         value = round(float(value), 2)
-        if not BUDGET_MIN <= value <= BUDGET_MAX:
-            return None, f"budget must be from ${BUDGET_MIN:.2f} to ${BUDGET_MAX:.2f}"
+        if not pack.BUDGET_MIN <= value <= pack.BUDGET_MAX:
+            return None, f"budget must be from {dollars}"
         return value, ""
-    return None, f"no such field: {field} (use one of {', '.join(FIELD_PREFIX)})"
+    return None, f"no such field: {field} (use one of {', '.join(FIELDS)})"
 
 
-def overrides_from(
-    raw_rows: dict[str, str], prefix: str = PREFIX
-) -> tuple[dict[str, Value], list[str]]:
-    """Parse `<prefix><name>` rows as `Data.pref_rows` returns them. Never raises.
+def part(found: Mapping[str, Any], top: str, label: str | None) -> dict[str, Any]:
+    """The row's `model` or `ceilings`, its `novel` variant's laid over them for a `novel` step."""
+    own = dict(found.get(top) or {})
+    if label == policy.NOVEL:
+        own.update(((found.get("variants") or {}).get(policy.NOVEL) or {}).get(top) or {})
+    return own
 
-    Each value is held to `check` of its prefix's field; one out of bounds is skipped and named.
-    """
-    field = next(f for f, p in FIELD_PREFIX.items() if p == prefix)
-    out: dict[str, Value] = {}
-    problems: list[str] = []
-    for key, raw in sorted(raw_rows.items()):
-        if not key.startswith(prefix):
-            continue
-        name = key[len(prefix) :]
-        try:
-            value = json.loads(raw)
-        except TypeError, ValueError:
-            problems.append(f"{key}: the stored value is not JSON ({raw!r}), ignored")
-            continue
-        if field in ("model", "effort") and not isinstance(value, str):
-            problems.append(f"{key}: the stored value is not a string ({value!r}), ignored")
-            continue
-        if field in ("turns", "budget") and isinstance(value, str):
-            problems.append(f"{key}: the stored value is not a number ({value!r}), ignored")
-            continue
-        if field == "model" and not value.strip():
-            problems.append(f"{key}: the stored value is empty, ignored")
-            continue
-        found, reason = check(field, value.strip() if isinstance(value, str) else value)
-        if reason:
-            problems.append(f"{key}: {value!r}: {reason}, ignored")
-            continue
-        out[name] = found
-    return out, problems
+
+def _source(found: Mapping[str, Any], top: str, sub: str, label: str | None) -> str:
+    """`override` when the owner's layer gives `top.sub` another value than the built-in row."""
+    now = part(found, top, label).get(sub)
+    if now is None:
+        return NONE
+    return OVERRIDE if now != part(found.get("builtin") or found, top, label).get(sub) else DEFAULT
 
 
 def resolve(
     name: str,
     label: str | None,
-    model_overrides: Mapping[str, Value],
-    effort_overrides: Mapping[str, Value],
-    defaults: dict[str, dict[str, str | None]],
     env_model: str | None,
     trial_model: str | None = None,
+    own: Mapping[str, Any] | None = None,
 ) -> tuple[str | None, str, str | None, str]:
-    """`(model, model_source, effort, effort_source)` for one row.
+    """`(model, model_source, effort, effort_source)` for one run of `name`'s row.
 
-    The `<name>:novel` keys are consulted only when `label` is `novel`. `trial_model` is taken,
-    as `TRIAL`, when no key has a model override and `COS_MODEL` is unset.
+    `own` stands for a row the pack does not have (a feature's session): its `id` and `effort`.
+    `trial_model` is taken, as `TRIAL`, when the owner did not choose the model and `COS_MODEL`
+    is unset.
     """
-    keys = ([name + NOVEL_SUFFIX] if label == policy.NOVEL else []) + [name]
-    keys += [FALLS_BACK[name]] if name in FALLS_BACK else []
-
-    def pick(field: str, overrides: Mapping[str, Value]) -> tuple[str | None, str]:
-        for key in keys:
-            if overrides.get(key):
-                return str(overrides[key]), OVERRIDE
-            if (defaults.get(key) or {}).get(field):
-                return defaults[key][field], DEFAULT
-        return None, NONE
-
-    model, model_source = pick("model", model_overrides)
+    found = pack.row(name)
+    if found is None:
+        model, effort = (own or {}).get("id"), (own or {}).get("effort")
+        model_source = DEFAULT if model else NONE
+        effort_source = DEFAULT if effort else NONE
+    else:
+        chosen = part(found, "model", label)
+        model, effort = chosen.get("id"), chosen.get("effort")
+        model_source = _source(found, "model", "id", label)
+        effort_source = _source(found, "model", "effort", label)
     if trial_model and model_source != OVERRIDE:
         model, model_source = (env_model, ENV) if env_model else (trial_model, TRIAL)
     if model is None and env_model:
         model, model_source = env_model, ENV
-    effort, effort_source = pick("effort", effort_overrides)
     return model, model_source, effort, effort_source
-
-
-def ceiling_key(stage: str, label: str | None) -> str:
-    """The row a step's ceilings are overridden under: `<stage>:novel` for a `novel` step of a
-    stage `NOVEL_CEILINGS` names, else the stage."""
-    if label == policy.NOVEL and stage in policy.NOVEL_CEILINGS:
-        return stage + NOVEL_SUFFIX
-    return stage
 
 
 class Ceilings(TypedDict):
@@ -254,151 +137,114 @@ class Ceilings(TypedDict):
     max_budget_source: str
 
 
-NO_CEILINGS = Ceilings(
-    max_turns=None, max_turns_source=NONE, max_budget_usd=None, max_budget_source=NONE
-)
+def ceilings(stage: str, label: str | None) -> Ceilings:
+    """The two ceilings a step of `stage` under `label` runs with, and where each came from:
+    `policy.row_for_step`'s, the owner's where they set them. A row with no budget is `None`, from
+    `none`. The page shows these and the runner hands them to the session, so the two cannot
+    differ."""
+    row = policy.row_for_step(stage, label)
+    found = pack.row(stage)
+    if found is None:
+        turns_source = DEFAULT
+        budget_source = DEFAULT if row.max_budget_usd else NONE
+    else:
+        turns_source = _source(found, "ceilings", "turns", label)
+        budget_source = _source(found, "ceilings", "usd", label)
+    return Ceilings(
+        max_turns=row.max_turns,
+        max_turns_source=DEFAULT if turns_source == NONE else turns_source,
+        max_budget_usd=row.max_budget_usd or None,
+        max_budget_source=budget_source if row.max_budget_usd else NONE,
+    )
 
 
 class ConfigRow(TypedDict):
     """One row of `agent_config`: what a session of `key` runs on, each with its source."""
 
     key: str
-    # The fields this row may override, of `FIELD_PREFIX`.
+    # The fields this row may set, of `FIELDS`.
     fields: list[str]
     model: str | None
     model_source: str
     effort: str | None
     effort_source: str
     ceilings: Ceilings
-    # Per field of `fields`: whether an override is stored.
+    # Per field of `fields`: whether the owner's layer sets it.
     overridden: dict[str, bool]
 
 
-class AgentConfig(TypedDict):
-    rows: list[ConfigRow]
-    problems: list[str]
-
-
-def ceilings(
-    stage: str,
-    label: str | None,
-    turns_overrides: Mapping[str, Value],
-    budget_overrides: Mapping[str, Value],
-) -> Ceilings:
-    """The two ceilings a step of `stage` under `label` runs with, and where each came from.
-
-    `{max_turns, max_turns_source, max_budget_usd, max_budget_source}`: the override of
-    `ceiling_key`'s row, else the agent row's own (`row_for_step`), with `turns_floor` applied
-    after either. A row with no budget is `None`, from `none`. The page shows these and the
-    runner hands them to the session, so the two cannot differ.
-    """
-    row = policy.row_for_step(stage, label)
-    key = ceiling_key(stage, label)
-    if key in turns_overrides:
-        turns, turns_source = int(turns_overrides[key]), OVERRIDE
-    else:
-        turns, turns_source = row.max_turns, DEFAULT
-    if key in budget_overrides:
-        budget, budget_source = float(budget_overrides[key]), OVERRIDE
-    elif row.max_budget_usd:
-        budget, budget_source = float(row.max_budget_usd), DEFAULT
-    else:
-        budget, budget_source = None, NONE
-    return Ceilings(
-        max_turns=policy.turns_floor(stage, turns),
-        max_turns_source=turns_source,
-        max_budget_usd=budget,
-        max_budget_source=budget_source,
+def config_row(key: str, env_model: str | None) -> ConfigRow:
+    """`key` (a row, or `<row>:novel`) as the Agents page shows it: every field resolved."""
+    base = key.removesuffix(NOVEL_SUFFIX)
+    label = policy.NOVEL if key != base else None
+    found = pack.row(base) or {}
+    model, model_source, effort, effort_source = resolve(base, label, env_model)
+    variant = ((found.get("variants") or {}).get(policy.NOVEL) or {}) if label else found
+    fields = ["model", "effort"] + (["turns", "budget"] if "ceilings" in variant else [])
+    limits = ceilings(base, label)
+    sources = {
+        "model": model_source,
+        "effort": effort_source,
+        "turns": limits["max_turns_source"],
+        "budget": limits["max_budget_source"],
+    }
+    return ConfigRow(
+        key=key,
+        fields=fields,
+        model=model,
+        model_source=model_source,
+        effort=effort,
+        effort_source=effort_source,
+        ceilings=limits,
+        overridden={f: sources[f] == OVERRIDE for f in fields},
     )
 
 
-def settable(agent_keys: Iterable[str]) -> dict[str, tuple[str, ...]]:
-    """Every row the Agents page shows, in its order, with the fields it may override.
+def variants_of(key: str) -> list[str]:
+    """The `<row>:novel` keys of a row that has a `novel` variant."""
+    found = pack.row(key) or {}
+    return [key + NOVEL_SUFFIX] if policy.NOVEL in (found.get("variants") or {}) else []
 
-    `agent_keys` are `agents.json`'s, which are the loop's stages (pr and ship run no session)
-    and Gebo. An agent takes all four; a `:novel` row model and effort, and its ceilings when
-    `NOVEL_CEILINGS` names its stage; `estimate` model and effort; `chat` a model only.
-    """
-    keys = [str(k) for k in agent_keys]
-    out: dict[str, tuple[str, ...]] = {}
-    for name in rows_for([k for k in keys if k not in FALLS_BACK]) + [
-        k for k in keys if k in FALLS_BACK
-    ]:
-        base = name.removesuffix(NOVEL_SUFFIX)
-        if name == CHAT:
-            out[name] = ("model",)
-        elif name == ESTIMATE:
-            out[name] = ("model", "effort")
-        elif name != base:
-            ceilings_too = ("turns", "budget") if base in policy.NOVEL_CEILINGS else ()
-            out[name] = ("model", "effort") + ceilings_too
+
+def set_field(key: str, field: str, value: Any) -> tuple[Any, Any]:
+    """Write `field` of `key` (a row, or `<row>:novel`) into the owner's layer, or put the
+    built-in's back when `value` is `None`; `(old, new)` of that field. `ValueError` when the row
+    would not pass `pack.check`, and nothing is written."""
+    base = key.removesuffix(NOVEL_SUFFIX)
+    found = pack.row(base)
+    if found is None:
+        raise ValueError(f"no such row: {key}")
+    if field not in FIELDS:
+        raise ValueError(f"no such field: {field} (use one of {', '.join(FIELDS)})")
+    if key != base and key not in variants_of(base) or field not in config_row(key, None)["fields"]:
+        raise ValueError(f"{key} has no {field} to set")
+    top, sub = FIELDS[field]
+    label = policy.NOVEL if key != base else None
+    builtin = found["builtin"]
+    if label is None:
+        now, was = dict(found.get(top) or {}), dict(builtin.get(top) or {})
+    else:
+        variants = found.get("variants") or {}
+        now = dict((variants.get(policy.NOVEL) or {}).get(top) or {})
+        was = dict(((builtin.get("variants") or {}).get(policy.NOVEL) or {}).get(top) or {})
+    old = part(found, top, label).get(sub)
+    if value is None:
+        now.pop(sub, None)
+        if sub in was:
+            now[sub] = was[sub]
+    else:
+        now[sub] = value
+    if label is None:
+        pack.write(base, top, now or None)
+    else:
+        variants = {k: dict(v) for k, v in (found.get("variants") or {}).items()}
+        variant = variants.setdefault(policy.NOVEL, {})
+        if now:
+            variant[top] = now
         else:
-            out[name] = tuple(FIELD_PREFIX)
-    return out
-
-
-def agent_config(
-    agent_keys: Iterable[str],
-    overrides: Mapping[str, Mapping[str, Value]],
-    defaults: dict[str, dict[str, str | None]],
-    env_model: str | None,
-) -> AgentConfig:
-    """Each row of `settable`, every field resolved with its source, and what was wrong.
-
-    `overrides` is `{field: overrides_from(...)}` for the four fields of `FIELD_PREFIX`. A field
-    a row does not take is `None` from `none`. `problems` names every stored key, and every key
-    of the defaults, that is no row's: such a key changes nothing.
-    """
-    rows_fields = settable(agent_keys)
-    rows: list[ConfigRow] = []
-    for name, fields in rows_fields.items():
-        base = name.removesuffix(NOVEL_SUFFIX)
-        label = policy.NOVEL if name != base else None
-        model, model_source, effort, effort_source = resolve(
-            base, label, overrides["model"], overrides["effort"], defaults, env_model
-        )
-        if "effort" not in fields:
-            effort, effort_source = None, NONE
-        rows.append(
-            ConfigRow(
-                key=name,
-                fields=list(fields),
-                model=model,
-                model_source=model_source,
-                effort=effort,
-                effort_source=effort_source,
-                ceilings=(
-                    ceilings(base, label, overrides["turns"], overrides["budget"])
-                    if "turns" in fields
-                    else NO_CEILINGS
-                ),
-                overridden={f: name in overrides[f] for f in fields},
-            )
-        )
-    problems = [
-        f"{FIELD_PREFIX[field]}{k}: no row called {k!r} takes a {field}, ignored"
-        for field in FIELD_PREFIX
-        for k in sorted(overrides[field])
-        if field not in rows_fields.get(k, ())
-    ] + [
-        f"{DEFAULT_PATH.name}: no row called {k!r}, ignored"
-        for k in sorted(defaults)
-        if k not in rows_fields
-    ]
-    return AgentConfig(rows=rows, problems=problems)
-
-
-def rows_for(stages: Iterable[str]) -> list[str]:
-    """Each stage, its `:novel` variant right after it when the stage comes after `plan`,
-    then `estimate`, then `chat`."""
-    names = [str(s) for s in stages]
-    after_plan = names.index("plan") + 1 if "plan" in names else len(names)
-    out: list[str] = []
-    for i, name in enumerate(names):
-        out.append(name)
-        if i >= after_plan:
-            out.append(name + NOVEL_SUFFIX)
-    return out + [ESTIMATE, CHAT]
+            variant.pop(top, None)
+        pack.write(base, "variants", variants)
+    return old, part(pack.row(base) or {}, top, label).get(sub)
 
 
 # The label of a step, from the plan's record. The files where a mistake costs the most force

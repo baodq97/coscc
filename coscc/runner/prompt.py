@@ -1,4 +1,4 @@
-"""What a step is told: the stage's rules, the envelope its row declares (`agents.json`
+"""What a step is told: the stage's rules, the envelope its row declares (its row's
 `input`: artifacts whole, earlier records, answers and findings from `cos.db`, the app's data),
 and the sections the app adds to them.
 """
@@ -10,23 +10,27 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import agents, harness
+from coscc.agent import agents, pack
 from coscc.units import contracts, submit
 from coscc.runner.review import finding_line
 from coscc.runner.reply import RunError
 
 
 def skill_for(stage: str) -> str:
-    """The rules for a stage, from this app's copy. Missing stops the step.
+    """The rules for a stage: the text of each skill its row names (`pack.skill`, the owner's copy
+    first). None stops the step.
 
     A step run without its rules spends quota and records the same `included` as a full one,
-    so absence is fatal. It refuses with `RunError`, not `MissingRules`: the routes map this
-    module's refusals with one `except RunError` into a 400 that names the problem; another
-    exception type would surface as a 500.
+    so absence is fatal. It refuses with `RunError`: the routes map this module's refusals with
+    one `except RunError` into a 400 that names the problem; another exception type would surface
+    as a 500.
     """
+    names = list((pack.row(stage) or {}).get("skills") or [])
+    if not names:
+        raise RunError(f"no rules for the {stage} stage: its row names no skill")
     try:
-        return harness.read_skill(f"write-{stage}", stage)
-    except harness.MissingRules as e:
+        return "\n\n".join(pack.skill(n) for n in names)
+    except LookupError as e:
         raise RunError(f"no rules for the {stage} stage: {e}") from e
 
 
@@ -35,14 +39,6 @@ def _read(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
-
-
-# What a stage is told beside one artifact it is handed.
-_BESIDE = {
-    ("spec", "spike"): "A spike ran on the spec before this one. Rewrite the spec on these "
-    "results: a question whose verdict is `fails` does not hold, so drop its `U<n>` and every "
-    "requirement that rested on it. A new question takes a new `U<n>`.\n\n",
-}
 
 
 def _artifacts(stage: str, directory: Path, included: list[str]) -> list[str]:
@@ -54,8 +50,7 @@ def _artifacts(stage: str, directory: Path, included: list[str]) -> list[str]:
         text = contracts.artifact_text(directory, bare)
         if text:
             included.append(f"{bare}.md")
-            beside = _BESIDE.get((stage, bare), "")
-            blocks.append(f"# The unit's {bare}.md\n\n{beside}{text.rstrip()}")
+            blocks.append(f"# The unit's {bare}.md\n\n{text.rstrip()}")
     return blocks
 
 

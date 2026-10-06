@@ -6,17 +6,18 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any, AsyncIterator, TypedDict
 
-from coscc.agent import models
-from coscc.agent import sessions as reader
+from coscc.agent import policy
 from coscc.agent.policy import Row
+from coscc.agent import sessions as reader
 from coscc.agent.sessions import Sessions
 from coscc.config import Config
 from coscc.kernel import Invalid, Run
 from coscc.runner import run as run_mod
 from coscc.units.workspaces import Workspaces
 
-# A chat turn's ceiling: `Sessions.stream`'s default, since chat names none, and no budget.
-CHAT_TURNS = 1
+# Leif's row, and what its turns are recorded under: the engine that opens them.
+LEIF = "leif"
+CHAT = "chat"
 
 
 class ChatSession(TypedDict):
@@ -108,9 +109,9 @@ class Chat:
         or failed is `Invalid` once its `end` is written.
         """
         self.check_send(cwd, text)
-        agent = self.agent_for(
-            models.CHAT, Row(tools=tuple(self.config.effective_tools()), max_turns=CHAT_TURNS)
-        )
+        # Leif's row, holding the machine's own tools (`COS_TOOLS`) rather than the row's.
+        row = replace(policy.row_for(LEIF), tools=tuple(self.config.effective_tools()))
+        agent = self.agent_for(LEIF, row)
         if resume is not None and resume.get("model"):
             agent = replace(
                 agent,
@@ -124,6 +125,7 @@ class Chat:
                 cwd,
                 text,
                 self.ws.key(cwd),
+                stage=CHAT,
                 session_id=session_id,
                 keep=True,
                 resume=resume,

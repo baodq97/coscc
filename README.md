@@ -24,7 +24,7 @@ app's `coscc.loop`:
 |---|---|
 | `.claude/CLAUDE.md` | Every rule that holds in every session. Claude Code loads it automatically. Read this first. |
 | `.claude/rules/` | Rules that load only when a session touches the files they name. |
-| `.claude/skills/` | One skill per stage that runs a session — `write-idea` through `write-review` — plus `cos-status`. `pr` and `ship` are the app's own and have none. |
+| `.claude/skills/` | A person's skills: `cos-status`, `incident`. The agents and their stage skills are the app's pack, `coscc/packs/coscc-sdlc/`. |
 
 Work units live in `.cos/NNNN_<slug>/`. `docs/` holds the playbook this is built from.
 

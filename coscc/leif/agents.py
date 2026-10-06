@@ -1,9 +1,10 @@
-"""The eight agents: who each is, what it runs on, what it may do and how its runs went.
+"""The agents: who each is, what it runs on, what it may do and how its runs went.
 
-The resolving is `coscc/agent/agents.py` (who) and `coscc/agent/models.py` (model, effort and
-the two ceilings); this is where the overrides are read from `prefs` and written back, and
-where the run log's `end` records are added up for the Agents page. `Models` gathers the
-inputs for which model and effort each stage runs on.
+The rows are `coscc/agent/pack.py`'s, resolved by `coscc/agent/agents.py` (who) and
+`coscc/agent/models.py` (model, effort and the two ceilings); this is where a field the page
+sets is written into the owner's layer and logged, and where the run log's `end` records are
+added up for the Agents page. `Models` gathers the inputs for which model and effort each run
+gets.
 """
 
 from __future__ import annotations
@@ -13,12 +14,12 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 
-from coscc.agent import agents, models, modeltrial, policy
+from coscc.agent import agents, models, modeltrial, pack, policy
 from coscc.config import Config
 from coscc.kernel import OWNER, Invalid
 from coscc.leif import decide
 from coscc.runner import run as run_mod
-from coscc.store.db import Busy, Data, Unusable
+from coscc.store.db import Busy, Unusable
 from coscc.store.journal import BadRecord, Journal
 from coscc.units import board as board_reader
 from coscc.units.contracts import Plan
@@ -36,12 +37,6 @@ COSTLY_SHARE = 0.8
 # The chips, worst first: a row with one of `ATTENTION` is listed before the rest.
 CHIPS = ("failed", "costly", "idle", "ok")
 ATTENTION = ("failed", "costly")
-
-
-def skill_of(key: str) -> str:
-    """The skill a step of `key` loads: `write-<stage>` (`coscc/runner/prompt.py`), and Gebo's
-    own `integrate` (`coscc/github/integration.py`)."""
-    return key if key == "integrate" else f"write-{key}"
 
 
 class RunView(TypedDict):
@@ -76,6 +71,7 @@ class AgentRow(TypedDict):
     config: models.ConfigRow
     # The `:novel` rows of this agent's stage, edited in its drawer.
     variants: list[models.ConfigRow]
+    # The skills its row names, joined.
     skill: str
     row: RowView
     last: RunView | None
@@ -88,7 +84,7 @@ class AgentRow(TypedDict):
 
 class AgentPage(TypedDict):
     rows: list[AgentRow]
-    # `estimate` and `chat`.
+    # The rows no state opens and no helper: `estimate` and `leif`.
     others: list[models.ConfigRow]
     problems: list[str]
     cos_model: str | None
@@ -130,46 +126,10 @@ class Agents:
         self.config = config
         self.ws = ws
 
-    def agent_overrides(self) -> tuple[dict[str, dict[str, str]], list[str]]:
-        """The stored overrides, or none and why when `cos.db` cannot be read: a name is
-        never a reason to refuse a step or a board read."""
-        try:
-            rows = Data(self.config.data_dir).pref_rows(agents.PREFIX)
-        except (Unusable, sqlite3.Error, OSError) as e:
-            return {}, [f"the agent overrides could not be read, so the defaults apply: {e}"]
-        return agents.overrides_from(rows)
-
     def agent(self, key: str) -> dict[str, Any] | None:
-        """The resolved row for `key`, overrides included, or `None`. Every place in the
-        service that shows or writes an agent's name asks this. Never raises on bad data."""
-        return agents.agent_for(key, self.agent_overrides()[0])
-
-    def agent_table(self) -> dict[str, Any]:
-        """Every agent's identity, each with `overridden`, and what was wrong."""
-        overrides, bad = self.agent_overrides()
-        found = agents.table(overrides)
-        for row in found["rows"]:
-            row["overridden"] = row["key"] in overrides
-        found["problems"] = bad + found["problems"]
-        return found
-
-    def config_overrides(self) -> tuple[dict[str, dict[str, models.Value]], list[str]]:
-        """`{field: {row: value}}` for model, effort, turns and budget, and what was wrong. A
-        store that cannot be read is no override at all, said in the problems: never a reason
-        to refuse a step or the page."""
-        found: dict[str, dict[str, models.Value]] = {}
-        problems: list[str] = []
-        try:
-            data = Data(self.config.data_dir)
-            for field, prefix in models.FIELD_PREFIX.items():
-                found[field], bad = models.overrides_from(data.pref_rows(prefix), prefix)
-                problems += bad
-        except (Unusable, sqlite3.Error, OSError) as e:
-            found = {field: {} for field in models.FIELD_PREFIX}
-            problems = [
-                f"the model and ceiling overrides could not be read, so the defaults apply: {e}"
-            ]
-        return found, problems
+        """The resolved identity of `key`, or `None`. Every place in the service that shows or
+        writes an agent's name asks this. Never raises on bad data."""
+        return agents.agent_for(key)
 
     def _ends(self, workspace: str | None) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
         """Every `end` record by stage, newest first, from one read of the run log, each with
@@ -197,22 +157,18 @@ class Agents:
     def agent_page(self, workspace: str | None = None, now: datetime | None = None) -> AgentPage:
         """Everything the Agents page shows, in one call: the run log is read once, not per stage.
 
-        `rows`, one per agent, failed and costly first and otherwise in `agents.json`'s order:
+        `rows`, one per agent, failed and costly first and otherwise in the pack's order:
         identity, model, effort and the two ceilings each with its source, its `:novel` rows
         under `variants`, the row (read only), the skill, the last run, the last `RECENT`,
-        the cost and count of the last `WINDOW_DAYS`, and the chip. `others`: `estimate` and
-        `chat`. `problems`: every override, default or record that was skipped.
+        the cost and count of the last `WINDOW_DAYS`, and the chip. `others`: the rows an
+        engine opens other than Gebo (`estimate`, `leif`). `problems`: every row or record that
+        cannot be used.
 
         `workspace` is a run-log key; `None` adds up every workspace of the working folder.
         """
         now = now or datetime.now(timezone.utc)
         since = (now - timedelta(days=WINDOW_DAYS)).isoformat(timespec="seconds")
-        identity = self.agent_table()
-        overrides, bad_overrides = self.config_overrides()
-        defaults, bad_defaults = models.load_defaults()
-        keys = [r["key"] for r in identity["rows"]]
-        config = models.agent_config(keys, overrides, defaults, self.config.model)
-        by_key = {r["key"]: r for r in config["rows"]}
+        identity = agents.table()
         ends, bad_runs = self._ends(workspace)
 
         rows: list[AgentRow] = []
@@ -221,8 +177,8 @@ class Agents:
             mine = ends.get(key, [])
             recent = [r for r in mine if str(r.get("at") or "") >= since]
             last = _run_view(mine[0]) if mine else None
-            config_row = by_key[key]
-            variants = [r for k, r in by_key.items() if k == key + models.NOVEL_SUFFIX]
+            config_row = models.config_row(key, self.config.model)
+            variants = [models.config_row(k, self.config.model) for k in models.variants_of(key)]
             # A `novel` run is held to the `:novel` row's dollar ceiling where it has one.
             ran_under = next(
                 (
@@ -246,7 +202,7 @@ class Agents:
                     identity_source=dict(who["source"]),
                     config=config_row,
                     variants=variants,
-                    skill=skill_of(key),
+                    skill=", ".join((pack.row(key) or {}).get("skills") or []),
                     row=_row_view(key),
                     last=last,
                     runs=[_run_view(r) for r in mine[:RECENT]],
@@ -256,41 +212,61 @@ class Agents:
                 )
             )
         rows.sort(key=lambda r: r["chip"] not in ATTENTION)
+        others = [
+            k
+            for k, r in pack.rows().items()
+            if not agents.shown(k) and (r.get("output") or {}).get("kind") != "helper"
+        ]
         return AgentPage(
             rows=rows,
-            others=[by_key[k] for k in (models.ESTIMATE, models.CHAT) if k in by_key],
-            problems=identity["problems"]
-            + bad_defaults
-            + bad_overrides
-            + config["problems"]
-            + bad_runs,
+            others=[models.config_row(k, self.config.model) for k in others],
+            problems=identity["problems"] + bad_runs,
             cos_model=self.config.model,
         )
 
     def set_agent_field(
         self, key: object, field: object, value: object = None, workspace: str | None = None
     ) -> AgentPage:
-        """Save one field of one row, or reset it to its default when `value` is `None`, then
-        log it and return `agent_page`. Out of bounds is refused and nothing is written.
+        """Save one field of one row into the owner's layer (`pack.write`), or put the built-in's
+        back when `value` is `None`, then log it and return `agent_page`. A value out of bounds,
+        or a row that would not pass `pack.check`, is refused and nothing is written.
 
         `field` is one of `agents.FIELDS` (an agent's identity; `""` resets too) or of
-        `models.FIELD_PREFIX` (model, effort, turns, budget; which rows take which is
-        `models.settable`; an effort of `""` resets too).
+        `models.FIELDS` (model, effort, turns, budget; `key` may be `<row>:novel`; an effort of
+        `""` resets too).
 
         **Behind the password like every route here**: whoever holds it or a live session can
-        raise any agent's budget to `BUDGET_MAX` a step, and the autopilot runs with it. The
-        trace is the `agent-setting` record and each step's `config` event.
+        raise any agent's budget to `pack.BUDGET_MAX` a step, and the autopilot runs with it. The
+        trace is the `agent-setting` record and each run's `row_hash` and `edited`.
         """
         if not isinstance(key, str) or not key:
             raise Invalid("key is required")
         field = str(field)
-        if field in agents.FIELDS:
-            old, new = self._set_identity(key, field, value)
-        elif field in models.FIELD_PREFIX:
-            old, new = self._set_config(key, field, value)
-        else:
-            known = (*agents.FIELDS, *models.FIELD_PREFIX)
+        if field not in (*agents.FIELDS, *models.FIELDS):
+            known = (*agents.FIELDS, *models.FIELDS)
             raise Invalid(f"no such field: {field} (use one of {', '.join(known)})")
+        reason = ""
+        if value == "" or value is None:
+            value = None
+        elif field in agents.FIELDS:
+            reason = agents.check_field(field, value)
+        else:
+            value, reason = models.check(field, value)
+        if reason:
+            raise Invalid(reason)
+        try:
+            if field in agents.FIELDS:
+                if pack.row(key) is None:
+                    raise Invalid(f"no such agent: {key} (use one of {', '.join(pack.rows())})")
+                old, new = pack.write(key, agents.WHERE[field], value)
+            else:
+                old, new = models.set_field(key, field, value)
+        except ValueError as e:
+            raise Invalid(str(e)) from e
+        except OSError as e:
+            raise Invalid(
+                f"the owner's layer could not be written, so nothing was saved: {e}"
+            ) from e
         journal = self.ws.journal()
         if journal is not None:
             try:
@@ -311,97 +287,11 @@ class Agents:
                 raise Invalid(f"the setting was saved but not logged: {e}") from e
         return self.agent_page(workspace)
 
-    def _set_config(self, key: str, field: str, value: Any) -> tuple[Any, Any]:
-        """Write or remove `<prefix><key>`; `(old, new)` override."""
-        rows = models.settable(agents.load_defaults()[0])
-        if key not in rows:
-            raise Invalid(f"no such row: {key} (use one of {', '.join(rows)})")
-        if field not in rows[key]:
-            raise Invalid(f"{key} has no {field} to set")
-        # The effort box's "Default" choice sends nothing: it means the default, so a reset.
-        if field == "effort" and value == "":
-            value = None
-        if value is not None:
-            value, reason = models.check(field, value)
-            if reason:
-                raise Invalid(reason)
-        prefix = models.FIELD_PREFIX[field]
-        data = Data(self.config.data_dir)
-        try:
-            old = models.overrides_from(data.pref_rows(prefix), prefix)[0].get(key)
-        except (Unusable, sqlite3.Error, OSError) as e:
-            raise Invalid(f"the overrides could not be read, so nothing was saved: {e}") from e
-        if value is None:
-            data.delete_pref(prefix + key)
-        else:
-            data.set_pref(prefix + key, value)
-        return old, value
-
-    def _set_identity(self, key: str, field: str, value: Any) -> tuple[Any, Any]:
-        """Write or remove one identity field of `key`'s override; `(old, new)` of that field.
-
-        A name another row has, override or default, whatever its case, is refused: removing
-        an override brings the default name back, so that is checked too.
-        """
-        defaults, _ = agents.load_defaults()
-        if key not in defaults:
-            raise Invalid(f"no such agent: {key} (use one of {', '.join(defaults)})")
-        value = "" if value is None else value
-        if value != "":
-            reason = agents.check_field(field, value)
-            if reason:
-                raise Invalid(reason)
-
-        # Read strictly, unlike `agent_overrides`: a write built on overrides it could not read
-        # would drop the row's other fields and check the name against defaults alone.
-        data = Data(self.config.data_dir)
-        try:
-            overrides, _ = agents.overrides_from(data.pref_rows(agents.PREFIX))
-        except (Unusable, sqlite3.Error, OSError) as e:
-            raise Invalid(
-                f"the agent overrides could not be read, so nothing was saved: {e}"
-            ) from e
-        old = overrides.get(key) or {}
-        new = {f: v for f, v in {**old, field: value}.items() if v != ""}
-        after = {k: v for k, v in overrides.items() if k != key}
-        if new:
-            after[key] = new
-
-        def named(k: str) -> str:
-            row = agents.resolve(k, defaults, after)
-            if row is None:
-                raise Invalid(f"no such agent: {k} (use one of {', '.join(defaults)})")
-            return str(row["name"])
-
-        name = named(key)
-        taken = {named(k).lower(): k for k in defaults if k != key}
-        if name.lower() in taken:
-            raise Invalid(f"the name {name} is already {taken[name.lower()]}'s")
-
-        if new:
-            data.set_pref(agents.PREFIX + key, new)
-        else:
-            data.delete_pref(agents.PREFIX + key)
-        return old.get(field), new.get(field)
-
 
 class Models:
     def __init__(self, config: Config, ws: Workspaces) -> None:
         self.config = config
         self.ws = ws
-
-    # -- which model each stage runs on --------------------------------------
-    #
-    # The resolving is `coscc/agent/models.py`; this gathers its inputs: the stage list from
-    # the loop, the overrides from `prefs`, `COS_MODEL` from `Config`.
-
-    def model_overrides(self) -> tuple[dict[str, models.Value], list[str]]:
-        return models.overrides_from(Data(self.config.data_dir).pref_rows(models.PREFIX))
-
-    def effort_overrides(self) -> tuple[dict[str, models.Value], list[str]]:
-        return models.overrides_from(
-            Data(self.config.data_dir).pref_rows(models.EFFORT_PREFIX), models.EFFORT_PREFIX
-        )
 
     def agent(
         self,
@@ -411,17 +301,10 @@ class Models:
         effort: str | None = None,
     ) -> run_mod.Agent:
         """The `run` agent of a session no stage runs: the estimate, a feature's session (whose own
-        `model` and `effort` stand where no override and no shipped row name one) and chat, on the
-        row's own ceilings."""
-        defaults, _ = models.load_defaults()
-        defaults.setdefault(key, {"model": model, "effort": effort})
+        `model` and `effort` stand where the pack has no row) and Leif, on the row's own ceilings
+        and with its body as the system prompt."""
         model, model_source, effort, effort_source = models.resolve(
-            key,
-            None,
-            self.model_overrides()[0],
-            self.effort_overrides()[0],
-            defaults,
-            self.config.model,
+            key, None, self.config.model, own={"id": model, "effort": effort}
         )
         return run_mod.Agent(
             key,
@@ -434,27 +317,13 @@ class Models:
                 "max_turns_source": models.DEFAULT,
                 "max_budget_source": models.DEFAULT if row.max_budget_usd else models.NONE,
             },
+            system=str((pack.row(key) or {}).get(pack.BODY) or ""),
         )
-
-    def model_for(self, name: str) -> tuple[str | None, str]:
-        """`(model, source)` for chat. Never raises on bad data.
-
-        A board step goes through `stage_config` instead, which also reads the label.
-        """
-        return self.config_for(name)[:2]
 
     def config_for(self, name: str) -> tuple[str | None, str, str | None, str]:
         """`(model, model_source, effort, effort_source)` of a row run with no label: Gebo's
-        `integrate`, which falls back to `impl`'s base row (`models.FALLS_BACK`)."""
-        defaults, _ = models.load_defaults()
-        return models.resolve(
-            name,
-            None,
-            self.model_overrides()[0],
-            self.effort_overrides()[0],
-            defaults,
-            self.config.model,
-        )
+        `integrate`."""
+        return models.resolve(name, None, self.config.model)
 
     def stage_config(
         self,
@@ -477,16 +346,10 @@ class Models:
         """
         history = [r for r in journal.records(key, unit) if r.get("stage") == "impl"]
         label_declared, label, label_source = models.label_of(stage, stages, plan)
-        arm = modeltrial.arm(unit) if modeltrial.applies(stage, label) else None
-        trial_kw = {"trial_model": modeltrial.model_for(stage, label, arm)} if arm else {}
+        arm = modeltrial.arm(unit, stage) if modeltrial.applies(stage, label) else None
+        trial_model = modeltrial.model_for(stage, label, arm) if arm else None
         model, model_source, effort, effort_source = models.resolve(
-            stage,
-            label,
-            self.model_overrides()[0],
-            self.effort_overrides()[0],
-            models.load_defaults()[0],
-            self.config.model,
-            **trial_kw,
+            stage, label, self.config.model, trial_model
         )
         trial_record = (
             {"trial_record": {modeltrial.FIELD: {"arm": arm, "requested": model}}} if arm else {}

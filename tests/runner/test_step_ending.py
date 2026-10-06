@@ -16,7 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from coscc.agent import harness
+from coscc.agent import pack
 from coscc.git import gitops
 from coscc.store.journal import Journal
 from coscc.runner.reply import RunError
@@ -204,7 +204,7 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
         with self.assertRaises(RunError) as caught:
             skill_for("no-such-stage")
         self.assertIn("no-such-stage", str(caught.exception))
-        self.assertIn("SKILL.md", str(caught.exception))
+        self.assertIn("names no skill", str(caught.exception))
 
     def test_the_prompt_always_carries_the_rules_section(self):
         with tempfile.TemporaryDirectory() as d:
@@ -236,27 +236,22 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
             sessions = Counting()
             runner = Runner(sessions=sessions, journal=journal)
 
-            originals = (harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS)
-            harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
-            harness.CHECKOUT_HARNESS = Path("/nonexistent/checkout")
-            try:
+            pack.write("spec", "skills", [])
 
-                async def go():
-                    async for _ in runner.run(
-                        workspace=d,
-                        directory=Path(d) / ".cos" / UNIT,
-                        journal_key=d,
-                        unit=UNIT,
-                        stage="spec",
-                        artifact="spec.md",
-                        mode="manual",
-                    ):
-                        pass
+            async def go():
+                async for _ in runner.run(
+                    workspace=d,
+                    directory=Path(d) / ".cos" / UNIT,
+                    journal_key=d,
+                    unit=UNIT,
+                    stage="spec",
+                    artifact="spec.md",
+                    mode="manual",
+                ):
+                    pass
 
-                with self.assertRaises(RunError):
-                    asyncio.run(go())
-            finally:
-                harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS = originals
+            with self.assertRaises(RunError):
+                asyncio.run(go())
 
             self.assertEqual(sessions.streams, 0)
             self.assertEqual(journal.timelines(d).get(UNIT, []), [])

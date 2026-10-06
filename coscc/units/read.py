@@ -637,8 +637,7 @@ async def _in_thread[T](fn: Callable[..., T], *args: Any) -> T:
 class Board:
     """The board of every workspace, read once each and held.
 
-    `unfinished(key)` lists a workspace's unfinished attempts (what is running); `overrides()`
-    the agent table's changes; `open_prs(cwd)` asks `gh` for the open pull requests (a list, or
+    `unfinished(key)` lists a workspace's unfinished attempts (what is running); `open_prs(cwd)` asks `gh` for the open pull requests (a list, or
     its error as a string); `attach(cwd, data, journal, key, prs, fresh)` adds what sits above
     `units`: each unit's `integration`, and returns the function that starts the CI asks that
     read found missing, which the read calls last.
@@ -650,14 +649,12 @@ class Board:
         ws: Workspaces,
         bus: Bus,
         unfinished: Callable[[str], list[Any]],
-        overrides: Callable[[], dict[str, Any]],
         open_prs: Callable[[str], Awaitable[list[dict[str, Any]] | str]],
         attach: Callable[..., Awaitable[Callable[[], None]]],
     ) -> None:
         self.config = config
         self.ws = ws
         self.unfinished = unfinished
-        self.overrides = overrides
         self.open_prs = open_prs
         self.attach = attach
         # By journal key: the last board read, `{cwd, data, read_at}`; the one read running;
@@ -924,7 +921,7 @@ class Board:
         )
         return data
 
-    def running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    def running_here(self, key: str) -> dict[str, list[dict[str, Any]]]:
         """`running`'s `running`, from memory alone: what `guide_block` reads too."""
         running: dict[str, list[dict[str, Any]]] = {}
         for entry in self.unfinished(key):
@@ -935,7 +932,7 @@ class Board:
                 if entry["machine"] == "integration"
                 else entry["machine"]
             )
-            row = None if kind == "rebase" else agents.agent_for(entry["stage"], overrides)
+            row = None if kind == "rebase" else agents.agent_for(entry["stage"])
             agent = {"glyph": row["glyph"], "name": row["name"]} if row else None
             running.setdefault(entry["unit"], []).append(
                 {
@@ -973,8 +970,7 @@ class Board:
         self.ws.check(cwd)
         key = self.ws.key(cwd)
         # Through the one lookup, so an override shows here too. Read once per call.
-        overrides = self.overrides()
-        running = self.running_here(key, overrides)
+        running = self.running_here(key)
         out: dict[str, Any] = {"running": running, "unknown_end": {}}
         journal = self.ws.journal()
         if journal is None:
@@ -993,7 +989,7 @@ class Board:
                 {
                     "stage": r["stage"],
                     "started": r["started"],
-                    "agent": agents.of_record(r, overrides),
+                    "agent": agents.of_record(r),
                 }
                 for r in found["open"]
                 if r.get("started")

@@ -15,7 +15,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from coscc.agent import policy
+from coscc.agent import helpers, pack, policy
 from coscc.agent.policy import READ_TOOLS, Row, row_for, row_for_step
 
 IMPL = row_for("impl")
@@ -26,7 +26,7 @@ def issued(row, roots=("/tmp/ws",), scratch=None, mcp=(), **fields) -> policy.Gr
     it writes, the scratch only with Bash, helpers only with `Agent`, `submit` when it submits and
     `peers` with helpers, then `mcp`; `fields` the rest (`branch`, `lease`, `secrets`, ...)."""
     bash = any(t in policy.EXEC_TOOLS for t in row.tools)
-    helpers = tuple(policy.SUBAGENTS) if policy.AGENT_TOOL in row.tools else ()
+    helpers = row.helpers if policy.AGENT_TOOL in row.tools else ()
     return policy.Grant(
         cwd=roots[0] if roots else "",
         write=tuple(roots),
@@ -61,7 +61,9 @@ class OnlyImplAndOnlyAutonomous(unittest.TestCase):
 
         Md` `## Answers`, answer 1: grants follow the stage, not the mode, so there is no `manual`
         left to carry nothing. What stays locked is a stage the table does not name."""
-        self.assertEqual(row_for("idea"), Row(submits=True, max_turns=policy.SUBMIT_TURNS))
+        self.assertEqual(
+            row_for("idea"), Row(submits=True, prose=True, max_turns=policy.SUBMIT_TURNS)
+        )
         self.assertEqual(row_for("no-such-stage"), Row())
 
     def test_impl_writes_its_own_artifact_and_prose_stages_do_not(self):
@@ -76,20 +78,13 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
     def test_every_prose_stage_holding_a_result_gains_submit_and_nothing_else(self):
         from coscc.units import submit
 
-        self.assertEqual(set(policy.SUBMITTING), {*submit.STAGE_RESULT, submit.ROUND})
         self.assertEqual(policy.SUBMIT_TOOL, submit.NAME)
-        for stage in policy.SUBMITTING:
+        for stage in (*submit.STAGE_RESULT, submit.ROUND):
             g = row_for(stage)
             self.assertTrue(g.submits, stage)
-            old = policy.ROWS.get(stage, Row())
-            self.assertEqual(replace(g, submits=False, max_turns=old.max_turns), old, stage)
             self.assertGreaterEqual(g.max_turns, policy.SUBMIT_TURNS, stage)
             self.assertNotIn(submit.NAME, g.tools, stage)
             self.assertEqual(says(g, submit.NAME, {"stage": stage}), "", stage)
-            if policy.is_prose_stage(stage):
-                # `codegraph` is a catalog entry whose effect is `read`.
-                reads = READ_TOOLS + (policy.CODEGRAPH,)
-                self.assertEqual(policy.beyond_reading(g, reads), (), stage)
 
     def test_no_other_mcp_tool_and_no_other_stage_gets_through(self):
         for stage in ("pr", "ship", "x"):
@@ -98,16 +93,14 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
             self.assertIn(policy.HELD, says(row_for("spec"), name, {}), name)
 
     def test_gebo_and_the_estimate_gain_submit_and_nothing_else(self):
-        """The sessions that are no stage, each with its old grant but `submits` and at least
-        `SUBMIT_TURNS` turns."""
+        """The sessions that are no stage submit too, with at least `SUBMIT_TURNS` turns."""
         from coscc.units import submit
 
-        self.assertEqual(set(policy.SUBMITTING_SESSIONS), set(submit.SESSIONS))
-        for kind in policy.SUBMITTING_SESSIONS:
-            g, old = row_for(kind), policy.ROWS[kind]
-            self.assertEqual(replace(g, submits=False, max_turns=old.max_turns), old, kind)
-            turns = old.max_turns if kind in policy.OWN_TURNS else policy.SUBMIT_TURNS
-            self.assertEqual(g.max_turns, max(old.max_turns, turns), kind)
+        for kind in ("integrate", "estimate"):
+            g = row_for(kind)
+            self.assertTrue(g.submits, kind)
+            self.assertGreaterEqual(g.max_turns, policy.SUBMIT_TURNS, kind)
+            self.assertNotIn(submit.NAME, g.tools, kind)
             self.assertEqual(says(g, submit.NAME, {}), "", kind)
             self.assertIn(policy.HELD, says(g, "mcp__cos__other", {}), kind)
 
@@ -141,7 +134,7 @@ class OneGrantPerStage(unittest.TestCase):
     """Md` `## Answers`, answer 1: tools follow the stage, in every mode."""
 
     def test_grants_are_keyed_by_stage_alone(self):
-        for key in policy.ROWS:
+        for key in pack.rows():
             self.assertIsInstance(key, str, key)
 
     def test_grant_for_takes_no_mode(self):
@@ -154,7 +147,6 @@ class OneGrantPerStage(unittest.TestCase):
     def test_spec_reads_and_only_reads(self):
         spec = row_for("spec")
         self.assertEqual(spec.tools, READ_TOOLS)
-        self.assertEqual(policy.beyond_reading(spec), ())
         self.assertTrue(spec.app_writes_artifact)
 
     def test_spec_has_the_turns_plan_has(self):
@@ -166,27 +158,25 @@ class OneGrantPerStage(unittest.TestCase):
         """The values each stage held before this unit, written out."""
         rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS
         expected = {
-            # `submits` on the stages that hand back a stage result.
             "impl": Row(
-                tools=rw + (policy.AGENT_TOOL, policy.SEND_MESSAGE, policy.VAULT, policy.CODEGRAPH),
+                tools=rw + (policy.AGENT_TOOL, policy.SEND_MESSAGE, "vault", "codegraph"),
                 max_turns=120,
                 max_budget_usd=8.0,
                 app_writes_artifact=False,
                 submits=True,
+                helpers=("scout", "worker"),
             ),
-            "plan": Row(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
+            "plan": Row(
+                tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True, prose=True
+            ),
             "review": Row(
-                tools=READ_TOOLS + (policy.CODEGRAPH,),
+                tools=READ_TOOLS + ("codegraph",),
                 max_turns=40,
                 max_budget_usd=4.0,
                 submits=True,
+                prose=True,
             ),
         }
-        added = policy.SUBMITTING_SESSIONS - {"estimate", "integrate"}
-        self.assertEqual(
-            set(policy.ROWS) - added,
-            set(expected) | {"intent", "spec", "integrate", "spike", "estimate"},
-        )
         for stage, grant in expected.items():
             self.assertEqual(row_for(stage), grant, stage)
 
@@ -195,7 +185,7 @@ class OneGrantPerStage(unittest.TestCase):
         either would start from the locked position."""
         for stage in ("pr", "ship"):
             with self.subTest(stage=stage):
-                self.assertNotIn(stage, policy.ROWS)
+                self.assertIsNone(pack.row(stage))
                 self.assertEqual(row_for(stage), Row())
                 self.assertEqual(row_for_step(stage, "novel"), Row())
 
@@ -203,22 +193,23 @@ class OneGrantPerStage(unittest.TestCase):
 class OnlyImplStartsHelpers(unittest.TestCase):
     def test_impl_holds_the_agent_tool_and_no_other_grant_does(self):
         self.assertIn(policy.AGENT_TOOL, IMPL.tools)
-        for stage, grant in policy.ROWS.items():
+        for stage in pack.rows():
             if stage != "impl":
                 with self.subTest(stage=stage):
-                    self.assertNotIn(policy.AGENT_TOOL, grant.tools)
+                    self.assertNotIn(policy.AGENT_TOOL, row_for(stage).tools)
 
     def test_a_helper_holds_no_tool_impl_does_not(self):
-        for name, spec in policy.SUBAGENTS.items():
+        for name in IMPL.helpers:
+            tools = policy.helper_tools(name)
             with self.subTest(helper=name):
-                # The kernel's `peers` is an MCP tool, which no grant lists.
-                self.assertTrue(set(spec["tools"]) - {policy.PEERS_TOOL} <= set(IMPL.tools))
-                self.assertNotIn(policy.AGENT_TOOL, spec["tools"])
-        self.assertEqual(policy.SUBAGENTS["scout"]["tools"], list(READ_TOOLS))
-        self.assertEqual(list(policy.SUBAGENTS), ["scout", "worker"])
+                self.assertTrue(set(tools) <= set(IMPL.tools))
+                self.assertNotIn(policy.AGENT_TOOL, tools)
+        self.assertEqual(policy.helper_tools("scout"), READ_TOOLS)
+        self.assertEqual(IMPL.helpers, ("scout", "worker"))
+        self.assertEqual(policy.helper_tools("impl"), ())
 
     def test_a_worker_is_sonnet_and_holds_what_a_parallel_step_needs(self):
-        worker = policy.SUBAGENTS["worker"]
+        worker = helpers.definitions(("worker",))["worker"]
         self.assertEqual(worker["model"], "sonnet")
         self.assertEqual(
             set(worker["tools"]),
@@ -371,8 +362,7 @@ class AFeatureAddsItsSession(unittest.TestCase):
     """`add_session`: a feature's grant, submitting, with its own turns when it asks."""
 
     def tearDown(self):
-        policy.ROWS.pop("planted", None)
-        policy.SUBMITTING_SESSIONS.discard("planted")
+        policy.ADDED.pop("planted", None)
         policy.OWN_TURNS.discard("planted")
 
     def test_an_added_session_submits_and_keeps_its_own_turns(self):
@@ -486,7 +476,6 @@ class IntentReadsWhatSpecReads(unittest.TestCase):
     def test_it_holds_the_read_tools_and_nothing_beyond_reading(self):
         grant = row_for("intent")
         self.assertEqual(grant.tools, READ_TOOLS)
-        self.assertEqual(policy.beyond_reading(grant), ())
 
     def test_its_ceilings_are_specs(self):
         grant = row_for("intent")
@@ -518,12 +507,12 @@ class SpikeWritesOnlyItsScratch(unittest.TestCase):
 
     def test_the_grant_is_the_one_the_spec_names(self):
         self.assertEqual(
-            self.G.tools, READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS + (policy.VAULT,)
+            self.G.tools, READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS + ("vault",)
         )
         self.assertEqual((self.G.max_turns, self.G.max_budget_usd), (80, 8.0))
         self.assertTrue(self.G.app_writes_artifact)
         self.assertIn("arbitrary code", self.G.warning)
-        self.assertNotIn("spike", policy.PROSE_STAGES)
+        self.assertFalse(self.G.prose)
 
     def test_it_reads_the_worktree_and_the_unit(self):
         self.assertEqual(self.d("Read", self.tree / "coscc" / "policy.py"), "")
@@ -649,7 +638,7 @@ class TheLabelDecidesImplsCeilings(unittest.TestCase):
             READ_TOOLS
             + policy.WRITE_TOOLS
             + policy.EXEC_TOOLS
-            + (policy.AGENT_TOOL, policy.SEND_MESSAGE, policy.VAULT, policy.CODEGRAPH)
+            + (policy.AGENT_TOOL, policy.SEND_MESSAGE, "vault", "codegraph")
         )
         written = Row(
             tools=rw,
@@ -657,6 +646,7 @@ class TheLabelDecidesImplsCeilings(unittest.TestCase):
             max_budget_usd=8.0,
             app_writes_artifact=False,
             submits=True,
+            helpers=("scout", "worker"),
         )
         for label in ("routine", None):
             with self.subTest(label=label):
@@ -694,7 +684,11 @@ class TheLabelDecidesImplsCeilings(unittest.TestCase):
 
     def test_every_grant_that_opens_anything_keeps_both_ceilings(self):
         """No label on any stage takes a ceiling away."""
-        for stage in set(policy.ROWS) | {"idea", "intent", "a-stage-invented-tomorrow"}:
+        for stage in (set(pack.rows()) - {"scout", "worker"}) | {
+            "idea",
+            "intent",
+            "a-stage-invented-tomorrow",
+        }:
             for label in self.LABELS:
                 grant = row_for_step(stage, label)
                 if not grant.opens_anything:
@@ -1725,7 +1719,8 @@ class GeboHoldsTheCeilingsAndTheWarning(unittest.TestCase):
         g = row_for("integrate")
         self.assertEqual((g.max_turns, g.max_budget_usd), (120, 8.0))
         self.assertFalse(g.app_writes_artifact)
-        self.assertEqual(g.warning, policy.INTEGRATE_WARNING)
+        self.assertEqual(g.warning, pack.row("integrate")["warning"])
+        self.assertIn("force-pushes", g.warning)
         self.assertEqual(g.tools, READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS)
 
     def test_a_merge_is_refused_for_every_session(self):

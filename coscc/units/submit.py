@@ -31,7 +31,7 @@ AGAIN = "Correct the object and call submit again."
 JUDGEMENTS = {"ready": "accepted", "not-ready": "draft"}
 
 # The stages whose run hands back a stage result. `review` hands back a round and the
-# integrate and estimate sessions their own objects. A set, as `policy.SUBMITTING` is.
+# integrate and estimate sessions their own objects.
 ResultStage = Literal["idea", "impl", "intent", "plan", "spec", "spike"]
 STAGE_RESULT: tuple[ResultStage, ...] = get_args(ResultStage)
 ROUND = "review"
@@ -44,21 +44,13 @@ ROUND_STATES = {
     "needs-person": "changes-requested",
 }
 
-# The sessions that are no stage and hand back an object, each by its row's name, with what
-# its tool says it is for; the schema is generated from its declaration (`contracts`). A
-# feature adds its own (`add_session`). The estimate's fields are checked by
-# `backlog.parse_proposal`: the declaration holds types, the app its rules.
-SESSIONS: dict[str, str] = {
-    "estimate": "Hand the app your estimate of every backlog unit, with the relations you propose.",
-    "integrate": "Hand the app the commits only a person can settle, each with why; `[]` when there is none.",
-}
-
 
 def add_session(kind: str, output: object, purpose: str) -> None:
-    """A feature's session (`kernel.Session`), added when the app is built: its declaration is
-    checked (`ContractError`), and taking a name another holds is a `ValueError`."""
-    contracts.add(kind, output)
-    SESSIONS[kind] = purpose
+    """A feature's session (`kernel.Session`), added when the app is built: its declaration, with
+    what its tool says it is for, is checked (`ContractError`), and taking a name another holds is
+    a `ValueError`. A row's own says it in `output.purpose`; the estimate's fields are checked by
+    `backlog.parse_proposal`: the declaration holds types, the app its rules."""
+    contracts.add(kind, {**output, "purpose": purpose} if isinstance(output, dict) else output)
 
 
 def round_problem(obj: Mapping[str, Any]) -> str:
@@ -269,7 +261,7 @@ class Collector:
 
     def __init__(self, kind: str):
         self.kind = self.stage = kind
-        self._what = SESSIONS[kind]
+        self._what = contracts.output(kind).get("purpose", "")
         self.schema = contracts.schema(kind)
         self.received: dict[str, Any] | None = None
 

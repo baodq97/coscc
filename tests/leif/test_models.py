@@ -123,11 +123,10 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         records = self.core.ws.journal().records("", kind="agent-setting")
         self.assertEqual(
             [(r["agent"], r["field"], r["old"], r["new"]) for r in records],
-            [("impl:novel", "effort", None, "max"), ("impl:novel", "effort", "max", None)],
+            [("impl:novel", "effort", "high", "max"), ("impl:novel", "effort", "max", "high")],
         )
         for name, effort in (
             ("chat", "low"),
-            ("plan:novel", "low"),
             ("impl", "turbo"),
             ("bogus", "low"),
         ):

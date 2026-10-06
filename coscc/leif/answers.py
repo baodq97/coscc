@@ -175,7 +175,7 @@ class Answers:
                 "reason": "the round has no number",
             }
         pr_url = (found.get("pr") or {}).get("url") or ""
-        # The `review` agent as the table names it now, overrides included.
+        # The `review` agent as its row names it now.
         reviewer = self.agent("review")
         result = await prcomment.post(
             unit,
@@ -744,7 +744,7 @@ class Answers:
         if (
             held is not None
             and held["machine"] == "step"
-            and not policy.is_prose_stage(held["stage"])
+            and not policy.row_for(held["stage"]).prose
         ):
             row = next(
                 (r for r in found.get("stages") or [] if r.get("stage") == held["stage"]), None

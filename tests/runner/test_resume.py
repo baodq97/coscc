@@ -429,7 +429,7 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual(streamed, [])
         self.assertEqual(said["result"], "resumed")
         [end] = self.ends()
-        self.assertEqual((end["agent"], end["status"]), ("chat", "paused-budget"))
+        self.assertEqual((end["agent"], end["status"]), ("leif", "paused-budget"))
         self.assertIn("error_max_turns", end["detail"])
 
     def test_a_refused_resume_ends_failed_without_a_new_session(self):

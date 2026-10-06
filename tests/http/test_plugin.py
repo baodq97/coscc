@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
-from coscc.agent.agents import DEFAULT_PATH
+import copy
+
+from coscc.agent import pack
 from coscc.http import plugin
 from coscc.units import contracts
 from coscc.units.contracts import ContractError
@@ -16,20 +15,17 @@ from coscc.units.contracts import ContractError
 
 class ABrokenShippedDeclarationStopsTheBuild(unittest.TestCase):
     def setUp(self):
-        contracts._shipped.cache_clear()
-        self.addCleanup(contracts._shipped.cache_clear)
+        contracts._READ[:] = []
+        self.addCleanup(contracts._READ.clear)
 
     def test_a_spec_without_unmeasured_is_refused_with_its_reader(self):
-        raw = json.loads(DEFAULT_PATH.read_text(encoding="utf-8"))
-        del raw["agents"]["spec"]["output"]["fields"]["unmeasured"]
-        with tempfile.TemporaryDirectory() as d:
-            broken = Path(d) / "agents.json"
-            broken.write_text(json.dumps(raw), encoding="utf-8")
-            with (
-                mock.patch.object(contracts, "DEFAULT_PATH", broken),
-                self.assertRaises(ContractError) as e,
-            ):
-                plugin.add_sessions(mock.Mock(), [])
+        broken = copy.deepcopy(pack.rows())
+        del broken["spec"]["output"]["fields"]["unmeasured"]
+        with (
+            mock.patch.object(pack, "rows", return_value=broken),
+            self.assertRaises(ContractError) as e,
+        ):
+            plugin.add_sessions(mock.Mock(), [])
         self.assertEqual(
             str(e.exception), "contract-field-missing: spec.unmeasured (read by spike-holds)"
         )

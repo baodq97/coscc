@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from coscc.github import prmachine
 from coscc.leif import decide
 from coscc.units.board import open_questions
-from coscc.agent.policy import ROWS, NOVEL_CEILINGS
+from coscc.agent import models, pack
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
 # `next`'s two actions for `ship`, one after the merge and one before it.
@@ -569,18 +569,26 @@ class TheDaysMoney(unittest.TestCase):
         self.assertEqual((got["chosen"], got["capped"]), ([], [spec]))
 
     def test_a_raised_budget_is_reserved_and_estimated_in_full(self):
-        self.assertEqual(decide.reservation("impl", {"impl:novel": 50.0}), 50.0)
-        self.assertEqual(decide.reservation("impl", {"impl": 30.0}), 30.0)
-        self.assertEqual(decide.reservation("spec", {"spec": 12.5}), 12.5)
-        self.assertEqual(decide.reservation("integrate", {"integrate": 20.0}), 20.0)
+        models.set_field("impl:novel", "budget", 50.0)
+        self.assertEqual(decide.reservation("impl"), 50.0)
+        models.set_field("impl:novel", "budget", None)
+        pack.write("impl", "ceilings", {"turns": 120, "usd": 30.0})
+        self.assertEqual(decide.reservation("impl"), 30.0)
+        models.set_field("spec", "budget", 12.5)
+        self.assertEqual(decide.reservation("spec"), 12.5)
+        models.set_field("integrate", "budget", 20.0)
+        self.assertEqual(decide.reservation("integrate"), 20.0)
         # A lowered one is held at what it now is.
-        self.assertEqual(decide.reservation("review", {"review": 1.0}), 1.0)
+        models.set_field("review", "budget", 1.0)
+        self.assertEqual(decide.reservation("review"), 1.0)
         rows = [{"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"}]
-        got = decide.spent_on(rows, decide.today(NOW), {"impl": 40.0})
-        self.assertEqual(got["estimated"], 40.0)
-        self.assertEqual(decide.estimate("idea", {"spec": 45.0}), 45.0)
+        pack.write("impl", "ceilings", {"turns": 120, "usd": 40.0})
+        self.assertEqual(decide.spent_on(rows, decide.today(NOW))["estimated"], 40.0)
+        models.set_field("spec", "budget", 45.0)
+        self.assertEqual(decide.estimate("idea"), 45.0)
+        models.set_field("spec", "budget", 9.0)
         start = {"kind": "start", "workspace": "w", "unit": "0010_a", "stage": "spec", "at": at()}
-        self.assertEqual(decide.reserved([start], NOW, (), {"spec": 9.0}), 9.0)
+        self.assertEqual(decide.reserved([start], NOW), 9.0)
 
     def test_an_end_without_cost_counts_its_stages_ceiling(self):
         rows = [
@@ -594,9 +602,11 @@ class TheDaysMoney(unittest.TestCase):
         )
 
     def test_a_stage_without_a_ceiling_counts_the_tables_largest(self):
-        largest = max(
-            [g.max_budget_usd for g in ROWS.values()] + [b for _, b in NOVEL_CEILINGS.values()]
-        )
+        ceilings = []
+        for found in pack.rows().values():
+            ceilings.append(found.get("ceilings") or {})
+            ceilings += [v.get("ceilings") or {} for v in (found.get("variants") or {}).values()]
+        largest = max(c.get("usd") or 0.0 for c in ceilings)
         self.assertGreater(largest, 0)
         self.assertEqual(decide.estimate("idea"), largest)
         self.assertEqual(largest, 16.0)

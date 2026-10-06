@@ -73,8 +73,10 @@ REASONS = (
     "no-branch",
     "no-git",
     "no-run-log",
-    # A required part of the stage's declared input (`agents.json` `input`) is missing.
+    # A required part of the stage's declared input (its row's `input`) is missing.
     "input-missing",
+    # The agent's row cannot run (`pack.check`): a bad owner file, a tool the catalog lacks.
+    "agent-invalid",
     # An integration refused because the unit's state has nothing to integrate.
     "nothing-to-integrate",
     # A feature refused the step; the words name the feature, and its reason follows.

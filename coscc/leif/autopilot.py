@@ -9,7 +9,6 @@ import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
-from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Iterable
 
 from coscc.leif import decide, guide
@@ -120,8 +119,6 @@ class Autopilot:
         config: Config,
         ws: Workspaces,
         holds: Holds,
-        budget: Callable[[], Mapping[str, Any]],
-        agent_overrides: Callable[[], dict[str, Any]],
         steps: Steps,
         integration: Integration,
         boards: Board,
@@ -129,8 +126,6 @@ class Autopilot:
         self.config = config
         self.ws = ws
         self.holds = holds
-        self.budget = budget
-        self.agent_overrides = agent_overrides
         self.steps = steps
         self.integration = integration
         self.boards = boards
@@ -341,15 +336,14 @@ class Autopilot:
     def cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:
         """The figures for a pass and for the board: every workspace, every starter."""
         now = datetime.now().astimezone()
-        budget = self.budget()
-        spent = decide.spent_today(records, now, budget)
+        spent = decide.spent_today(records, now)
         active = {
             (row["workspace"], row["unit"]): row["stage"] or row["machine"]
             for row in self.holds.attempts.unfinished()
             if row["unit"]
         }
         running = decide.reserved(
-            records, now, [(k, unit, stage) for (k, unit), stage in active.items()], budget
+            records, now, [(k, unit, stage) for (k, unit), stage in active.items()]
         )
         return {
             "limit": limit,
@@ -490,7 +484,6 @@ class Autopilot:
             board = {u["name"]: u for u in data["units"]}
             found: dict[str, dict[str, str]] = {}
             candidates: list[dict[str, Any]] = []
-            budget = self.budget()
             # Why each unit that is no candidate waits, for the units ranked below it.
             reasons: dict[str, tuple[str, str]] = {}
             # Every unit on the shortlist is asked, and no other.
@@ -650,7 +643,7 @@ class Autopilot:
                         "stage": stage,
                         "files": files,
                         "rank": rank,
-                        "need": decide.reservation(stage, budget),
+                        "need": decide.reservation(stage),
                         "rerun": rerun,
                         "note": app_note,
                         "extra": extra,
@@ -812,7 +805,7 @@ class Autopilot:
         """
         if not autopilot_values(self.config, key)["autopilot"]:
             return {"on": False}
-        entries = self.boards.running_here(key, self.agent_overrides())
+        entries = self.boards.running_here(key)
         units = [
             {**u, "state": shown_state(u.get("state") or {}, entries.get(u.get("name")))}
             for u in units

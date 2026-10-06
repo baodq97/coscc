@@ -76,7 +76,7 @@ class MetadataRoutes(Http):
         got = (await self.get("/api/vault/secrets")).json()
         self.assertEqual(got["workspace"], self.key)
         self.assertEqual(
-            (got["stages"], got["modes"]), (list(vault.VAULT_AGENTS), list(vault.MODES))
+            (got["stages"], got["modes"]), (list(vault.vault_agents()), list(vault.MODES))
         )
         self.assertIs(got["age"], True)
         self.assertEqual({s["name"] for s in got["secrets"]}, {"ws:db", "global:tok"})
@@ -206,12 +206,12 @@ class TheJsonRoutes(Http):
         )
         self.assertEqual(
             (r.status_code, r.json()["stages"], r.json()["modes"]),
-            (200, ["impl", "spike"], ["env"]),
+            (200, ["spike", "impl"], ["env"]),
         )
         (line,) = self.vault_lines()
         self.assertEqual(
             (line["action"], line["actor"], line["stages"], line["modes"]),
-            ("policy", "human:owner", ["impl", "spike"], ["env"]),
+            ("policy", "human:owner", ["spike", "impl"], ["env"]),
         )
 
     async def test_a_policy_the_store_refuses_is_400_and_writes_nothing(self):

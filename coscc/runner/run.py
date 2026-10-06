@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import policy
+from coscc.agent import pack, policy
 from coscc.agent.helpers import Denials, Gate
 from coscc.agent.policy import Grant, Row
 from coscc.agent.sessions import Refused, StepHandle, Suspended, secrets_of
@@ -62,7 +62,8 @@ class Agent:
     with both ceilings resolved, and what it runs on, with where each came from (`sources`:
     `model_source`, `effort_source`, `max_turns_source`, `max_budget_source`). `name` is the
     agent's name for its `start`; `settings` its commit attribution; `preset` whether the session
-    gets Claude Code's system prompt."""
+    gets Claude Code's system prompt; `system` the row's body, appended to it, or the whole system
+    prompt without it."""
 
     key: str
     row: Row
@@ -72,6 +73,7 @@ class Agent:
     name: str = ""
     settings: str | None = None
     preset: bool = False
+    system: str = ""
 
 
 @dataclass(frozen=True)
@@ -138,7 +140,7 @@ def issue(
       the unit's `scratch` only when it holds Bash too, under `scratch.RAM_CAP`.
     - `branch` and `lease` as the caller found them: the branch the worktree stands on as the
       session opens (none on the trunk, detached, or for a spike) and Gebo's lease.
-    - `helpers`: `policy.SUBAGENTS`, only when `row` holds `Agent`.
+    - `helpers`: the row's helper rows, only when `row` holds `Agent`.
     - `mcp`: `submit` when `row` submits, `peers` with helpers, and `mcp`, the full names of the
       catalog tools `row` lists, on for the workspace and admitted (`kernel.Hooks.tools_for`).
     - `use`: what those tools may use (`kernel.Tool.uses`).
@@ -153,7 +155,7 @@ def issue(
         raise ValueError("a grant needs the secrets it denies")
     writes = any(t in policy.WRITE_TOOLS for t in row.tools)
     bash = writes and any(t in policy.EXEC_TOOLS for t in row.tools)
-    helpers = tuple(policy.SUBAGENTS) if policy.AGENT_TOOL in row.tools else ()
+    helpers = row.helpers if policy.AGENT_TOOL in row.tools else ()
     return Grant(
         cwd=cwd,
         write=tuple(dict.fromkeys(p for p in (cwd, unit_dir) if p)) if writes else (),
@@ -287,9 +289,16 @@ def session_kw(agent: Agent, cwd: str, workspace: str = "") -> Mapping[str, Any]
         **({"workspace": workspace} if workspace and workspace != cwd else {}),
         **({"model": agent.model} if agent.model is not None else {}),
         **({"effort": agent.effort} if agent.effort is not None else {}),
-        **({"system_prompt": dict(CLAUDE_CODE_PRESET)} if agent.preset else {}),
+        **({"system_prompt": system_prompt(agent)} if agent.preset or agent.system else {}),
         **({"settings": agent.settings} if agent.settings is not None and agent.preset else {}),
     }
+
+
+def system_prompt(agent: Agent) -> dict[str, Any]:
+    """Claude Code's preset with the row's body appended, or the body as the whole prompt."""
+    if not agent.preset:
+        return {"type": "custom", "prompt": agent.system}
+    return {**CLAUDE_CODE_PRESET, **({"append": agent.system} if agent.system else {})}
 
 
 def open_session(
@@ -358,6 +367,7 @@ def _started(ctx: Ctx, agent: Agent, given: Input, stage: str, run: str, grant: 
             ),
             agent=agent.key,
             **({"agent_name": agent.name} if agent.name else {}),
+            **pack.stamp(agent.key),
             run=run,
             pid=os.getpid(),
             **given.start,
@@ -406,6 +416,9 @@ async def run(
     reply, terminal, models_used = "", used_up, []
     channel = given.channel
     try:
+        bad = pack.problems(agent.key) if given.resume is None and pack.row(agent.key) else []
+        if bad:
+            raise Refused(f"agent-invalid: {agent.key}'s row cannot run: {'; '.join(bad)}")
         if not used_up:
             stream = _stream(
                 ctx, agent, given, text, out.session, turns, budget, Gate(grant, denials), owner
@@ -541,7 +554,7 @@ async def _abandon(recorder: Recorder | None) -> None:
 def _owner(agent: Agent, given: Input, stage: str, start_at: Any, run: str) -> dict[str, Any]:
     """Whose session this is, for a `suspend` row: all the next start needs to take it up again."""
     return {
-        "kind": agent.key,
+        "kind": stage,
         "workspace": given.workspace,
         "workspace_dir": given.workspace_dir or given.cwd,
         "unit": given.unit,

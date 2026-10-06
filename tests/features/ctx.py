@@ -34,20 +34,24 @@ def ctx_for(**given: Any) -> Ctx:
 
 
 def rows_without_feature_tools() -> Any:
-    """`policy.ROWS` with every feature's catalog name taken out, as a patch: an app built with a
-    list of features that leaves one out would stop, since a row naming a tool no catalog holds
-    stops the build."""
-    from dataclasses import replace
+    """`pack.rows` with every feature's catalog name taken out of the built-in rows, as a patch:
+    an app built with a list of features that leaves one out would stop, since a row naming a tool
+    no catalog holds stops the build."""
     from unittest import mock
 
-    from coscc.agent import policy
+    from coscc.agent import pack
     from coscc.kernel import BUILTINS
 
     names = {t.name for t in BUILTINS}
-    return mock.patch.dict(
-        policy.ROWS,
-        {
-            k: replace(r, tools=tuple(t for t in r.tools if t in names))
-            for k, r in policy.ROWS.items()
-        },
-    )
+    rows = pack.rows()
+    trimmed = {
+        k: {
+            **r,
+            "builtin": {
+                **r["builtin"],
+                "tools": {t: p for t, p in r["builtin"].get("tools", {}).items() if t in names},
+            },
+        }
+        for k, r in rows.items()
+    }
+    return mock.patch.object(pack, "rows", lambda: trimmed)

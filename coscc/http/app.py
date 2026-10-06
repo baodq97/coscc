@@ -23,6 +23,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from coscc import features
+from coscc.agent import pack
 from coscc.agent.sessions import Sessions
 from coscc.bus import Event
 from coscc.config import Config, from_env
@@ -64,6 +65,8 @@ class Core:
     sessions: Sessions
 
     def __post_init__(self) -> None:
+        # The owner's layer of the agents' rows lives under this data root.
+        pack.ROOT = self.config.data_dir
         # Which workspaces there are, and where each keeps its units.
         self.ws = Workspaces(self.config, self.sessions)
         # One question, asked in two places. See `Sessions.membership`.
@@ -122,8 +125,6 @@ class Core:
             self.sessions,
             self.steps,
             self.bus,
-            agent_overrides=lambda: self.agents.agent_overrides()[0],
-            config_overrides=self.agents.config_overrides,
             config_for=self.models.config_for,
         )
         self.watch = Watch(self.config, self.ws)
@@ -132,7 +133,6 @@ class Core:
             self.ws,
             self.bus,
             self.attempts.unfinished,
-            lambda: self.agents.agent_overrides()[0],
             lambda cwd: open_prs_once(cwd)(),
             self._attach,
         )
@@ -142,8 +142,6 @@ class Core:
             self.config,
             self.ws,
             self.holds,
-            lambda: self.agents.config_overrides()[0]["budget"],
-            lambda: self.agents.agent_overrides()[0],
             self.steps,
             self.integration,
             self.boards,

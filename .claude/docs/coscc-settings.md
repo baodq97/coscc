@@ -2,9 +2,13 @@
 
 Read this before changing `/api/settings/*`, model resolution, `/api/backlog/*` or the backlog.
 
-- Model, effort, agent names and the autopilot are settings for whoever holds the password. They
-  resolve override, then file, then environment; every change is one `setting` row with the old
-  and new value. A model id is not checked when saved; a wrong one fails the next step.
+- Model, effort, ceilings, agent names and the autopilot are settings for whoever holds the
+  password. An agent's are its row: the built-in pack's, the owner's layer laid over it
+  (`<data root>/packs/local/agents/<key>.md`, only what differs), then `COS_MODEL` for a row
+  with no model. Every change is one `agent-setting` row with the old and new value, and each
+  run's `start` names its row (`pack`, `row_hash`, `edited`). A model id is not checked when
+  saved; a wrong one fails the next step. A hand-edited owner file that breaks the row refuses
+  that agent's runs (`agent-invalid`) and shows on the Agents page.
 - A stage marked `novel` runs on a dearer row with higher ceilings, so one press can cost more.
   A temporary model trial can override a stage's model without showing on Settings; the step's
   `start` row names it.

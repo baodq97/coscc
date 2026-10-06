@@ -16,7 +16,7 @@ import shutil
 import signal
 import tempfile
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -34,7 +34,6 @@ from claude_agent_sdk import (
     TextBlock,
     ToolUseBlock,
 )
-from claude_agent_sdk.types import SystemPromptPreset
 
 from coscc import config as cfg
 from coscc.agent import harness, instructions, transcript
@@ -537,7 +536,7 @@ def _options(
     max_budget_usd: float | None = None,
     workspace: str | None = None,
     model: str | None = None,
-    system_prompt: SystemPromptPreset | None = None,
+    system_prompt: Mapping[str, Any] | None = None,
     effort: str | None = None,
     settings: str | None = None,
     *,
@@ -564,13 +563,14 @@ def _options(
     `COS_MODEL` applies.
 
     `system_prompt` is `None` unless a caller asks: the SDK then hands the CLI an empty system
-    prompt, as every chat turn and tool-less step gets. A board step with tools passes
-    `runner.CLAUDE_CODE_PRESET`; it changes nothing else.
+    prompt. A run whose row holds a tool passes `runner.CLAUDE_CODE_PRESET`, with the row's body
+    as its `append`; one holding none whose row has a body passes `{"type": "custom", "prompt":
+    <body>}`.
 
-    No settings source is loaded for any session. The project's instructions come back through
-    `coscc/agent/instructions.py`, written to `PROMPT_FILE` in `data_dir`: appended to the
-    preset when there is one (`--append-system-prompt-file`), the whole system prompt when
-    there is not (`--system-prompt-file`), nothing written when `cwd` holds none.
+    No settings source is loaded for any session. The row's body and the project's instructions
+    (`coscc/agent/instructions.py`) are written, in that order, to `PROMPT_FILE` in `data_dir`:
+    appended to the preset when there is one (`--append-system-prompt-file`), the whole system
+    prompt when there is not (`--system-prompt-file`), nothing written when neither says anything.
 
     `data_dir` is the session's own data root; building a `Data` touches no disk.
 
@@ -632,15 +632,17 @@ def _options(
     if mcp_servers:
         options.mcp_servers = dict(mcp_servers)
     if agents:
-        # `policy.SUBAGENTS`: helpers inside this session, held by the same gate.
+        # The row's helper rows (`helpers.definitions`): inside this session, held by the same gate.
         options.agents = {name: AgentDefinition(**spec) for name, spec in agents.items()}
-    project = instructions.read(cwd).text
-    if system_prompt is not None:
-        options.system_prompt = system_prompt.copy()
+    preset = system_prompt is not None and system_prompt.get("type") == "preset"
+    body = str((system_prompt or {}).get("append" if preset else "prompt") or "")
+    project = "\n\n".join(p for p in (body, instructions.read(cwd).text) if p)
+    if preset:
+        options.system_prompt = {"type": "preset", "preset": "claude_code"}
     options.settings = json.dumps(
         {
             "autoMode": AUTO_MODE,
-            **(json.loads(settings) if settings is not None and system_prompt is not None else {}),
+            **(json.loads(settings) if settings is not None and preset else {}),
         },
         ensure_ascii=False,
     )
@@ -650,7 +652,7 @@ def _options(
         # an error that names nothing of why. The file sits in the session's data root, `0700`.
         path = Path(data_dir) / PROMPT_FILE
         path.write_text(project, encoding="utf-8")
-        if system_prompt is not None:
+        if preset:
             # The SDK has no file form for a preset's `append`; the CLI has the flag.
             options.extra_args["append-system-prompt-file"] = str(path)
         else:
@@ -787,7 +789,7 @@ class Sessions:
         max_budget_usd: float | None = None,
         workspace: str | None = None,
         model: str | None = None,
-        system_prompt: SystemPromptPreset | None = None,
+        system_prompt: Mapping[str, Any] | None = None,
         effort: str | None = None,
         step: StepHandle | None = None,
         settings: str | None = None,

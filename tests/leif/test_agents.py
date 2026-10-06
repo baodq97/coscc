@@ -10,7 +10,8 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.config import Config
-from coscc.store.db import Busy, Data
+from coscc.agent import pack
+from coscc.store.db import Data
 from coscc.http.app import Core
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
@@ -82,13 +83,12 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
             ("spec", "turns", 2.5),
             ("spec", "budget", 0.09),
             ("spec", "budget", 50.01),
-            ("spec", "model", ""),
             ("spec", "model", "x" * 101),
             ("spec", "effort", "turbo"),
             ("chat", "effort", "low"),
             ("chat", "turns", 10),
             ("review:novel", "turns", 10),
-            ("estimate", "budget", 1.0),
+            ("plan:novel", "effort", "low"),
             ("deploy", "model", "m"),
             ("spec", "tools", ["Bash"]),
             ("", "model", "m"),
@@ -97,9 +97,13 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
         for key, field, value in wrong:
             with self.assertRaises(Invalid, msg=(key, field, value)):
                 self.core.agents.set_agent_field(key, field, value)
-        for prefix in ("model:", "effort:", "turns:", "budget:"):
-            self.assertEqual(self.data.pref_rows(prefix), {}, prefix)
+        self.assertEqual(pack.owner_fields("spec")[0], {})
         self.assertEqual(self._settings(), [])
+
+    def test_an_empty_value_puts_the_builtin_back(self):
+        self.core.agents.set_agent_field("spec", "model", "m")
+        self.core.agents.set_agent_field("spec", "model", "")
+        self.assertEqual(pack.owner_fields("spec")[0], {})
 
     def test_identity_fields_keep_their_rules(self):
         agents = self.core.agents
@@ -123,24 +127,25 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
         agents.set_agent_field("impl", "name", None)
         agents.set_agent_field("review", "name", None)
         self.assertEqual(agents.agent("review")["name"], "Tiwaz")
-        self.assertEqual(self.data.pref_rows("agent:"), {})
+        self.assertEqual(pack.owner_fields("review")[0], {})
+        # Each record carries the value in force before and after, the built-in's included.
         self.assertEqual(
             self._settings(),
             [
-                ("review", "name", None, "Judge", "owner"),
-                ("impl", "name", None, "Tiwaz", "owner"),
-                ("impl", "name", "Tiwaz", None, "owner"),
-                ("review", "name", "Judge", None, "owner"),
+                ("review", "name", "Tiwaz", "Judge", "owner"),
+                ("impl", "name", "Uruz", "Tiwaz", "owner"),
+                ("impl", "name", "Tiwaz", "Uruz", "owner"),
+                ("review", "name", "Judge", "Tiwaz", "owner"),
             ],
         )
 
     def test_an_unreadable_store_writes_nothing(self):
         self.core.agents.set_agent_field("review", "name", "Judge")
-        with mock.patch.object(Data, "pref_rows", side_effect=Busy("locked")):
+        with mock.patch.object(pack, "write", side_effect=OSError("read-only")):
             for field, value in (("role", "Reads it all."), ("turns", 10)):
                 with self.assertRaises(Invalid):
                     self.core.agents.set_agent_field("review", field, value)
-        self.assertEqual(self.data.pref_rows("agent:"), {"agent:review": '{"name": "Judge"}'})
+        self.assertEqual(pack.owner_fields("review")[0], {"name": "Judge"})
         self.assertEqual(len(self._settings()), 1)
 
 
@@ -150,6 +155,10 @@ class ThePage(_WithAService):
         for row in page["rows"]:
             self.assertNotIn("commands", row["row"], row["key"])
         self.assertNotIn("haiku", json.dumps(page).lower())
+
+    def test_the_others_are_estimate_and_leif(self):
+        page = self.core.agents.agent_page(now=NOW)
+        self.assertEqual(sorted(o["key"] for o in page["others"]), ["estimate", "leif"])
 
     def test_runs_last_five_and_thirty_days(self):
         self._seed(

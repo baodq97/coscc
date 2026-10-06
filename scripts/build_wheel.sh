@@ -48,19 +48,8 @@ uv sync --frozen
 npm --prefix ui ci --no-audit --no-fund >&2
 npm --prefix ui run build >&2
 
-# The one thing this app reads from outside `coscc/`, and the one that shipped missing
-# three times. `.cos/0012_installed-copy-runs-no-stage/intent.md` measured v0.2.2: the
-# Board answered 400 and every step ran with no rules in its prompt, because
-# `coscc/units/board.py` and `coscc/runner/step.py` were reaching for a `.claude/` that only exists in
-# a checkout.
-#
-# One named directory, never `.claude/` whole (the loop is `coscc/loop/`, in the package already):
-# `.claude/settings.local.json` is a personal file (`.gitignore`) and a release is published. `coscc/agent/harness.py` refuses a
-# wheel that carries one. `rm -rf` first: a tree left over from an earlier build would be
-# copied into the wheel alongside the new one, and the packaged copy is the one that wins.
-rm -rf coscc/_harness
-mkdir -p coscc/_harness
-cp -r .claude/skills coscc/_harness/skills
+# The agents and their skills are package data (`coscc/packs/`), carried by `uv build` like the
+# rest of `coscc/`: nothing is copied in from outside the package.
 
 # The build stamp the board reads its commit from (0068 R1). Always written, never read
 # back by this script: a stale one left in a checkout is overwritten here.

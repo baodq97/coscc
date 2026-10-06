@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 from coscc import units
-from coscc.agent import harness
+from coscc.agent import pack
 from coscc.config import Config
 from coscc.http.app import Core
 from coscc.kernel import Invalid
@@ -147,7 +147,7 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
     """The boundary `coscc/http/routes.py` depends on, and the one review caught open.
 
     `run_step` maps this layer's refusals with one `except RunError`. 0012 introduced a
-    second exception type on that path -- `harness.MissingRules`, raised when a stage's
+    second exception type on that path -- a missing skill, raised when a stage's
     rules cannot be found -- and for one commit it escaped: measured 2026-09-22, a
     workspace whose harness had no skills produced an unhandled
     `MissingRules` where a 400 was intended, so the page would have shown a 500 for the
@@ -169,11 +169,6 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             (unit / "intent.md").write_text("I", encoding="utf-8")
             (unit / "spec.md").write_text("S", encoding="utf-8")
 
-            # A harness carrying no skills: the Board reads, every Run refuses.
-            half = root / "half"
-            half.mkdir()
-            (half / "skills").mkdir()
-
             config = Config(
                 workspaces=(),
                 working_dir=str(root / "work"),
@@ -188,23 +183,19 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
                 statuses={"intent.md": "accepted", "spec.md": "accepted"},
             )
 
-            originals = (harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS)
-            harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
-            harness.CHECKOUT_HARNESS = half
-            try:
+            # A row naming no skill: the Board reads, every Run refuses.
+            pack.write("plan", "skills", [])
 
-                async def go():
-                    async for _ in core.steps.run_step(str(workspace), "0009_a-test-unit", "plan"):
-                        pass
+            async def go():
+                async for _ in core.steps.run_step(str(workspace), "0009_a-test-unit", "plan"):
+                    pass
 
-                with self.assertRaises(Invalid) as caught:
-                    asyncio.run(go())
-            finally:
-                harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS = originals
+            with self.assertRaises(Invalid) as caught:
+                asyncio.run(go())
 
             message = str(caught.exception)
             self.assertIn("plan", message)
-            self.assertIn("SKILL.md", message)
+            self.assertIn("no skill", message)
 
 
 if __name__ == "__main__":

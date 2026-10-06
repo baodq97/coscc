@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import coscc
 from coscc import config
 
 if TYPE_CHECKING:
@@ -35,8 +36,9 @@ from typing import Any, Iterator
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
 # 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped;
-# 13: idea 0006 M2 in one step, `_before_13` and `_after_13`; 14: `exhausted` ends are `failed`).
-SCHEMA_VERSION = 14
+# 13: idea 0006 M2 in one step, `_before_13` and `_after_13`; 14: `exhausted` ends are `failed`;
+# 15: the agent prefs move into the owner's layer of the agents' pack, `_to_15`).
+SCHEMA_VERSION = 15
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -466,6 +468,54 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# The prefs `_to_15` moves, and the one row renamed on the way.
+_MOVED = ("agent", "model", "effort", "turns", "budget")
+_RENAMED = {"chat": "leif"}
+# Where each moved pref lands in a row: `(top key, sub key)`; `agent`'s fields are their own.
+_LANDS = {
+    "model": ("model", "id"),
+    "effort": ("model", "effort"),
+    "turns": ("ceilings", "turns"),
+    "budget": ("ceilings", "usd"),
+}
+_IDENTITY = {"glyph": "glyph", "name": "name", "meaning": "description", "role": "body"}
+
+
+def _front(text: str) -> dict[str, Any]:
+    """A built-in row's frontmatter: its `key: <JSON>` lines between the two `---`."""
+    head = text.split("\n---", 1)[0].removeprefix("---\n")
+    out: dict[str, Any] = {}
+    for line in head.splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key and not key.startswith("#"):
+            out[key] = json.loads(value)
+    return out
+
+
+def _owner_row(
+    built: dict[str, Any], given: dict[tuple[str, str], Any]
+) -> tuple[dict[str, Any], str]:
+    """What the owner's layer of one row holds for the prefs `given` (`{(prefix, variant):
+    value}`): each top-level key whose value then differs from `built`, and the body."""
+    after = json.loads(json.dumps(built))
+    body = ""
+    for (prefix, variant), value in given.items():
+        if prefix == "agent":
+            for field, text in (value if isinstance(value, dict) else {}).items():
+                if field == "role":
+                    body = str(text)
+                elif field in _IDENTITY:
+                    after[_IDENTITY[field]] = text
+            continue
+        top, sub = _LANDS[prefix]
+        if variant:
+            holder = after.setdefault("variants", {}).setdefault(variant, {})
+        else:
+            holder = after
+        holder.setdefault(top, {})[sub] = value
+    return {k: v for k, v in after.items() if built.get(k) != v}, body
+
+
 class Data:
     """One data directory: the database, the object folder, and the schema in between.
 
@@ -629,6 +679,8 @@ class Data:
                 if found == 12:
                     self._after_13(conn)
                 self._to_14(conn)
+                if found:
+                    self._to_15(conn)
                 for table, column, declaration in _COLUMNS:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
@@ -666,6 +718,47 @@ class Data:
             "WHERE kind = 'end' AND json_extract(event, '$.outcome') = 'exhausted'"
         )
         conn.execute("UPDATE attempt_moves SET outcome = 'failed' WHERE outcome = 'exhausted'")
+
+    def _to_15(self, conn: sqlite3.Connection) -> None:
+        """15: every `agent:`, `model:`, `effort:`, `turns:` and `budget:` pref becomes the owner's
+        layer of the agents' pack (`coscc/agent/pack.py`), `<root>/packs/local/agents/<key>.md`,
+        holding only what differs from the built-in row, and the prefs go. `chat` is `leif`,
+        `<key>:novel` the row's `novel` variant; Gebo, which ran `impl`'s model and effort when it
+        had none of its own, keeps them. A key no built-in row has changed nothing and is dropped."""
+        rows = conn.execute("SELECT key, value FROM prefs").fetchall()
+        found: dict[str, dict[tuple[str, str], Any]] = {}
+        for key, raw in rows:
+            prefix, _, name = str(key).partition(":")
+            if prefix not in _MOVED or not name:
+                continue
+            try:
+                value = json.loads(raw)
+            except ValueError:
+                continue
+            base, _, variant = name.partition(":")
+            found.setdefault(_RENAMED.get(base, base), {})[(prefix, variant)] = value
+        impl = found.get("impl", {})
+        gebo = found.setdefault("integrate", {})
+        for field in ("model", "effort"):
+            if (field, "") in impl and (field, "") not in gebo:
+                gebo[(field, "")] = impl[(field, "")]
+        packs = Path(coscc.__file__).resolve().parent / "packs" / "coscc-sdlc" / "agents"
+        for key, given in found.items():
+            built = packs / f"{key}.md"
+            if not given or not built.is_file():
+                continue
+            fields, body = _owner_row(_front(built.read_text(encoding="utf-8")), given)
+            if fields or body:
+                path = self.root / "packs" / "local" / "agents" / f"{key}.md"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                lines = [f"{k}: {json.dumps(v, ensure_ascii=False)}" for k, v in fields.items()]
+                path.write_text(
+                    "---\n" + "\n".join(lines) + "\n---\n" + (f"{body}\n" if body else ""),
+                    encoding="utf-8",
+                )
+        for key, _ in rows:
+            if str(key).partition(":")[0] in _MOVED:
+                conn.execute("DELETE FROM prefs WHERE key = ?", (key,))
 
     @staticmethod
     def _after_13(conn: sqlite3.Connection) -> None:

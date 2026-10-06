@@ -465,19 +465,16 @@ def outcome_of_session(head_before: str, head_now: str, needs_person: list[str])
     return "failed"
 
 
-def describe_for_review(
-    rec: dict[str, Any], overrides: dict[str, dict[str, str]] | None = None
-) -> str:
+def describe_for_review(rec: dict[str, Any]) -> str:
     """The section the next `review` prompt carries.
 
     A completion says what it pushed (local commits nobody had pushed) and that the app opened
     the session for it, not a person.
 
-    The session is named from the record, or for an older one from today's table, `overrides`
-    included.
+    The session is named from the record, or for an older one from today's row.
     """
     body = json.dumps(rec, ensure_ascii=False, indent=2)
-    name = agents.of_record(rec, overrides)
+    name = agents.of_record(rec)
     session = f"an agent session ({name})" if name else "an agent session"
     if str((rec.get("completion") or {}).get("relation") or "") in COMPLETION:
         return (

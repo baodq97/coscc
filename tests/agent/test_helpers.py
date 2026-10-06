@@ -25,14 +25,14 @@ from coscc.agent.helpers import (
     Helpers,
     malformed,
 )
-from coscc.agent.policy import BACKGROUND_REFUSAL, HOST, SUBAGENTS, Grant
+from coscc.agent.policy import BACKGROUND_REFUSAL, HOST, Grant
 from coscc.config import Config
 
 # The grant an impl run holds: its worktree, helpers and `peers`, and the secrets.
 IMPL = Grant(
     cwd="/w",
     write=("/w",),
-    helpers=tuple(SUBAGENTS),
+    helpers=("scout", "worker"),
     mcp=("mcp__cos__submit", "mcp__cos__peers"),
     secrets=("/data/cos.db",),
     tools=("Read", "Write", "Bash", "Agent", "SendMessage"),
