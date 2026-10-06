@@ -22,6 +22,7 @@ from coscc.units import worktrees
 from coscc.config import PROTECTED_DB_VAR
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit
+from tests.procs import left_running, sleeping
 
 
 def git(where: Path, *args: str) -> str:
@@ -217,21 +218,6 @@ class Ensuring(Repo):
         self.assertEqual(git(self.repo, "branch", "--show-current"), "fix/a")
 
 
-def running(marker: str) -> list[str]:
-    """Command lines of the processes whose argv holds `marker`, read from /proc."""
-    found = []
-    for proc in Path("/proc").glob("[0-9]*"):
-        if proc.name == str(os.getpid()):
-            continue
-        try:
-            argv = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
-        except OSError:
-            continue
-        if marker in argv:
-            found.append(argv)
-    return found
-
-
 async def cancelled_after(coro, delay: float = 1.0) -> float:
     """Seconds the task took to end once cancelled `delay` seconds in. It must end cancelled."""
     task = asyncio.ensure_future(coro)
@@ -274,7 +260,7 @@ class CancellingWhilePreparing(Repo):
 
     def _killed_add(self) -> None:
         """What a `kill -9` of `git worktree add` mid-checkout leaves (spike S3)."""
-        git(self.repo, "config", "filter.slow.smudge", "sleep 3.33; cat")
+        git(self.repo, "config", "filter.slow.smudge", f"sleep {sleeping('3.33')}; cat")
         self.tree.parent.mkdir(parents=True, exist_ok=True)
         add = subprocess.Popen(
             ["git", "-C", str(self.repo), "worktree", "add", "--detach", "--", str(self.tree)]
@@ -293,21 +279,26 @@ class CancellingWhilePreparing(Repo):
 
     def test_s1_cancelled_in_the_fetch_ends_at_once_and_the_next_call_opens_the_tree(self):
         git(self.repo, "branch", "fix/a", self.main)
-        git(self.repo, "config", "remote.origin.uploadpack", "sleep 3.11; git-upload-pack")
+        git(
+            self.repo,
+            "config",
+            "remote.origin.uploadpack",
+            f"sleep {sleeping('3.11')}; git-upload-pack",
+        )
         took = asyncio.run(
             cancelled_after(worktrees.ensure(self.repo, self.UNIT, "fix/a", self.data))
         )
         self.assertLess(took, 10)
-        self.assertEqual(running("sleep 3.11"), [])
+        self.assertEqual(left_running("sleep " + sleeping("3.11")), [])
         self.assertFalse(self.tree.exists())
         git(self.repo, "config", "--unset", "remote.origin.uploadpack")
         self._assert_usable(self._ensure("fix/a"))
 
     def test_s2_cancelled_in_worktree_add_ends_at_once_and_leaves_no_tree(self):
-        git(self.repo, "config", "filter.slow.smudge", "sleep 3.22; cat")
+        git(self.repo, "config", "filter.slow.smudge", f"sleep {sleeping('3.22')}; cat")
         took = asyncio.run(cancelled_after(worktrees.ensure(self.repo, self.UNIT, None, self.data)))
         self.assertLess(took, 10)
-        self.assertEqual(running("sleep 3.22"), [])
+        self.assertEqual(left_running("sleep " + sleeping("3.22")), [])
         self.assertFalse(self.tree.exists())
         self.assertEqual(len(git(self.repo, "worktree", "list", "--porcelain").split("\n\n")), 1)
         git(self.repo, "config", "--unset", "filter.slow.smudge")
@@ -315,12 +306,12 @@ class CancellingWhilePreparing(Repo):
 
     def test_s2_on_an_existing_branch_cleans_up_the_same_way(self):
         git(self.repo, "branch", "fix/a", self.main)
-        git(self.repo, "config", "filter.slow.smudge", "sleep 3.23; cat")
+        git(self.repo, "config", "filter.slow.smudge", f"sleep {sleeping('3.23')}; cat")
         took = asyncio.run(
             cancelled_after(worktrees.ensure(self.repo, self.UNIT, "fix/a", self.data), 1.5)
         )
         self.assertLess(took, 10)
-        self.assertEqual(running("sleep 3.23"), [])
+        self.assertEqual(left_running("sleep " + sleeping("3.23")), [])
         self.assertFalse(self.tree.exists())
         git(self.repo, "config", "--unset", "filter.slow.smudge")
         self._assert_usable(self._ensure("fix/a"))
