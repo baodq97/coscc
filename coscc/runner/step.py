@@ -1469,6 +1469,7 @@ class Runner:
             model_source=model_source,
             effort=effort,
             effort_source=effort_source,
+            budget_source=ceilings["max_budget_source"],
             label_declared=label_declared,
             label=label,
             label_source=label_source,
@@ -1708,6 +1709,7 @@ class Runner:
         model_source: str,
         effort: str | None,
         effort_source: str,
+        budget_source: str,
         label_declared: str | None,
         label: str | None,
         label_source: str | None,
@@ -1753,6 +1755,9 @@ class Runner:
             grants=record(grant),
             blocks=blocks,
             max_turns=row.max_turns,
+            # The $ ceiling the session runs under (`None`: none) and where it came from.
+            max_budget_usd=row.max_budget_usd or None,
+            max_budget_source=budget_source,
             # Which row ran: its pack, its hash, the keys the owner's layer set.
             **pack.stamp(stage),
             head=head,

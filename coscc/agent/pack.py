@@ -119,6 +119,14 @@ def _one_line(where: str, value: Any, limit: int = LINE_MAX) -> list[str]:
     return [f"{where} is at most {limit} characters"] if len(value) > limit else []
 
 
+def no_long_context(model: str) -> str:
+    """Why `model` cannot carry the `[1m]` suffix (the 1M-context beta), `""` when it can: only an
+    Opus or a Sonnet id has that window, and the API refuses the beta for any other."""
+    if "[1m]" in model.lower() and not any(f in model.lower() for f in ("opus", "sonnet")):
+        return f"{model} has no 1M context: only an opus or sonnet id takes [1m]"
+    return ""
+
+
 def check_model(where: str, model: Any) -> list[str]:
     if not isinstance(model, dict) or not set(model) <= {"id", "effort", "trial"}:
         return [f"{where} is {{id, effort, trial}}"]
@@ -128,6 +136,8 @@ def check_model(where: str, model: Any) -> list[str]:
             isinstance(given, str) and given.strip() and len(given) <= MODEL_MAX
         ):
             out.append(f"{where}: a model is a name of 1 to {MODEL_MAX} characters")
+        elif given is not None and (why := no_long_context(given)):
+            out.append(f"{where}: {why}")
     if "trial" in model and not (isinstance(model["trial"], list) and len(model["trial"]) == 2):
         out.append(f"{where}.trial names two models, one per arm")
     if model.get("effort") is not None and model["effort"] not in EFFORTS:
