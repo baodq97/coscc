@@ -7,7 +7,7 @@ An idea is one file, `.cos/ideas/NNNN_<slug>.md`, in the store of the workspace 
 
 ```
 # Idea: <title>
-Author: the originator. Status: accepted.
+Author: the originator.
 
 ## In their own words
 

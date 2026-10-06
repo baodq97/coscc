@@ -141,7 +141,7 @@
  ],
  "tests/loop/test_branch.py::test_pr_text_against_the_units_type[None-True]#1": [
   0,
-  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"intent.md declares no Type, so the title's type \\\"feat\\\" cannot be checked against it\"}\n",
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the intent has handed back no type, so the title's type \\\"feat\\\" cannot be checked against it\"}\n",
   ""
  ],
  "tests/loop/test_branch.py::test_pr_text_against_the_units_type[feat-True]#1": [
@@ -151,12 +151,12 @@
  ],
  "tests/loop/test_branch.py::test_pr_text_against_the_units_type[fix-True]#1": [
   0,
-  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title's type is \\\"feat\\\", but intent.md declares Type: fix\"}\n",
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title's type is \\\"feat\\\", but the intent's type is fix\"}\n",
   ""
  ],
  "tests/loop/test_branch.py::test_pr_text_against_the_units_type[wip-True]#1": [
   0,
-  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"intent.md declares no Type, so the title's type \\\"feat\\\" cannot be checked against it\"}\n",
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"feat(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the intent has handed back no type, so the title's type \\\"feat\\\" cannot be checked against it\"}\n",
   ""
  ],
  "tests/loop/test_branch.py::test_pr_text_of_a_good_title#1": [
@@ -221,7 +221,7 @@
  ],
  "tests/loop/test_branch.py::test_pr_text_titles[# PR: fix(0151): port the loop]#1": [
   0,
-  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"fix(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title's type is \\\"fix\\\", but intent.md declares Type: feat\"}\n",
+  "{\"unit\":\"0151_the-loop-is-decided\",\"title\":\"fix(0151): port the loop\",\"body\":\"Body.\\n\",\"url\":null,\"scope\":null,\"status\":\"draft\",\"titleProblem\":\"the title's type is \\\"fix\\\", but the intent's type is feat\"}\n",
   ""
  ],
  "tests/loop/test_branch.py::test_pr_text_titles[# PR: port the loop]#1": [
@@ -362,7 +362,7 @@
  "tests/loop/test_branch.py::test_unit_branch_of_a_unit_the_app_does_not_know#1": [
   1,
   "",
-  "0001_x/intent.md declares no Type: — one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
+  "0001_x: the intent has handed back no type — one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
  ],
  "tests/loop/test_branch.py::test_unit_branch_of_no_such_unit#1": [
   2,
@@ -377,6 +377,6 @@
  "tests/loop/test_branch.py::test_unit_branch_with_no_type#1": [
   1,
   "",
-  "0001_x/intent.md declares no Type: — one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
+  "0001_x: the intent has handed back no type — one of feat, fix, docs, refactor, test, chore, perf, build, ci, revert\n"
  ]
 }

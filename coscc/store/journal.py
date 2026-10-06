@@ -1,8 +1,8 @@
 """Everything about a step that is not the artifact: who ran it, when, in which mode, what it
 cost and how often it was told no.
 
-The status of a stage is never read from here; it comes from the artifact's `Status:` line via
-`board.py`, so the journal can say only who was there and what it cost.
+The status of a stage is never read from here; it is the unit's transitions in `cos.db`, so the
+journal can say only who was there and what it cost.
 
 Append-only, as a safety property: concurrent read-modify-write of a list loses entries
 silently, and an append has no read step. The transaction still frames a record so a reader
@@ -375,8 +375,8 @@ class Journal:
     def attempted(self, workspace: str, unit: str, stage: str, **extra: Any) -> dict[str, Any]:
         """What a stopped step left behind, written just before its `end` record.
 
-        Never read for a stage's status; `board.py` reads only `Status:` in the artifact. Only read
-        back by `failed_attempts`, to build the next run's prompt.
+        Never read for a stage's status, which is the unit's transitions. Only read back by
+        `failed_attempts`, to build the next run's prompt.
         """
         return self.append(
             {"kind": "attempt", "workspace": workspace, "unit": unit, "stage": stage, **extra}

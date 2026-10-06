@@ -14,16 +14,6 @@
   "",
   "spec cannot be run again for 0001_x: spec.md is \"draft\", not accepted\n"
  ],
- "tests/loop/test_rerun.py::test_a_finished_unit_offers_nothing_and_says_why#1": [
-  0,
-  "{\"unit\":\"0001_x\",\"offers\":[],\"why\":\"the unit is finished: plan.md is done\"}\n",
-  ""
- ],
- "tests/loop/test_rerun.py::test_a_finished_unit_refuses_a_stage#1": [
-  1,
-  "",
-  "spec cannot be run again for 0001_x: the unit is finished: plan.md is done\n"
- ],
  "tests/loop/test_rerun.py::test_a_granted_rerun_names_only_the_files_that_exist#1": [
   0,
   "{\"unit\":\"0001_x\",\"stage\":\"intent\",\"later\":[\"spec\",\"plan\",\"impl\",\"pr\",\"review\",\"ship\"],\"block\":\"### Rerun\\nRequested by: owner. Date: <today>. Via: product.\\nStage: intent.\\nStale: intent.md sha256:87aaf8521439e81bb170c9a801541695cf4928e80f0077e71a40a8bf17835342\\nStale: pr.md sha256:39c2faed93a9dd593ab3ab08e1ee362b2c2b7fdfc6746bcfb8b97446d29a6857\\n\"}\n",

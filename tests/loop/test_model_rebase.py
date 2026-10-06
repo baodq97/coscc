@@ -13,11 +13,9 @@ from types import SimpleNamespace
 
 from coscc.loop.model import (
     branch_problem,
-    parse_answers,
     parse_more_rounds,
     parse_review,
     parse_ship,
-    parse_status,
     review_limit,
 )
 from coscc.loop.probe import UI_STANDARD, Probe
@@ -29,7 +27,6 @@ from tests.loop.test_model import (
     ROUND2,
     moved_to,
     round3,
-    tree_after_round_two,
     check_gate,
     next_action,
     next_step,
@@ -42,11 +39,13 @@ from tests.loop.test_model import (
     art,
     asked,
     branched,
-    f_block,
     green_probe,
     impl_text,
     ok,
-    question_tree,
+    answer,
+    claim_record,
+    known,
+    read,
     rated,
     review_art,
     round_,
@@ -61,6 +60,10 @@ TRUNK = "refs/remotes/origin/main"
 SHIP_OLD = "# Ship: x\nReview: review.md. Author: A. Status: draft.\n\n## What went out\n\nNothing merged.\n"
 
 
+def f_block(id_, text="ran it"):
+    return f"\n### {id_}\nAnswered by: Bao. Date: 2026-09-24. Via: product.\n\n{text}\n"
+
+
 def ship_draft(n, refused="the head branch is not up to date with the base branch"):
     said = "" if refused is None else f"Refused: {refused}\n"
     return (
@@ -72,7 +75,7 @@ def ship_draft(n, refused="the head branch is not up to date with the base branc
 def ship_art(text):
     ship = parse_ship(text)
     has = ship["round"] is not None or ship["refused"] is not None
-    return {**art(parse_status(text)), **({"ship": ship} if has else {})}
+    return {**art("draft"), **({"ship": ship} if has else {})}
 
 
 def passed_once():
@@ -857,8 +860,33 @@ def fresh(tmp_path: Path) -> Path:
     return tmp_path / str(len(list(tmp_path.iterdir())))
 
 
+def tree_of(tmp_path, files, entry):
+    d = fresh(tmp_path) / "qroot" / ".cos" / "0001_q"
+    d.mkdir(parents=True)
+    for f, text in files.items():
+        (d / f).write_text(text)
+    return read(d, "0001_q", entry)
+
+
 def stuck(tmp_path, review, extra=None):
-    return question_tree(fresh(tmp_path), {**stuck_files(review), **(extra or {})})[1]
+    files = {**stuck_files(review), **(extra or {})}
+    statuses = {f: "accepted" for f in files} | {"review.md": "changes-requested"}
+    return tree_of(tmp_path, files, known(statuses))
+
+
+def tree_after_round_two(tmp_path, review, claims=("F2", "F3"), answers=None):
+    """A unit right after its second review round, impl's record claiming `claims`."""
+    files = {
+        "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+        "spec.md": "# S\nStatus: accepted.\n",
+        "plan.md": "# P\nStatus: accepted.\n",
+        "impl.md": impl_text(),
+        "pr.md": "# PR: fix(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n",
+        "review.md": review,
+    }
+    statuses = {f: "accepted" for f in files} | {"review.md": "changes-requested"}
+    entry = known(statuses, type="fix", records=claim_record(*claims), answers=answers)
+    return tree_of(tmp_path, files, entry)
 
 
 def test_a_more_rounds_block_lifts_the_review_limit_of_its_unit_alone(tmp_path):
@@ -910,12 +938,7 @@ def test_a_more_rounds_block_with_no_decided_by_or_no_rounds_line_is_not_counted
 
 
 def test_a_more_rounds_block_is_never_an_answer_and_never_the_tail_of_a_finding_answer():
-    answers = parse_answers(with_more(STUCK, f_block("F1", "đã chạy"), MORE))
-    assert len(answers) == 1
-    assert answers[0]["id"] == "F1"
-    assert answers[0]["text"] == "đã chạy"
-    assert "Rounds:" not in answers[0]["text"]
-    # Nor is it a round: the review stops at the answers.
+    # It is not a round: the review stops at the answers.
     assert len(parse_review(with_more(STUCK, MORE))["rounds"]) == 3
 
 
@@ -1202,6 +1225,7 @@ def test_every_branch_of_next_that_reads_ci_stops_on_the_same_line_and_the_gates
         "stale": {"stage": "impl", "date": "2026-09-26"},
     }
     passed_review = {**CHAIN, "review.md": review_art("accepted", round_(1, "pass"))}
+    rows = [answer("review.md", f, "Bao", "ran it", "2026-09-24") for f in ("F2", "F3")]
     answered = (
         f"{REVIEW_HEAD}{ROUND1}\n{ROUND2}\n{round3()}\n## Answers\n{f_block('F2')}{f_block('F3')}"
     )
@@ -1209,7 +1233,7 @@ def test_every_branch_of_next_that_reads_ci_stops_on_the_same_line_and_the_gates
     cases = [
         ("pr done, no review", branched(CHAIN), probe()),
         ("a stale review", branched({**CHAIN, "review.md": stale}), probe()),
-        ("person-answered", tree_after_round_two(tmp_path, answered), probe()),
+        ("person-answered", tree_after_round_two(tmp_path, answered, answers=rows), probe()),
         ("every open finding claimed", tree_after_round_two(tmp_path, claimed), probe()),
         (
             "review-incomplete",

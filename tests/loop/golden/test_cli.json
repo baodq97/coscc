@@ -27,7 +27,7 @@
  "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv0]#1": [
   2,
   "",
-  "usage: python -m coscc.loop [--root <dir>] <command>\n  reading a .cos/ (these take --root):\n    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | meta [<unit> [<artifact>]...]\n    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, the app's snapshot\n  describing this checkout (these do not):\n    check-branch [name] | check-tag <tag> | check-version\n"
+  "usage: python -m coscc.loop [--root <dir>] <command>\n  reading a .cos/ (these take --root):\n    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>]\n    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, the app's snapshot\n  describing this checkout (these do not):\n    check-branch [name] | check-tag <tag> | check-version\n"
  ],
  "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv9]#1": [
   2,
@@ -37,7 +37,7 @@
  "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv1]#1": [
   2,
   "",
-  "usage: python -m coscc.loop [--root <dir>] <command>\n  reading a .cos/ (these take --root):\n    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | meta [<unit> [<artifact>]...]\n    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, the app's snapshot\n  describing this checkout (these do not):\n    check-branch [name] | check-tag <tag> | check-version\n"
+  "usage: python -m coscc.loop [--root <dir>] <command>\n  reading a .cos/ (these take --root):\n    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>]\n    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, the app's snapshot\n  describing this checkout (these do not):\n    check-branch [name] | check-tag <tag> | check-version\n"
  ],
  "tests/loop/test_cli.py::test_a_misuse_is_refused_alike[argv2]#1": [
   2,

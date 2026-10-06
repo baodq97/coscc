@@ -1,7 +1,7 @@
-"""The loop's parsers, gates and branch grammar, called directly, each held to fixed values.
+"""The loop's gates, readers and branch grammar, called directly, each held to fixed values.
 
-A unit read from files gets the snapshot the app would build of them, from
-`meta`'s own readers.
+A unit read from files gets the snapshot the app would build of its rows, stated by each test
+with `known`: the files' headers decide nothing.
 """
 
 from __future__ import annotations
@@ -24,14 +24,9 @@ from coscc.loop.branch import (
 from coscc.loop.model import (
     branch_for,
     branch_problem,
-    parse_answers,
-    parse_questions,
-    parse_skip_reason,
-    parse_status,
-    parse_type,
     read_unit,
 )
-from coscc.loop.paths import next_number, unit_meta
+from coscc.loop.paths import next_number
 from coscc.loop import stringify
 from coscc.loop.model import (
     parse_deadline,
@@ -39,7 +34,7 @@ from coscc.loop.model import (
     unit_outcome,
 )
 from coscc.loop import SPIKE_ROUNDS
-from coscc.loop.model import fold_holds, hold_blocks, non_blocking
+from coscc.loop.model import fold_holds, non_blocking
 from coscc.loop.rules import between_pr_and_ship, decide, gate_answer, next_answer
 from coscc.loop.run import ask
 from coscc.loop.model import parse_pr, parse_review, review_rounds
@@ -80,47 +75,82 @@ def claim_record(*ids: str) -> dict:
     return {"impl.md": {"result": {**_BASE, "needs_person": list(ids)}}}
 
 
-def entry_from(m: dict, records: dict | None = None) -> dict:
-    """The snapshot entry the app builds of `meta`'s reading; a skip stands for a person's.
-    `records` are the submitted records, `{file: {"result", ...}}`."""
-    arts = {
-        f: {
-            "status": a.get("status"),
-            "raw": a.get("raw"),
-            "questions": a.get("questions"),
-            **({"authority": "person"} if a.get("status") == "skipped" else {}),
-        }
-        for f, a in m["artifacts"].items()
+def plan_record(*rests_on: str) -> dict:
+    """The plan's submitted record, resting on the spike items `rests_on`."""
+    return {"plan.md": {"result": {**_BASE, "rests_on": list(rests_on)}}}
+
+
+def answer(file: str, ref: int | str, by: str, text: str, date: str = "2026-09-23") -> dict:
+    """A person's answer row: to question `ref` (a number) or finding `ref` (`F<n>`)."""
+    number = isinstance(ref, int)
+    return {
+        "artifact": file,
+        "n": ref if number else None,
+        "id": None if number else ref,
+        "by": by,
+        "date": date,
+        "via": "product",
+        "text": text,
     }
+
+
+def hold(state: str, reason: str, by: str = "Leif", date: str = "2026-09-24") -> dict:
+    """A hold row: `paused`, `dropped` or `active` (resumed)."""
+    return {"state": state, "reason": reason, "by": by, "date": date, "via": "product"}
+
+
+def known(
+    statuses: dict[str, str] | None = None,
+    *,
+    type: str | None = "feat",
+    questions: dict[str, list[str]] | None = None,
+    answers: list[dict] | None = None,
+    holds: list[dict] | None = None,
+    records: dict | None = None,
+    links: dict | None = None,
+) -> dict:
+    """The snapshot entry the app builds of a unit's rows: each file's status, `{file: status}`
+    (a skip is a person's); the open questions each record handed back, `{file: [text]}`
+    numbered from 1; answer and hold rows; the submitted records, `{file: {"result", ...}}`."""
+    arts: dict[str, dict] = {
+        f: {
+            "status": st,
+            "questions": [
+                {"n": i, "text": t} for i, t in enumerate((questions or {}).get(f, []), 1)
+            ],
+            **({"authority": "person"} if st == "skipped" else {}),
+        }
+        for f, st in (statuses or {}).items()
+    }
+    for f, qs in (questions or {}).items():
+        arts.setdefault(f, {"status": None})["questions"] = [
+            {"n": i, "text": t} for i, t in enumerate(qs, 1)
+        ]
     for f, rec in (records or {}).items():
-        arts.setdefault(f, {"status": None, "raw": None, "questions": None}).update(rec)
+        arts.setdefault(f, {"status": None, "questions": None}).update(rec)
     return {
         "artifacts": arts,
-        "type": m.get("type"),
-        "links": m.get("links") or {"idea": None, "dependsOn": None},
-        "holds": [h for h in (m.get("holds") or []) if h.get("by") is not None],
-        "answers": m.get("answers"),
+        "type": type,
+        "links": links or {"idea": None, "dependsOn": None},
+        "holds": holds or [],
+        "answers": answers or [],
         "unknowns": [],
-        "merged": (m["artifacts"].get("ship.md") or {}).get("status") == "accepted",
+        "merged": (statuses or {}).get("ship.md") == "accepted",
     }
 
 
-def state_of_root(root: Path, records: dict | None = None) -> dict:
-    """The snapshot of `<root>/.cos/`, as the app would hand `--state`; `records` by unit name."""
-    cos = root / ".cos"
-    units = {}
-    if cos.exists():
-        for d in sorted(cos.iterdir()):
-            if d.is_dir() and d.name != "ideas":
-                units[f"/{d.name}"] = entry_from(unit_meta(str(d)), (records or {}).get(d.name))
-    return {"workspace": "", "workspaces": [], "units": units}
+def state_of_root(root: Path, units: dict[str, dict] | None = None) -> dict:
+    """The snapshot the app would hand `--state` for `<root>`: `units`, a `known` entry by name."""
+    return {
+        "workspace": "",
+        "workspaces": [],
+        "units": {f"/{n}": e for n, e in (units or {}).items()},
+    }
 
 
-def read(dir_: Path, name: str, records: dict | None = None) -> dict:
-    """`read_unit` of `dir_` under `name`, with the snapshot of its files and `records`."""
-    state = {"workspace": "", "workspaces": [], "units": {}}
-    state["units"][f"/{name}"] = entry_from(unit_meta(str(dir_)), records)
-    return read_unit(str(dir_), name, state)
+def read(dir_: Path, name: str, entry: dict | None = None) -> dict:
+    """`read_unit` of `dir_` under `name`, with `entry` (a `known`) as the app's snapshot."""
+    return read_unit(str(dir_), name, state_of_root(dir_, {name: entry or known()}))
 
 
 def unit(artifacts: dict) -> dict:
@@ -159,38 +189,18 @@ def files_in(tmp_path: Path, files: dict[str, str], name: str = "u") -> Path:
     return d
 
 
-def cli(*argv: str, stdin: str | None = None):
-    """`python -m coscc.loop argv`; a deciding command gets the snapshot of its `--root`."""
+def cli(*argv: str, stdin: str | None = None, units: dict[str, dict] | None = None):
+    """`python -m coscc.loop argv`; a deciding command gets `units` (`known` entries by name) as
+    the snapshot of its `--root`."""
     words = list(argv)
     deciding = {"status", "gate", "next", "rerun", "unit-branch", "pr-text", "screens"}
     if "--root" in words and deciding & set(words) and "--state" not in words:
         root = Path(words[words.index("--root") + 1])
-        return python([*words, "--state", "-"], stdin=json.dumps(state_of_root(root)))
+        return python([*words, "--state", "-"], stdin=json.dumps(state_of_root(root, units)))
     return python(words, stdin=stdin)
 
 
 # --- the status line, the gates and the next action -------------------------------------
-
-
-def test_parse_status_takes_the_first_status_line():
-    assert parse_status("Author: X. Status: draft.") == "draft"
-    assert parse_status("Intent: intent.md. Spec: skipped (tiny). Status: accepted.") == "accepted"
-    assert parse_status("Status: Accepted.") == "accepted"
-
-
-def test_a_later_status_mention_cannot_shadow_the_real_one():
-    assert parse_status("Status: draft.\n\n## Notes\nStatus: accepted is what we want.") == "draft"
-
-
-def test_parse_status_returns_none_rather_than_guessing():
-    assert parse_status("# Intent: x\nNo status here.") is None
-
-
-def test_parse_skip_reason_reads_the_plan_header():
-    assert parse_skip_reason("Spec: skipped (one file, no schema change).") == (
-        "one file, no schema change"
-    )
-    assert parse_skip_reason("Spec: spec.md.") is None
 
 
 def test_spec_gate_needs_an_accepted_intent():
@@ -234,8 +244,8 @@ def test_a_rejected_artifact_closes_the_unit():
     assert "closed" in r["action"]
 
 
-def test_a_done_plan_is_finished():
-    assert next_action(unit({**FULL, "plan.md": art("done")}))["action"] == "finished"
+def test_a_shipped_unit_is_finished():
+    assert next_action({**unit(FULL), "shipped": True})["action"] == "finished"
 
 
 def test_next_number_counts_from_the_highest():
@@ -247,7 +257,9 @@ def test_next_number_counts_from_the_highest():
 
 def test_an_unreadable_artifact_is_not_a_missing_one():
     broken = unit({"intent.md": {"status": None, "skipReason": None}})
-    assert "exists but carries no Status line" in check_gate(broken, "spec")["need"][0]
+    assert (
+        "has no status: no record was handed back for it" in check_gate(broken, "spec")["need"][0]
+    )
     assert re.search(r"fix intent\.md", next_action(broken)["action"])
     absent = unit({})
     assert "does not exist" in check_gate(absent, "spec")["need"][0]
@@ -291,10 +303,6 @@ def test_a_later_stage_needs_the_earlier_ones_behind_it():
     assert check_gate(unit({**FULL, "pr.md": pr}), "review", green_probe())["ok"] is False
 
 
-def test_a_done_artifact_is_not_in_the_way():
-    assert check_gate(unit({**FULL, "plan.md": art("done")}), "impl")["ok"] is True
-
-
 def test_next_action_walks_past_an_accepted_plan():
     assert next_action(unit({**FULL, "impl.md": art("accepted")}))["action"] == "pr"
     with_pr = {**FULL, "impl.md": art("accepted"), "pr.md": art("accepted")}
@@ -312,20 +320,19 @@ def test_a_late_rejection_closes_the_unit():
 # --- the Type header --------------------------------------------------------------------
 
 
-def with_intent(tmp_path: Path, header: str) -> dict:
-    d = files_in(tmp_path, {"intent.md": f"# Intent: x\n{header}\n"}, name=str(len(header)))
-    return read(d, "0011_typed")
+def with_intent(tmp_path: Path, type_: str | None) -> dict:
+    d = files_in(tmp_path, {"intent.md": "# Intent: x\n"}, name=str(type_))
+    return read(d, "0011_typed", known({"intent.md": "accepted"}, type=type_))
 
 
 def test_an_intent_with_no_type_is_a_problem(tmp_path):
-    u = with_intent(tmp_path, "Author: Bao Do. Status: accepted.")
-    assert len(u["problems"]) == 1
-    assert re.search(r"intent\.md declares no Type", u["problems"][0])
+    u = with_intent(tmp_path, None)
+    assert u["problems"] == ["the intent has handed back no type"]
     assert "type" not in u
 
 
 def test_a_type_outside_the_ten_is_another_problem(tmp_path):
-    u = with_intent(tmp_path, "Author: Bao Do. Type: nonsense. Status: accepted.")
+    u = with_intent(tmp_path, "nonsense")
     assert len(u["problems"]) == 1
     assert 'has type "nonsense", not one of' in u["problems"][0]
     for t in BRANCH_TYPES:
@@ -336,7 +343,8 @@ def test_a_type_outside_the_ten_is_another_problem(tmp_path):
 
 
 def test_a_unit_holding_only_a_valid_idea_is_pre_intent(tmp_path):
-    u = read(files_in(tmp_path, {"idea.md": "# Idea: x\nStatus: accepted.\n"}), "0015_fresh")
+    d = files_in(tmp_path, {"idea.md": "# Idea: x\n"})
+    u = read(d, "0015_fresh", known({"idea.md": "accepted"}))
     assert u["phase"] == "pre-intent"
     assert u["problems"] == []
     assert next_action(u) == {
@@ -348,8 +356,10 @@ def test_a_unit_holding_only_a_valid_idea_is_pre_intent(tmp_path):
 
 
 def test_an_idea_with_a_later_artifact_and_no_intent_is_a_problem(tmp_path):
-    files = {"idea.md": "Status: accepted.\n", "spec.md": "Status: draft.\n"}
-    u = read(files_in(tmp_path, files), "0015_x")
+    files = {"idea.md": "# Idea\n", "spec.md": "# Spec\n"}
+    u = read(
+        files_in(tmp_path, files), "0015_x", known({"idea.md": "accepted", "spec.md": "draft"})
+    )
     assert u["phase"] == "started"
     assert "no intent.md — every unit opens with one" in u["problems"]
 
@@ -358,16 +368,17 @@ def test_an_idea_with_no_status_line_is_not_pre_intent(tmp_path):
     u = read(files_in(tmp_path, {"idea.md": "# Idea: x\n"}), "0015_x")
     assert u["phase"] == "started"
     assert "no intent.md — every unit opens with one" in u["problems"]
-    assert "idea.md carries no Status line" in u["problems"]
+    assert "idea.md has no status: no record was handed back for it" in u["problems"]
 
 
 def test_a_unit_with_an_intent_is_started(tmp_path):
-    u = read(files_in(tmp_path, {"intent.md": "Type: fix. Status: draft.\n"}), "0015_x")
+    d = files_in(tmp_path, {"intent.md": "# Intent\n"})
+    u = read(d, "0015_x", known({"intent.md": "draft"}, type="fix"))
     assert u["phase"] == "started"
 
 
 def test_a_type_problem_closes_no_gate():
-    u = {**unit({"intent.md": art("accepted")}), "problems": ["intent.md declares no Type"]}
+    u = {**unit({"intent.md": art("accepted")}), "problems": ["the intent has handed back no type"]}
     assert check_gate(u, "spec") == {"ok": True, "need": []}
 
 
@@ -447,29 +458,22 @@ def test_a_version_place_that_could_not_be_read_is_named():
     assert "declares no version" in version_problem({"pyproject.toml": None})
 
 
-def test_parse_type_reads_the_header_field():
-    assert parse_type("Author: X. Type: feat. Status: accepted.") == "feat"
-    assert parse_type("Author: X. Type: Feat. Status: accepted.") == "feat"
-    assert parse_type("Author: X. Status: accepted.") is None
-
-
-def unit_branch(name, header):
-    """What `unit-branch` derives: the unit's name and the `Type:` of its header."""
-    return branch_for(name, parse_type(header))
+def unit_branch(name, type_):
+    """What `unit-branch` derives: the unit's name and the type its intent handed back."""
+    return branch_for(name, type_)
 
 
 def test_the_branch_name_is_derived_from_the_unit_and_its_type():
-    header = "Author: X. Type: feat. Status: accepted."
-    got = unit_branch("0009_branch-and-release-conventions", header)
+    got = unit_branch("0009_branch-and-release-conventions", "feat")
     assert got == {"branch": "feat/branch-and-release-conventions"}
     assert branch_problem(got["branch"]) is None
 
 
 def test_a_derived_name_no_grammar_accepts_cannot_be_produced():
-    assert '"feature" is not one of' in unit_branch("0009_x", "Type: feature.")["error"]
-    assert "declares no Type:" in unit_branch("0009_x", "Author: X.")["error"]
-    assert "does not match NNNN_<slug>" in unit_branch("9_x", "Type: feat.")["error"]
-    assert "does not match NNNN_<slug>" in unit_branch(None, "Type: feat.")["error"]
+    assert '"feature" is not one of' in unit_branch("0009_x", "feature")["error"]
+    assert "the intent has handed back no type" in unit_branch("0009_x", None)["error"]
+    assert "does not match NNNN_<slug>" in unit_branch("9_x", "feat")["error"]
+    assert "does not match NNNN_<slug>" in unit_branch(None, "feat")["error"]
 
 
 def slug_of(n: int) -> str:
@@ -482,13 +486,13 @@ OLD_0044 = "0044_open-questions-wait-for-the-originator-even-when-precedent-answ
 
 
 def test_a_long_slug_is_cut_at_its_last_hyphen():
-    assert unit_branch(OLD_0044, "Type: feat.")["branch"] == (
+    assert unit_branch(OLD_0044, "feat")["branch"] == (
         "feat/open-questions-wait-for-the-originator-even-when-precedent"
     )
     assert len(slug_of(60)) == 60
-    assert unit_branch(f"0001_{slug_of(60)}", "Type: feat.")["branch"] == f"feat/{slug_of(60)}"
-    assert unit_branch("0001_" + "a" * 71, "Type: fix.")["branch"] == "fix/" + "a" * 60
-    assert unit_branch("0001_" + "a" * 60 + "-b", "Type: fix.")["branch"] == "fix/" + "a" * 60
+    assert unit_branch(f"0001_{slug_of(60)}", "feat")["branch"] == f"feat/{slug_of(60)}"
+    assert unit_branch("0001_" + "a" * 71, "fix")["branch"] == "fix/" + "a" * 60
+    assert unit_branch("0001_" + "a" * 60 + "-b", "fix")["branch"] == "fix/" + "a" * 60
 
 
 # --- the --root boundary, through the command line --------------------------------------
@@ -496,140 +500,54 @@ def test_a_long_slug_is_cut_at_its_last_hyphen():
 
 # --- 0016, 0109: the numbered questions under Open questions, and their answers -------------
 
-QUESTIONS = "\n".join(
-    [
-        "# Intent: q",
-        "Author: t. Type: feat. Status: accepted.",
-        "",
-        "## Problem",
-        "",
-        "1. Not a question: this list is under Problem.",
-        "",
-        "## Open questions",
-        "",
-        "1. **First?** Asked here",
-        "   and continued on this line.",
-        "2. Second?",
-        "3. Third?",
-        "",
-    ]
-)
-
-
-def answer_block(n, by, text):
-    return f"\n### Câu {n}\nAnswered by: {by}. Date: 2026-09-23. Via: product.\n\n{text}\n"
-
-
-def with_answers(*blocks):
-    return f"{QUESTIONS}\n## Answers\n{''.join(blocks)}"
+Q3 = ["**First?** Asked here and continued on this line.", "Second?", "Third?"]
+INTENT_Q = "# Intent: q\n"
 
 
 def question_tree(
-    tmp_path: Path, files: dict[str, str], records: dict | None = None
+    tmp_path: Path, files: dict[str, str], entry: dict | None = None
 ) -> tuple[Path, dict]:
     root = tmp_path / "qroot"
     d = root / ".cos" / "0001_q"
     d.mkdir(parents=True)
     for f, text in files.items():
         (d / f).write_text(text)
-    return root, read(d, "0001_q", records)
+    return root, read(d, "0001_q", entry)
 
 
 def ns(qs):
     return [q["n"] for q in qs]
 
 
-def test_questions_are_the_numbered_items_under_open_questions():
-    qs = parse_questions(QUESTIONS)
-    assert ns(qs) == [1, 2, 3]
-    assert "continued on this line" in qs[0]["text"]
-
-
-def test_a_bullet_is_never_a_question():
-    bullets = "## Open questions\n\nKhông còn câu hỏi mở.\n\n- **One?** first\n- Two?\n"
-    assert parse_questions(bullets) == []
-    mixed = "## Open questions\n\n1. Numbered?\n- a sub-point of it\n2. Also numbered?\n"
-    assert ns(parse_questions(mixed)) == [1, 2]
-    assert "sub-point" in parse_questions(mixed)[0]["text"]
-
-
-def test_a_numbered_item_is_a_question_only_when_it_asks_one():
-    text = "## Open questions\n\n1. Ai quyết định?\n7. Người khởi xướng vẫn nên đọc lại file này.\n"
-    assert ns(parse_questions(text)) == [1]
-
-
 def test_a_note_keeps_no_answer_and_a_heading_with_none_is_counted(tmp_path):
-    intent = "\n".join(
-        [
-            "# Intent: q",
-            "Author: t. Type: fix. Status: accepted.",
-            "",
-            "## Open questions",
-            "",
-            "1. A?",
-            "2. Ghi chú.",
-            "",
-            "## Answers",
-            answer_block(1, "A", "có"),
-            answer_block(2, "A", "đã đọc"),
-        ]
+    entry = known(
+        {"intent.md": "accepted", "spec.md": "accepted"},
+        type="fix",
+        questions={"intent.md": ["A?"]},
+        answers=[answer("intent.md", 1, "A", "có"), answer("intent.md", 2, "A", "đã đọc")],
     )
-    spec = (
-        "# Spec\nIntent: intent.md. Author: t. Status: accepted.\n\n"
-        "## Open questions\n\nKhông còn câu hỏi mở.\n"
-    )
-    _, u = question_tree(tmp_path, {"intent.md": intent, "spec.md": spec})
+    _, u = question_tree(tmp_path, {"intent.md": INTENT_Q, "spec.md": "# Spec\n"}, entry)
     qs = u["artifacts"]["intent.md"]["questions"]
     assert [[q["n"], q["answered"]] for q in qs] == [[1, True]]
-    assert len(parse_answers(intent)) == 2
     assert u["counted"] == "spec.md"
     assert u["open"] == 0
 
 
-def test_the_notes_of_a_hold_and_a_rerun_are_not_questions():
-    s0107 = "\n".join(
-        [
-            "## Open questions",
-            "",
-            "Không còn câu hỏi mở. Câu 1 đến câu 5 của intent.md ## Answers đã được trả lời, "
-            "và spec này dùng chúng như sau:",
-            "",
-            "- Câu 1 là hạn 2026-10-02. Spec không đổi hạn này.",
-            "- Câu 2 cho phép R4.",
-            "- Câu 3 cho phép R5.",
-            "- Câu 4 là cách đo, và thành phép thử ngoài spec.",
-            "- Câu 5 là lý do có Out of scope về nén tất định.",
-            "",
-            "Cả năm câu do Leif (CoS) trả lời thay người khởi xướng.",
-            "",
-        ]
-    )
-    assert parse_questions(s0107) == []
-    s0054 = "\n".join(
-        [
-            "## Open questions",
-            "",
-            "1. Hạn thật cho outcome: đã trả lời, xem `intent.md ## Answers, câu 1`.",
-            "6. Nút tách riêng và dòng xác nhận là yêu cầu hay gợi ý: đã trả lời, "
-            "xem `intent.md ## Answers, câu 6`.",
-            "7. Các câu 1–6 do Leif (CoS) trả lời thay người khởi xướng. "
-            "Người khởi xướng vẫn nên đọc lại file này.",
-            "",
-        ]
-    )
-    assert 7 not in ns(parse_questions(s0054))
-
-
 def test_three_questions_and_no_answers_is_three_open(tmp_path):
-    _, u = question_tree(tmp_path, {"intent.md": QUESTIONS})
+    entry = known({"intent.md": "accepted"}, questions={"intent.md": Q3})
+    _, u = question_tree(tmp_path, {"intent.md": INTENT_Q}, entry)
     assert u["open"] == 3
     assert len(u["questions"]) == 3
     assert u["problems"] == []
 
 
 def test_one_answer_leaves_two_open_and_says_who_gave_it(tmp_path):
-    text = with_answers(answer_block(2, "Phong Pham", "Tách ra."))
-    _, u = question_tree(tmp_path, {"intent.md": text})
+    entry = known(
+        {"intent.md": "accepted"},
+        questions={"intent.md": Q3},
+        answers=[answer("intent.md", 2, "Phong Pham", "Tách ra.")],
+    )
+    _, u = question_tree(tmp_path, {"intent.md": INTENT_Q}, entry)
     assert u["open"] == 2
     q2 = next(q for q in u["artifacts"]["intent.md"]["questions"] if q["n"] == 2)
     assert q2["answered"] is True
@@ -638,33 +556,25 @@ def test_one_answer_leaves_two_open_and_says_who_gave_it(tmp_path):
     assert q2["answer"]["text"] == "Tách ra."
 
 
-def test_of_two_blocks_for_one_number_the_last_is_in_force(tmp_path):
-    text = with_answers(answer_block(1, "A", "cũ"), answer_block(1, "B. C", "mới"))
-    assert len(parse_answers(text)) == 2
-    _, u = question_tree(tmp_path, {"intent.md": text})
+def test_of_two_answers_for_one_number_the_last_is_in_force(tmp_path):
+    entry = known(
+        {"intent.md": "accepted"},
+        questions={"intent.md": Q3},
+        answers=[answer("intent.md", 1, "A", "cũ"), answer("intent.md", 1, "B. C", "mới")],
+    )
+    _, u = question_tree(tmp_path, {"intent.md": INTENT_Q}, entry)
     q1 = next(q for q in u["artifacts"]["intent.md"]["questions"] if q["n"] == 1)
     assert q1["answer"]["text"] == "mới"
     assert q1["answer"]["by"] == "B. C"
     assert u["open"] == 2
 
 
-def test_a_block_with_no_header_line_is_not_an_answer():
-    assert parse_answers(f"{QUESTIONS}\n## Answers\n\n### Câu 1\nno header here\n") == []
-
-
-def test_answers_are_never_read_as_questions():
-    text = with_answers(answer_block(3, "A", "1. looks like a question"))
-    assert ns(parse_questions(text)) == [1, 2, 3]
-    assert parse_status(text) == "accepted"
-    assert parse_status(QUESTIONS) == parse_status(text)
-
-
 def test_only_the_latest_artifact_with_questions_is_counted(tmp_path):
-    spec = (
-        "# Spec\nIntent: intent.md. Author: t. Status: accepted.\n\n"
-        "## Open questions\n\n1. Only one?\n"
+    entry = known(
+        {"intent.md": "accepted", "spec.md": "accepted"},
+        questions={"intent.md": Q3, "spec.md": ["Only one?"]},
     )
-    _, u = question_tree(tmp_path, {"intent.md": QUESTIONS, "spec.md": spec})
+    _, u = question_tree(tmp_path, {"intent.md": INTENT_Q, "spec.md": "# Spec\n"}, entry)
     assert u["open"] == 1
     assert u["counted"] == "spec.md"
     assert [q["artifact"] for q in u["questions"]] == ["intent.md"] * 3 + ["spec.md"]
@@ -672,16 +582,17 @@ def test_only_the_latest_artifact_with_questions_is_counted(tmp_path):
 
 
 def test_an_open_question_closes_no_gate(tmp_path):
-    _, u = question_tree(tmp_path, {"intent.md": QUESTIONS})
+    entry = known({"intent.md": "accepted"}, questions={"intent.md": Q3})
+    _, u = question_tree(tmp_path, {"intent.md": INTENT_Q}, entry)
     assert u["open"] == 3
     assert check_gate(u, "spec")["ok"] is True
 
 
 def test_status_json_over_64_kib_reaches_a_pipe_whole(tmp_path):
     """Read asynchronously, the way the board reads it."""
-    long = f"{QUESTIONS}4. {'x' * 200 * 1024}?\n"
-    root, _ = question_tree(tmp_path, {"intent.md": long})
-    stdin = json.dumps(state_of_root(root))
+    entry = known({"intent.md": "accepted"}, questions={"intent.md": [*Q3, f"{'x' * 200 * 1024}?"]})
+    root, _ = question_tree(tmp_path, {"intent.md": INTENT_Q}, entry)
+    stdin = json.dumps(state_of_root(root, {"0001_q": entry}))
     got = asyncio.run(ask(["--root", str(root), "--state", "-", "status", "--json"], stdin=stdin))
     assert len(got.out) > 200 * 1024
     assert json.loads(got.out)["units"][0]["open"] == 4
@@ -712,11 +623,6 @@ def round_(n, verdict, findings=()):
 
 def branched(artifacts):
     return {**unit(artifacts), "name": "0001_x", "branch": "feat/x"}
-
-
-def test_parse_status_reads_a_hyphenated_status_whole():
-    assert parse_status("Author: X. Status: changes-requested.") == "changes-requested"
-    assert parse_status("Status: accepted-.") == "accepted"
 
 
 def test_parse_pr_reads_the_pull_request_or_none():
@@ -1025,9 +931,9 @@ def test_a_pass_with_the_ship_gate_open_is_ship_pinned():
     assert n["action"].startswith(f"ship — merge with --match-head-commit {SHA}")
 
 
-def test_a_done_plan_offers_nothing_whatever_the_later_files_say():
+def test_a_shipped_unit_offers_nothing_whatever_the_later_files_say():
     cr = review_art("changes-requested", round_(1, "changes-requested", ["- F1 [open] x"]))
-    u = unit({**CHAIN, "plan.md": art("done"), "review.md": cr})
+    u = {**unit({**CHAIN, "review.md": cr}), "shipped": True}
     assert next_step(u, green_probe()) == {"blocked": False, "action": "finished", "stage": ""}
 
 
@@ -1075,8 +981,9 @@ def impl_text(needs=""):
     )
 
 
-def f_block(id_, text="ran it"):
-    return f"\n### {id_}\nAnswered by: Bao. Date: 2026-09-24. Via: product.\n\n{text}\n"
+def f_ans(*ids):
+    """A person's answer rows to the findings `ids`."""
+    return [answer("review.md", i, "Bao", "ran it", "2026-09-24") for i in ids]
 
 
 def round3(f3="needs-person", extra=()):
@@ -1087,47 +994,44 @@ def round3(f3="needs-person", extra=()):
     )
 
 
-def tree_after_round_two(tmp_path, review, claims=("F2", "F3")):
-    """A unit right after its second review round, as files on disk, impl's record claiming
-    `claims` only a person can close."""
+def round_two_entry(claims=("F2", "F3"), answers=()):
+    """The rows of a unit right after its second review round, impl's record claiming `claims`
+    only a person can close, and a person's `answers` on the review."""
+    return known(
+        {
+            "intent.md": "accepted",
+            "spec.md": "accepted",
+            "plan.md": "accepted",
+            "impl.md": "accepted",
+            "pr.md": "accepted",
+            "review.md": "changes-requested",
+        },
+        type="fix",
+        records=claim_record(*claims),
+        answers=list(answers),
+    )
+
+
+ROUND_TWO_FILES = {
+    "intent.md": "# I\n",
+    "spec.md": "# S\n",
+    "plan.md": "# P\n",
+    "impl.md": impl_text(),
+    "pr.md": "# PR: fix(0001): x\nPR: https://github.com/o/r/pull/7.\n",
+}
+
+
+def tree_after_round_two(tmp_path, review, claims=("F2", "F3"), answers=()):
+    """A unit right after its second review round, as files on disk."""
     _, u = question_tree(
         tmp_path / str(len(list(tmp_path.iterdir()))),
-        {
-            "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
-            "spec.md": "# S\nStatus: accepted.\n",
-            "plan.md": "# P\nStatus: accepted.\n",
-            "impl.md": impl_text(),
-            "pr.md": "# PR: fix(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n",
-            "review.md": review,
-        },
-        claim_record(*claims),
+        {**ROUND_TWO_FILES, "review.md": review},
+        round_two_entry(claims, answers),
     )
     return u
 
 
 R12 = f"{REVIEW_HEAD}{ROUND1}\n{ROUND2}"
-
-
-def test_parse_answers_reads_numbered_and_finding_blocks_side_by_side(tmp_path):
-    text = (
-        f"{with_answers(answer_block(2, 'Bao', 'two'))}{f_block('F2', 'first')}"
-        f"{f_block('F2', 'second')}\n### F3\nno header\n"
-    )
-    assert [[a["n"], a["id"], a["text"]] for a in parse_answers(text)] == [
-        [2, None, "two"],
-        [None, "F2", "first"],
-        [None, "F2", "second"],
-    ]
-    root, _ = question_tree(tmp_path / "a", {})
-    d = root / ".cos" / "0001_q"
-    (d / "review.md").write_text(
-        f"{REVIEW_HEAD}{ROUND1}\n## Answers\n{f_block('F2', 'first')}{f_block('F2', 'second')}"
-        "\n### F3\nno header\n"
-    )
-    assert read(d, "0001_q")["artifacts"]["review.md"]["personAnswers"] == ["F2"]
-    intent = f"# I\nAuthor: t. Type: fix. Status: accepted.\n\n{with_answers(f_block('F1'))}"
-    _, u = question_tree(tmp_path / "b", {"intent.md": intent})
-    assert all(not q["answered"] for q in u["artifacts"]["intent.md"]["questions"])
 
 
 def test_the_person_labels_and_the_needs_person_verdict_are_read():
@@ -1180,7 +1084,7 @@ def test_both_claims_confirmed_names_a_person(tmp_path):
 
 
 def test_one_answered_one_not_still_waits_for_the_other(tmp_path):
-    u = tree_after_round_two(tmp_path, f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}")
+    u = tree_after_round_two(tmp_path, f"{R12}\n{round3()}", answers=f_ans("F2"))
     n = next_step(u, green_probe())
     assert n["stage"] == ""
     assert n["action"].startswith("needs a person — F3: c")
@@ -1188,9 +1092,7 @@ def test_one_answered_one_not_still_waits_for_the_other(tmp_path):
 
 
 def test_both_answered_review_reads_the_answers(tmp_path):
-    u = tree_after_round_two(
-        tmp_path, f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}{f_block('F3')}"
-    )
+    u = tree_after_round_two(tmp_path, f"{R12}\n{round3()}", answers=f_ans("F2", "F3"))
     n = next_step(u, green_probe())
     assert n["stage"] == "review"
     assert "a person answered F2, F3 in review.md" in n["action"]
@@ -1227,8 +1129,9 @@ def test_answered_but_kept_open_is_impl_not_review_again(tmp_path):
     r4 = round_(
         4, "changes-requested", [f"- F1 [fixed {FIX}] a", "- F2 [answered] b", "- F3 [open] c"]
     )
-    review = f"{R12}\n{round3()}\n{r4}\n## Answers\n{f_block('F2')}{f_block('F3')}"
-    n = next_step(tree_after_round_two(tmp_path, review), green_probe(), 4)
+    review = f"{R12}\n{round3()}\n{r4}"
+    u = tree_after_round_two(tmp_path, review, answers=f_ans("F2", "F3"))
+    n = next_step(u, green_probe(), 4)
     assert n["stage"] == "impl"
     assert "claimed in impl.md ## Needs a person" not in n["action"]
     r4b = round_(
@@ -1277,21 +1180,17 @@ def test_ship_closes_an_answered_finding_only_with_its_answer():
 
 
 def test_next_prints_waiting_only_when_a_person_is_awaited(tmp_path):
+    entry = round_two_entry(claims=(), answers=f_ans("F2"))
     root, _ = question_tree(
         tmp_path,
-        {
-            "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
-            "spec.md": "Status: accepted.\n",
-            "plan.md": "Status: accepted.\n",
-            "impl.md": impl_text(),
-            "pr.md": "PR: https://github.com/o/r/pull/7. Status: accepted.\n",
-            "review.md": f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}",
-        },
+        {**ROUND_TWO_FILES, "review.md": f"{R12}\n{round3()}"},
+        entry,
     )
-    out = json.loads(cli("--root", str(root), "next", "0001_q").out)
+    units = {"0001_q": entry}
+    out = json.loads(cli("--root", str(root), "next", "0001_q", units=units).out)
     assert out["stage"] == ""
     assert out["waiting"] == ["F3"]
-    status = json.loads(cli("--root", str(root), "status", "--json").out)["units"][0]
+    status = json.loads(cli("--root", str(root), "status", "--json", units=units).out)["units"][0]
     assert status["next"]["waiting"] == ["F3"]
     assert status["personFindings"] == [
         {"id": "F2", "reason": "b", "answered": True},
@@ -1312,7 +1211,7 @@ def test_between_pr_and_ship_only_on_an_accepted_pr_naming_a_pull_request():
     assert between({**no_pr, "pr.md": {**art("accepted"), "pr": None}}) is False
     cr = review_art("changes-requested", round_(1, "changes-requested", ["- F1 [open] x"]))
     assert between({**CHAIN, "review.md": cr}) is True
-    assert between({**CHAIN, "plan.md": art("done")}) is False
+    assert between_pr_and_ship({**unit(CHAIN), "shipped": True}) is False
     assert between({**CHAIN, "review.md": art("rejected")}) is False
 
 
@@ -1324,12 +1223,13 @@ def test_the_plans_impl_label_opens_and_closes_no_gate_and_moves_no_next(tmp_pat
         root = tmp_path / str(label)
         d = root / ".cos" / "0001_same"
         d.mkdir(parents=True)
-        (d / "intent.md").write_text("# X\nType: feat. Status: accepted.\n")
-        (d / "spec.md").write_text("# X\nStatus: accepted.\n")
+        (d / "intent.md").write_text("# X\n")
+        (d / "spec.md").write_text("# X\n")
         said = "" if label is None else f" Impl: {label}."
         (d / "plan.md").write_text(f"# X\nStatus: accepted.{said}\n")
-        gate = cli("gate", "0001_same", "implement", "--root", str(root))
-        nxt = cli("next", "0001_same", "--root", str(root))
+        rows = {"0001_same": known(dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"))}
+        gate = cli("gate", "0001_same", "implement", "--root", str(root), units=rows)
+        nxt = cli("next", "0001_same", "--root", str(root), units=rows)
         return gate.code, gate.out, json.loads(nxt.out)
 
     routine = ask_("routine")
@@ -1416,32 +1316,19 @@ def test_a_valid_outcome_block_needs_a_result_measured_by_and_source_or_reason()
     assert o["measuredBy"] == "agent"
 
 
-def test_an_outcome_block_ends_the_answer_above_it_and_is_no_answer():
-    def f(id_, text):
-        return f"\n### {id_}\nAnswered by: Linh. Date: 2026-09-23. Via: product.\n\n{text}\n"
-
-    out = outcome_block(["Result: đạt", "Measured by: agent", "Source: x"])
-    head = f"{OUTCOME_INTENT}\n## Answers\n{answer_block(1, 'Linh', 'Yes.')}"
-    plain = f"{head}{f('F2', 'Fine.')}{f('F3', 'Also.')}"
-    mixed = f"{head}{out}{f('F2', 'Fine.')}{out}{f('F3', 'Also.')}"
-    after = parse_answers(mixed)
-    assert after == parse_answers(plain)
-    assert not any("Result:" in a["text"] for a in after)
-    assert [a["id"] if a["id"] is not None else a["n"] for a in after] == [1, "F2", "F3"]
-    assert next(a for a in after if a["id"] == "F2")["text"] == "Fine."
-
-
 def test_an_outcome_block_changes_nothing_but_outcome(tmp_path):
     d = tmp_path / "u"
     d.mkdir()
-    for f in ["idea.md", "spec.md", "impl.md", "pr.md", "review.md", "ship.md"]:
-        pr = "PR: https://github.com/o/r/pull/7. Status: accepted.\n"
-        (d / f).write_text(pr if f == "pr.md" else "Status: accepted.\n")
-    (d / "plan.md").write_text("Status: done.\n")
+    files = ["idea.md", "spec.md", "impl.md", "pr.md", "review.md", "ship.md", "plan.md"]
+    for f in files:
+        pr = "PR: https://github.com/o/r/pull/7.\n"
+        (d / f).write_text(pr if f == "pr.md" else "# x\n")
     (d / "intent.md").write_text(OUTCOME_INTENT)
+    entry = known(dict.fromkeys([*files, "intent.md"], "accepted"))
+    entry["shipped"] = True
 
     def view():
-        u = read(d, "0047_x")
+        u = read(d, "0047_x", entry)
         gates = [check_gate(u, s, green_probe()) for s in STAGE_NAMES]
         rest = {k: v for k, v in u.items() if k != "outcome"}
         return u["outcome"], stringify({"rest": rest, "next": next_action(u), "gates": gates})
@@ -1468,7 +1355,7 @@ def spec_text(concerns, status="accepted"):
     )
 
 
-INTENT_0039 = "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n"
+INTENT_0039 = "# Intent: x\n"
 
 
 def spike_text(rnd, items):
@@ -1477,18 +1364,20 @@ def spike_text(rnd, items):
     return head + body
 
 
-def spike_unit(tmp_path, files, records=None):
+def spike_unit(tmp_path, files, records=None, statuses=None):
+    """A unit of `files`, each accepted but for `statuses`, its record rows `records`."""
     d = files_in(
         tmp_path, {"intent.md": INTENT_0039, **files}, name=f"s{len(list(tmp_path.iterdir()))}"
     )
-    return read(d, "0039_x", records)
+    rows = dict.fromkeys(["intent.md", *files], "accepted") | (statuses or {})
+    return read(d, "0039_x", known(rows, records=records))
 
 
-def with_entry(d, name="0039_x"):
-    """The snapshot of `d`'s files and its entry, for a test to change before `read_unit`."""
-    entry = entry_from(unit_meta(str(d)))
-    state = {"workspace": "", "workspaces": [], "units": {f"/{name}": entry}}
-    return state, entry
+def with_entry(statuses, name="0039_x"):
+    """A snapshot of a unit whose files are `statuses` (all accepted), and its entry, for a test
+    to change before `read_unit`."""
+    entry = known(dict.fromkeys(statuses, "accepted"))
+    return state_of_root(Path(), {name: entry}), entry
 
 
 def test_a_stage_result_decides_the_specs_ids_and_the_spikes_verdicts(tmp_path):
@@ -1500,7 +1389,7 @@ def test_a_stage_result_decides_the_specs_ids_and_the_spikes_verdicts(tmp_path):
     d = files_in(tmp_path, files)
 
     def read_(spec, spike=None):
-        state, entry = with_entry(d)
+        state, entry = with_entry(files)
         entry["artifacts"]["spec.md"]["result"] = {
             "stage": "spec",
             "judgement": "ready",
@@ -1535,7 +1424,7 @@ def test_the_loop_reads_no_prose_for_spec_spike_and_impl_decisions(tmp_path):
         "impl.md": "# Impl: x\nStatus: accepted.\n\n## Needs a person\n\n- F2: a login\n",
     }
     d = files_in(tmp_path, files)
-    state, entry = with_entry(d)
+    state, entry = with_entry(files)
     u = read_unit(str(d), "0039_x", state)
     assert "unmeasured" not in u["artifacts"]["spec.md"]
     assert u["artifacts"]["spike.md"]["spike"] == {"round": None, "items": {}}
@@ -1552,8 +1441,10 @@ def test_a_round_and_the_claims_the_app_holds_decide(tmp_path):
         "## Round 2\n\nReviewed: abc1234. Verdict: pass.\n\n### Findings\n\nNone.\n"
     )
     impl = "# Impl: x\nStatus: accepted.\n\n## Needs a person\n\n- F2: a login\n"
-    d = files_in(tmp_path, {"intent.md": INTENT_0039, "review.md": review, "impl.md": impl})
-    state, entry = with_entry(d)
+    files = {"intent.md": INTENT_0039, "review.md": review, "impl.md": impl}
+    d = files_in(tmp_path, files)
+    state, entry = with_entry(files)
+    entry["artifacts"]["review.md"]["status"] = "changes-requested"
 
     def row(label, severity="medium"):
         return {
@@ -1602,11 +1493,9 @@ def test_a_round_and_the_claims_the_app_holds_decide(tmp_path):
 
 
 def test_a_unit_with_nothing_unmeasured_walks_as_if_spike_did_not_exist(tmp_path):
-    u = spike_unit(
-        tmp_path, {"spec.md": spec_text("- **C1.** none"), "plan.md": "Status: accepted.\n"}
-    )
+    u = spike_unit(tmp_path, {"spec.md": spec_text("- **C1.** none"), "plan.md": "# Plan\n"})
     assert "unmeasured" not in u["artifacts"]["spec.md"]
-    assert "citesSpike" not in u["artifacts"]["plan.md"]
+    assert "restsOn" not in u["artifacts"]["plan.md"]
     assert check_gate(u, "impl")["ok"] is True
     assert "write-impl" in next_action(u)["action"]
     assert check_gate(u, "spike")["need"] == [
@@ -1622,9 +1511,14 @@ def test_a_skipped_spec_never_needs_a_spike(tmp_path):
     files = {
         "spec.md": spec_text("- [unmeasured] U1. x", "skipped"),
         "spike.md": spike_text(1, [("U1", "fails")]),
-        "plan.md": "Status: accepted.\n",
+        "plan.md": "# Plan\n",
     }
-    u = spike_unit(tmp_path, files, {**spec_record("U1"), **spike_record(U1="fails")})
+    u = spike_unit(
+        tmp_path,
+        files,
+        {**spec_record("U1"), **spike_record(U1="fails")},
+        {"spec.md": "skipped"},
+    )
     assert check_gate(u, "impl")["ok"] is True
     assert "write-impl" in next_action(u)["action"]
 
@@ -1709,7 +1603,9 @@ def test_a_spec_rewritten_without_its_questions_needs_no_spike(tmp_path):
     assert next_action(u)["stage"] == "plan"
     assert check_gate(u, "plan")["ok"] is True
     draft = spike_unit(
-        tmp_path, {"spec.md": spec_text("- none left"), "spike.md": "# Spike\nStatus: draft.\n"}
+        tmp_path,
+        {"spec.md": spec_text("- none left"), "spike.md": "# Spike\n"},
+        statuses={"spike.md": "draft"},
     )
     assert next_action(draft)["stage"] == "plan"
     assert check_gate(draft, "plan")["ok"] is True
@@ -1718,23 +1614,16 @@ def test_a_spec_rewritten_without_its_questions_needs_no_spike(tmp_path):
 
 def skip_tree(tmp_path, authority, files=None):
     """`spec.md` skipped, and the snapshot saying whose decision the skip was."""
-    files = {"spec.md": "# Spec\nStatus: skipped.\n"} if files is None else files
+    files = {"spec.md": "# Spec\n"} if files is None else files
     d = files_in(
         tmp_path, {"intent.md": INTENT_0039, **files}, name=f"k{len(list(tmp_path.iterdir()))}"
     )
-    state, e = with_entry(d)
-    spec = {
-        "raw": None,
-        "questions": None,
-        **e["artifacts"].get("spec.md", {}),
-        "status": "skipped",
-    }
-    if authority is not None:
-        spec["authority"] = authority
+    entry = known({"intent.md": "accepted", "spec.md": "skipped"})
+    if authority is None:
+        entry["artifacts"]["spec.md"].pop("authority")
     else:
-        spec.pop("authority", None)
-    e["artifacts"]["spec.md"] = spec
-    return read_unit(str(d), "0039_x", state)
+        entry["artifacts"]["spec.md"]["authority"] = authority
+    return read(d, "0039_x", entry)
 
 
 def test_a_skip_no_person_decided_stops_the_unit_for_a_person(tmp_path):
@@ -1766,6 +1655,12 @@ def test_a_skip_a_person_decided_opens_plan_with_or_without_a_file(tmp_path):
         assert recorded["artifacts"]["spec.md"] == {"status": "skipped", "skipReason": None}
         assert [p for p in recorded["problems"] if "spec.md" in p] == []
         assert check_gate(recorded, "plan")["ok"] is True
+    reasoned = known({"intent.md": "accepted", "spec.md": "skipped"})
+    reasoned["artifacts"]["spec.md"]["reason"] = "one file, no schema"
+    d = files_in(tmp_path, {"intent.md": INTENT_0039}, name="reasoned")
+    assert read(d, "0039_x", reasoned)["artifacts"]["spec.md"]["skipReason"] == (
+        "one file, no schema"
+    )
     bare = skip_tree(tmp_path, "agent", {})
     assert "spec.md" not in bare["artifacts"]
     assert "the app records spec.md as skipped, but the file does not exist" in "\n".join(
@@ -1773,98 +1668,67 @@ def test_a_skip_a_person_decided_opens_plan_with_or_without_a_file(tmp_path):
     )
 
 
-def test_with_a_spike_required_impl_opens_only_on_a_plan_citing_it(tmp_path):
+def test_with_a_spike_required_impl_opens_only_on_a_plan_resting_on_it(tmp_path):
     files = {"spec.md": SPEC, "spike.md": SPIKE}
     records = {**spec_record("U1"), **spike_record(U1="holds")}
-    silent = spike_unit(
-        tmp_path, {**files, "plan.md": "Status: accepted.\n\n1. build it\n"}, records
-    )
-    assert silent["artifacts"]["plan.md"]["citesSpike"] is False
+    silent = spike_unit(tmp_path, {**files, "plan.md": "# Plan\n"}, records)
+    assert silent["artifacts"]["plan.md"]["restsOn"] == []
     assert check_gate(silent, "impl")["need"] == [
-        "plan.md does not cite spike.md — every step that rests on a U<n> cites spike.md ## U<n>"
+        "plan.md rests on no U<n> — its record's rests_on names the spike items its steps rest on"
     ]
-    cites = spike_unit(
-        tmp_path,
-        {**files, "plan.md": "Status: accepted.\n\n1. build it (spike.md ## U1)\n"},
-        records,
-    )
+    cites = spike_unit(tmp_path, {**files, "plan.md": "# Plan\n"}, {**records, **plan_record("U1")})
+    assert cites["artifacts"]["plan.md"]["restsOn"] == ["U1"]
     assert check_gate(cites, "impl")["ok"] is True
 
 
 # --- 0045: a person pauses or drops a unit -------------------------------------------------
 
-HELD_INTENT = (
-    "# Intent: x\nType: feat. Status: accepted.\n\n## Open questions\n\n1. Một?\n2. Hai?\n\n"
-    "## Answers\n"
-)
 
-
-def hold_block(head, reason, by="Leif"):
-    return f"\n### {head}\nDecided by: {by}. Date: 2026-09-24. Via: product.\n\n{reason}\n"
-
-
-def parse_hold(text):
-    return fold_holds(hold_blocks(text))
-
-
-def held_tree(tmp_path, tail, extra=None):
+def held_tree(tmp_path, holds=(), extra=None, answers=None, shipped=False):
+    """A unit whose intent asks two questions; `extra` is `{file: status}` of its later files."""
     root = tmp_path / f"h{len(list(tmp_path.iterdir()))}"
     d = root / ".cos" / "0001_held"
     d.mkdir(parents=True)
-    (d / "intent.md").write_text(HELD_INTENT + tail)
-    for f, text in (extra or {}).items():
+    files = {"intent.md": "# Intent: x\n", **dict.fromkeys(extra or {}, "# x\n")}
+    if "pr.md" in files:
+        files["pr.md"] = "PR: https://github.com/o/r/pull/7.\n"
+    for f, text in files.items():
         (d / f).write_text(text)
+    entry = known(
+        {"intent.md": "accepted", **(extra or {})},
+        questions={"intent.md": ["Một?", "Hai?"]},
+        answers=answers,
+        holds=list(holds),
+    )
+    entry["shipped"] = shipped
     return SimpleNamespace(
-        root=root, u=read(d, "0001_held"), cli=lambda *a: cli(*a, "--root", str(root))
+        root=root,
+        u=read(d, "0001_held", entry),
+        cli=lambda *a: cli(*a, "--root", str(root), units={"0001_held": entry}),
     )
 
 
-def test_a_hold_block_ends_the_answer_before_it():
-    text = HELD_INTENT + answer_block(2, "A", "Tách ra.") + hold_block("Paused", "chờ 0034")
-    answers = parse_answers(text)
-    assert len(answers) == 1
-    assert answers[0]["text"] == "Tách ra."
-    assert parse_hold(text)["hold"]["reason"] == "chờ 0034"
+LATER = dict.fromkeys(["spec.md", "plan.md", "impl.md", "pr.md"], "accepted")
 
 
-def test_no_hold_block_is_no_hold_and_the_active_moves(tmp_path):
-    u = held_tree(tmp_path, answer_block(1, "A", "x")).u
+def test_no_hold_row_is_no_hold_and_the_active_moves(tmp_path):
+    u = held_tree(tmp_path, answers=[answer("intent.md", 1, "A", "x")]).u
     assert u["hold"] is None
     assert u["holdMoves"] == ["paused", "dropped"]
     assert u["problems"] == []
 
 
-def test_hold_blocks_are_read_in_order_and_the_last_valid_one_decides():
-    def walk(*heads):
-        return parse_hold(
-            HELD_INTENT + "".join(hold_block(h, f"r{i}") for i, h in enumerate(heads))
-        )
-
-    assert walk("Paused")["hold"]["state"] == "paused"
-    assert walk("Paused", "Resumed")["hold"] is None
-    assert walk("Dropped")["hold"]["state"] == "dropped"
-    assert walk("Paused", "Dropped")["hold"]["state"] == "dropped"
-    assert walk("Dropped", "Paused")["hold"]["reason"] == "r1"
-    assert walk("Dropped", "Paused", "Resumed") == {"hold": None, "problems": []}
-
-
 def test_an_invalid_hold_move_is_ignored_and_reported(tmp_path):
-    resumed = parse_hold(HELD_INTENT + hold_block("Dropped", "bỏ") + hold_block("Resumed", "lại"))
+    resumed = fold_holds([hold("dropped", "bỏ"), hold("active", "lại")])
     assert resumed["hold"]["state"] == "dropped"
     msg = "hold block 2 (### Resumed) is not a valid move from dropped — it is ignored"
     assert resumed["problems"] == [msg]
-    twice = parse_hold(HELD_INTENT + hold_block("Paused", "a") + hold_block("Paused", "b"))
+    twice = fold_holds([hold("paused", "a"), hold("paused", "b")])
     assert twice["hold"]["reason"] == "a"
     assert len(twice["problems"]) == 1
-    assert len(parse_hold(HELD_INTENT + hold_block("Resumed", "x"))["problems"]) == 1
-    u = held_tree(tmp_path, hold_block("Dropped", "bỏ") + hold_block("Resumed", "lại")).u
+    assert len(fold_holds([hold("active", "x")])["problems"]) == 1
+    u = held_tree(tmp_path, [hold("dropped", "bỏ"), hold("active", "lại")]).u
     assert u["problems"] == [f"intent.md: {msg}"]
-
-
-def test_a_hold_block_without_a_decided_by_line_is_not_counted():
-    assert parse_hold(f"{HELD_INTENT}\n### Paused\n\nkhông ai ký\n")["hold"] is None
-    assert parse_hold(f"{HELD_INTENT}\n### Paused\nDecided by: A\n\nthiếu ngày\n")["hold"] is None
-    assert parse_hold(f"{HELD_INTENT}\n### Paused\n")["problems"] == []
 
 
 def test_next_offers_no_stage_and_asks_no_probe_when_held(tmp_path):
@@ -1872,18 +1736,12 @@ def test_next_offers_no_stage_and_asks_no_probe_when_held(tmp_path):
         raise AssertionError("the probe was asked")
 
     probe = SimpleNamespace(gh=boom, git=boom)
-    later = {
-        "spec.md": "Status: accepted.\n",
-        "plan.md": "Status: accepted.\n",
-        "impl.md": "Status: accepted.\n",
-        "pr.md": "PR: https://github.com/o/r/pull/7. Status: accepted.\n",
-    }
-    paused = held_tree(tmp_path, hold_block("Paused", "chờ người"), later)
+    paused = held_tree(tmp_path, [hold("paused", "chờ người")], LATER)
     n = next_step(paused.u, probe)
     assert n["stage"] == ""
     assert n["blocked"] is True
     assert n["action"] == "paused — chờ người (Leif, 2026-09-24) — resume it from the board"
-    dropped = held_tree(tmp_path, hold_block("Dropped", "không đáng"), later)
+    dropped = held_tree(tmp_path, [hold("dropped", "không đáng")], LATER)
     assert next_step(dropped.u, probe) == {
         "blocked": False,
         "action": "dropped — không đáng (Leif, 2026-09-24)",
@@ -1902,7 +1760,7 @@ def test_next_offers_no_stage_and_asks_no_probe_when_held(tmp_path):
 
 
 def test_every_gate_is_closed_on_a_held_unit_and_says_why(tmp_path):
-    h = held_tree(tmp_path, hold_block("Paused", "chờ 0034"), {"spec.md": "Status: accepted.\n"})
+    h = held_tree(tmp_path, [hold("paused", "chờ 0034")], {"spec.md": "accepted"})
     for s in STAGE_NAMES:
         g = check_gate(h.u, s, green_probe())
         assert g["ok"] is False, s
@@ -1913,9 +1771,9 @@ def test_every_gate_is_closed_on_a_held_unit_and_says_why(tmp_path):
     assert check_gate(h.u, "nope")["need"][0].startswith("unknown stage")
 
 
-def test_a_done_plan_or_a_rejection_wins_over_a_hold(tmp_path):
-    files = {"spec.md": "Status: accepted.\n", "plan.md": "Status: done.\n"}
-    done = held_tree(tmp_path, hold_block("Paused", "x"), files).u
+def test_a_shipped_unit_or_a_rejection_wins_over_a_hold(tmp_path):
+    files = {"spec.md": "accepted", "plan.md": "accepted"}
+    done = held_tree(tmp_path, [hold("paused", "x")], files, shipped=True).u
     assert done["hold"] is None
     assert done["holdMoves"] == []
     assert (
@@ -1923,7 +1781,7 @@ def test_a_done_plan_or_a_rejection_wins_over_a_hold(tmp_path):
         in done["problems"]
     )
     assert next_action(done)["action"] == "finished"
-    closed = held_tree(tmp_path, hold_block("Dropped", "x"), {"spec.md": "Status: rejected.\n"}).u
+    closed = held_tree(tmp_path, [hold("dropped", "x")], {"spec.md": "rejected"}).u
     assert closed["hold"] is None
     assert closed["holdMoves"] == []
     assert (
@@ -1933,17 +1791,14 @@ def test_a_done_plan_or_a_rejection_wins_over_a_hold(tmp_path):
 
 
 def test_an_idea_with_no_intent_can_be_held(tmp_path):
-    d = files_in(tmp_path, {"idea.md": "# Idea: x\nStatus: accepted.\n"})
-    u = read(d, "0001_x")
+    d = files_in(tmp_path, {"idea.md": "# Idea: x\n"})
+    u = read(d, "0001_x", known({"idea.md": "accepted"}))
     assert u["hold"] is None
     assert u["holdMoves"] == ["paused", "dropped"]
 
     def held(*moves):
-        state, entry = with_entry(d, "0001_x")
-        entry["holds"] = [
-            {"state": s, "reason": r, "by": "Leif", "date": "2026-10-05"} for s, r in moves
-        ]
-        return read_unit(str(d), "0001_x", state)
+        rows = [hold(s, r, date="2026-10-05") for s, r in moves]
+        return read(d, "0001_x", known({"idea.md": "accepted"}, holds=rows))
 
     dropped = held(("dropped", "gộp vào 0055"))
     assert dropped["hold"]["state"] == "dropped"
@@ -2038,9 +1893,9 @@ def test_a_severity_lowered_between_rounds_closes_ship():
 
 def test_next_step_never_offers_a_closed_gate_in_the_person_states(tmp_path):
     reviews = [
-        R12,
-        f"{R12}\n{round3()}",
-        f"{R12}\n{round3()}\n## Answers\n{f_block('F2')}{f_block('F3')}",
+        (R12, ()),
+        (f"{R12}\n{round3()}", ()),
+        (f"{R12}\n{round3()}", f_ans("F2", "F3")),
     ]
     probes = [
         green_probe(),
@@ -2048,8 +1903,8 @@ def test_next_step_never_offers_a_closed_gate_in_the_person_states(tmp_path):
         green_probe([{"name": "t", "bucket": "pending"}]),
     ]
     for probe in probes:
-        for review in reviews:
-            u = tree_after_round_two(tmp_path, review)
+        for review, answers in reviews:
+            u = tree_after_round_two(tmp_path, review, answers=answers)
             stage = next_step(u, probe)["stage"]
             if stage:
                 assert check_gate(u, stage, probe)["ok"] is True, stage

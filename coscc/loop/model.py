@@ -46,16 +46,6 @@ A = re.ASCII
 STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+(?:-[A-Za-z]+)*)", A)
 
 
-def parse_status(text):
-    m = STATUS_RE.search(text)
-    return m[1].lower() if m else None
-
-
-def parse_skip_reason(text):
-    m = re.search(r"\bSpec:\s*skipped\s*\(([^)]*)\)", text, A | re.I)
-    return trim(m[1]) if m else None
-
-
 def section(text, title):
     """The lines of `## <title>` up to the next `## `, or `None` with no such heading."""
     lines = split_lines(text)
@@ -69,25 +59,6 @@ def section(text, title):
 
 def _find(items, pred):
     return next((i for i, x in enumerate(items) if pred(x)), -1)
-
-
-def parse_questions(text):
-    lines = section(text, "Open questions")
-    if lines is None:
-        return None
-    found: list[Any] = []
-    for line in lines:
-        m = re.match(r"^(\d+)\.\s+(.*)$", line, A)
-        if m:
-            found.append({"n": int(m[1]), "lines": [m[2]]})
-        elif found:
-            found[-1]["lines"].append(line)
-
-    def asks(q):
-        blank = _find(q["lines"], lambda l: trim(l) == "")
-        return "?" in "\n".join(q["lines"] if blank == -1 else q["lines"][:blank])
-
-    return [{"n": q["n"], "text": trim("\n".join(q["lines"]))} for q in found if asks(q)]
 
 
 ANSWER_META = re.compile(r"^Answered by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\.?\s*$", A)
@@ -134,63 +105,6 @@ def answer_blocks(text):
         elif blocks:
             blocks[-1]["lines"].append(line)
     return blocks
-
-
-def parse_answers(text):
-    answers = []
-    for b in answer_blocks(text):
-        if b.get("outcome") or b.get("hold") or b.get("rerun") or b.get("moreRounds"):
-            continue
-        at = _find(b["lines"], lambda l: trim(l) != "")
-        meta = None if at == -1 else ANSWER_META.match(b["lines"][at])
-        if not meta:
-            continue
-        answers.append(
-            {
-                "n": b["n"],
-                "id": b["id"],
-                "by": trim(meta[1]),
-                "date": meta[2],
-                "via": meta[3],
-                "text": trim("\n".join(b["lines"][at + 1 :])),
-            }
-        )
-    return answers
-
-
-def hold_blocks(text):
-    lines = section(text or "", "Answers")
-    if lines is None:
-        return []
-    blocks: list[Any] = []
-    for line in lines:
-        m = HOLD_HEAD.match(line)
-        if m:
-            blocks.append({"head": m[1], "lines": []})
-        elif H3.match(line):
-            blocks.append({"head": None, "lines": []})
-        elif blocks:
-            blocks[-1]["lines"].append(line)
-    out = []
-    for b in blocks:
-        if not b["head"]:
-            continue
-        at = _find(b["lines"], lambda l: trim(l) != "")
-        meta = None if at == -1 else HOLD_META.match(b["lines"][at])
-        state = HOLD_TO[b["head"]]
-        if not meta:
-            out.append({"state": state, "reason": None, "by": None, "date": None, "via": None})
-            continue
-        out.append(
-            {
-                "state": state,
-                "reason": trim("\n".join(b["lines"][at + 1 :])),
-                "by": trim(meta[1]),
-                "date": meta[2],
-                "via": meta[3],
-            }
-        )
-    return out
 
 
 def fold_holds(rows):
@@ -455,9 +369,9 @@ def title_problem(title, type_, number):
     if m[1] not in BRANCH_TYPES:
         return f'the title\'s type "{m[1]}" is not one of {TYPE_LIST}'
     if not type_:
-        return f'intent.md declares no Type, so the title\'s type "{m[1]}" cannot be checked against it'
+        return f'the intent has handed back no type, so the title\'s type "{m[1]}" cannot be checked against it'
     if m[1] != type_:
-        return f'the title\'s type is "{m[1]}", but intent.md declares Type: {type_}'
+        return f"the title's type is \"{m[1]}\", but the intent's type is {type_}"
     if m[2] != number:
         return f"the title names unit {m[2]}, not {number}"
     if re.match(r"wip(?![a-z0-9])", m[3], A | re.I):
@@ -723,7 +637,7 @@ def entry_of(state, ws, name):
 
 
 def status_in(e, file):
-    return nullish(dig(e, "artifacts", file, "status"), nullish(dig(e, "artifacts", file, "raw")))
+    return nullish(dig(e, "artifacts", file, "status"))
 
 
 def answers_in(e, file):
@@ -738,17 +652,21 @@ def status_of(u, f):
     return nullish(dig(u, "artifacts", f, "status"))
 
 
+NO_STATUS = "{file} has no status: no record was handed back for it"
+NO_TYPE = "the intent has handed back no type"
+
+
 def present(u, f):
     return f in u["artifacts"]
 
 
 def settled(s):
-    return s in ("accepted", "skipped", "done")
+    return s in ("accepted", "skipped")
 
 
 def ended_of(unit):
     # A unit that shipped stays finished, whatever ran again after it.
-    if unit.get("shipped") or status_of(unit, "plan.md") == "done":
+    if unit.get("shipped"):
         return "finished"
     return "closed" if any(status_of(unit, s["file"]) == "rejected" for s in STAGES) else None
 
@@ -901,7 +819,7 @@ def skipped_by(u, f):
 
 
 def missing(u, f):
-    return f"{f} exists but carries no Status line" if present(u, f) else f"{f} does not exist"
+    return NO_STATUS.format(file=f) if present(u, f) else f"{f} does not exist"
 
 
 def unmeasured_of(u):
@@ -1181,17 +1099,12 @@ def not_a_work_branch(name, problem):
     return f'"{name}" is not a work branch: {problem}'
 
 
-def parse_type(text):
-    m = re.search(r"\bType:\s*([A-Za-z]+)", text, A)
-    return m[1].lower() if m else None
-
-
 def branch_for(unit_name, type_):
     match = UNIT_RE.fullmatch(js(nullish(unit_name, "")))
     if not match:
         return {"error": f'"{js(unit_name)}" does not match NNNN_<slug>'}
     if not type_:
-        return {"error": f"{unit_name}/intent.md declares no Type: — one of {TYPE_LIST}"}
+        return {"error": f"{unit_name}: {NO_TYPE} — one of {TYPE_LIST}"}
     if type_ not in BRANCH_TYPES:
         return {"error": f'"{js(type_)}" is not one of {TYPE_LIST}'}
     return {"branch": f"{type_}/{branch_slug(match[2])}"}
@@ -1203,14 +1116,16 @@ def branch_for(unit_name, type_):
 def _artifact(unit, known, file, text):
     status = status_in(known, file)
     if status is None:
-        unit["problems"].append(f"{file} carries no Status line")
+        unit["problems"].append(NO_STATUS.format(file=file))
     elif status not in VALID[file]:
         unit["problems"].append(
             f'{file} has status "{js(status)}", not one of {", ".join(VALID[file])}'
         )
     a: dict[str, Any] = {
         "status": status,
-        "skipReason": parse_skip_reason(text) if file == "plan.md" else None,
+        "skipReason": nullish(dig(known, "artifacts", file, "reason"))
+        if status == "skipped"
+        else None,
     }
     unit["artifacts"][file] = a
     by = nullish(dig(known, "artifacts", file, "authority"))
@@ -1252,7 +1167,7 @@ def _artifact(unit, known, file, text):
         if ship["round"] is not None or ship["refused"] is not None:
             a["ship"] = ship
     if file == "plan.md" and required(unit, SPIKE):
-        a["citesSpike"] = "spike.md" in text
+        a["restsOn"] = list(nullish(dig(result, "rests_on"), []))
     questions = join_answers(
         nullish(dig(known, "artifacts", file, "questions")), answers_in(known, file)
     )
@@ -1286,7 +1201,10 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
         if not dig(a, "status") or file in unit["artifacts"]:
             continue
         if a["status"] == "skipped" and dig(a, "authority") in DECIDERS:
-            unit["artifacts"][file] = {"status": a["status"], "skipReason": None}
+            unit["artifacts"][file] = {
+                "status": a["status"],
+                "skipReason": nullish(dig(a, "reason")),
+            }
         else:
             unit["problems"].append(
                 f"the app records {file} as {js(a['status'])}, but the file does not exist"
@@ -1320,9 +1238,7 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
     else:
         type_ = nullish(dig(known, "type"))
         if type_ is None:
-            unit["problems"].append(
-                f'intent.md declares no Type — add "Type: <{BRANCH_TYPES[0]}|…>" to its header'
-            )
+            unit["problems"].append(NO_TYPE)
         elif type_ not in BRANCH_TYPES:
             unit["problems"].append(
                 f'intent.md has type "{js(type_)}", not one of {", ".join(BRANCH_TYPES)}'

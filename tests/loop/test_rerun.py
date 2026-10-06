@@ -73,16 +73,6 @@ def test_a_stale_stage_is_not_offered(store):
     assert offered(store) == ["intent"]
 
 
-def test_a_finished_unit_offers_nothing_and_says_why(store):
-    make(store, {"intent.md": "accepted", "spec.md": "accepted", "plan.md": "done"})
-    r = rerun(store, UNIT)
-    assert json.loads(r.out) == {
-        "unit": UNIT,
-        "offers": [],
-        "why": "the unit is finished: plan.md is done",
-    }
-
-
 def test_a_rejected_unit_offers_nothing_and_says_why(store):
     make(store, {"intent.md": "accepted", "spec.md": "rejected"})
     assert "spec.md is rejected" in json.loads(rerun(store, UNIT).out)["why"]
@@ -156,13 +146,6 @@ def test_a_closed_gate_is_refused_with_what_it_needs(store):
     r = rerun(store, UNIT, "plan")
     assert r.code == 1
     assert r.err.startswith(f"plan cannot be run again for {UNIT}: ")
-
-
-def test_a_finished_unit_refuses_a_stage(store):
-    make(store, {"intent.md": "accepted", "spec.md": "accepted", "plan.md": "done"})
-    r = rerun(store, UNIT, "spec")
-    assert r.code == 1
-    assert "plan.md is done" in r.err
 
 
 def test_a_shipped_unit_offers_nothing_and_refuses_every_stage(store):

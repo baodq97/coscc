@@ -117,7 +117,7 @@ def test_unit_branch_of_a_unit_the_app_does_not_know(store):
     store.unit("0001_x", {"intent.md": header("x", "accepted")})
     r = expect(store.argv("unit-branch", "0001_x"))
     assert r.code == 1
-    assert "declares no Type" in r.err
+    assert "handed back no type" in r.err
 
 
 def test_unit_branch_of_a_name_that_is_no_unit(store):
@@ -131,7 +131,7 @@ def test_unit_branch_with_no_type(store):
     store.unit("0001_x", {"intent.md": header("x", "accepted")}, entry(type=None))
     r = expect(store.argv("unit-branch", "0001_x"))
     assert r.code == 1
-    assert "declares no Type" in r.err
+    assert "handed back no type" in r.err
 
 
 def test_unit_branch_with_a_bad_type(store):

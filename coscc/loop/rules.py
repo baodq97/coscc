@@ -137,7 +137,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
             if present(unit, s["file"]):
                 return {
                     "blocked": True,
-                    "action": f"fix {s['file']} — it carries no Status line",
+                    "action": f"fix {s['file']} — it has no status: no record was handed back for it",
                     "stage": "",
                     "why": code("unreadable"),
                 }
@@ -455,11 +455,11 @@ def evaluate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
         if (
             _at(target["name"]) >= _at("impl")
             and required(unit, SPIKE)
-            and not dig(unit, "artifacts", "plan.md", "citesSpike")
+            and not dig(unit, "artifacts", "plan.md", "restsOn")
         ):
             need.append(
-                "plan.md does not cite spike.md — every step that rests on a U<n> "
-                "cites spike.md ## U<n>"
+                "plan.md rests on no U<n> — its record's rests_on names the spike items "
+                "its steps rest on"
             )
 
     said: dict = {}
@@ -701,7 +701,6 @@ CODE = {
     "accepted": "A",
     "rejected": "x",
     "skipped": "s",
-    "done": "D",
     "changes-requested": "c",
 }
 # `CODE[status]` on a JavaScript object: `constructor` is on every one, and not nullish.
@@ -781,7 +780,7 @@ def cmd_status(json, cos_dir, limit, state, out):
         cells = " | ".join(cell(u, s["file"]) for s in STAGES)
         out(f"| {u['name']} | {cells} | {u['next']['action']} |")
     out(
-        "\nA accepted · d draft · c changes-requested · s skipped · D done · x rejected · "
+        "\nA accepted · d draft · c changes-requested · s skipped · x rejected · "
         f"{DASH} not started"
     )
 
