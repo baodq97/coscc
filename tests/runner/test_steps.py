@@ -27,6 +27,7 @@ from tests.http.test_app import create_sync, timeline, unit_history
 from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
 from tests.http.test_app import use_sessions
+from tests.agent.edit import whole
 
 
 def state_of(core, cwd, unit, **kw):
@@ -1497,7 +1498,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
             t: p for t, p in pack.row("impl")["tools"].items() if t not in ("vault", "codegraph")
         }
         pack.write("impl", "tools", tools)
-        self.core.agents.set_agent_field("impl", "model", "claude-other")
+        self.core.agents.set_agent_field("impl", *whole("impl", "model.id", "claude-other"))
         self._run(arm="opus-5-5")
         start = self._starts()[0]
         self.assertEqual((start["model"], start["model_source"]), ("claude-other", "override"))

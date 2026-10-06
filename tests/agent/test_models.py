@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 from coscc.agent import models, pack, policy
+from tests.agent.edit import set_part
 
 OPUS = "claude-opus-5-5[1m]"
 SONNET = "claude-sonnet-5-5[1m]"
@@ -45,18 +46,14 @@ class TheNovelVariant(unittest.TestCase):
             self.assertEqual(models.resolve("impl", label, None)[:3], (SONNET, "default", "medium"))
 
     def test_a_novel_override_is_the_variants_only(self):
-        models.set_field("impl:novel", "model", "n")
+        set_part("impl", "variants.novel.model.id", "n")
         self.assertEqual(models.resolve("impl", "novel", None)[:2], ("n", "override"))
         self.assertEqual(models.resolve("impl", None, None)[:2], (SONNET, "default"))
 
     def test_a_base_override_does_not_reach_the_novel_step(self):
-        models.set_field("impl", "model", "b")
+        set_part("impl", "model.id", "b")
         self.assertEqual(models.resolve("impl", None, None)[:2], ("b", "override"))
         self.assertEqual(models.resolve("impl", "novel", None)[:2], (OPUS, "default"))
-
-    def test_only_a_row_with_a_variant_lists_one(self):
-        self.assertEqual(models.variants_of("impl"), ["impl:novel"])
-        self.assertEqual(models.variants_of("spec"), [])
 
 
 class TheTrialTier(unittest.TestCase):
@@ -72,7 +69,7 @@ class TheTrialTier(unittest.TestCase):
         self.assertEqual(env[:2], ("env", "COS_MODEL"))
 
     def test_an_owner_model_beats_the_trial(self):
-        models.set_field("impl", "model", "o")
+        set_part("impl", "model.id", "o")
         self.assertEqual(
             models.resolve("impl", "routine", None, trial_model="t")[:2], ("o", "override")
         )
@@ -107,8 +104,8 @@ class TheCeilingsResolveInOnePlace(unittest.TestCase):
                 "max_budget_source": "default",
             },
         )
-        models.set_field("spec", "turns", 30)
-        models.set_field("spec", "budget", 1.5)
+        set_part("spec", "ceilings.turns", 30)
+        set_part("spec", "ceilings.usd", 1.5)
         found = models.ceilings("spec", None)
         self.assertEqual((found["max_turns"], found["max_turns_source"]), (30, "override"))
         self.assertEqual((found["max_budget_usd"], found["max_budget_source"]), (1.5, "override"))
@@ -122,7 +119,7 @@ class TheCeilingsResolveInOnePlace(unittest.TestCase):
         )
 
     def test_the_floor_holds_under_an_override(self):
-        models.set_field("plan", "turns", 1)
+        set_part("plan", "ceilings.turns", 1)
         found = models.ceilings("plan", None)
         self.assertEqual(
             (found["max_turns"], found["max_turns_source"]), (policy.SUBMIT_TURNS, "override")
@@ -135,36 +132,30 @@ class TheCeilingsResolveInOnePlace(unittest.TestCase):
         # The base row's raise is not the `novel` run's.
         self.assertEqual(models.ceilings("impl", "novel")["max_turns"], 250)
         self.assertEqual(models.ceilings("impl", None)["max_budget_usd"], 12.0)
-        models.set_field("impl:novel", "turns", 300)
-        models.set_field("impl:novel", "budget", 20.0)
+        set_part("impl", "variants.novel.ceilings.turns", 300)
+        set_part("impl", "variants.novel.ceilings.usd", 20.0)
         found = models.ceilings("impl", "novel")
         self.assertEqual((found["max_turns"], found["max_budget_usd"]), (300, 20.0))
         self.assertEqual(found["max_turns_source"], "override")
 
     def test_putting_none_back_restores_the_builtin(self):
-        models.set_field("spec", "turns", 30)
-        old, new = models.set_field("spec", "turns", None)
+        set_part("spec", "ceilings.turns", 30)
+        old, new = set_part("spec", "ceilings.turns", None)
         self.assertEqual((old, new), (30, 40))
         self.assertEqual(models.ceilings("spec", None)["max_turns_source"], "default")
 
 
 class TheConfigRowIsWhatThePageShows(unittest.TestCase):
-    def test_a_row_with_ceilings_lists_all_four_fields(self):
-        found = models.config_row("impl", None)
-        self.assertEqual(found["fields"], ["model", "effort", "turns", "budget"])
-        self.assertFalse(any(found["overridden"].values()))
-        models.set_field("impl", "effort", "high")
-        self.assertTrue(models.config_row("impl", None)["overridden"]["effort"])
+    def test_it_is_what_a_run_gets_under_its_label(self):
+        found = models.config_row("impl", None, "novel")
+        self.assertEqual((found["model"], found["effort"]), (OPUS, "high"))
+        self.assertEqual(found["ceilings"], models.ceilings("impl", "novel"))
+        set_part("impl", "model.effort", "high")
+        self.assertEqual(models.config_row("impl", None)["effort_source"], "override")
 
     def test_a_row_without_a_model_takes_cos_model(self):
         found = models.config_row("leif", "x")
         self.assertEqual((found["model"], found["model_source"]), ("x", "COS_MODEL"))
-
-    def test_set_field_refuses_what_pack_would(self):
-        with self.assertRaises(ValueError):
-            models.set_field("nobody", "model", "m")
-        with self.assertRaises(ValueError):
-            models.set_field("impl", "colour", "red")
 
 
 class TheBoundsOfAnOverride(unittest.TestCase):

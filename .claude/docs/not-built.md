@@ -18,10 +18,15 @@ Read this before adding a route, a button or a grant.
   it as a run opens, from the agent's row and where the run stands (its worktree, the unit's
   branch, the vault's list of agents per secret), and it ends with the run. No grant, no action:
   a write, a push, a helper or an MCP tool the run's grant does not hold is refused, and the
-  secrets are refused whatever it holds. A row is data: the built-in pack ships with the app,
-  and the owner's layer (`<data root>/packs/local/`) is written by whoever holds the password,
-  each change logged `by: owner`. That person can give an agent more tools; the critical blocks
-  read only the grant and hold whatever a row names.
+  secrets are refused whatever it holds.
+- **Whoever holds the password can widen what an agent may do, inside the critical calls.** A
+  row is data: the built-in pack ships with the app, and the Agents page writes every part of
+  it (model, ceilings, tools, input, output, prompt, skills) into the owner's layer
+  (`<data root>/packs/local/`), each change logged `by: owner` and each run naming its
+  `row_hash`. A tool set to `ask` is refused `asks-a-person`: no run asks a person yet. The
+  critical calls read only the grant, so no row reaches the secrets, another branch, a
+  background command, a nested helper, a merge or a release. No agent holds a tool that writes
+  a row.
 - **No list of programs, and no route to widen one.** What a session may run is auto mode's
   judgement plus the few critical blocks; a person adds nothing at runtime. The one place a line
   is read strictly (no substitution at all) is the vault's `vault_exec`, since it runs with secrets

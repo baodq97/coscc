@@ -8,7 +8,7 @@ touching such a file; the `review` of that unit opens every PNG it wrote with `R
     uv run python scripts/capture_screens.py <address>... [--out <dir>]
 
 Each address is a path of the app, starting with `/`, at most six of them. Each is taken
-at 1440×900 and 390×844, full page, into `<out>/<address slug>-<W>x<H>.png` (`<out>`
+at 1440×900 and 390×844 (or `--sizes`), full page, into `<out>/<address slug>-<W>x<H>.png` (`<out>`
 defaults to `.screens/` in this checkout, which git ignores). The PNGs and manifest of the
 last run there are removed first and nothing else; a `<out>` that holds files but no
 `manifest.json` is refused, since this command did not write it. So is a tree with
@@ -62,6 +62,9 @@ of no unit, each with its events like the `integrate` one (`seed_runs`), so ever
 agent has no run: `idea`), and one chat conversation in a temporary `CLAUDE_CONFIG_DIR`, titled `Backlog screen
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
 visible text as `<address slug>-<W>x<H>.txt`.
+
+`intent` is edited on the Agents page (Haiku, low effort, `Grep` off, `Glob` on ask, a line
+added to its role) and `spike` has a hand-written owner file its checks refuse (`seed_agents`).
 
 `codegraph` is at `pilot` in `proj` (`seed_pilot`), so `/settings` shows its pilot sentence;
 only with `npm` on `PATH`, else the feature is locked and the row shows `off`.
@@ -566,6 +569,26 @@ def make_unread_fixture(api: httpx.Client, proj: Path, rows: Rows) -> None:
     )
 
 
+def seed_agents(api: httpx.Client, data_dir: Path) -> None:
+    """`intent` edited on the Agents page: Haiku at low effort, `Grep` off and `Glob` on ask, a
+    line added to its role; and a hand-written owner file for `spike` that its checks refuse, so
+    `/agents` shows an edited row, an `ask` tool and an agent that cannot run."""
+    intent = next(r for r in api.get("/api/agents").json()["rows"] if r["key"] == "intent")
+    tools = {**intent["row"]["tools"], "Glob": "ask"}
+    tools.pop("Grep", None)
+    for field, value in (
+        ("model", {"id": "claude-haiku-4-5", "effort": "low"}),
+        ("tools", tools),
+        ("body", intent["row"]["body"] + "\nBegin your reply with the word MARKER-M4."),
+    ):
+        said = api.post("/api/agents/field", json={"key": "intent", "field": field, "value": value})
+        if said.status_code != 200:
+            raise RuntimeError(f"could not edit intent's {field}: {said.text}")
+    bad = data_dir / "packs" / "local" / "agents" / "spike.md"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_text('---\nceilings: {"turns": 0, "usd": 4.0}\n---\n', encoding="utf-8")
+
+
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     """One ended `plan` run of `0004_finished` in the running app's run log, keyed
     as `Workspaces.key` keys it, with the envelope its `start` names. `at` is when it is written, so the page reads "just now"."""
@@ -1035,14 +1058,21 @@ def parse(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     p.add_argument("addresses", nargs="+", metavar="address")
     p.add_argument("--out", type=Path, default=REPO / ".screens")
-    return p.parse_args(argv)
+    p.add_argument(
+        "--sizes",
+        default=",".join(f"{w}x{h}" for w, h in SIZES),
+        help="the sizes to take, as WxH,WxH",
+    )
+    args = p.parse_args(argv)
+    args.sizes = tuple(tuple(int(n) for n in s.split("x")) for s in args.sizes.split(","))
+    return args
 
 
 def run(argv: list[str]) -> int:
     args = parse(argv)
     if len(args.addresses) > MAX_ADDRESSES:
         print(
-            f"{len(args.addresses)} addresses, at most {MAX_ADDRESSES} — {MAX_ADDRESSES * len(SIZES)} images is the ceiling",
+            f"{len(args.addresses)} addresses, at most {MAX_ADDRESSES} — {MAX_ADDRESSES * len(args.sizes)} images is the ceiling",
             file=sys.stderr,
         )
         return EXIT_ENV
@@ -1131,6 +1161,7 @@ def capture(args: argparse.Namespace, roots: list[Path]) -> int:
                     return EXIT_BROKEN
                 try:
                     make_all(api, work, data_dir, proj, other)
+                    seed_agents(api, data_dir)
                     seed_runs(work, data_dir, proj)
                     seed_transitions(work, data_dir, proj)
                 except RuntimeError as e:
@@ -1147,7 +1178,7 @@ def capture(args: argparse.Namespace, roots: list[Path]) -> int:
                     return EXIT_BROKEN
             seed_run(work, data_dir, proj)
             for address in args.addresses:
-                for size in SIZES:
+                for size in args.sizes:
                     try:
                         path, url, text, full = shoot(browser, app.base, token, address, size, out)
                     except RuntimeError as e:
@@ -1182,7 +1213,7 @@ def capture(args: argparse.Namespace, roots: list[Path]) -> int:
         "dirty": bool(git_out("status", "--porcelain").strip()),
         "taken_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "addresses": args.addresses,
-        "sizes": [f"{w}x{h}" for w, h in SIZES],
+        "sizes": [f"{w}x{h}" for w, h in args.sizes],
         "shots": shots,
         "hits": hits,
     }

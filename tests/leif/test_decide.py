@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 from coscc.github import prmachine
 from coscc.leif import decide
 from coscc.units.board import open_questions
-from coscc.agent import models, pack
+from coscc.agent import pack
+from tests.agent.edit import set_part
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
 # `next`'s two actions for `ship`, one after the merge and one before it.
@@ -569,24 +570,24 @@ class TheDaysMoney(unittest.TestCase):
         self.assertEqual((got["chosen"], got["capped"]), ([], [spec]))
 
     def test_a_raised_budget_is_reserved_and_estimated_in_full(self):
-        models.set_field("impl:novel", "budget", 50.0)
+        set_part("impl", "variants.novel.ceilings.usd", 50.0)
         self.assertEqual(decide.reservation("impl"), 50.0)
-        models.set_field("impl:novel", "budget", None)
+        set_part("impl", "variants.novel.ceilings.usd", None)
         pack.write("impl", "ceilings", {"turns": 120, "usd": 30.0})
         self.assertEqual(decide.reservation("impl"), 30.0)
-        models.set_field("spec", "budget", 12.5)
+        set_part("spec", "ceilings.usd", 12.5)
         self.assertEqual(decide.reservation("spec"), 12.5)
-        models.set_field("integrate", "budget", 20.0)
+        set_part("integrate", "ceilings.usd", 20.0)
         self.assertEqual(decide.reservation("integrate"), 20.0)
         # A lowered one is held at what it now is.
-        models.set_field("review", "budget", 1.0)
+        set_part("review", "ceilings.usd", 1.0)
         self.assertEqual(decide.reservation("review"), 1.0)
         rows = [{"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"}]
         pack.write("impl", "ceilings", {"turns": 120, "usd": 40.0})
         self.assertEqual(decide.spent_on(rows, decide.today(NOW))["estimated"], 40.0)
-        models.set_field("spec", "budget", 45.0)
+        set_part("spec", "ceilings.usd", 45.0)
         self.assertEqual(decide.estimate("idea"), 45.0)
-        models.set_field("spec", "budget", 9.0)
+        set_part("spec", "ceilings.usd", 9.0)
         start = {"kind": "start", "workspace": "w", "unit": "0010_a", "stage": "spec", "at": at()}
         self.assertEqual(decide.reserved([start], NOW), 9.0)
 

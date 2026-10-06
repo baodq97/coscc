@@ -30,6 +30,7 @@ from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
 from coscc.github.integration import CI_REFRESH
 from tests.http.test_app import use_config, use_sessions
+from tests.agent.edit import whole
 
 SLUG = "proof-of-gebo"
 PR = 7
@@ -270,13 +271,13 @@ class GeboThroughTheService(unittest.TestCase):
         async def act(tree, gate):
             return "[needs-person] f.txt: both"
 
-        for field, value in (
-            ("turns", 33),
-            ("budget", 2.5),
-            ("model", "gebo-model"),
-            ("effort", "high"),
+        for path, value in (
+            ("ceilings.turns", 33),
+            ("ceilings.usd", 2.5),
+            ("model.id", "gebo-model"),
+            ("model.effort", "high"),
         ):
-            self.core.agents.set_agent_field("integrate", field, value)
+            self.core.agents.set_agent_field("integrate", *whole("integrate", path, value))
         self.integrate_with(act)
         [kw] = self.core.sessions.kws
         self.assertEqual((kw["max_turns"], kw["max_budget_usd"]), (33, 2.5))

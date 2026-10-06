@@ -8,7 +8,7 @@ in; this module never reads the environment) applies, and with neither the SDK d
 the row's own. Only a routine step of a row with `model.trial` hands one in.
 
 A step's two ceilings resolve in `ceilings`, the one place the Agents page and the runner both
-ask, the `SUBMIT_TURNS` floor applied after either. `check` reads a value the page sends.
+ask, the `SUBMIT_TURNS` floor applied after either. `check` reads a value a person sends.
 """
 
 from __future__ import annotations
@@ -18,16 +18,6 @@ from typing import Any, Mapping, TypedDict
 
 from coscc.agent import pack, policy
 
-NOVEL_SUFFIX = ":novel"
-# The fields of a row the Agents page sets, and where each lives in the row: `(key, sub-key)`.
-FIELDS = {
-    "model": ("model", "id"),
-    "effort": ("model", "effort"),
-    "turns": ("ceilings", "turns"),
-    "budget": ("ceilings", "usd"),
-}
-# An override as the page sends it: a model or an effort, a number of turns, dollars.
-Value = str | int | float
 
 OVERRIDE = "override"
 # The model came from the trial, between `COS_MODEL` and the row's.
@@ -79,23 +69,19 @@ def check(field: str, value: Any) -> tuple[Any, str]:
         if not pack.BUDGET_MIN <= value <= pack.BUDGET_MAX:
             return None, f"budget must be from {dollars}"
         return value, ""
-    return None, f"no such field: {field} (use one of {', '.join(FIELDS)})"
-
-
-def part(found: Mapping[str, Any], top: str, label: str | None) -> dict[str, Any]:
-    """The row's `model` or `ceilings`, its `novel` variant's laid over them for a `novel` step."""
-    own = dict(found.get(top) or {})
-    if label == policy.NOVEL:
-        own.update(((found.get("variants") or {}).get(policy.NOVEL) or {}).get(top) or {})
-    return own
+    return None, f"no such field: {field} (use one of model, effort, turns, budget)"
 
 
 def _source(found: Mapping[str, Any], top: str, sub: str, label: str | None) -> str:
     """`override` when the owner's layer gives `top.sub` another value than the built-in row."""
-    now = part(found, top, label).get(sub)
+    now = policy.part_of(found, top, label).get(sub)
     if now is None:
         return NONE
-    return OVERRIDE if now != part(found.get("builtin") or found, top, label).get(sub) else DEFAULT
+    return (
+        OVERRIDE
+        if now != policy.part_of(found.get("builtin") or found, top, label).get(sub)
+        else DEFAULT
+    )
 
 
 def resolve(
@@ -117,7 +103,7 @@ def resolve(
         model_source = DEFAULT if model else NONE
         effort_source = DEFAULT if effort else NONE
     else:
-        chosen = part(found, "model", label)
+        chosen = policy.part_of(found, "model", label)
         model, effort = chosen.get("id"), chosen.get("effort")
         model_source = _source(found, "model", "id", label)
         effort_source = _source(found, "model", "effort", label)
@@ -159,92 +145,30 @@ def ceilings(stage: str, label: str | None) -> Ceilings:
 
 
 class ConfigRow(TypedDict):
-    """One row of `agent_config`: what a session of `key` runs on, each with its source."""
+    """What a session of `key` runs on, resolved, each with its source; `label` is `novel` for the
+    row's `novel` variant, else `None`."""
 
     key: str
-    # The fields this row may set, of `FIELDS`.
-    fields: list[str]
+    label: str | None
     model: str | None
     model_source: str
     effort: str | None
     effort_source: str
     ceilings: Ceilings
-    # Per field of `fields`: whether the owner's layer sets it.
-    overridden: dict[str, bool]
 
 
-def config_row(key: str, env_model: str | None) -> ConfigRow:
-    """`key` (a row, or `<row>:novel`) as the Agents page shows it: every field resolved."""
-    base = key.removesuffix(NOVEL_SUFFIX)
-    label = policy.NOVEL if key != base else None
-    found = pack.row(base) or {}
-    model, model_source, effort, effort_source = resolve(base, label, env_model)
-    variant = ((found.get("variants") or {}).get(policy.NOVEL) or {}) if label else found
-    fields = ["model", "effort"] + (["turns", "budget"] if "ceilings" in variant else [])
-    limits = ceilings(base, label)
-    sources = {
-        "model": model_source,
-        "effort": effort_source,
-        "turns": limits["max_turns_source"],
-        "budget": limits["max_budget_source"],
-    }
+def config_row(key: str, env_model: str | None, label: str | None = None) -> ConfigRow:
+    """`key` under `label` as the Agents page shows it: every value resolved, as a run gets it."""
+    model, model_source, effort, effort_source = resolve(key, label, env_model)
     return ConfigRow(
         key=key,
-        fields=fields,
+        label=label,
         model=model,
         model_source=model_source,
         effort=effort,
         effort_source=effort_source,
-        ceilings=limits,
-        overridden={f: sources[f] == OVERRIDE for f in fields},
+        ceilings=ceilings(key, label),
     )
-
-
-def variants_of(key: str) -> list[str]:
-    """The `<row>:novel` keys of a row that has a `novel` variant."""
-    found = pack.row(key) or {}
-    return [key + NOVEL_SUFFIX] if policy.NOVEL in (found.get("variants") or {}) else []
-
-
-def set_field(key: str, field: str, value: Any) -> tuple[Any, Any]:
-    """Write `field` of `key` (a row, or `<row>:novel`) into the owner's layer, or put the
-    built-in's back when `value` is `None`; `(old, new)` of that field. `ValueError` when the row
-    would not pass `pack.check`, and nothing is written."""
-    base = key.removesuffix(NOVEL_SUFFIX)
-    found = pack.row(base)
-    if found is None:
-        raise ValueError(f"no such row: {key}")
-    if field not in FIELDS:
-        raise ValueError(f"no such field: {field} (use one of {', '.join(FIELDS)})")
-    if key != base and key not in variants_of(base) or field not in config_row(key, None)["fields"]:
-        raise ValueError(f"{key} has no {field} to set")
-    top, sub = FIELDS[field]
-    label = policy.NOVEL if key != base else None
-    builtin = found["builtin"]
-    if label is None:
-        now, was = dict(found.get(top) or {}), dict(builtin.get(top) or {})
-    else:
-        variants = found.get("variants") or {}
-        now = dict((variants.get(policy.NOVEL) or {}).get(top) or {})
-        was = dict(((builtin.get("variants") or {}).get(policy.NOVEL) or {}).get(top) or {})
-    old = part(found, top, label).get(sub)
-    if value is None:
-        now.pop(sub, None)
-        if sub in was:
-            now[sub] = was[sub]
-    else:
-        now[sub] = value
-    if label is None:
-        pack.write(base, top, now or None)
-    else:
-        variants = {k: dict(v) for k, v in (found.get("variants") or {}).items()}
-        variant = variants.setdefault(policy.NOVEL, {})
-        if now:
-            variant[top] = now
-        else:
-            variant.pop(top, None)
-        pack.write(base, "variants", variants)
-    return old, part(pack.row(base) or {}, top, label).get(sub)
 
 
 # The label of a step, from the plan's record. The files where a mistake costs the most force

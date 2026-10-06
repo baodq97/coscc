@@ -51,6 +51,8 @@ KEYS = (
     "consequence",
 )
 BODY = "body"
+# A field `write` takes for the text of a skill the row names: `skill:<name>`.
+SKILL = "skill:"
 
 # What the CLI's `--effort` accepts.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -487,32 +489,60 @@ def owner_fields(key: str) -> tuple[dict[str, Any], str]:
     return parse(path.read_text(encoding="utf-8"))
 
 
-def write(key: str, field: str, value: Any) -> tuple[Any, Any]:
-    """Set `field` (a frontmatter key, or `body`) of `key` in the owner's layer, or reset it to
-    the built-in's when `value` is `None` or equals it. The row is checked as it would then stand;
-    a reason is a `ValueError` and nothing is written. `(old, new)` effective values."""
+def write(
+    key: str, field: str, value: Any, catalog: Mapping[str, str] | None = None
+) -> tuple[Any, Any]:
+    """Set `field` of `key` in the owner's layer: a frontmatter key, `body`, or `skill:<name>` (the
+    text of a skill the row names, for every row naming it). `None`, or the built-in's value, resets
+    it. The row is checked as it would then stand, with `catalog` (`check`); a reason is a
+    `ValueError` and nothing is written. `(old, new)` effective values."""
     found = row(key)
     if found is None:
         raise ValueError(f"no such agent: {key} (use one of {', '.join(rows())})")
+    if field.startswith(SKILL):
+        return _write_skill(found, field.removeprefix(SKILL), value)
     if field not in (*KEYS, BODY):
-        raise ValueError(f"{field}: no such key (use one of {', '.join((*KEYS, BODY))})")
+        raise ValueError(
+            f"{field}: no such key (use one of {', '.join((*KEYS, BODY))}, {SKILL}<name>)"
+        )
     base = found["builtin"]
     fields, body = owner_fields(key)
     old = found.get(field)
     if field == BODY:
-        body = "" if value is None or value == base.get(BODY) else str(value)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("the body is text")
+        body = "" if value is None or value.strip() == str(base.get(BODY) or "") else value
     elif value is None or value == base.get(field):
         fields.pop(field, None)
     else:
         fields[field] = value
-    after = {**_fields(base), **fields, **({BODY: body} if body else {})}
+    after = {**_fields(base), **fields, **({BODY: body.strip()} if body.strip() else {})}
     others = {k: _fields(r) for k, r in rows().items() if k != key}
-    reasons = check(after, None, {**others, key: after})
+    reasons = check(after, catalog, {**others, key: after})
     if reasons:
         raise ValueError("; ".join(reasons))
     path = owner_dir() / "agents" / f"{key}.md"
-    if fields or body:
+    if fields or body.strip():
         _atomic(path, render(fields, body))
     else:
         path.unlink(missing_ok=True)
     return old, after.get(field)
+
+
+def _write_skill(found: Mapping[str, Any], name: str, value: Any) -> tuple[str, str]:
+    if name not in (found.get("skills") or []):
+        raise ValueError(f"{SKILL}{name}: {found['key']} names no such skill")
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"{SKILL}{name} is text")
+    builtin = BUILTIN / "skills" / name / SKILL_FILE
+    base = builtin.read_text(encoding="utf-8") if builtin.is_file() else ""
+    old = skill(name)
+    path = owner_dir() / "skills" / name / SKILL_FILE
+    if value is None or not value.strip() or value.strip() == base.strip():
+        path.unlink(missing_ok=True)
+        if path.parent.is_dir() and not any(path.parent.iterdir()):
+            path.parent.rmdir()
+        return old, base
+    text = value if value.endswith("\n") else value + "\n"
+    _atomic(path, text)
+    return old, text

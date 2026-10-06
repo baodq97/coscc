@@ -6,7 +6,9 @@ Read this before changing `/api/settings/*`, model resolution, `/api/backlog/*` 
   password. An agent's are its row: the built-in pack's, the owner's layer laid over it
   (`<data root>/packs/local/agents/<key>.md`, only what differs), then `COS_MODEL` for a row
   with no model. Every change is one `agent-setting` row with the old and new value, and each
-  run's `start` names its row (`pack`, `row_hash`, `edited`). A model id is not checked when
+  run's `start` names its row (`pack`, `row_hash`, `edited`). `POST /api/agents/field` saves one
+  key whole (`body`, `skill:<name>` too; `null` resets) after `pack.check` with the catalog and
+  the contracts; `trigger` is shown, not saved. A model id is not checked when
   saved; a wrong one fails the next step. A hand-edited owner file that breaks the row refuses
   that agent's runs (`agent-invalid`) and shows on the Agents page.
 - A stage marked `novel` runs on a dearer row with higher ceilings, so one press can cost more.

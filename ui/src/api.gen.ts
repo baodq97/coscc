@@ -2,27 +2,28 @@
 
 export type AgentPage = {
   "rows": AgentRow[];
-  "others": ConfigRow[];
+  "catalog": CatalogTool[];
   "problems": string[];
   "cos_model": string | null;
 };
 
 export type AgentRow = {
   "key": string;
-  "glyph": string;
-  "name": string;
-  "meaning": string;
-  "role": string;
-  "identity_source": Record<string, string>;
+  "group": "stage" | "engine" | "helper" | "feature";
+  "row": RowFields;
+  "builtin": RowFields;
+  "edited": string[];
+  "problems": string[];
+  "editable": boolean;
+  "skills": SkillText[];
+  "row_hash": string;
   "config": ConfigRow;
-  "variants": ConfigRow[];
-  "skill": string;
-  "row": RowView;
+  "novel": ConfigRow | null;
   "last": RunView | null;
-  "runs": RunView[];
   "runs_30d": number;
   "cost_30d": number;
   "chip": string;
+  "groups": RunGroup[];
 };
 
 export type AgentRun = {
@@ -144,6 +145,15 @@ export type Cards = {
   "running": Running[];
 };
 
+export type CatalogTool = {
+  "name": string;
+  "effect": string;
+  "tier": string;
+  "server": string;
+  "feature": string;
+  "on": boolean;
+};
+
 export type Ceilings = {
   "max_turns": number | null;
   "max_turns_source": string;
@@ -188,13 +198,12 @@ export type Commit = {
 
 export type ConfigRow = {
   "key": string;
-  "fields": string[];
+  "label": string | null;
   "model": string | null;
   "model_source": string;
   "effort": string | null;
   "effort_source": string;
   "ceilings": Ceilings;
-  "overridden": Record<string, boolean>;
 };
 
 export type DaySpend = {
@@ -429,10 +438,22 @@ export type Round = {
   "unfinished": boolean;
 };
 
-export type RowView = {
-  "tools": string[];
-  "submits": boolean;
-  "warning": string;
+export type RowFields = {
+  "name"?: string;
+  "glyph"?: string;
+  "description"?: string;
+  "model"?: Record<string, unknown>;
+  "variants"?: Record<string, unknown>;
+  "skills"?: string[];
+  "tools"?: Record<string, string>;
+  "helpers"?: string[];
+  "input"?: Record<string, unknown>;
+  "output"?: Record<string, unknown>;
+  "trigger"?: Record<string, string>;
+  "ceilings"?: Record<string, unknown>;
+  "warning"?: string;
+  "consequence"?: string;
+  "body"?: string;
 };
 
 export type Run = {
@@ -446,6 +467,14 @@ export type Run = {
   "rejected": string[];
   "stopped": boolean;
   "detail": string;
+};
+
+export type RunGroup = {
+  "row_hash": string;
+  "settings": Setting[];
+  "runs": RunView[];
+  "cost_usd": number;
+  "turns": number;
 };
 
 export type RunPart = {
@@ -462,6 +491,7 @@ export type RunView = {
   "at": string;
   "turns": number | null;
   "cost_usd": number | null;
+  "row_hash": string;
 };
 
 export type Running = {
@@ -484,6 +514,14 @@ export type Secrets = {
   "modes": string[];
   "secrets": Meta[];
   "globals": Meta[];
+};
+
+export type Setting = {
+  "at": string;
+  "field": string;
+  "old": unknown;
+  "new": unknown;
+  "by": string;
 };
 
 export type Shipped = {
@@ -519,6 +557,13 @@ export type Shown = {
   "schedule"?: number | null;
   "hours"?: number[];
   "summary"?: string;
+};
+
+export type SkillText = {
+  "name": string;
+  "text": string;
+  "builtin": string;
+  "edited": boolean;
 };
 
 export type Source = {

@@ -132,6 +132,7 @@ def issue(
     held: tuple[str, ...] = (),
     mcp: tuple[str, ...] = (),
     use: tuple[tuple[str, str], ...] = (),
+    asks: tuple[str, ...] = (),
 ) -> Grant:
     """The grant of one run, issued as it opens and held by its session's gate only: no grant, no
     action (`policy.critical`).
@@ -147,15 +148,19 @@ def issue(
     - `tools`: the names in `row` that are no feature's (`features`, the catalog's feature
       entries), Claude Code's own; `held`: the features' entries `row` names that are on, whether
       or not their `when` admitted the run.
+    - `asks`: the row's own tools set to `ask` and `asks`, the full names of its catalog tools set
+      to `ask`: offered, every call refused `policy.ASKS`. A write tool or `Agent` set to `ask`
+      opens no place to write and no helper.
     - `secrets`: this app's (`sessions.secrets_of`), the deny list no grant lifts; never empty.
     """
     config = getattr(sessions, "config", None)
     secrets = secrets_of(config if config is not None else Config())
     if not secrets:
         raise ValueError("a grant needs the secrets it denies")
-    writes = any(t in policy.WRITE_TOOLS for t in row.tools)
-    bash = writes and any(t in policy.EXEC_TOOLS for t in row.tools)
-    helpers = row.helpers if policy.AGENT_TOOL in row.tools else ()
+    allowed = [t for t in row.tools if t not in row.asks]
+    writes = any(t in policy.WRITE_TOOLS for t in allowed)
+    bash = writes and any(t in policy.EXEC_TOOLS for t in allowed)
+    helpers = row.helpers if policy.AGENT_TOOL in allowed else ()
     return Grant(
         cwd=cwd,
         write=tuple(dict.fromkeys(p for p in (cwd, unit_dir) if p)) if writes else (),
@@ -174,6 +179,7 @@ def issue(
         home=config.home if config is not None else "",
         tools=tuple(t for t in row.tools if t not in features),
         held=held,
+        asks=(*(t for t in row.asks if t not in features), *asks),
     )
 
 

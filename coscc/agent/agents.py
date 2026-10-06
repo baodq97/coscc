@@ -1,7 +1,7 @@
 """Who an agent is: its glyph, name, meaning and role, read from its row (`coscc/agent/pack.py`).
 
 The meaning is the row's `description`, the role its body. Label, address and commit attribution
-are built here so only a name that passed `check_field` reaches a trailer.
+are built here from a name `pack.check` passed.
 """
 
 from __future__ import annotations
@@ -19,10 +19,6 @@ WHERE = {"glyph": "glyph", "name": "name", "meaning": "description", "role": pac
 OVERRIDE = "override"
 DEFAULT = "default"
 
-NAME_MAX = pack.NAME_MAX
-GLYPH_MAX = pack.GLYPH_MAX
-MEANING_MAX = 60
-ROLE_MAX = 200
 
 DOMAIN = "agents.coscc.invalid"
 
@@ -30,31 +26,6 @@ DOMAIN = "agents.coscc.invalid"
 # `Concluded by:`), or to the end of the line.
 _AUTHOR = re.compile(r"(?:^|\s)Author:\s*(.*?)(?:\.\s+[A-Z][\w-]*(?: [a-z][\w-]*)*:.*)?$")
 _ANSWERS = "## Answers"
-_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
-
-
-def check_field(field: str, value: Any) -> str:
-    """Why `value` may not be `field`'s, or `""`. The duplicate-name rule is `pack.check`'s."""
-    if field not in FIELDS:
-        return f"no such field: {field} (use one of {', '.join(FIELDS)})"
-    if not isinstance(value, str):
-        return f"{field} must be text"
-    if field == "name":
-        if not 1 <= len(value) <= NAME_MAX or not _NAME.fullmatch(value):
-            return (
-                f"name must be 1 to {NAME_MAX} ASCII letters, digits or hyphens, "
-                "starting with a letter"
-            )
-    elif field == "glyph":
-        if not 1 <= len(value) <= GLYPH_MAX or any(c.isspace() for c in value):
-            return f"glyph must be 1 or {GLYPH_MAX} characters with no space"
-    else:
-        limit = MEANING_MAX if field == "meaning" else ROLE_MAX
-        if len(value) > limit:
-            return f"{field} must be at most {limit} characters"
-        if "\n" in value or "\r" in value:
-            return f"{field} must be one line"
-    return ""
 
 
 def agent_for(key: str) -> dict[str, Any] | None:
@@ -110,14 +81,13 @@ def settings_json(row: dict[str, Any]) -> str:
 
 
 def identity_section(row: dict[str, Any]) -> str:
-    """The section a prompt opens with. An empty field is left out of its sentence."""
-    glyph, name, meaning, role = (str(row.get(f) or "") for f in FIELDS)
+    """The section a prompt opens with. An empty field is left out of its sentence. The role is the
+    row's body, the system prompt, so it is not said again here."""
+    glyph, name, meaning = (str(row.get(f) or "") for f in ("glyph", "name", "meaning"))
     who = " ".join(p for p in (glyph, name) if p)
     if meaning:
         who += f" ({meaning})"
     lines = ["# Who you are", "", f"You are {who}, the agent of the {row['key']} stage."]
-    if role:
-        lines.append(f"Your role: {role}")
     lines += [
         "",
         "Where the rules below ask for your name and do not spell it out, write exactly "

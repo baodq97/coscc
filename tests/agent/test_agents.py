@@ -37,29 +37,30 @@ class OverridesComeFirst(unittest.TestCase):
         pack.write("review", "name", None)
         self.assertEqual(agent_for("review")["source"]["name"], agents.DEFAULT)
 
-    def test_every_rule_of_but_the_duplicate(self):
-        ok = {"name": "Tiwaz-2", "glyph": "ᛏᛏ", "meaning": "x" * 60, "role": "y" * 200}
+    def test_every_rule_of_the_identity_is_packs_at_save(self):
+        ok = {"name": "Tiwaz-2", "glyph": "ᛏᛏ", "description": "x" * 200}
         for field, value in ok.items():
-            self.assertEqual(agents.check_field(field, value), "", field)
+            pack.write("review", field, value)
+            pack.write("review", field, None)
         wrong = [
             ("name", ""),
             ("name", "2abc"),
             ("name", "a" * 25),
             ("name", "Tïwaz"),
             ("name", "a b"),
-            ("glyph", ""),
+            ("name", "Raidho"),
             ("glyph", "abc"),
             ("glyph", "a b"),
             ("glyph", " "),
-            ("meaning", "x" * 61),
-            ("meaning", "a\nb"),
-            ("role", "y" * 201),
-            ("role", "a\rb"),
+            ("description", "x" * 201),
+            ("description", "a\nb"),
             ("name", 3),
             ("colour", "red"),
         ]
         for field, value in wrong:
-            self.assertNotEqual(agents.check_field(field, value), "", (field, value))
+            with self.assertRaises(ValueError, msg=(field, value)):
+                pack.write("review", field, value)
+        self.assertEqual(pack.owner_fields("review"), ({}, ""))
 
 
 if __name__ == "__main__":

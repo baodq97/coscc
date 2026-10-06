@@ -19,6 +19,7 @@ from __future__ import annotations
 import functools
 import re
 from dataclasses import dataclass, replace
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from coscc.agent import pack
@@ -51,6 +52,8 @@ class Row:
     prose: bool = False
     # The helper rows `Agent` may start, when the row holds it.
     helpers: tuple[str, ...] = ()
+    # Of `tools`, those set to `ask`: offered to the session, and every call refused `ASKS`.
+    asks: tuple[str, ...] = ()
 
     @property
     def opens_anything(self) -> bool:
@@ -114,12 +117,17 @@ def add_session(kind: str, row: Row, own_turns: bool) -> None:
         OWN_TURNS.add(kind)
 
 
-def _ceilings(found: dict[str, Any], label: str | None) -> dict[str, Any]:
-    """The row's ceilings, its `novel` variant's laid over them for a `novel` step."""
-    own = dict(found.get("ceilings") or {})
+def part_of(found: Mapping[str, Any], top: str, label: str | None) -> dict[str, Any]:
+    """The row's `top` (`model`, `ceilings`), its `novel` variant's laid over it for a `novel`
+    step. A part of the wrong shape (a hand-edited owner file, its runs refused) reads as none."""
+    own = _obj(found.get(top))
     if label == NOVEL:
-        own.update(((found.get("variants") or {}).get(NOVEL) or {}).get("ceilings") or {})
+        own.update(_obj(_obj(_obj(found.get("variants")).get(NOVEL)).get(top)))
     return own
+
+
+def _obj(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _row(key: str, label: str | None) -> Row:
@@ -129,9 +137,10 @@ def _row(key: str, label: str | None) -> Row:
     if found is None:
         return Row()
     output = found.get("output") or {}
-    ceilings = _ceilings(found, label)
+    ceilings = part_of(found, "ceilings", label)
     return Row(
-        tools=pack.tools(found),
+        tools=pack.tools(found) + pack.tools(found, "ask"),
+        asks=pack.tools(found, "ask"),
         max_turns=int(ceilings.get("turns") or 1),
         max_budget_usd=float(ceilings.get("usd") or 0.0),
         app_writes_artifact=output.get("by") != "session",
@@ -161,8 +170,9 @@ def row_for_step(stage: str, label: str | None) -> Row:
     """The row for one step run under a plan's effective label: a `novel` step takes the ceilings
     of its row's `novel` variant where it has them; the tools are `row_for(stage)`'s."""
     row = row_for(stage)
-    variant = (((pack.row(stage) or {}).get("variants") or {}).get(NOVEL)) or {}
-    if label != NOVEL or "ceilings" not in variant:
+    variants = (pack.row(stage) or {}).get("variants")
+    variant = variants.get(NOVEL) if isinstance(variants, dict) else None
+    if label != NOVEL or not isinstance(variant, dict) or "ceilings" not in variant:
         return row
     novel = _row(stage, NOVEL)
     return replace(
@@ -1112,6 +1122,9 @@ HELPERS = (
     "helpers are named, in the foreground, read-only in git, and nothing runs in the background"
 )
 HELD = "only the MCP tools this session holds"
+# A tool the row sets to `ask`: no person is asked in a run yet, so the call is refused, the code
+# naming who it waits for.
+ASKS = "asks-a-person"
 # A push the grant allows that a feature's guard (`vault-leak`) denies, asked again at the push.
 GUARDED = "a feature's guard refuses this push"
 
@@ -1119,11 +1132,19 @@ GUARDED = "a feature's guard refuses this push"
 # What a refusal lacked, by the rule its reason opens with: the grant that would have allowed the
 # call, or `NEVER` for what no grant allows. `REMOVAL` is `write`'s: `rm -r` stays inside it.
 NEVER = "never granted"
-LACKED = {WRITES: "write", REMOVAL: "write", HOST: "push", HELPERS: "helpers", HELD: "mcp"}
+LACKED = {
+    WRITES: "write",
+    REMOVAL: "write",
+    HOST: "push",
+    HELPERS: "helpers",
+    HELD: "mcp",
+    ASKS: ASKS,
+}
 
 
 def lacked(reason: str) -> str:
-    """The grant a refusal names: `write`, `push`, `helpers`, `mcp`; `NEVER` for a secret; "" for
+    """The grant a refusal names: `write`, `push`, `helpers`, `mcp`, `ASKS` for a tool waiting on a
+    person; `NEVER` for a secret; "" for
     a refusal that is not the hook's rule (a line it could not read, `auto`'s own)."""
     if reason.startswith(SECRETS):
         return NEVER
@@ -1170,6 +1191,9 @@ class Grant:
     # (`coscc/kernel.py`), whether or not their `when` admitted the run: what a prompt block that
     # teaches one is shown for.
     held: tuple[str, ...] = ()
+    # The tools its row sets to `ask`, as the session names them (`Read`, `mcp__vault__get`):
+    # offered, and every call refused `ASKS` until a person can be asked.
+    asks: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in self.mcp:
@@ -1221,6 +1245,7 @@ def record(grant: Grant) -> dict:
         "use": [list(u) for u in grant.use],
         "tools": list(grant.tools),
         "held": list(grant.held),
+        "asks": list(grant.asks),
     }
 
 
@@ -1238,6 +1263,8 @@ def critical(
         reason = _helper_tool_refused(tool, kind)
         if reason:
             return reason
+    if tool in grant.asks:
+        return f"{ASKS}: {tool} is set to ask, and a run cannot ask a person yet"
     if tool.startswith("mcp__"):
         if tool in grant.mcp:
             return ""
