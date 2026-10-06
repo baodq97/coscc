@@ -10,6 +10,11 @@ from typing import Any
 
 from coscc.runner.reply import RunError, unfence
 
+# A closing round's header line, read as leniently as the loop reads it (`loop.model.ROUND_META`).
+_INCOMPLETE_META = re.compile(
+    r"^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*incomplete\.?$", re.A | re.I
+)
+
 
 def _sections(text: str) -> list[tuple[int, str]]:
     """`text` cut at each `## ` heading: `(start, section)`, the part before the first included."""
@@ -207,7 +212,8 @@ def closing_round_problem(existing: str, reply: str, head: str) -> str | None:
     number = max(on_disk, default=0) + 1
     if _round_number(new[0]) != number:
         return f"{new[0].splitlines()[0]} is not ## Round {number}, the next round"
-    if _first_line(new[0]) != f"Reviewed: {head}. Verdict: incomplete.":
+    meta = _INCOMPLETE_META.match(_first_line(new[0]).strip())
+    if not meta or meta.group(1).lower() != head.lower():
         return (
             f"{new[0].splitlines()[0]} does not open with "
             f"`Reviewed: {head}. Verdict: incomplete.`, the head this step ran on"

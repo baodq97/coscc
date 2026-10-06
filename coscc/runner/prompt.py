@@ -447,7 +447,7 @@ def _unfinished_round(
         "round raised, so the loop does not count it against `COS_REVIEW_ROUNDS` and "
         f"this review runs again. Write Round {number + 1} as a full round for the commit "
         "named below. List every finding of every earlier round with its label, "
-        f"{dropped} among them."
+        f"{dropped} among them; the earlier rounds are in the unit's `review.md`."
     ]
 
 

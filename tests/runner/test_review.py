@@ -118,6 +118,13 @@ class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
         self.assertIsNone(self.problem("```\n" + incomplete_reply(self.HEAD) + "```\n"))
         self.assertIsNone(self.problem(incomplete_reply(self.HEAD, number=1), existing=""))
 
+    def test_the_header_line_is_read_as_leniently_as_the_loop_reads_it(self):
+        line = f"Reviewed: {self.HEAD}. Verdict: incomplete."
+        for written in (line.rstrip("."), line.lower(), line.replace(": ", ":  ")):
+            with self.subTest(written=written):
+                self.assertIsNone(self.problem(incomplete_reply(self.HEAD).replace(line, written)))
+        self.assertIsNotNone(self.problem(incomplete_reply("c" * 40)))
+
     def test_a_round_with_no_status_line_passes(self):
         reply = incomplete_reply(self.HEAD).replace("Status: draft.", "").replace("Status: ", "")
         self.assertNotIn("Status:", reply)
