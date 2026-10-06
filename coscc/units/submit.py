@@ -2,7 +2,7 @@
 
 An in-process tool registered through an SDK MCP server: the SDK checks the arguments against
 the tool's JSON Schema before the handler runs, the handler gets a dict before the session's
-`ResultMessage`, and `can_use_tool` is still asked first.
+`ResultMessage`, and the session's gate is still asked first.
 
 A `Channel` is bound to one run. Its handler checks what the schema cannot (the object came
 from the run the app has open; the artifacts it judged are still the revision the app read),
@@ -21,7 +21,7 @@ from coscc.units import contracts, guards
 
 SERVER = "cos"
 TOOL = "submit"
-# What `can_use_tool` is asked with, and so what `policy.decide` lets through.
+# The name the session's gate is asked with, and so what `policy.allowed_mcp` holds.
 NAME = f"mcp__{SERVER}__{TOOL}"
 
 # With this sentence in the error sessions submit again after one more turn; without it, often not.
