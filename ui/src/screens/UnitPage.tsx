@@ -328,6 +328,11 @@ function RunItem({ run, name, live, cwd, unit }: { run: UnitRun; name: string; l
           {[run.turns != null ? `${run.turns} turns` : "", run.model ? modelName(run.model) : "", run.artifact].filter(Boolean).join(" · ")}
         </div>
         {stopped && run.detail && <div className="muted" style={{ marginTop: 2 }}>{run.detail}</div>}
+        {run.envelope.length > 0 && (
+          <div className="faint" style={{ fontSize: 12 }} title="What its prompt held, as its row declares">
+            Given: {run.envelope.join(" · ")}
+          </div>
+        )}
         {run.run && (
           <button className="link-btn faint" style={{ fontSize: 12, marginTop: 4 }} onClick={() => setShown(!shown)}>
             {shown ? "Hide what it did" : "What it did"}

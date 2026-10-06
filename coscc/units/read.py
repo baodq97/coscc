@@ -26,7 +26,7 @@ from coscc.git import gitops
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, now
 from coscc.store.journal import last_runs, timelines_of, totals_of
-from coscc.units import BadUnit, Invalid, backlog, scratch, worktrees
+from coscc.units import BadUnit, Invalid, backlog, contracts, scratch, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable, attention_reason, unit_state
 from coscc.units.meta import OutputRecord
@@ -145,6 +145,8 @@ class Card(TypedDict):
     # When its last run ended, or empty: what a list sorts by.
     updated: str
     attention_reason: str
+    # What the next stage declares it needs and the unit lacks: the step is refused until it is there.
+    missing: list[str]
     idea: str
     rank: int | None
     effort: str | None
@@ -264,6 +266,7 @@ def card(u: Mapping[str, Any]) -> Card:
             default="",
         ),
         "attention_reason": str(u.get("attention_reason") or ""),
+        "missing": [str(m) for m in u.get("missing") or []],
         "idea": str(u.get("idea") or ""),
         "rank": backlog_.get("rank"),
         "effort": backlog_.get("effort"),
@@ -366,6 +369,8 @@ class UnitRun(TypedDict):
     cost_usd: float | None
     turns: int | None
     run: str
+    # The parts its prompt was handed (`start.envelope`), `[]` when it records none.
+    envelope: list[str]
 
 
 class Worktree(TypedDict):
@@ -492,6 +497,7 @@ def detail(
                 if r.get("turns_reported", True)
                 else None,
                 "run": _text(r.get("run")),
+                "envelope": [str(p) for p in r.get("envelope") or []],
             }
             for r in timeline
         ],
@@ -776,6 +782,18 @@ class Board:
                 row["last_run"] = unit_last_runs.get(row["stage"])
             unit["cost"] = totals_of(timelines.get(unit["name"], [])) if journal is not None else {}
             unit["attention_reason"] = attention_reason(unit)
+            stage = str(unit.get("next_stage") or "")
+            unit["missing"] = (
+                contracts.missing(
+                    stage,
+                    self.ws.unit_dir(cwd, unit["name"]),
+                    state["units"].get(f"{state['workspace']}/{unit['name']}"),
+                )
+                if stage
+                else []
+            )
+            if unit["missing"]:
+                unit["attention_reason"] = f"{stage} needs {' and '.join(unit['missing'])}"
 
         lap("fold")
         await self._attach_worktrees(cwd, data["units"])

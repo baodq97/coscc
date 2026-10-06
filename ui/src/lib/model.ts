@@ -17,6 +17,8 @@ export function unitState(u: Unit): { group: string; label: string } {
   if (u.why === "finished" || u.why === "outdated-main") return { group: "Shipped", label: "Shipped" };
   if (u.phase === "pre-intent") return { group: "Ideas", label: "Idea" };
   if (u.open > 0) return { group: "Needs you", label: `${u.open} question${u.open > 1 ? "s" : ""}` };
+  // The next stage is refused before it spends until what it declares it needs is there.
+  if (u.missing?.length) return { group: "Needs you", label: `Needs ${u.missing.join(" and ")}` };
   return { group: "In progress", label: STAGE_LABEL[u.next_stage] ?? (u.next_stage || "In progress") };
 }
 

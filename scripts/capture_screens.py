@@ -41,6 +41,8 @@ After them `make_idea_fixture` makes `0006_frontend-calls-api`, and
                            one head by the autopilot (`make_autopilot_fixture`)
     0009_refused-impl      an accepted plan, whose `impl` the autopilot queued and
                            the gate refused with `gate-closed` (`seed_refusal`)
+    0010_missing-input     an accepted plan with no `intent.md`, which `impl` declares:
+                           its card reads `Needs intent.md`
 
 Every file is written by hand as prose; each unit's states (the `statuses`, `type`, `shipped`
 and `questions` its fixture carries) are seeded as rows in `cos.db` by `seed_fixture`, since
@@ -258,6 +260,16 @@ AUTOPILOT_FIXTURE = {
             "plan.md": "# Plan: refused impl\nIntent: intent.md. Author: capture_screens.\n",
         },
     },
+    # An accepted plan whose `intent.md` is gone: `impl` declares it, so the card says what is
+    # missing and a press is refused `input-missing`.
+    "missing-input": {
+        "statuses": dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"),
+        "type": "feat",
+        "files": {
+            "spec.md": "# Spec: missing input\nIntent: intent.md. Author: capture_screens.\n",
+            "plan.md": "# Plan: missing input\nIntent: intent.md. Author: capture_screens.\n",
+        },
+    },
 }
 DRAFT_IMPL, REFUSED_IMPL = "0008_draft-impl", "0009_refused-impl"
 
@@ -460,13 +472,15 @@ def make_unread_fixture(api: httpx.Client, proj: Path, rows: Rows) -> None:
 
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     """One ended `plan` run of `0004_finished` in the running app's run log, keyed
-    as `Workspaces.key` keys it. `at` is when it is written, so the page reads "just now"."""
+    as `Workspaces.key` keys it, with the envelope its `start` names. `at` is when it is written, so the page reads "just now"."""
     import uuid
 
     from coscc.store.journal import Journal
 
     journal, key = Journal(work, data_dir), str(proj.resolve())
-    journal.started(key, "0004_finished", "plan", "manual")
+    journal.started(
+        key, "0004_finished", "plan", "manual", envelope=["intent.md", "spec.md", "answers"]
+    )
     journal.finished(key, "0004_finished", "plan", "done", session_id=str(uuid.uuid4()))
 
 
