@@ -61,37 +61,28 @@ def next_step(unit, probe=None, limit=REVIEW_ROUNDS):
     return {k: v for k, v in next_answer(unit, probe, limit).items() if k != "reasons"}
 
 
-def records_of(d: Path | str) -> dict:
-    """What the agent would have submitted for the fixture prose in `d`: the engine reads these
-    records and never the prose, so a fixture line about an unmeasured item stands for a record."""
-    out: dict = {}
-    for file in ("spec.md", "spike.md", "impl.md"):
-        path = Path(d) / file
-        if not path.exists():
-            continue
-        text = path.read_text().split("\n## Answers")[0]
-        base = {"judgement": "ready", "questions": []}
-        if file == "spec.md":
-            lines = re.findall(r"^[-*] \[unmeasured\] (U\d+)", text.split("## Concerns")[-1], re.M)
-            out[file] = {"result": {**base, "unmeasured": lines}}
-        elif file == "spike.md":
-            rnd = re.search(r"Round: (\d+)", text)
-            found = re.findall(r"^## (U\d+)\s*\n+Verdict: (holds|fails)", text, re.M)
-            out[file] = {
-                "round": int(rnd[1]) if rnd else None,
-                "result": {**base, "verdicts": [{"id": i, "verdict": v} for i, v in found]},
-            }
-        else:
-            ids = re.findall(r"^- (F\d+):\s*\S", text.split("## Needs a person")[-1], re.M)
-            out[file] = {
-                "result": {**base, "needs_person": ids if "## Needs a person" in text else []}
-            }
-    return out
+_BASE = {"judgement": "ready", "questions": []}
 
 
-def entry_from(m: dict, d: Path | str | None = None) -> dict:
+def spec_record(*ids: str) -> dict:
+    """The spec's submitted record, naming `ids` unmeasured."""
+    return {"spec.md": {"result": {**_BASE, "unmeasured": list(ids)}}}
+
+
+def spike_record(rnd: int | None = 1, **verdicts: str) -> dict:
+    """The spike's submitted record, a verdict per id, with the round the app counted."""
+    found = [{"id": i, "verdict": v} for i, v in verdicts.items()]
+    return {"spike.md": {"round": rnd, "result": {**_BASE, "verdicts": found}}}
+
+
+def claim_record(*ids: str) -> dict:
+    """impl's submitted record, claiming `ids` only a person can close."""
+    return {"impl.md": {"result": {**_BASE, "needs_person": list(ids)}}}
+
+
+def entry_from(m: dict, records: dict | None = None) -> dict:
     """The snapshot entry the app builds of `meta`'s reading; a skip stands for a person's.
-    `d` is the unit's directory, for the records its prose stands for."""
+    `records` are the submitted records, `{file: {"result", ...}}`."""
     arts = {
         f: {
             "status": a.get("status"),
@@ -101,8 +92,8 @@ def entry_from(m: dict, d: Path | str | None = None) -> dict:
         }
         for f, a in m["artifacts"].items()
     }
-    for f, rec in (records_of(d) if d else {}).items():
-        arts[f].update(rec)
+    for f, rec in (records or {}).items():
+        arts.setdefault(f, {"status": None, "raw": None, "questions": None}).update(rec)
     return {
         "artifacts": arts,
         "type": m.get("type"),
@@ -114,22 +105,22 @@ def entry_from(m: dict, d: Path | str | None = None) -> dict:
     }
 
 
-def state_of_root(root: Path) -> dict:
-    """The snapshot of `<root>/.cos/`, as the app would hand `--state`."""
+def state_of_root(root: Path, records: dict | None = None) -> dict:
+    """The snapshot of `<root>/.cos/`, as the app would hand `--state`; `records` by unit name."""
     cos = root / ".cos"
     units = {}
     if cos.exists():
         for d in sorted(cos.iterdir()):
             if d.is_dir() and d.name != "ideas":
-                units[f"/{d.name}"] = entry_from(unit_meta(str(d)), d)
+                units[f"/{d.name}"] = entry_from(unit_meta(str(d)), (records or {}).get(d.name))
     ideas = read_ideas(str(cos)) if (cos / "ideas").exists() else []
     return {"workspace": "", "workspaces": [], "units": units, "ideas": {"": ideas}}
 
 
-def read(dir_: Path, name: str) -> dict:
-    """`read_unit` of `dir_` under `name`, with the snapshot of its files."""
+def read(dir_: Path, name: str, records: dict | None = None) -> dict:
+    """`read_unit` of `dir_` under `name`, with the snapshot of its files and `records`."""
     state = {"workspace": "", "workspaces": [], "units": {}, "ideas": {"": []}}
-    state["units"][f"/{name}"] = entry_from(unit_meta(str(dir_)), dir_)
+    state["units"][f"/{name}"] = entry_from(unit_meta(str(dir_)), records)
     return read_unit(str(dir_), name, state)
 
 
@@ -534,13 +525,15 @@ def with_answers(*blocks):
     return f"{QUESTIONS}\n## Answers\n{''.join(blocks)}"
 
 
-def question_tree(tmp_path: Path, files: dict[str, str]) -> tuple[Path, dict]:
+def question_tree(
+    tmp_path: Path, files: dict[str, str], records: dict | None = None
+) -> tuple[Path, dict]:
     root = tmp_path / "qroot"
     d = root / ".cos" / "0001_q"
     d.mkdir(parents=True)
     for f, text in files.items():
         (d / f).write_text(text)
-    return root, read(d, "0001_q")
+    return root, read(d, "0001_q", records)
 
 
 def ns(qs):
@@ -1071,15 +1064,12 @@ def test_next_step_never_offers_a_stage_whose_gate_is_closed():
 
 # --- 0028: a finding impl cannot fix waits for a person -------------------------------------
 
-NEEDS = (
-    "## Needs a person\n\n- F2: the grant holds no budget for --paid\n- F3: the grant holds no gh\n"
-)
 REVIEW_HEAD = "# Review: x\nPR: pr.md. Author: t. Status: changes-requested.\n\n"
 ROUND1 = round_(1, "changes-requested", ["- F1 [open] a", "- F2 [open] b", "- F3 [open] c"])
 ROUND2 = round_(2, "changes-requested", [f"- F1 [fixed {FIX}] a", "- F2 [open] b", "- F3 [open] c"])
 
 
-def impl_text(needs=NEEDS):
+def impl_text(needs=""):
     return (
         "# Impl: x\nIntent: intent.md. Plan: plan.md. Author: t. Status: accepted.\n\n"
         f"## What was built\n\nx\n\n{needs}"
@@ -1098,18 +1088,20 @@ def round3(f3="needs-person", extra=()):
     )
 
 
-def tree_after_round_two(tmp_path, review, impl=None):
-    """A unit right after its second review round, as files on disk."""
+def tree_after_round_two(tmp_path, review, claims=("F2", "F3")):
+    """A unit right after its second review round, as files on disk, impl's record claiming
+    `claims` only a person can close."""
     _, u = question_tree(
         tmp_path / str(len(list(tmp_path.iterdir()))),
         {
             "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
             "spec.md": "# S\nStatus: accepted.\n",
             "plan.md": "# P\nStatus: accepted.\n",
-            "impl.md": impl_text() if impl is None else impl,
+            "impl.md": impl_text(),
             "pr.md": "# PR: fix(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n",
             "review.md": review,
         },
+        claim_record(*claims),
     )
     return u
 
@@ -1261,8 +1253,8 @@ def test_a_needs_person_verdict_written_wrong_falls_back(tmp_path):
     assert b["personFindings"] == []
 
 
-def test_an_impl_with_no_needs_a_person_section_changes_nothing(tmp_path):
-    n = next_step(tree_after_round_two(tmp_path, R12, impl_text("")), green_probe())
+def test_an_impl_that_claims_nothing_changes_nothing(tmp_path):
+    n = next_step(tree_after_round_two(tmp_path, R12, claims=()), green_probe())
     assert n["stage"] == "impl"
     assert "nothing outside .cos/0001_q/ has reached #7" in n["action"]
 
@@ -1486,16 +1478,16 @@ def spike_text(rnd, items):
     return head + body
 
 
-def spike_unit(tmp_path, files):
+def spike_unit(tmp_path, files, records=None):
     d = files_in(
         tmp_path, {"intent.md": INTENT_0039, **files}, name=f"s{len(list(tmp_path.iterdir()))}"
     )
-    return read(d, "0039_x")
+    return read(d, "0039_x", records)
 
 
 def with_entry(d, name="0039_x"):
     """The snapshot of `d`'s files and its entry, for a test to change before `read_unit`."""
-    entry = entry_from(unit_meta(str(d)), d)
+    entry = entry_from(unit_meta(str(d)))
     state = {"workspace": "", "workspaces": [], "units": {f"/{name}": entry}, "ideas": {"": []}}
     return state, entry
 
@@ -1545,9 +1537,6 @@ def test_the_loop_reads_no_prose_for_spec_spike_and_impl_decisions(tmp_path):
     }
     d = files_in(tmp_path, files)
     state, entry = with_entry(d)
-    for f in ("spec.md", "spike.md", "impl.md"):
-        entry["artifacts"][f].pop("result")
-    entry["artifacts"]["spike.md"].pop("round")
     u = read_unit(str(d), "0039_x", state)
     assert "unmeasured" not in u["artifacts"]["spec.md"]
     assert u["artifacts"]["spike.md"]["spike"] == {"round": None, "items": {}}
@@ -1626,46 +1615,50 @@ def test_a_unit_with_nothing_unmeasured_walks_as_if_spike_did_not_exist(tmp_path
     ]
 
 
+SPEC = spec_text("- [unmeasured] U1. a")
+SPIKE = spike_text(1, [("U1", "holds")])
+
+
 def test_a_skipped_spec_never_needs_a_spike(tmp_path):
     files = {
         "spec.md": spec_text("- [unmeasured] U1. x", "skipped"),
         "spike.md": spike_text(1, [("U1", "fails")]),
         "plan.md": "Status: accepted.\n",
     }
-    u = spike_unit(tmp_path, files)
+    u = spike_unit(tmp_path, files, {**spec_record("U1"), **spike_record(U1="fails")})
     assert check_gate(u, "impl")["ok"] is True
     assert "write-impl" in next_action(u)["action"]
 
 
 def test_an_unmeasured_spec_sends_the_unit_to_spike_and_closes_plan(tmp_path):
-    spec = spec_text("- [unmeasured] U1. a\n- [unmeasured] U2. b")
-    none = spike_unit(tmp_path, {"spec.md": spec})
+    asked = spec_record("U1", "U2")
+    none = spike_unit(tmp_path, {"spec.md": SPEC}, asked)
     assert none["artifacts"]["spec.md"]["unmeasured"]["ids"] == ["U1", "U2"]
     assert next_action(none)["stage"] == "spike"
     assert check_gate(none, "spike")["ok"] is True
     need = "\n".join(check_gate(none, "plan")["need"])
     assert "spike.md does not exist" in need
     assert "U1: spike.md is missing, not accepted" in need
-    spike = spike_text(1, [("U1", "holds")]) + "\n## U2\n\nno verdict here\n"
-    no_verdict = spike_unit(tmp_path, {"spec.md": spec, "spike.md": spike})
+    no_verdict = spike_unit(
+        tmp_path, {"spec.md": SPEC, "spike.md": SPIKE}, {**asked, **spike_record(U1="holds")}
+    )
     need = check_gate(no_verdict, "plan")["need"]
     assert len(need) == 1
     assert re.match(r"U2: .* does not measure U2", need[0])
     assert next_action(no_verdict)["stage"] == "spike"
     held = spike_unit(
-        tmp_path, {"spec.md": spec, "spike.md": spike_text(1, [("U1", "holds"), ("U2", "holds")])}
+        tmp_path,
+        {"spec.md": SPEC, "spike.md": SPIKE},
+        {**asked, **spike_record(U1="holds", U2="holds")},
     )
     assert check_gate(held, "plan")["ok"] is True
     assert next_action(held)["stage"] == "plan"
 
 
 def test_spec_spike_spec_again_spike_plan(tmp_path):
+    files = {"spec.md": SPEC, "spike.md": SPIKE}
     first = spike_unit(
-        tmp_path,
-        {
-            "spec.md": spec_text("- [unmeasured] U1. a\n- [unmeasured] U2. b"),
-            "spike.md": spike_text(1, [("U1", "holds"), ("U2", "fails")]),
-        },
+        tmp_path, files, {**spec_record("U1", "U2"), **spike_record(U1="holds", U2="fails")}
     )
     assert next_action(first)["stage"] == "spec"
     assert "U2 does not hold" in next_action(first)["action"]
@@ -1674,20 +1667,12 @@ def test_spec_spike_spec_again_spike_plan(tmp_path):
     )
     assert check_gate(first, "spec")["ok"] is True
     rewritten = spike_unit(
-        tmp_path,
-        {
-            "spec.md": spec_text("- [unmeasured] U1. a\n- [unmeasured] U3. c"),
-            "spike.md": spike_text(1, [("U1", "holds"), ("U2", "fails")]),
-        },
+        tmp_path, files, {**spec_record("U1", "U3"), **spike_record(U1="holds", U2="fails")}
     )
     assert next_action(rewritten)["stage"] == "spike"
     assert "does not measure U3" in next_action(rewritten)["action"]
     measured = spike_unit(
-        tmp_path,
-        {
-            "spec.md": spec_text("- [unmeasured] U1. a\n- [unmeasured] U3. c"),
-            "spike.md": spike_text(2, [("U1", "holds"), ("U3", "holds")]),
-        },
+        tmp_path, files, {**spec_record("U1", "U3"), **spike_record(2, U1="holds", U3="holds")}
     )
     assert next_action(measured)["stage"] == "plan"
     assert check_gate(measured, "plan")["ok"] is True
@@ -1696,10 +1681,8 @@ def test_spec_spike_spec_again_spike_plan(tmp_path):
 def test_fails_ahead_of_missing(tmp_path):
     u = spike_unit(
         tmp_path,
-        {
-            "spec.md": spec_text("- [unmeasured] U1. a\n- [unmeasured] U2. b"),
-            "spike.md": spike_text(1, [("U2", "fails")]),
-        },
+        {"spec.md": SPEC, "spike.md": SPIKE},
+        {**spec_record("U1", "U2"), **spike_record(U2="fails")},
     )
     assert next_action(u)["stage"] == "spec"
 
@@ -1707,10 +1690,8 @@ def test_fails_ahead_of_missing(tmp_path):
 def test_a_question_still_failing_at_the_last_spike_round_needs_a_person(tmp_path):
     u = spike_unit(
         tmp_path,
-        {
-            "spec.md": spec_text("- [unmeasured] U3. c"),
-            "spike.md": spike_text(SPIKE_ROUNDS, [("U3", "fails")]),
-        },
+        {"spec.md": SPEC, "spike.md": SPIKE},
+        {**spec_record("U3"), **spike_record(SPIKE_ROUNDS, U3="fails")},
     )
     n = next_action(u)
     assert n["stage"] == ""
@@ -1724,6 +1705,7 @@ def test_a_spec_rewritten_without_its_questions_needs_no_spike(tmp_path):
     u = spike_unit(
         tmp_path,
         {"spec.md": spec_text("- none left"), "spike.md": spike_text(1, [("U1", "fails")])},
+        {**spec_record(), **spike_record(U1="fails")},
     )
     assert next_action(u)["stage"] == "plan"
     assert check_gate(u, "plan")["ok"] is True
@@ -1793,17 +1775,19 @@ def test_a_skip_a_person_decided_opens_plan_with_or_without_a_file(tmp_path):
 
 
 def test_with_a_spike_required_impl_opens_only_on_a_plan_citing_it(tmp_path):
-    files = {
-        "spec.md": spec_text("- [unmeasured] U1. a"),
-        "spike.md": spike_text(1, [("U1", "holds")]),
-    }
-    silent = spike_unit(tmp_path, {**files, "plan.md": "Status: accepted.\n\n1. build it\n"})
+    files = {"spec.md": SPEC, "spike.md": SPIKE}
+    records = {**spec_record("U1"), **spike_record(U1="holds")}
+    silent = spike_unit(
+        tmp_path, {**files, "plan.md": "Status: accepted.\n\n1. build it\n"}, records
+    )
     assert silent["artifacts"]["plan.md"]["citesSpike"] is False
     assert check_gate(silent, "impl")["need"] == [
         "plan.md does not cite spike.md — every step that rests on a U<n> cites spike.md ## U<n>"
     ]
     cites = spike_unit(
-        tmp_path, {**files, "plan.md": "Status: accepted.\n\n1. build it (spike.md ## U1)\n"}
+        tmp_path,
+        {**files, "plan.md": "Status: accepted.\n\n1. build it (spike.md ## U1)\n"},
+        records,
     )
     assert check_gate(cites, "impl")["ok"] is True
 

@@ -34,7 +34,6 @@ from tests.loop.test_model import (
     asked,
     branched,
     green_probe,
-    impl_text,
     low,
     ok,
     review_art,
@@ -100,8 +99,7 @@ def test_every_blocking_finding_claimed_and_one_low_unclaimed_is_review_not_impl
     u = tree_after_round_two(tmp_path, f"{REVIEW_HEAD}{ROUND1}\n{r2}")
     assert next_step(u, green_probe())["stage"] == "review"
     only_low = round_(1, "changes-requested", [low("F1")])
-    impl = impl_text("## Needs a person\n\n- F1: the grant holds no gh\n")
-    u = tree_after_round_two(tmp_path, f"{REVIEW_HEAD}{only_low}", impl)
+    u = tree_after_round_two(tmp_path, f"{REVIEW_HEAD}{only_low}", claims=("F1",))
     assert next_step(u, green_probe())["stage"] == "impl"
 
 
