@@ -34,7 +34,7 @@ from coscc.leif.agents import Agents, Models
 from coscc.leif.answers import Answers
 from coscc.leif.autopilot import Autopilot, autopilot_values
 from coscc.leif.backlog import Backlog
-from coscc.leif.chat import CHAT_TURNS, Chat
+from coscc.leif.chat import Chat
 from coscc.leif.insights import Activity
 from coscc.runner.queue import Attempts, Holds, Updating
 from coscc.runner.resume import Resume
@@ -84,7 +84,7 @@ class Core:
             self.ws,
             self.sessions,
             lambda: refuse_while_updating(self.updater),
-            self.models.model_for,
+            self.models.agent,
         )
         self.ideas = Ideas(self.config, self.ws)
         self.backlog = Backlog(
@@ -126,7 +126,7 @@ class Core:
             config_overrides=self.agents.config_overrides,
             config_for=self.models.config_for,
         )
-        self.watch = Watch(self.config, self.ws, self.steps.recorders)
+        self.watch = Watch(self.config, self.ws)
         self.boards = Board(
             self.config,
             self.ws,
@@ -187,7 +187,6 @@ class Core:
                 "chat": lambda cwd, record: self._resume_chat(cwd, record),
             },
             refuse_updating=lambda: refuse_while_updating(self.updater),
-            chat_turns=CHAT_TURNS,
             finish=self._resumed,
         )
 

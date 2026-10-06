@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any, AsyncIterator, TypedDict
 
 from coscc.agent import models
 from coscc.agent import sessions as reader
-from coscc.agent import transcript
+from coscc.agent.policy import Grant
 from coscc.agent.sessions import Sessions
 from coscc.config import Config
-from coscc.kernel import Invalid
-from coscc.store.db import Busy
-from coscc.store.journal import BadRecord
+from coscc.kernel import Invalid, Run
+from coscc.runner import run as run_mod
 from coscc.units.workspaces import Workspaces
 
 # A chat turn's ceiling: `Sessions.stream`'s default, since chat names none, and no budget.
@@ -54,13 +54,13 @@ class Chat:
         ws: Workspaces,
         sessions: Sessions,
         refuse_updating: Callable[[], None],
-        model_for: Callable[[str], tuple[str | None, str]],
+        agent_for: Callable[[str, Grant], run_mod.Agent],
     ) -> None:
         self.config = config
         self.ws = ws
         self.sessions = sessions
         self.refuse_updating = refuse_updating
-        self.model_for = model_for
+        self.agent_for = agent_for
 
     # -- sessions -----------------------------------------------------------
 
@@ -99,58 +99,46 @@ class Chat:
         session_id: str | None = None,
         resume: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
-        """Yield `(kind, payload)` exactly as the session layer does.
+        """`chunk` and `tool` as the reply arrives, then one `done` with the `session_id`: one
+        run of the `chat` agent (`run_mod.run`), with its `start` and `end` like any agent's.
 
         Re-runs the pure `check_send` so no caller can skip it. `resume` is a `suspend` row
         of a chat turn an update paused: the turn goes on from its safe point, on its
-        model, with what is left of its ceiling, and opens nothing when none is.
+        model, with what is left of its ceiling, and opens nothing when none is. A turn refused
+        or failed is `Invalid` once its `end` is written.
         """
         self.check_send(cwd, text)
-        # Chat is a row of the same table as the stages.
-        model, model_source = self.model_for(models.CHAT)
-        extra: dict[str, Any] = {
-            "owner": {
-                "kind": "chat",
-                "workspace": self.ws.key(cwd),
-                "workspace_dir": cwd,
-                "unit": "",
-                "stage": "",
-            }
-        }
-        if resume is not None:
-            model, model_source = resume.get("model") or model, "resumed"
-            turns, _, used_up = transcript.ceilings_left(CHAT_TURNS, None, resume)
-            if used_up:
-                return
-            extra.update(resume_at=resume.get("safe_uuid"), max_turns=turns)
-        async for item in self.sessions.stream(
-            cwd,
-            text,
-            session_id,
-            **({"model": model} if model is not None else {}),
-            **extra,
+        agent = self.agent_for(
+            models.CHAT, Grant(tools=tuple(self.config.effective_tools()), max_turns=CHAT_TURNS)
+        )
+        if resume is not None and resume.get("model"):
+            agent = replace(
+                agent,
+                model=str(resume["model"]),
+                sources={**agent.sources, "model_source": "resumed"},
+            )
+        got: Run | None = None
+        async for kind, payload in run_mod.run(
+            agent,
+            run_mod.Input(
+                cwd,
+                text,
+                self.ws.key(cwd),
+                session_id=session_id,
+                keep=True,
+                resume=resume,
+            ),
+            ctx=run_mod.Ctx(self.sessions, self.ws.journal(), self.config.data_dir),
         ):
-            if item[0] == "session":
-                # `api.py` treats every kind but `chunk` as the terminal `done` row;
-                # forwarding this would end the reply early.
-                continue
-            if item[0] == "done":
-                # One record per turn: the model a *new* client is created with. A client
-                # already live keeps the model it was made with.
-                journal = self.ws.journal()
-                if journal is not None:
-                    try:
-                        journal.append(
-                            {
-                                "kind": "chat",
-                                "workspace": self.ws.key(cwd),
-                                "unit": "",
-                                "stage": "",
-                                "model": model,
-                                "model_source": model_source,
-                                "session_id": (item[1] or {}).get("session_id", ""),
-                            }
-                        )
-                    except BadRecord, Busy:
-                        pass  # a busy log must not cost the reply that was already paid for
-            yield item
+            if kind == "done":
+                got = payload
+            else:
+                yield (kind, payload)
+        if got is None:
+            return
+        if got.status in ("refused", "failed"):
+            raise Invalid(got.detail)
+        yield (
+            "done",
+            {"session_id": got.session, "run": got.run, "status": got.status, "cost": got.cost},
+        )

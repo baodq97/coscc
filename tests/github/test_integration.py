@@ -87,7 +87,7 @@ def a_unit_at_pr(core, cwd, unit, directory):
 
 
 class StandIn:
-    """`Sessions` as `run_gebo` uses it: `stream` runs `act` in the tree, then replies.
+    """`Sessions` as Gebo's run uses it: `stream` runs `act` in the tree, then replies.
 
     Like a Gebo that follows its rules, it hands back through `submit` one `needs_person` item per
     `[needs-person] <why>` line its reply carries, unless `said` is set, which it hands back

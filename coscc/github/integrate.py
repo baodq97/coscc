@@ -21,19 +21,13 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal, get_args
+from typing import Any, Literal, get_args
 
 from coscc.agent import agents
-from coscc.agent.transcript import ceilings_left
 from coscc.git import gh
 from coscc.runner.step import check_started_by
-from coscc.agent.helpers import Denials, Gate
-from coscc.agent.policy import Places
-from coscc.runner.attempt import CLAUDE_CODE_PRESET
 from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
-from coscc.units.submit import SERVER
 
 STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown")
 # The three states with something to integrate. `current` carries a button too; a press on it
@@ -727,109 +721,3 @@ async def pr_head(tree: str, n: int) -> str:
         return str(json.loads(out).get("headRefOid") or "")
     except (ValueError, AttributeError) as e:
         raise IntegrateError(f"gh pr view did not return JSON: {e}") from e
-
-
-async def run_gebo(
-    sessions: Any,
-    *,
-    tree: str,
-    workspace: str,
-    prompt: str,
-    grant: Any,
-    lease: tuple[str, str],
-    model: str | None,
-    effort: str | None = None,
-    settings: str | None = None,
-    owner: dict[str, Any] | None = None,
-    resume: dict[str, Any] | None = None,
-    channel: Any = None,
-    on_open: Callable[[int, float | None], None] | None = None,
-) -> AsyncIterator[tuple[str, Any]]:
-    """One Gebo session, streamed. Not `Runner.run`: that requires an artifact written, and Gebo
-    writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`.
-
-    `model` and `effort` are passed to the session only when named. The `grant`'s two ceilings are
-    the ones the caller resolved (`models.ceilings`); a `resume` goes on under what is left of them.
-    `on_open` is told those two, the turns and the budget (`None` for none) the session is handed,
-    just before it opens and so before any of its events; a session a used-up ceiling never opens
-    does not call it.
-
-    `settings` is the agent's commit attribution, beside the preset every Gebo session has; `None`
-    passes nothing.
-
-    `owner` and `resume`: whose session this is, for a `suspend` row, and such a row to go on
-    from, under what is left of the grant's ceilings.
-
-    `channel` is the `submit.Collector` Gebo hands its result to; `None` opens none.
-
-    `lease` is `(branch, head)`: Gebo writes only its `tree` and pushes only `branch`, with a lease
-    bound to `head`.
-    """
-    denials = Denials()
-    reply = ""
-    end: dict[str, Any] = {}
-    kwargs: dict[str, Any] = {"system_prompt": dict(CLAUDE_CODE_PRESET)}
-    if tree != workspace:
-        kwargs["workspace"] = workspace
-    if model is not None:
-        kwargs["model"] = model
-    if effort is not None:
-        kwargs["effort"] = effort
-    if settings is not None:
-        kwargs["settings"] = settings
-    if owner is not None:
-        kwargs["owner"] = owner
-    if channel is not None:
-        kwargs["mcp_servers"] = {SERVER: channel.server()}
-    turns, budget = grant.max_turns, grant.max_budget_usd or None
-    if resume is not None:
-        turns, budget, used_up = ceilings_left(grant.max_turns, grant.max_budget_usd, resume)
-        if used_up:
-            yield (
-                "end",
-                {
-                    "reply": "",
-                    "session_id": resume.get("session_id", ""),
-                    "terminal_reason": used_up,
-                    "cost": {},
-                    "denials": 0,
-                    "denied": None,
-                    "background": 0,
-                    "classified": 0,
-                },
-            )
-            return
-        kwargs["resume_at"] = resume.get("safe_uuid")
-    if on_open is not None:
-        on_open(turns, budget)
-    async for kind, payload in sessions.stream(
-        tree,
-        prompt,
-        (resume or {}).get("session_id") or None,
-        max_turns=turns,
-        gate=Gate(grant, Places(roots=(tree,), branch=lease[0], lease=lease[1]), denials),
-        tools=list(grant.tools),
-        max_budget_usd=budget,
-        **kwargs,
-    ):
-        if kind == "chunk":
-            reply += payload
-            yield ("chunk", payload)
-        elif kind == "tool":
-            continue
-        elif kind == "session":
-            end["session_id"] = str(payload)
-        else:  # `done`, as `Runner.run` reads it
-            end.update(
-                session_id=payload.get("session_id", end.get("session_id", "")),
-                cost=payload.get("cost", {}) or {},
-                terminal_reason=str(payload.get("terminal_reason") or ""),
-                models_used=list(payload.get("models_used") or []),
-            )
-    end["reply"] = reply
-    end["denials"] = denials.count
-    end["denied"] = denials.reasons or None
-    # The `integrate` grant always holds `Bash`.
-    end["background"] = denials.background
-    end["classified"] = denials.classified
-    yield ("end", end)

@@ -54,7 +54,8 @@ that ended `failed` after 109 turns with no known cost on `0002_open-question`, 
 `impl` run on `0004_finished` that ended `failed` with neither; also two
 `impl` runs and one `integrate` opened by a conflict on `0002_open-question` ($16.32 in all,
 over the $15 budget, one `impl` at four times the median tokens per turn) and three `impl`
-runs on `0004_finished`, then a last `impl` run that failed (`seed_runs`), so every anomaly
+runs on `0004_finished`, then a last `impl` run that failed, and an `estimate` and a `chat` run
+of no unit, each with its events like the `integrate` one (`seed_runs`), so every anomaly
 `/cost` knows has a row and `/agents` shows `impl` as `failed` and `spec` as `ok` (an `idle`
 agent has no run: `idea`), and one chat conversation in a temporary `CLAUDE_CONFIG_DIR`, titled `Backlog screen
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
@@ -662,8 +663,38 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
         journal.finished(
             key, "0002_open-question", "impl", "done", turns=turns, cost_usd=usd, **_tokens(tokens)
         )
-    journal.started(key, "0002_open-question", "integrate", "manual", integrate_state="conflicting")
-    journal.finished(key, "0002_open-question", "integrate", "done", turns=6, cost_usd=0.80)
+    journal.started(
+        key,
+        "0002_open-question",
+        "integrate",
+        "manual",
+        integrate_state="conflicting",
+        agent="Gebo",
+        run="capture-integrate-1",
+    )
+    _run_events(work, data_dir, key, "0002_open-question", "integrate", "capture-integrate-1")
+    journal.finished(
+        key,
+        "0002_open-question",
+        "integrate",
+        "done",
+        agent="integrate",
+        status="done",
+        run="capture-integrate-1",
+        turns=6,
+        cost_usd=0.80,
+    )
+    # Runs no unit holds, each with its events: Insights lists the estimate and chat beside the
+    # stages, and `/run/proj/capture-estimate-1` opens one.
+    for stage, run, usd in (
+        ("estimate", "capture-estimate-1", 0.11),
+        ("chat", "capture-chat-1", 0.04),
+    ):
+        journal.started(key, "", stage, "manual", run=run)
+        _run_events(work, data_dir, key, "", stage, run)
+        journal.finished(
+            key, "", stage, "done", agent=stage, status="done", run=run, turns=2, cost_usd=usd
+        )
     for _ in range(3):
         journal.started(key, "0004_finished", "impl", "autonomous")
         journal.finished(
@@ -673,6 +704,31 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     # (a stage's chip is its last run's); `spec` ended `done` above and is `ok`.
     journal.started(key, "0004_finished", "impl", "autonomous")
     journal.finished(key, "0004_finished", "impl", "failed", cost_unknown=True)
+
+
+def _run_events(work: Path, data_dir: Path, key: str, unit: str, stage: str, run: str) -> None:
+    """A short run's events as the recorder stores them: its config, a read, a refusal, its words
+    and its end."""
+    from coscc.store.db import Data
+
+    data, at = Data(data_dir), int(time.time() * 1000)
+    data.step_run_open(run, str(Path(work).resolve()), key, unit, stage, at)
+    said = [
+        ("config", {"model": "claude-opus-5-5[1m]", "effort": "medium"}),
+        ("tool_use", {"id": "t1", "name": "Read", "input": {"file_path": "README.md"}}),
+        ("denied", {"tool": "Bash", "input": {"command": "curl x"}, "reason": "not granted"}),
+        ("text", {"text": "Three units are ready to estimate; 0002 waits on its question."}),
+        ("result", {"num_turns": 2, "cost_usd": 0.11, "terminal_reason": "completed"}),
+        ("end", {"outcome": "done", "detail": ""}),
+    ]
+    data.step_events_add(
+        run,
+        [
+            {"run": run, "seq": n, "at": at + n, "kind": kind, **fields}
+            for n, (kind, fields) in enumerate(said, start=1)
+        ],
+    )
+    data.step_run_close(run, at + len(said), 0)
 
 
 def seed_refusal(data_dir: Path, proj: Path) -> None:

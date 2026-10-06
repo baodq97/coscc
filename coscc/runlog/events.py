@@ -161,13 +161,20 @@ class Recorder:
         self.pending: list[dict[str, Any]] = []
         self.subscribers: set[asyncio.Queue] = set()
         self._message_ids: set[str] = set()
+        # Each helper's `agent_id` by the id of the `Agent` call that started it, and the helper
+        # whose message is being recorded now: every event of it carries that `agent_id`.
+        self._helpers: dict[str, str] = {}
+        self._from = ""
         self._task: asyncio.Task | None = None
         self._opened = False
 
     def _emit(self, kind: str, **fields: Any) -> None:
         try:
             self.seq += 1
-            event = _cut({"run": self.run, "seq": self.seq, "at": now_ms(), "kind": kind, **fields})
+            mark = {"agent_id": self._from} if self._from else {}
+            event = _cut(
+                {"run": self.run, "seq": self.seq, "at": now_ms(), "kind": kind, **mark, **fields}
+            )
             self.events.append(event)
             self.pending.append(event)
             for q in list(self.subscribers):
@@ -208,8 +215,15 @@ class Recorder:
         )
 
     def message(self, msg: Any) -> None:
-        """One SDK message, as one or more events. Synchronous: no `await` on this path."""
+        """One SDK message, as one or more events; a helper's carry its `agent_id`. Synchronous: no
+        `await` on this path."""
+        parent = str(getattr(msg, "parent_tool_use_id", None) or "")
+        self._from = self._helpers.get(parent, parent)
         try:
+            data = getattr(msg, "data", None)
+            if getattr(msg, "subtype", "") == "task_started" and isinstance(data, dict):
+                if data.get("tool_use_id") and data.get("task_id"):
+                    self._helpers[str(data["tool_use_id"])] = str(data["task_id"])
             before = self.seq
             if isinstance(msg, AssistantMessage):
                 mid = getattr(msg, "message_id", None)
@@ -234,6 +248,8 @@ class Recorder:
                 self._emit("system", **_system_fields(msg))
         except Exception:  # noqa: BLE001 - `_lose` logs the first
             self._lose()
+        finally:
+            self._from = ""
 
     def _lose(self) -> None:
         """One event lost, counted in the `end` row; the first of a run is logged with its

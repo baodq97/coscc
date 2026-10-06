@@ -40,6 +40,13 @@ class InsightsMeasureTheShippedUnitsAgainstTheTargets(unittest.TestCase):
             ),
             # A late run on a unit shipped long ago does not bring it into the window.
             end("0001_old", "2026-10-03T00:00:00+00:00", 0.5, "pr"),
+            # A chat turn: no unit, and its agent named on its `end`, with the run it opens.
+            {
+                **end("", "2026-10-03T01:00:00+00:00", 0.25, ""),
+                "agent": "chat",
+                "run": "c1",
+                "outcome": "done",
+            },
         ]
         rounds = lambda *v: [{"verdict": x} for x in v]
         units = [
@@ -69,5 +76,19 @@ class InsightsMeasureTheShippedUnitsAgainstTheTargets(unittest.TestCase):
             {d["day"] for d in got["by_day"]}, {"2026-10-01", "2026-10-02", "2026-10-03"}
         )
         self.assertEqual(
-            {r["stage"]: r["usd"] for r in got["by_stage"]}, {"review": 8.0, "impl": 6.0, "pr": 0.5}
+            {r["agent"]: r["usd"] for r in got["by_agent"]},
+            {"review": 8.0, "impl": 6.0, "pr": 0.5, "chat": 0.25},
+        )
+        [chat] = [r for r in got["by_agent"] if r["agent"] == "chat"]
+        self.assertEqual(
+            chat["runs"],
+            [
+                {
+                    "run": "c1",
+                    "unit": "",
+                    "at": "2026-10-03T01:00:00+00:00",
+                    "usd": 0.25,
+                    "outcome": "done",
+                }
+            ],
         )

@@ -25,6 +25,22 @@ export type AgentRow = {
   "chip": string;
 };
 
+export type AgentRun = {
+  "run": string;
+  "unit": string;
+  "at": string;
+  "usd": number | null;
+  "outcome": string;
+};
+
+export type AgentSpend = {
+  "agent": string;
+  "usd": number | null;
+  "steps": number;
+  "unknown": number;
+  "runs": AgentRun[];
+};
+
 export type Answer = {
   "artifact": string;
   "n": number;
@@ -272,7 +288,7 @@ export type Insights = {
   "shipped": Shipped[];
   "targets": Target[];
   "by_day": DaySpend[];
-  "by_stage": StageSpend[];
+  "by_agent": AgentSpend[];
   "waste": Waste[];
 };
 
@@ -495,13 +511,6 @@ export type Source = {
   "at": string;
 };
 
-export type StageSpend = {
-  "stage": string;
-  "usd": number | null;
-  "steps": number;
-  "unknown": number;
-};
-
 export type StageView = {
   "stage": string;
   "file": string;
@@ -515,6 +524,7 @@ export type StepEvent = {
   "seq": number;
   "at": number;
   "kind": string;
+  "agent_id"?: string;
   "role"?: string;
   "text"?: string;
   "thinking"?: string;
@@ -652,12 +662,12 @@ export type Get = {
   "/api/features/shown": Shown[];
   "/api/insights": Insights;
   "/api/release": ReleaseView | null;
+  "/api/runs/{run}": EventsPage;
   "/api/scan/proposals": Proposals;
   "/api/settings/autopilot": AutopilotSettings;
   "/api/units": Cards;
   "/api/units/next": NextStep;
   "/api/units/{name}": Detail;
-  "/api/units/{name}/runs/{run}": EventsPage;
   "/api/update": UpdateStatus;
   "/api/vault/leaks": Leaks;
   "/api/vault/secrets": Secrets;

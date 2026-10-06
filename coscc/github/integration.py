@@ -10,17 +10,16 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from coscc import units
 from coscc.agent import agents, harness
 from coscc.agent import steps as steps_mod
 from coscc.agent.policy import grant_for
-from coscc.agent.sessions import Sessions, Suspended
+from coscc.agent.sessions import Sessions
 from coscc.bus import Bus
 from coscc.config import Config
 from coscc.git import fetches, gitops
@@ -28,11 +27,14 @@ from coscc.git.gitops import GitError
 from coscc.github import integrate, prmachine
 from coscc.github.integrate import open_prs_once
 from coscc.kernel import Invalid, facts as facts_of
-from coscc.runlog import events
 from coscc.runner.queue import Attempt, Holds, Refused
-from coscc.runner.step import check_started_by, config_sources, tell_config, with_ceilings
+from coscc.agent.policy import Places
+from coscc.kernel import Run
+from coscc.runner import run as run_mod
+from coscc.runner.run import NO_SUBMISSION
+from coscc.runner.step import check_started_by, config_sources, with_ceilings
 from coscc.runner.steps import Steps
-from coscc.store.db import Busy, Data, now as _now
+from coscc.store.db import Busy, now as _now
 from coscc.store.journal import BadRecord, Journal
 from coscc.units import submit as submit_mod, worktrees
 from coscc.units import board as board_reader
@@ -772,7 +774,7 @@ class Integration:
             detail = f"pushed on GitHub, but the local branch was not moved: {e}"
         return record(head_after=head_after, outcome="pushed", detail=detail), None
 
-    async def integrate_gebo(  # noqa: PLR0915 - still to split
+    async def integrate_gebo(
         self,
         cwd: str,
         key: str,
@@ -826,17 +828,7 @@ class Integration:
             was,
         )
         name = agent["name"] if agent is not None else ""
-        # This session's own run: what is stored of it is its `config` event and its `end`, since
-        # Gebo's messages are not recorded.
-        recorder = events.Recorder(
-            uuid.uuid4().hex,
-            Data(self.config.data_dir),
-            str(journal.working_dir),
-            key,
-            unit,
-            "integrate",
-        )
-        start_at = was.get("start_at")
+        start: dict[str, Any] = {}
         if resume is None:
             assert directory is not None
             assert info is not None
@@ -867,102 +859,110 @@ class Integration:
                 agent=agent,
             )
             model, model_source, effort, effort_source = self.config_for("integrate")
-            app = self.steps.identity()
-            try:
-                start_at = journal.started(
-                    key,
-                    unit,
-                    "integrate",
-                    "manual",
-                    started_by=seen["started_by"],
-                    prompt_chars=len(prompt),
-                    granted=list(grant.tools),
-                    max_turns=grant.max_turns,
-                    head=head_before,
-                    model=model,
-                    model_source=model_source,
-                    effort=effort,
-                    effort_source=effort_source,
-                    run=recorder.run,
-                    pointed=list(own),
-                    app_version=app["version"],
-                    app_commit=app["commit"],
-                    # What opened this session, for *Integrate for a conflict*.
-                    integrate_state=info["state"],
-                    **({"agent": name} if name else {}),
-                ).get("at")
-            except BadRecord, Busy:
-                pass
+            # What opened this session, for *Integrate for a conflict*.
+            start = {"head": head_before, "pointed": list(own), "integrate_state": info["state"]}
         else:
-            prompt, model = str(resume.get("message") or ""), resume.get("model")
+            prompt, model = "", resume.get("model")
             effort = was.get("effort")
             # Where they came from is in the owner.
             model_source = effort_source = ""
-        sources = config_sources(ceilings, model_source, effort_source, was)
-        # All `resume_integration` needs to take this session up again, no git read.
-        owner = {
-            "kind": "integrate",
-            "workspace": key,
-            "workspace_dir": cwd,
-            "unit": unit,
-            "stage": "integrate",
-            "start_at": start_at,
-            "max_turns": grant.max_turns,
-            "max_budget_usd": grant.max_budget_usd,
-            "effort": effort,
-            # Where each came from, for the `config` of the segment that takes it up.
-            **sources,
-            "run": recorder.run,
-            "pr": pr,
-            "tree": str(tree),
-            "branch": branch,
-            "head_before": head_before,
-            "origin_sha": origin_sha,
-            "seen": seen,
-            "refused_update": refused_update,
-            "completion": completion,
-            "rel": rel,
-        }
-        end: dict[str, Any] = {}
-        failure = ""
         # What Gebo says needs a person is the object it hands back, not its words.
         collector = submit_mod.Collector("integrate")
-        recorder.start()
-        try:
-            async for kind, payload in integrate.run_gebo(
-                self.sessions,
-                tree=str(tree),
-                workspace=cwd,
-                prompt=prompt,
-                grant=grant,
-                lease=(branch, head_before),
+        reply: list[str] = []
+        # What the session's end reads of GitHub and the tree: the outcome and why.
+        seen_after: dict[str, Any] = {"head_now": head_before, "outcome": "failed", "details": []}
+
+        async def finish(got: Run) -> Mapping[str, Any]:
+            seen_after.update(
+                await self._after_gebo(got, tree, pr, branch, head_before, completion, collector)
+            )
+            if seen_after["outcome"] in ("pushed", "needs-person"):
+                got.status = "done"
+            elif got.status == "done":
+                got.status = "failed"
+            got.detail = "; ".join(seen_after["details"])
+            return {}
+
+        stream = run_mod.run(
+            run_mod.Agent(
+                "integrate",
+                grant,
                 model=model,
                 effort=effort,
+                sources=config_sources(ceilings, model_source, effort_source, was),
+                name=name,
                 settings=agents.settings_json(agent) if agent is not None else None,
-                owner=owner,
-                resume=resume,
+                preset=True,
+            ),
+            run_mod.Input(
+                str(tree),
+                prompt,
+                key,
+                workspace_dir=cwd,
+                unit=unit,
+                started_by=seen["started_by"],
+                start=start,
+                # All `resume_integration` needs to take this session up again, no git read.
+                owner={
+                    "pr": pr,
+                    "tree": str(tree),
+                    "branch": branch,
+                    "head_before": head_before,
+                    "origin_sha": origin_sha,
+                    "seen": seen,
+                    "refused_update": refused_update,
+                    "completion": completion,
+                    "rel": rel,
+                },
+                # Gebo writes only its `tree` and pushes only `branch`, with a lease bound to its head.
+                places=Places(roots=(str(tree),), branch=branch, lease=head_before),
                 channel=collector,
-                on_open=functools.partial(tell_config, recorder, model, effort, sources),
-            ):
-                if kind == "chunk":
-                    yield ("chunk", payload)
-                else:
-                    end = payload
-        except Suspended, asyncio.CancelledError:
-            # Paused by an update, with its `suspend` row, or the app going down. No `end` and no
-            # record; what can be written of the run is, its row stays open and the next start
-            # closes it, the owner naming the run.
-            await recorder.abandon()
-            raise
-        except Exception as e:
-            # Recorded, never swallowed silently.
-            log.exception("the integration session of %s failed", unit)
-            failure = f"the session failed: {e}"
-        run_fields = {
-            "run": recorder.run,
-            "events_lost": await recorder.close("failed" if failure else "done", failure),
-        }
-        details = [failure] if failure else []
+                resume=resume,
+            ),
+            ctx=run_mod.Ctx(self.sessions, journal, self.config.data_dir, self.steps.identity()),
+            finish=finish,
+        )
+        async for kind, payload in stream:
+            if kind == "chunk":
+                reply.append(payload)
+                yield ("chunk", payload)
+        head_now, outcome = seen_after["head_now"], seen_after["outcome"]
+        needs_person = integrate.needs_person_of(collector.object())
+        rec = write(
+            integrate.record(
+                workspace=key,
+                unit=unit,
+                pr=pr,
+                mode="agent",
+                head_before=head_before,
+                head_after=head_now,
+                origin_sha=origin_sha,
+                outcome=outcome,
+                related_=rel,
+                report="".join(reply),
+                needs_person=needs_person,
+                detail="; ".join(seen_after["details"]),
+                update_branch=refused_update,
+                agent=name,
+                **seen,
+            )
+        )
+        yield ("done", {"integration": rec})
+
+    async def _after_gebo(
+        self,
+        got: Run,
+        tree: Path,
+        pr: int,
+        branch: str,
+        head_before: str,
+        completion: dict[str, Any] | None,
+        collector: submit_mod.Collector,
+    ) -> dict[str, Any]:
+        """What a Gebo session left, read from GitHub and its tree before its `end`:
+        `{head_now, outcome, details}`. A rebase it left open is aborted."""
+        failed = got.status in ("failed", "refused") and not got.detail.startswith(NO_SUBMISSION)
+        details = [got.detail] if failed and got.detail else []
         try:
             if await gitops.rebase_in_progress(tree):
                 await gitops.abort_rebase(tree)
@@ -974,7 +974,6 @@ class Integration:
         except integrate.IntegrateError as e:
             head_now = head_before
             details.append(f"could not read the pull request's head afterwards: {e}")
-        reply = str(end.get("reply") or "")
         needs_person = integrate.needs_person_of(collector.object())
         outcome = integrate.outcome_of_session(head_before, head_now, needs_person)
         if outcome == "failed" and not submit_mod.submitted(collector):
@@ -1006,44 +1005,7 @@ class Integration:
                 f"the pull request's head moved to {head_now[:7]}, not to the local head "
                 f"{str(completion['local_head'])[:7]} this completion was to push"
             )
-        try:
-            journal.finished(
-                key,
-                unit,
-                "integrate",
-                "done" if outcome in ("pushed", "needs-person") else "failed",
-                session_id=end.get("session_id", ""),
-                detail="; ".join(details) or None,
-                denials=end.get("denials", 0),
-                denied=end.get("denied"),
-                background=end.get("background", 0),
-                classified=end.get("classified", 0),
-                models_used=end.get("models_used") or None,
-                **run_fields,
-                **(end.get("cost") or {}),
-            )
-        except BadRecord, Busy:
-            pass
-        rec = write(
-            integrate.record(
-                workspace=key,
-                unit=unit,
-                pr=pr,
-                mode="agent",
-                head_before=head_before,
-                head_after=head_now,
-                origin_sha=origin_sha,
-                outcome=outcome,
-                related_=rel,
-                report=reply,
-                needs_person=needs_person,
-                detail="; ".join(details),
-                update_branch=refused_update,
-                agent=name,
-                **seen,
-            )
-        )
-        yield ("done", {"integration": rec})
+        return {"head_now": head_now, "outcome": outcome, "details": details}
 
     async def _related(
         self, root: Path, unit: str, data: dict[str, Any], head: str, origin_sha: str
