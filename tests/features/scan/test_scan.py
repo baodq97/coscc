@@ -320,9 +320,10 @@ class ItsSessionIsDeclaredHere(unittest.TestCase):
         self.assertTrue(g.submits)
         self.assertEqual((g.max_turns, g.max_budget_usd), (2, 0.68))
         self.assertIn("paid session", g.warning)
-        self.assertEqual(policy.decide(g, "mcp__cos__submit", {}, "/tmp/ws"), "")
-        for tool in ("Read", "Bash", "Write"):
-            self.assertIn("not granted", policy.decide(g, tool, {}, "/tmp/ws"), tool)
+        places = policy.Places(roots=("/w",))
+        self.assertEqual(g.tools, ())
+        self.assertEqual(policy.critical(g, places, "mcp__cos__submit", {}, None), "")
+        self.assertIn(policy.HELD, policy.critical(g, places, "mcp__cos__other", {}, None))
 
     def test_the_collector_keeps_proposals_and_refuses_a_bare_one(self):
         good = {

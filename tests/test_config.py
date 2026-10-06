@@ -23,10 +23,6 @@ class DefaultsAreTheSafePosture(unittest.TestCase):
     def test_write_and_exec_off_by_default(self):
         self.assertFalse(from_env({}).allow_write_and_exec)
 
-    def test_bypass_permissions_off_by_default(self):
-        self.assertFalse(from_env({}).bypass_permissions)
-        self.assertEqual(from_env({}).permission_mode(), "default")
-
     def test_resuming_foreign_sessions_off_by_default(self):
         self.assertFalse(from_env({}).resume_foreign_sessions)
 
@@ -45,18 +41,18 @@ class Knob2ActuallySubtracts(unittest.TestCase):
         self.assertEqual(Config(allow_write_and_exec=True).effective_tools(), [])
 
 
-class Knob3IsReachableOnlyFromTheEnvironment(unittest.TestCase):
-    def test_bypass_turns_on_from_the_environment(self):
+class TheConfigIsReadOnlyFromTheEnvironment(unittest.TestCase):
+    def test_no_setting_turns_the_permission_mode(self):
         c = from_env({"COS_BYPASS_PERMISSIONS": "1"})
-        self.assertTrue(c.bypass_permissions)
-        self.assertEqual(c.permission_mode(), "bypassPermissions")
+        self.assertFalse(hasattr(c, "bypass_permissions"))
+        self.assertFalse(hasattr(c, "permission_mode"))
 
     def test_config_is_frozen_so_a_request_handler_cannot_raise_privilege(self):
         # "Not settable over HTTP" has to be structural. A handler holding the config
         # object must not be able to write to it.
         c = from_env({})
         with self.assertRaises(Exception):
-            c.bypass_permissions = True  # type: ignore[misc]
+            c.allow_write_and_exec = True  # type: ignore[misc]
 
     def test_there_is_no_mutator_left_on_the_config(self):
         """OQ6, answered by deleting rather than documenting.
@@ -98,8 +94,8 @@ class Parsing(unittest.TestCase):
     def test_an_empty_setting_reads_as_unset(self):
         # `child_env` overrides every `COS_*` with "", so this is what a session started by an app
         # launched with `COS_HOST`/`COS_PORT` set reads.
-        c = from_env({"COS_HOST": "", "COS_PORT": "", "COS_BYPASS_PERMISSIONS": ""})
-        self.assertEqual((c.host, c.port, c.bypass_permissions), ("0.0.0.0", 8790, False))
+        c = from_env({"COS_HOST": "", "COS_PORT": "", "COS_ALLOW_WRITE_AND_EXEC": ""})
+        self.assertEqual((c.host, c.port, c.allow_write_and_exec), ("0.0.0.0", 8790, False))
 
 
 class WorkspaceMembership(unittest.TestCase):

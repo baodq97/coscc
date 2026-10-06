@@ -2281,9 +2281,9 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
         self.assertTrue(units.spike_dir(str(self.repo), self.unit, core.config.data_dir).is_dir())
 
 
-class EveryStageReadsTheUnitsItsUnitNames(unittest.TestCase):
-    """`_link_kwargs` adds the named units' `idea.md` and `intent.md` to `read_also` for every
-    stage, after the siblings `impl` reads."""
+class EveryStageIsToldTheUnitsItsUnitNames(unittest.TestCase):
+    """`_link_kwargs` names where the named units' `idea.md` and `intent.md` are, for every stage,
+    beside the siblings `impl` reads."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -2306,25 +2306,24 @@ class EveryStageReadsTheUnitsItsUnitNames(unittest.TestCase):
     def link(self, stage: str) -> dict:
         return asyncio.run(self.core.steps._link_kwargs(str(self.repo), self.unit, stage))
 
-    def test_a_stage_other_than_impl_is_handed_the_paths_and_the_note(self):
+    def test_a_stage_other_than_impl_is_handed_the_note(self):
         kw = self.link("plan")
-        self.assertEqual(kw["read_also"], (str(self.named),))
+        self.assertNotIn("siblings_note", kw)
         self.assertIn(f"- {self.other} (idea.md): {self.named}", kw["mentions_note"])
 
     def test_impl_keeps_its_siblings_beside_them(self):
         async def siblings(cwd, unit):
-            return ("/sibling",), "- api: /sibling"
+            return "- api: /sibling"
 
         with mock.patch.object(self.core.steps.ideas, "siblings", siblings):
             kw = self.link("impl")
-        self.assertEqual(kw["read_also"], ("/sibling", str(self.named)))
+        self.assertIn(str(self.named), kw["mentions_note"])
         self.assertEqual(kw["siblings_note"], "- api: /sibling")
 
     def test_a_unit_that_names_none_is_handed_neither(self):
         own = self.core.ws.unit_dir(str(self.repo), self.unit)
         (own / "idea.md").write_text("words\n", encoding="utf-8")
         kw = self.link("plan")
-        self.assertNotIn("read_also", kw)
         self.assertNotIn("mentions_note", kw)
 
 

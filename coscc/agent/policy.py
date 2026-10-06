@@ -9,8 +9,9 @@ instead.
   nothing here.
 
 `Grant.tools` is not the whole enforcement: a list handed to the SDK covers the built-in set
-only and MCP tools walk past `tools=[]`. So the grant also carries what `Runner` must refuse
-at the moment of use, in `can_use_tool`.
+only and MCP tools walk past `tools=[]`. Every session runs Claude Code's `auto` mode, and what
+no session may do whatever `auto` thinks is `critical` below, asked by the gate's hook before
+every call (`coscc/agent/helpers.py`).
 """
 
 from __future__ import annotations
@@ -46,12 +47,13 @@ class Grant:
     # Command prefixes refused even though their first word is allowed, each with the reason
     # given. Matched on the leading tokens of a segment: the plain spelling and nothing cleverer.
     denied: tuple[tuple[tuple[str, ...], str], ...] = ()
-    # Every `git push` must carry `--force-with-lease` bound to the head the pull request had
-    # when the step began, and name the unit's own branch. The lease is per run, so it reaches
-    # `decide` as `lease`, not through the grant.
+    # Every `git push` of a command the app checks with `check_command` must carry
+    # `--force-with-lease` bound to the head the pull request had when the step began, and name
+    # the unit's own branch. The lease is per run, so it is passed as `lease`, not through the
+    # grant.
     push_needs_lease: bool = False
     # Whether the session is handed `submit` (`coscc/units/submit.py`), the one tool beyond this
-    # grant's list `decide` lets through. It writes nothing and runs nothing, and is not in
+    # grant's list the gate lets through. It writes nothing and runs nothing, and is not in
     # `tools`: `--tools` names the built-in set, and an SDK server's tool reaches the session anyway.
     submits: bool = False
     # Full names of MCP tools a feature's server holds, derived by `coscc/kernel.py`. Not in `tools`
@@ -81,9 +83,8 @@ MCP_NAME = re.compile(r"mcp__([a-z][a-z0-9-]*)__[a-z][a-z0-9_]*")
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 EXEC_TOOLS = ("Bash",)
 # Hands work to one of `SUBAGENTS` inside the same session. Every tool call a helper makes
-# reaches the same `decide` and grant as the session's own, with its `agent_id`, and its spend
-# is in the session's cost. `Agent` itself never reaches `decide` (it is not asked about in the
-# `default` mode): `coscc/agent/helpers.py`'s hook holds it.
+# reaches the same gate and grant as the session's own, with its `agent_id`, and its spend is in
+# the session's cost.
 AGENT_TOOL = "Agent"
 # The SDK's own message between the agents of one session; the same hook holds where it goes.
 SEND_MESSAGE = "SendMessage"
@@ -278,8 +279,7 @@ GRANTS: dict[str, Grant] = {
     # The first grant that both holds commands and has the app write its artifact from the
     # reply. `beyond_reading` guards only `PROSE_STAGES`, which this is not, so `policy_test`
     # pins `git` out of `commands` instead. Writing is held to the session's `cwd`, a throwaway
-    # directory `runner.steps.Steps.run_step` makes and removes; the worktree and the unit are read
-    # through `read_also`.
+    # directory `runner.steps.Steps.run_step` makes and removes.
     #
     # Ceilings chosen, not measured. Spikes that finished were recorded at 36-44 turns and 40
     # turns / $4.0 stopped several before writing `spike.md`. The recorded `turns` is not the
@@ -1121,7 +1121,7 @@ def check_command(
     be read, a lone `&`, a substitution in effect, a redirect that writes, then every simple
     command. `scratch` is the unit's `(ram, disk)` directories: a redirect may write below
     either (`_redirect_refused`), the ram one only while its files add up to less than
-    `ram_cap` bytes. **That write is outside the write boundary `decide` keeps.**
+    `ram_cap` bytes.
     """
     text = (command or "").strip()
     if not text:
@@ -1262,7 +1262,7 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
 
 
 # Redirection into a file, which is a write that no write-tool check would ever see: a redirect
-# writes a file without any write tool being called, so the path check in `decide` never sees it.
+# writes a file without any write tool being called, so no write tool's path check sees it.
 #
 # Safe: `> /dev/null`, `2>&1`, and writes below the unit's two scratch directories (`_scratch_of`).
 # Writing a file in the worktree stays refused: use Write/Edit.
@@ -1327,7 +1327,7 @@ def _scratch_of(raw: str, scratch: tuple[str, str] | None) -> int | None:
     """Which of `scratch` (0 the ram directory, 1 the disk one) the absolute path `raw` lies
     below, and is not the directory itself; `None` for neither.
 
-    Both sides are resolved when `decide` runs, not when bash opens the file: a directory
+    Both sides are resolved when the call is checked, not when it writes: a directory
     swapped for a symlink in between is not seen. A symlink inside either directory that points
     out of it resolves out, so it is not a way to write elsewhere.
     """
@@ -1454,116 +1454,6 @@ def _paths_in(tool_input: dict) -> list[str]:
     return out
 
 
-def decide(
-    grant: Grant,
-    tool: str,
-    tool_input: dict,
-    workspace: str,
-    unit_dir: str | None = None,
-    read_also: tuple[str, ...] = (),
-    lease: tuple[str, str] | None = None,
-    agent_id: str | None = None,
-    scratch: tuple[str, str] | None = None,
-    ram_cap: int = 0,
-) -> str:
-    """ "" if this call may proceed, else the reason it may not.
-
-    Checked in this order on purpose: the tool has to be granted at all before anything about
-    its arguments matters.
-
-    `agent_id` is the CLI's, never the session's: set when one of `SUBAGENTS` made the call. A
-    helper runs `git` only as `HELPER_GIT`, on top of every other check.
-
-    **`unit_dir` widens the write boundary by exactly one directory.** Every artifact lives in
-    the product's own store, outside the workspace, so a step that writes its own artifact
-    (`impl`) needs that one place. It is one directory, not a prefix of the store: a step may
-    write its own unit's files and no other unit's. And the path is not the caller's: it comes
-    from `coscc/units/__init__.py`, built from the data root and a workspace that already passed
-    the membership gate; no route leads from a request to this value. `None` means no second
-    root, the shape every prose stage runs with (they hold no write tools).
-
-    The same two roots bound `Read`, `Glob` and `Grep` too.
-
-    **`scratch` is the unit's `(ram, disk)` directories, and widens the write boundary by those
-    two**, for a step whose grant holds an exec tool: a redirect or a write tool may write
-    below either, and a write below the ram one is refused once its files add up to `ram_cap`
-    bytes, the reason naming the disk one. Every step may read both. The paths are the app's
-    (`coscc/units/scratch.py`), passed in because this module imports nothing of it; `None`
-    means no scratch.
-
-    `read_also` widens **reading only**, by an explicit list of paths the app built from the
-    data root (Gebo's own unit folder and the intent/spec/plan of the related units). Writing
-    keeps its roots. `lease` is `(branch, head)`, which a grant with `push_needs_lease` binds
-    every `git push` to.
-    """
-    if tool == SUBMIT_TOOL and grant.submits:
-        # The one MCP tool a grant lets through, by its exact name: the app's own in-process
-        # server, whose handler writes nothing and runs nothing.
-        return ""
-    if tool.startswith("mcp__") and tool in grant.mcp:
-        # Safe because `grant.mcp` holds only names the kernel derived from a feature's declared
-        # tools, and `Grant` refuses any entry that is not `mcp__<server>__<name>` or that names
-        # the `cos` server: a built-in tool or `submit` can never enter it.
-        return ""
-    if tool == PEERS_TOOL and AGENT_TOOL in grant.tools:
-        # The app's own list of this run's helpers: it reads nothing else and writes nothing.
-        return ""
-    if tool not in grant.tools:
-        # Covers MCP tools by construction: their names are never in a grant.
-        return f"this step was not granted {tool}"
-
-    if tool == AGENT_TOOL and tool_input.get("subagent_type") not in SUBAGENTS:
-        return f"only these helpers may be started: {', '.join(SUBAGENTS)}"
-
-    if tool in EXEC_TOOLS:
-        # Only the calls the CLI asks about reach here: one it takes for read-only runs in the
-        # background without asking, which is what `sessions.FOREGROUND_ENV` closes.
-        if tool_input.get("run_in_background"):
-            return f"run_in_background is refused: {BACKGROUND_REFUSAL}"
-        command = str(tool_input.get("command", ""))
-        reason = (
-            check_command(grant, command, lease, scratch, ram_cap)
-            or _git_into(command, workspace, read_also)
-            or _helper_git(command, agent_id)
-        )
-        if reason:
-            return reason
-
-    if tool in WRITE_TOOLS:
-        # Relative paths resolve against the app's own directory here; changing that would widen
-        # writing in one corner.
-        roots, reason = _roots(workspace, unit_dir)
-        if reason:
-            return reason
-        # Where a redirect may write (`_scratch_of`), the write tools may too, for a step that can run commands.
-        own = scratch if any(t in grant.tools for t in EXEC_TOOLS) else None
-        reason = _write_refused(tool_input, roots, own, ram_cap)
-        if reason:
-            return reason
-
-    if tool in READ_TOOLS:
-        # Reading is held to the same two roots as writing, or a step that could `Read` could read
-        # anything the app's process could (`~/.ssh`, `~/.config/coscc/env`, every other unit).
-        # Relative paths resolve against the workspace, the session's `cwd` and so what the tool
-        # itself will read.
-        roots, reason = _roots(workspace, unit_dir)
-        if reason:
-            return reason
-        from pathlib import Path
-
-        for extra in (*read_also, *(p for p in scratch or () if p)):
-            try:
-                roots.append(Path(extra).expanduser().resolve())
-            except OSError:
-                return "a path this step may read could not be resolved"
-        for raw in _read_paths_in(tool, tool_input):
-            if raw is _TRAVERSAL:
-                return f"reading outside the workspace is not allowed: {tool_input.get('pattern')}"
-            if not _inside(raw, roots, roots[0]):
-                return f"reading outside the workspace is not allowed: {raw}"
-    return ""
-
-
 def _write_refused(
     tool_input: dict, roots: list, scratch: tuple[str, str] | None, ram_cap: int
 ) -> str:
@@ -1632,91 +1522,6 @@ def _launched(words: list[str]) -> list[int]:
     return out
 
 
-# git's own options that take a value, in front of the subcommand.
-_GIT_VALUED = ("-C", "-c", "--git-dir", "--work-tree")
-
-
-def _git_into(command: str, workspace: str, read_also: tuple[str, ...]) -> str:
-    """Why a `git` pointed into a path `read_also` names is refused, or "".
-
-    `read_also` widens reading, and `git -C <sibling> commit` would be a write there that no
-    write tool made. `_words` drops `-C` and its value, so the deny list never sees it; this
-    reads them as git does: each `-C` relative to the one before, and a relative `--git-dir`,
-    `--work-tree`, `-c` value or `GIT_*=` assignment against both the workspace and the
-    directory the `-C`s end in. `cd <sibling> && git ...` needs `cd`, which no grant holds. A
-    path a subcommand takes (`git worktree add <sibling>/x`) is not read, and the rest is still
-    the read boundary, which is not a sandbox (`.claude/rules/coscc-policy.md`).
-    """
-    from pathlib import Path
-
-    if not read_also:
-        return ""
-    parsed = _read(command)
-    if isinstance(parsed, _Unreadable):
-        return ""
-    try:
-        roots = [Path(p).expanduser().resolve() for p in read_also]
-        base = Path(workspace).expanduser().resolve()
-    except OSError:
-        return "a path this step may read could not be resolved"
-    refused = "git may not be pointed at {}: this step may read that repository, not change it"
-    for simple in parsed.commands:
-        words = list(simple.words)
-        k = 0
-        while k < len(words) - 1 and _ASSIGNMENT.match(words[k]):
-            k += 1
-        if not words or words[k].rsplit("/", 1)[-1] != "git":
-            continue
-        # `GIT_DIR=`, `GIT_WORK_TREE=` and the other `GIT_*` paths git reads from its environment.
-        values = [w.partition("=")[2] for w in words[:k] if w.startswith("GIT_")]
-        if any(e for w, e in zip(words[:k], simple.expanded) if w.startswith("GIT_")):
-            # What a variable holds is not known here, and `impl`'s grant lets one reach git.
-            return "git may not be given a GIT_* variable's value: this step cannot read where it points"
-        rest = words[k + 1 :]
-        unknown = simple.expanded[k + 1 :]
-        where = base
-        i = 0
-        while i < len(rest) and rest[i].startswith("-"):
-            name, eq, value = rest[i].partition("=")
-            if name in _GIT_VALUED and not eq:
-                value = rest[i + 1] if i + 1 < len(rest) else ""
-                i += 1
-            if name in _GIT_VALUED and i < len(unknown) and unknown[i]:
-                return f"git may not be given a variable for {name}: this step cannot read where it points"
-            if name == "-C" and value:
-                # An absolute value replaces `where`; a relative one goes on from it.
-                where = where / Path(value).expanduser()
-                if _inside(str(where), roots, None):
-                    return refused.format(value)
-            elif name == "-c":
-                # `-c core.worktree=<dir>` moves the work tree as `--work-tree` does.
-                values.append(value.partition("=")[2])
-            elif name in _GIT_VALUED:
-                values.append(value)
-            i += 1
-        for value in values:
-            if value and (_inside(value, roots, base) or _inside(value, roots, where)):
-                return refused.format(value)
-    return ""
-
-
-def _roots(workspace: str, unit_dir: str | None) -> tuple[list, str]:
-    """The directories a step may touch, resolved: the workspace, then its own unit."""
-    from pathlib import Path
-
-    roots = []
-    for candidate in (workspace, unit_dir):
-        if not candidate:
-            continue
-        try:
-            roots.append(Path(candidate).expanduser().resolve())
-        except OSError:
-            return [], "the workspace path could not be resolved"
-    if not roots:
-        return [], "the workspace path could not be resolved"
-    return roots, ""
-
-
 def _inside(raw: str, roots: list, base) -> bool:
     """Whether `raw`, once resolved (symlinks included), lies in one of `roots`.
 
@@ -1735,31 +1540,8 @@ def _inside(raw: str, roots: list, base) -> bool:
     return any(target == root or root in target.parents for root in roots)
 
 
-# Stands in for a path when a `Glob` pattern climbs with `..`: there is no fixed prefix to
-# check, and the pattern itself says it is leaving.
-_TRAVERSAL = object()
+# The characters that end the fixed part of a `Glob` pattern.
 _GLOB_CHARS = "*?[{"
-
-
-def _read_paths_in(tool: str, tool_input: dict) -> list:
-    """Every path a read tool was given, plus the fixed prefix of an absolute `Glob` pattern.
-
-    No `path` at all is fine: the SDK then searches the session's `cwd`, the workspace. Reading
-    a pattern this way is best-effort; `TheReadBoundaryIsNotASandbox` below pins what it misses.
-    """
-    out: list = list(_paths_in(tool_input))
-    pattern = tool_input.get("pattern")
-    if tool == "Glob" and isinstance(pattern, str) and pattern:
-        if ".." in pattern.replace("\\", "/").split("/"):
-            out.append(_TRAVERSAL)
-        elif pattern.startswith(("/", "~")):
-            fixed = []
-            for part in pattern.split("/"):
-                if any(c in part for c in _GLOB_CHARS):
-                    break
-                fixed.append(part)
-            out.append("/".join(fixed) or "/")
-    return out
 
 
 # --- the critical calls ------------------------------------------------------
@@ -1816,7 +1598,7 @@ def critical(
     """ "" unless the call is one every session is refused, else why, opening with its item.
 
     `agent_id` is the CLI's, set when one of `SUBAGENTS` made the call. Reads no command list
-    and no read boundary: what is not here is `auto`'s to decide.
+    and no read boundary: what is not here is for `auto` to judge.
     """
     if tool.startswith("mcp__"):
         if tool in allowed_mcp(grant):
@@ -1971,12 +1753,14 @@ def bash_refused(places: Places, command: str, agent_id: str | None = None) -> s
         return (
             f"{HOST}: a git alias, an include or GIT_CONFIG_* can rename `push`: none may be made"
         )
+    reason = _helper_git(command, agent_id)
+    if reason:
+        return f"{HELPERS}: {reason}"
     for simple in parsed.commands:
         reason = _simple_refused(places, simple, agent_id, command)
         if reason:
             return reason
-    reason = _helper_git(command, agent_id)
-    return f"{HELPERS}: {reason}" if reason else ""
+    return ""
 
 
 def _simple_refused(places: Places, simple: _Simple, agent_id: str | None, line: str) -> str:

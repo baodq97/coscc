@@ -1,6 +1,6 @@
 """The recorder each board step carries: what the step does, event by event, for anyone watching.
 
-Every SDK message `Sessions._stream` gets, every refusal `permission_gate` makes, the `config`
+Every SDK message `Sessions._stream` gets, every refusal the session's gate records, the `config`
 a session opened with and the runner's outcome become numbered events, kept in memory for the life of the step, pushed to
 followers, and written to two tables of `cos.db` (never into the run log).
 

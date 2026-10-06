@@ -18,7 +18,8 @@ from coscc.store.journal import BadRecord, Journal, timelines_of
 from coscc.store.db import Busy
 from coscc.agent.policy import grant_for
 from coscc.agent import models
-from coscc.runner.attempt import Denials, permission_gate
+from coscc.agent.helpers import Gate
+from coscc.agent.policy import Places
 from coscc.runner.reply import CEILING_MARKERS
 from coscc.agent.sessions import StepHandle, Suspended
 from coscc.runner.resume import resume_kwargs
@@ -419,7 +420,7 @@ class Backlog:
                         tools=[],
                         # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses
                         # every one but `submit`.
-                        can_use_tool=permission_gate(grant, cwd, Denials()),
+                        gate=Gate(grant, Places(roots=(cwd,))),
                         step=StepHandle(),
                         mcp_servers={submit_mod.SERVER: collector.server()},
                         owner={

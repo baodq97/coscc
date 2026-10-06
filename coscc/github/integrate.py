@@ -29,7 +29,9 @@ from coscc.agent import agents
 from coscc.agent.transcript import ceilings_left
 from coscc.git import gh
 from coscc.runner.step import check_started_by
-from coscc.runner.attempt import CLAUDE_CODE_PRESET, Denials, permission_gate
+from coscc.agent.helpers import Denials, Gate
+from coscc.agent.policy import Places
+from coscc.runner.attempt import CLAUDE_CODE_PRESET
 from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
 from coscc.units.submit import SERVER
 
@@ -354,15 +356,6 @@ def related_units(rel: dict[str, list[dict]]) -> list[str]:
     return out
 
 
-def read_paths(units_root: Path, own: str, rel: dict[str, list[dict]]) -> tuple[str, ...]:
-    """Gebo's own unit folder, and intent/spec/plan of the related units, nothing else."""
-    paths = [str(units_root / own)]
-    for name in related_units(rel):
-        for f in ("intent.md", "spec.md", "plan.md"):
-            paths.append(str(units_root / name / f))
-    return tuple(paths)
-
-
 def needs_person_of(submitted: dict[str, Any] | None) -> list[str]:
     """What Gebo handed back through `submit` as needing a person, one line each: `<commit>: <why>`,
     or `<why>` alone when it names no commit. `[]` when it handed back none; its reply is never
@@ -594,7 +587,7 @@ def build_prompt(
         for name in names:
             for f in ("intent.md", "spec.md", "plan.md"):
                 parts.append(f"- {units_root / name / f}")
-    # Named, not carried. `read_paths` already lets Gebo `Read` its own unit's folder.
+    # Named, not carried: Gebo reads what it needs of them.
     parts.append("\n# This unit's own artifacts\n")
     for path in own_paths.values():
         parts.append(f"- {path}")
@@ -743,7 +736,6 @@ async def run_gebo(
     workspace: str,
     prompt: str,
     grant: Any,
-    read_also: tuple[str, ...],
     lease: tuple[str, str],
     model: str | None,
     effort: str | None = None,
@@ -769,6 +761,9 @@ async def run_gebo(
     from, under what is left of the grant's ceilings.
 
     `channel` is the `submit.Collector` Gebo hands its result to; `None` opens none.
+
+    `lease` is `(branch, head)`: Gebo writes only its `tree` and pushes only `branch`, with a lease
+    bound to `head`.
     """
     denials = Denials()
     reply = ""
@@ -800,6 +795,7 @@ async def run_gebo(
                     "denials": 0,
                     "denied": None,
                     "background": 0,
+                    "classified": 0,
                 },
             )
             return
@@ -811,7 +807,7 @@ async def run_gebo(
         prompt,
         (resume or {}).get("session_id") or None,
         max_turns=turns,
-        can_use_tool=permission_gate(grant, tree, denials, None, read_also=read_also, lease=lease),
+        gate=Gate(grant, Places(roots=(tree,), branch=lease[0], lease=lease[1]), denials),
         tools=list(grant.tools),
         max_budget_usd=budget,
         **kwargs,
@@ -835,4 +831,5 @@ async def run_gebo(
     end["denied"] = denials.reasons or None
     # The `integrate` grant always holds `Bash`.
     end["background"] = denials.background
+    end["classified"] = denials.classified
     yield ("end", end)

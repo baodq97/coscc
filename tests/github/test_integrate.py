@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.github import integrate as ig
+from tests.runner.test_step import asks
 from tests.units.test_submit import submits as _submits
 
 HEAD = "a" * 40
@@ -512,16 +513,16 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         class FakeSessions:
             async def stream(self, cwd, prompt, session_id, **kw):
                 seen.update(kw, cwd=cwd)
-                gate = kw["can_use_tool"]
-                seen["push_ok"] = await gate(
+                gate = kw["gate"]
+                seen["push_ok"] = await asks(
+                    gate,
                     "Bash",
                     {"command": f"git push --force-with-lease=feat/x:{HEAD} origin feat/x"},
-                    None,
                 )
-                seen["push_bad"] = await gate(
-                    "Bash", {"command": "git push --force origin feat/x"}, None
+                seen["push_bad"] = await asks(
+                    gate, "Bash", {"command": "git push --force origin feat/x"}
                 )
-                seen["submit"] = await gate("mcp__cos__submit", {}, None)
+                seen["submit"] = await asks(gate, "mcp__cos__submit", {})
                 yield ("chunk", "[needs-person] C vs D")
                 await _submits(kw, needs_person=[{"commit": "", "why": "A vs B"}])
                 yield ("done", {"session_id": "s", "cost": {"usd": 0.1}})
@@ -538,7 +539,6 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
                 workspace="/w",
                 prompt="p",
                 grant=grant_for("integrate"),
-                read_also=(),
                 lease=("feat/x", HEAD),
                 model=None,
                 channel=collector,
@@ -549,9 +549,9 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         out = asyncio.run(go())
         self.assertEqual(seen["max_turns"], 120)
         self.assertEqual(seen["cwd"], "/t")
-        self.assertEqual(type(seen["push_ok"]).__name__, "PermissionResultAllow")
-        self.assertEqual(type(seen["push_bad"]).__name__, "PermissionResultDeny")
-        self.assertEqual(type(seen["submit"]).__name__, "PermissionResultAllow")
+        self.assertEqual(seen["push_ok"], "")
+        self.assertIn("lease", seen["push_bad"])
+        self.assertEqual(seen["submit"], "")
         end = out[-1][1]
         self.assertEqual(end["reply"], "[needs-person] C vs D")
         self.assertEqual(end["denials"], 1)
@@ -567,10 +567,8 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
 
         class FakeSessions:
             async def stream(self, cwd, prompt, session_id, **kw):
-                await kw["can_use_tool"]("Bash", {"command": "npm test &"}, None)
-                await kw["can_use_tool"](
-                    "Bash", {"command": "git push --force origin feat/x"}, None
-                )
+                await asks(kw["gate"], "Bash", {"command": "npm test &"})
+                await asks(kw["gate"], "Bash", {"command": "git push --force origin feat/x"})
                 await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {}})
 
@@ -583,7 +581,6 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
                     workspace="/w",
                     prompt="p",
                     grant=grant_for("integrate"),
-                    read_also=(),
                     lease=("feat/x", HEAD),
                     model=None,
                 )

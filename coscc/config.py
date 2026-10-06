@@ -47,14 +47,12 @@ def _list(env: dict[str, str], name: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Config:
-    """The app's entire local state: workspaces plus four knobs."""
+    """The app's entire local state: workspaces plus three knobs."""
 
     # Knob 1. Empty means chat only — no tools at all, not even read.
     tools: tuple[str, ...] = ()
     # Knob 2. While off, no write or exec tool survives `effective_tools`.
     allow_write_and_exec: bool = False
-    # Knob 3. Off, and not settable over HTTP — see `from_env`.
-    bypass_permissions: bool = False
     # Knob 4. Off because resuming a foreign session is untested.
     resume_foreign_sessions: bool = False
 
@@ -92,10 +90,6 @@ class Config:
         if self.allow_write_and_exec:
             return list(self.tools)
         return [t for t in self.tools if t not in WRITE_AND_EXEC_TOOLS]
-
-    def permission_mode(self) -> str:
-        """`bypassPermissions` only when knob 3 is on."""
-        return "bypassPermissions" if self.bypass_permissions else "default"
 
     def may_resume(self, session_created_here: bool) -> bool:
         """The app resumes only what it created, until knob 4 is turned on."""
@@ -149,7 +143,7 @@ def protect(db_path: str | os.PathLike[str], env: dict[str, str] | None = None) 
 def from_env(env: dict[str, str] | None = None) -> Config:
     """Build the config; the only reader of the environment.
 
-    Knob 3 and `data_dir` are reachable only from here: a request has no path to this
+    The knobs and `data_dir` are reachable only from here: a request has no path to this
     function, and there is deliberately no setter.
     """
     e = dict(os.environ if env is None else env)
@@ -161,7 +155,6 @@ def from_env(env: dict[str, str] | None = None) -> Config:
     return Config(
         tools=_list(e, "TOOLS"),
         allow_write_and_exec=_flag(e, "ALLOW_WRITE_AND_EXEC", False),
-        bypass_permissions=_flag(e, "BYPASS_PERMISSIONS", False),
         resume_foreign_sessions=_flag(e, "RESUME_FOREIGN_SESSIONS", False),
         workspaces=declared or fallback,
         working_dir=working_dir,

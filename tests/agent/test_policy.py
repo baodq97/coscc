@@ -16,9 +16,16 @@ from dataclasses import replace
 from pathlib import Path
 
 from coscc.agent import policy
-from coscc.agent.policy import READ_TOOLS, Grant, check_command, decide, grant_for, grant_for_step
+from coscc.agent.policy import READ_TOOLS, Grant, check_command, grant_for, grant_for_step
 
 IMPL = grant_for("impl")
+
+
+def says(grant, tool, tool_input, roots=("/tmp/ws",), agent_id=None, **places) -> str:
+    """What `critical` says of one call, the session's places being `roots` and `places`."""
+    return policy.critical(grant, policy.Places(roots=roots, **places), tool, tool_input, agent_id)
+
+
 # The deny list's own reading is still `integrate`'s, and is pinned here on a grant that holds
 # nothing else.
 MERGING = Grant(
@@ -63,17 +70,15 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
             self.assertEqual(replace(g, submits=False, max_turns=old.max_turns), old, stage)
             self.assertGreaterEqual(g.max_turns, policy.SUBMIT_TURNS, stage)
             self.assertNotIn(submit.NAME, g.tools, stage)
-            self.assertEqual(decide(g, submit.NAME, {"stage": stage}, "/tmp/ws"), "", stage)
+            self.assertEqual(says(g, submit.NAME, {"stage": stage}), "", stage)
             if policy.is_prose_stage(stage):
                 self.assertEqual(policy.beyond_reading(g), (), stage)
 
     def test_no_other_mcp_tool_and_no_other_stage_gets_through(self):
         for stage in ("pr", "ship", "x"):
-            self.assertIn(
-                "not granted", decide(grant_for(stage), policy.SUBMIT_TOOL, {}, "/tmp/ws"), stage
-            )
-        for name in ("mcp__cos__other", "mcp__other__submit", "submit"):
-            self.assertIn("not granted", decide(grant_for("spec"), name, {}, "/tmp/ws"), name)
+            self.assertIn(policy.HELD, says(grant_for(stage), policy.SUBMIT_TOOL, {}), stage)
+        for name in ("mcp__cos__other", "mcp__other__submit"):
+            self.assertIn(policy.HELD, says(grant_for("spec"), name, {}), name)
 
     def test_gebo_and_the_estimate_gain_submit_and_nothing_else(self):
         """The sessions that are no stage, each with its old grant but `submits` and at least
@@ -86,8 +91,8 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
             self.assertEqual(replace(g, submits=False, max_turns=old.max_turns), old, kind)
             turns = old.max_turns if kind in policy.OWN_TURNS else policy.SUBMIT_TURNS
             self.assertEqual(g.max_turns, max(old.max_turns, turns), kind)
-            self.assertEqual(decide(g, submit.NAME, {}, "/tmp/ws"), "", kind)
-            self.assertIn("not granted", decide(g, "mcp__cos__other", {}, "/tmp/ws"), kind)
+            self.assertEqual(says(g, submit.NAME, {}), "", kind)
+            self.assertIn(policy.HELD, says(g, "mcp__cos__other", {}), kind)
 
     def test_the_tool_touches_no_disk_and_runs_nothing(self):
         import ast
@@ -130,20 +135,11 @@ class OneGrantPerStage(unittest.TestCase):
         self.assertNotEqual(grant_for("spec"), Grant())
 
     def test_spec_reads_and_only_reads(self):
-        """Reading, bounded like writing, and nothing else."""
         spec = grant_for("spec")
         self.assertEqual(spec.tools, READ_TOOLS)
         self.assertEqual(spec.commands, ())
         self.assertEqual(policy.beyond_reading(spec), ())
         self.assertTrue(spec.app_writes_artifact)
-        ws, unit = "/tmp/ws", "/tmp/data/units/ws-abc/.cos/0001_a"
-        self.assertIn(
-            "reading outside",
-            decide(spec, "Read", {"file_path": "/etc/passwd"}, ws, unit),
-        )
-        self.assertEqual(decide(spec, "Read", {"file_path": f"{ws}/a.py"}, ws, unit), "")
-        for tool in ("Write", "Bash"):
-            self.assertIn("was not granted", decide(spec, tool, {}, ws, unit))
 
     def test_spec_has_the_turns_plan_has(self):
         """Copied from `plan`, not measured for `spec`."""
@@ -210,22 +206,17 @@ class OnlyImplStartsHelpers(unittest.TestCase):
         )
 
     def test_peers_is_open_to_a_grant_that_starts_helpers_only(self):
-        self.assertEqual(decide(IMPL, policy.PEERS_TOOL, {}, "/tmp", agent_id="a1"), "")
-        self.assertEqual(decide(IMPL, policy.PEERS_TOOL, {}, "/tmp"), "")
-        self.assertIn("was not granted", decide(grant_for("review"), policy.PEERS_TOOL, {}, "/tmp"))
+        self.assertEqual(says(IMPL, policy.PEERS_TOOL, {}, agent_id="a1"), "")
+        self.assertEqual(says(IMPL, policy.PEERS_TOOL, {}), "")
+        self.assertIn(policy.HELD, says(grant_for("review"), policy.PEERS_TOOL, {}))
 
     def test_only_a_named_helper_may_be_started(self):
-        self.assertEqual(decide(IMPL, policy.AGENT_TOOL, {"subagent_type": "scout"}, "/tmp"), "")
+        self.assertEqual(says(IMPL, policy.AGENT_TOOL, {"subagent_type": "scout"}), "")
         for other in ("general-purpose", "Explore", None):
             with self.subTest(subagent_type=other):
                 self.assertIn(
-                    "only these helpers",
-                    decide(IMPL, policy.AGENT_TOOL, {"subagent_type": other}, "/tmp"),
+                    "only these helpers", says(IMPL, policy.AGENT_TOOL, {"subagent_type": other})
                 )
-        self.assertIn(
-            "was not granted",
-            decide(grant_for("review"), policy.AGENT_TOOL, {"subagent_type": "scout"}, "/tmp"),
-        )
 
 
 # What the app bounds a unit's ram directory to (`coscc.units.scratch.RAM_CAP`).
@@ -233,9 +224,9 @@ CAP = 64 * 2**20
 
 
 class WritesBelowTheUnitsScratch(unittest.TestCase):
-    """Outside its worktree a step may write only into its unit's ram and disk directories."""
+    """Outside its worktree and its unit a step's write tools reach only its unit's ram and disk
+    directories, and only with Bash."""
 
-    UNIT = "0060_x"
     WS = "/tmp/ws"
     UNIT_DIR = "/tmp/data/units/ws-abc/.cos/0060_x"
 
@@ -248,211 +239,101 @@ class WritesBelowTheUnitsScratch(unittest.TestCase):
             d.mkdir()
         self.scratch = (str(self.ram), str(self.disk))
 
-    def bash(self, line, grant=IMPL, scratch="own", cap=CAP):
-        scratch = self.scratch if scratch == "own" else scratch
-        return decide(
-            grant, "Bash", {"command": line}, self.WS, self.UNIT_DIR, scratch=scratch, ram_cap=cap
-        )
-
     def write(self, path, grant=IMPL, tool="Write", scratch="own", cap=CAP):
         scratch = self.scratch if scratch == "own" else scratch
-        return decide(
+        return says(
             grant,
             tool,
             {"file_path": str(path)},
-            self.WS,
-            self.UNIT_DIR,
+            roots=(self.WS, self.UNIT_DIR),
             scratch=scratch,
             ram_cap=cap,
         )
 
-    def test_a_tmp_directory_naming_the_unit_is_no_longer_a_place_to_write(self):
-        d = Path(tempfile.mkdtemp(dir="/tmp", prefix=f"coscc-{self.UNIT}-"))
+    def test_a_tmp_directory_naming_the_unit_is_no_place_to_write(self):
+        d = Path(tempfile.mkdtemp(prefix="coscc-0060_x-"))
         self.addCleanup(d.rmdir)
-        self.assertIn("redirecting into a file", self.bash(f"echo a > {d}/f"))
-        self.assertIn("redirecting into a file", self.bash(f"echo a > {d}/f", scratch=None))
-        self.assertIn("outside the workspace", self.write(d / "f"))
-        self.assertIn("outside the workspace", self.write(d / "f", scratch=None))
+        self.assertIn(policy.WRITES, self.write(d / "f"))
+        self.assertIn(policy.WRITES, self.write(d / "f", scratch=None))
 
-    def test_a_redirect_and_a_write_tool_may_write_below_either_directory(self):
+    def test_a_write_tool_may_write_below_either_directory(self):
         for where in (self.ram, self.disk):
-            with self.subTest(where=where.name):
-                self.assertEqual(self.bash(f"echo a > {where}/f"), "")
-                self.assertEqual(self.bash(f"echo a >> {where}/sub/f"), "")
-                for tool in ("Write", "Edit", "NotebookEdit"):
-                    self.assertEqual(self.write(where / "f", tool=tool, grant=IMPL), "", tool)
+            for tool in policy.WRITE_TOOLS:
+                with self.subTest(where=where.name, tool=tool):
+                    self.assertEqual(self.write(where / "f", tool=tool), "")
+                    self.assertEqual(self.write(where / "sub" / "f", tool=tool), "")
 
-    def test_the_directory_itself_and_what_expands_are_refused(self):
-        for line in (
-            f"echo a > {self.ram}",
-            f"echo a > {self.ram}/*",
-            f"echo a > {self.ram}/$F",
-            f"echo a > {self.ram}/../other/f",
-            "echo a > $HOME/f",
-            "echo a > $COS_SCRATCH_RAMX/f",
-            "echo a > ${COS_SCRATCH_RAM:-/etc}/f",
-            "echo a > $COS_SCRATCH_RAM/$F",
-            "echo a > $COS_SCRATCH_RAM/*",
-            "echo a > '$COS_SCRATCH_RAM'/f",
-        ):
-            with self.subTest(line=line):
-                self.assertIn("redirecting into a file", self.bash(line))
-
-    def test_the_variables_naming_the_directories_may_be_written_below(self):
-        for line in (
-            "echo a > $COS_SCRATCH_RAM/f",
-            'echo a > "${COS_SCRATCH_RAM}/sub/f"',
-            "echo a > $COS_SCRATCH_DISK/f",
-            "npm test > $TMPDIR/log 2>&1",
-            "echo $COS_SCRATCH_DISK > $COS_SCRATCH_DISK/where",
-        ):
-            with self.subTest(line=line):
-                self.assertEqual(self.bash(line), "")
-        self.assertIn("redirecting", self.bash("echo a > $COS_SCRATCH_RAM/f", scratch=None))
-
-    def test_a_variable_the_line_could_point_elsewhere_is_refused(self):
-        for line in (
-            "COS_SCRATCH_RAM=/etc; echo a > $COS_SCRATCH_RAM/f",
-            "export TMPDIR=/etc && echo a > $TMPDIR/f",
-            "read COS_SCRATCH_DISK; echo a > $COS_SCRATCH_DISK/f",
-            "printf -v COS_SCRATCH_RAM /etc; echo a > ${COS_SCRATCH_RAM}/f",
-        ):
-            with self.subTest(line=line):
-                self.assertIn("redirecting into a file", self.bash(line))
-
-    def test_a_full_ram_directory_refuses_its_variable_too(self):
-        with (self.ram / "big").open("wb") as f:
-            f.truncate(CAP)
-        self.assertIn(str(self.disk), self.bash("echo a > $COS_SCRATCH_RAM/x"))
-        self.assertEqual(self.bash("echo a > $COS_SCRATCH_DISK/x"), "")
+    def test_the_directory_itself_and_a_way_out_are_refused(self):
+        for path in (self.ram, self.ram / ".." / "other" / "f", self.ram.parent / "ram-2" / "f"):
+            with self.subTest(path=path):
+                self.assertIn(policy.WRITES, self.write(path))
 
     def test_a_step_without_exec_tools_may_not_write_there(self):
-        # Holds `Write` and no command tool: the step may read its scratch and not write it.
         grant = Grant(tools=("Write", "Read"))
-        self.assertIn("outside the workspace", self.write(self.disk / "f", grant=grant))
-        self.assertIn("outside the workspace", self.write(self.ram / "f", grant=grant))
+        self.assertIn(policy.WRITES, self.write(self.disk / "f", grant=grant))
+        self.assertIn(policy.WRITES, self.write(self.ram / "f", grant=grant))
         self.assertEqual(self.write(self.disk / "f", grant=IMPL), "")
 
     def test_without_scratch_nothing_outside_the_workspace_may_be_written(self):
-        self.assertIn("redirecting", self.bash(f"echo a > {self.disk}/f", scratch=None))
-        self.assertIn("outside the workspace", self.write(self.disk / "f", scratch=None))
+        self.assertIn(policy.WRITES, self.write(self.disk / "f", scratch=None))
 
     def test_another_units_scratch_is_refused(self):
-        self.assertIn("redirecting", self.bash(f"echo a > {self.other}/f"))
-        self.assertIn("outside the workspace", self.write(self.other / "f"))
-        sibling = self.ram.parent / (self.ram.name + "-2")
-        self.assertIn("redirecting", self.bash(f"echo a > {sibling}/f"))
+        self.assertIn(policy.WRITES, self.write(self.other / "f"))
 
     def test_a_symlink_inside_scratch_pointing_out_is_refused(self):
         for where in (self.ram, self.disk):
             with self.subTest(where=where.name):
                 link = where / "out"
                 link.symlink_to(self.other)
-                self.assertIn("redirecting", self.bash(f"echo a > {link}/f"))
-                self.assertIn("outside the workspace", self.write(link / "f"))
-                self.assertIn("outside the workspace", self.write(link))
+                self.assertIn(policy.WRITES, self.write(link / "f"))
+                self.assertIn(policy.WRITES, self.write(link))
         link = self.ram / "plain"
         link.symlink_to(self.disk)
-        self.assertEqual(self.bash(f"echo a > {link}/f"), "")
+        self.assertEqual(self.write(link / "f"), "")
 
     def test_a_full_ram_directory_is_refused_and_names_the_disk_one(self):
-        cap = CAP
         big = self.ram / "sub" / "big"
         big.parent.mkdir()
         with big.open("wb") as f:
             f.truncate(CAP)
-        for reason in (
-            self.bash(f"echo a > {self.ram}/x", cap=cap),
-            self.write(self.ram / "x", cap=cap),
-        ):
-            self.assertIn(str(self.disk), reason)
-            self.assertIn("COS_SCRATCH_DISK", reason)
-        self.assertEqual(self.bash(f"echo a > {self.disk}/x", cap=cap), "")
-        self.assertEqual(self.write(self.disk / "x", cap=cap), "")
+        reason = self.write(self.ram / "x")
+        self.assertIn(str(self.disk), reason)
+        self.assertIn("COS_SCRATCH_DISK", reason)
+        self.assertEqual(self.write(self.disk / "x"), "")
 
     def test_a_ram_directory_just_under_the_cap_still_takes_a_write(self):
-        cap = CAP
         with (self.ram / "big").open("wb") as f:
-            f.truncate(cap - 2**20)
-        self.assertEqual(self.bash(f"echo a > {self.ram}/x", cap=cap), "")
-        self.assertEqual(self.write(self.ram / "x", cap=cap), "")
+            f.truncate(CAP - 2**20)
+        self.assertEqual(self.write(self.ram / "x"), "")
 
     def test_a_symlink_in_ram_is_not_followed_when_the_size_is_counted(self):
         cap = 2**20
         with (self.disk / "big").open("wb") as f:
             f.truncate(10 * cap)
         (self.ram / "ln").symlink_to(self.disk / "big")
-        self.assertEqual(self.bash(f"echo a > {self.ram}/x", cap=cap), "")
-
-    def test_the_refusal_names_where_a_redirect_may_go(self):
-        reason = self.bash("echo a > /tmp/elsewhere/f")
-        for fragment in ("$COS_SCRATCH_RAM", "$COS_SCRATCH_DISK", str(self.ram), str(self.disk)):
-            self.assertIn(fragment, reason)
-        self.assertNotIn("/tmp/<directory", reason)
-
-    def test_every_step_may_read_its_scratch(self):
-        (self.ram / "f").write_text("x")
-        (self.disk / "f").write_text("x")
-        reads = (
-            ("Read", {"file_path": "{}/f"}),
-            ("Glob", {"pattern": "{}/*"}),
-            ("Grep", {"pattern": "x", "path": "{}"}),
-        )
-        for grant in (IMPL, Grant(tools=READ_TOOLS)):
-            for where in (self.ram, self.disk):
-                for tool, args in reads:
-                    given = {k: v.format(where) for k, v in args.items()}
-                    with self.subTest(tool=tool, where=where.name):
-                        got = decide(grant, tool, given, self.WS, scratch=self.scratch)
-                        self.assertEqual(got, "")
-        refused = decide(
-            IMPL, "Read", {"file_path": str(self.other / "f")}, self.WS, scratch=self.scratch
-        )
-        self.assertIn("outside the workspace", refused)
-        self.assertIn(
-            "outside the workspace", decide(IMPL, "Read", {"file_path": f"{self.disk}/f"}, self.WS)
-        )
-
-
-class AToolNobodyGrantedIsRefused(unittest.TestCase):
-    def test_an_mcp_tool_is_refused_by_construction(self):
-        # Eleven of these were measured arriving at a session created with `tools=[]`.
-        # They are refused here because their names can never be in a grant.
-        for tool in (
-            "mcp__claude_ai_Claude_Docs__delete",
-            "mcp__microsoft-learn__microsoft_docs_fetch",
-        ):
-            self.assertIn("was not granted", decide(IMPL, tool, {}, "/tmp"))
-
-    def test_a_granted_read_tool_passes(self):
-        self.assertEqual(decide(IMPL, "Read", {"file_path": "/tmp/x"}, "/tmp"), "")
-
-    def test_an_empty_grant_refuses_everything(self):
-        for tool in ("Read", "Write", "Bash"):
-            self.assertIn("was not granted", decide(Grant(), tool, {}, "/tmp"))
+        self.assertEqual(self.write(self.ram / "x", cap=cap), "")
 
 
 class WritesStayInTheWorkspace(unittest.TestCase):
     def test_a_write_inside_the_workspace_passes(self):
         with tempfile.TemporaryDirectory() as d:
             target = Path(d) / "src" / "a.py"
-            self.assertEqual(decide(IMPL, "Write", {"file_path": str(target)}, d), "")
+            self.assertEqual(says(IMPL, "Write", {"file_path": str(target)}, roots=(d,)), "")
 
     def test_a_write_outside_the_workspace_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             for bad in ("/etc/passwd", "/tmp/elsewhere.txt", str(Path(d).parent / "up.txt")):
-                self.assertIn(
-                    "outside the workspace", decide(IMPL, "Write", {"file_path": bad}, d), bad
-                )
+                said = says(IMPL, "Write", {"file_path": bad}, roots=(d,))
+                self.assertIn(policy.WRITES, said, bad)
 
     def test_a_traversal_back_out_is_refused_after_resolving(self):
         with tempfile.TemporaryDirectory() as d:
             bad = str(Path(d) / ".." / ".." / "etc" / "passwd")
-            self.assertIn("outside the workspace", decide(IMPL, "Write", {"file_path": bad}, d))
+            self.assertIn(policy.WRITES, says(IMPL, "Write", {"file_path": bad}, roots=(d,)))
 
     def test_the_workspace_root_itself_is_allowed(self):
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(decide(IMPL, "Write", {"file_path": d}, d), "")
+            self.assertEqual(says(IMPL, "Write", {"file_path": d}, roots=(d,)), "")
 
 
 class CommandsAreCheckedSegmentBySegment(unittest.TestCase):
@@ -489,7 +370,7 @@ class CommandsAreCheckedSegmentBySegment(unittest.TestCase):
 
     def test_redirection_into_a_file_is_refused(self):
         # A redirect writes without any write tool being called, so the path check in
-        # `decide` never sees it. Found while reading a real run on 2026-09-22.
+        # no write tool sees it. Found while reading a real run on 2026-09-22.
         for bad in ("echo x > /etc/passwd", "cat a >> b", "npm test > out.txt"):
             self.assertIn("redirecting into a file", check_command(IMPL, bad), bad)
 
@@ -498,10 +379,6 @@ class CommandsAreCheckedSegmentBySegment(unittest.TestCase):
         # splitter: the `&` read as a separator and the `1` as a command.
         for good in ("npm test 2>&1", "ls >&2", "uv run python -m unittest 2>&1 | tail -5"):
             self.assertEqual(check_command(IMPL, good), "", good)
-
-    def test_a_bash_call_goes_through_the_command_check(self):
-        self.assertIn("may not run", decide(IMPL, "Bash", {"command": "curl http://x"}, "/tmp"))
-        self.assertEqual(decide(IMPL, "Bash", {"command": "npm test"}, "/tmp"), "")
 
 
 class MergingIsShipsNotPrs(unittest.TestCase):
@@ -597,7 +474,7 @@ class AFeatureAddsItsSession(unittest.TestCase):
         g = grant_for("planted")
         self.assertTrue(g.submits)
         self.assertEqual((g.max_turns, g.max_budget_usd), (2, 0.5))
-        self.assertEqual(decide(g, "mcp__cos__submit", {}, "/tmp/ws"), "")
+        self.assertEqual(says(g, "mcp__cos__submit", {}), "")
 
     def test_a_name_another_grant_holds_is_refused(self):
         with self.assertRaises(ValueError):
@@ -609,147 +486,39 @@ if __name__ == "__main__":
 
 
 class TheWriteBoundaryIsTheWorkspacePlusOneDirectory(unittest.TestCase):
-    """A security guard widened, so both sides get a test.
-
-    Every artifact lives in the product's store, outside the workspace, which puts the file
-    `impl` and `pr` must write outside the only place they were allowed to write. The boundary
-    admits **one** more directory: the step's own unit."""
+    """Every artifact lives in the product's store, outside the workspace, so a step that writes
+    its own admits **one** more directory: the step's own unit."""
 
     def setUp(self):
         self.grant = policy.grant_for("impl")
         self.workspace = "/tmp/ws"
         self.unit = "/tmp/data/units/ws-abc/.cos/0001_a-problem"
 
-    def _decide(self, path: str, unit_dir: str | None = None) -> str:
-        return policy.decide(self.grant, "Write", {"file_path": path}, self.workspace, unit_dir)
+    def _says(self, path: str, unit_dir: str | None = None) -> str:
+        roots = (self.workspace, unit_dir) if unit_dir else (self.workspace,)
+        return says(self.grant, "Write", {"file_path": path}, roots=roots)
 
     def test_a_step_may_write_its_own_artifact(self):
-        self.assertEqual(self._decide(f"{self.unit}/impl.md", self.unit), "")
+        self.assertEqual(self._says(f"{self.unit}/impl.md", self.unit), "")
 
     def test_a_step_may_still_write_code_in_the_workspace(self):
-        self.assertEqual(self._decide(f"{self.workspace}/src/a.py", self.unit), "")
+        self.assertEqual(self._says(f"{self.workspace}/src/a.py", self.unit), "")
 
     def test_it_is_one_directory_and_not_the_whole_store(self):
         # The sibling unit is the case that matters: a prefix check on the store would
         # let any step rewrite any other unit's artifacts.
         sibling = "/tmp/data/units/ws-abc/.cos/0002_another/impl.md"
-        self.assertIn("outside the workspace", self._decide(sibling, self.unit))
+        self.assertIn(policy.WRITES, self._says(sibling, self.unit))
         store = "/tmp/data/units/ws-abc/.cos/anything.md"
-        self.assertIn("outside the workspace", self._decide(store, self.unit))
+        self.assertIn(policy.WRITES, self._says(store, self.unit))
 
     def test_everywhere_else_is_still_refused(self):
         for path in ("/etc/passwd", "/tmp/data/cos.db", "/tmp/ws/../elsewhere/x.py", "~/.ssh/id"):
-            self.assertIn("outside the workspace", self._decide(path, self.unit), path)
+            self.assertIn(policy.WRITES, self._says(path, self.unit), path)
 
-    def test_without_a_unit_directory_the_boundary_is_what_it_always_was(self):
-        # Every prose stage runs this way, and they are granted no write tools at all --
-        # so this is the shape that must not have loosened.
-        self.assertEqual(self._decide(f"{self.workspace}/src/a.py"), "")
-        self.assertIn("outside the workspace", self._decide(f"{self.unit}/impl.md"))
-
-    def test_a_shell_redirect_is_still_refused_whatever_the_boundary_is(self):
-        # The write boundary never sees a redirect; `check_command` is what stops it, and
-        # widening one must not have touched the other.
-        reason = policy.decide(
-            self.grant,
-            "Bash",
-            {"command": f"echo x > {self.unit}/impl.md"},
-            self.workspace,
-            self.unit,
-        )
-        self.assertIn("redirect", reason)
-
-
-class ReadsStayInTheCheckoutAndTheUnit(unittest.TestCase):
-    """Md` `## Answers`, answer 2: reading has the boundary writing has.
-
-    Every grant holding `Read` is held to it, `impl` included, not only the prose stages."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        root = Path(self._tmp.name)
-        self.ws = root / "ws"
-        self.unit = root / "data" / "units" / "ws-abc" / ".cos" / "0001_a-problem"
-        (self.ws / "src").mkdir(parents=True)
-        self.unit.mkdir(parents=True)
-        self.grant = Grant(tools=READ_TOOLS)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _decide(self, tool: str, tool_input: dict, grant: Grant | None = None) -> str:
-        return decide(grant or self.grant, tool, tool_input, str(self.ws), str(self.unit))
-
-    def test_a_read_in_the_workspace_passes(self):
-        self.assertEqual(self._decide("Read", {"file_path": str(self.ws / "src" / "a.py")}), "")
-
-    def test_a_read_in_the_units_own_directory_passes(self):
-        self.assertEqual(self._decide("Read", {"file_path": str(self.unit / "spec.md")}), "")
-
-    def test_a_read_anywhere_else_is_refused(self):
-        sibling = self.unit.parent / "0002_another" / "impl.md"
-        for bad in (
-            "/etc/passwd",
-            "~/.ssh/id_rsa",
-            "~/.config/coscc/env",
-            str(sibling),
-            str(self.ws / ".." / "x"),
-        ):
-            self.assertIn(
-                "reading outside the workspace", self._decide("Read", {"file_path": bad}), bad
-            )
-
-    def test_a_relative_path_is_read_from_the_workspace(self):
-        self.assertEqual(self._decide("Read", {"file_path": "src/a.py"}), "")
-        self.assertIn("outside", self._decide("Read", {"file_path": "../../etc/passwd"}))
-
-    def test_a_glob_without_a_path_searches_the_workspace(self):
-        self.assertEqual(self._decide("Glob", {"pattern": "**/*.py"}), "")
-
-    def test_a_glob_aimed_elsewhere_is_refused(self):
-        for tool_input in (
-            {"pattern": "*", "path": "/etc"},
-            {"pattern": "/home/*/.ssh/*"},
-            {"pattern": "../**/*"},
-        ):
-            self.assertIn("reading outside", self._decide("Glob", tool_input), tool_input)
-
-    def test_an_absolute_glob_inside_the_workspace_passes(self):
-        self.assertEqual(self._decide("Glob", {"pattern": f"{self.ws}/src/*.py"}), "")
-
-    def test_a_grep_aimed_elsewhere_is_refused(self):
-        self.assertIn("reading outside", self._decide("Grep", {"pattern": "x", "path": "/etc"}))
-        self.assertEqual(self._decide("Grep", {"pattern": "x", "path": str(self.ws)}), "")
-
-    def test_a_symlink_out_of_the_workspace_is_refused(self):
-        link = self.ws / "escape"
-        link.symlink_to("/etc")
-        self.assertIn("reading outside", self._decide("Read", {"file_path": str(link / "passwd")}))
-
-    def test_the_boundary_holds_for_impl_too(self):
-        self.assertIn(
-            "reading outside",
-            self._decide("Read", {"file_path": "/etc/passwd"}, grant=IMPL),
-        )
-        self.assertEqual(
-            self._decide("Read", {"file_path": str(self.ws / "src" / "a.py")}, grant=IMPL), ""
-        )
-
-
-class TheReadBoundaryIsNotASandbox(unittest.TestCase):
-    """`impl`, `pr` and `ship` keep `cat` and `head` in their commands, and `check_command` reads no
-    path but a writing redirect's target, so a shell read walks past the `Read` check. Only `spec`,
-    `plan` and `review`, which hold no `Bash`, are actually held by it."""
-
-    def test_a_shell_read_is_not_checked(self):
-        self.assertEqual(decide(IMPL, "Bash", {"command": "cat ~/.ssh/id_rsa"}, "/tmp/ws"), "")
-
-    def test_a_glob_pattern_is_read_only_up_to_its_first_wildcard(self):
-        # Only the fixed prefix is checked. A pattern that does not start with `/` or `~`
-        # is taken as relative to the workspace, whatever the tool later makes of it.
-        self.assertEqual(
-            decide(Grant(tools=READ_TOOLS), "Glob", {"pattern": "{a,b}/*"}, "/tmp/ws"), ""
-        )
+    def test_without_a_unit_directory_the_boundary_is_the_workspace(self):
+        self.assertEqual(self._says(f"{self.workspace}/src/a.py"), "")
+        self.assertIn(policy.WRITES, self._says(f"{self.unit}/impl.md"))
 
 
 class TheImplCeilingsCameFromMeasurement(unittest.TestCase):
@@ -948,65 +717,9 @@ class IntegrateKeepsItsDenyList(unittest.TestCase):
         self.assertIn("ship stage's", check_command(grant_for("integrate"), "gh pr merge 7"))
 
 
-class GeboReadsAnExplicitList(unittest.TestCase):
-    """`read_also` widens reading by named paths, and never writing."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        base = Path(self._tmp.name)
-        self.tree = base / "tree"
-        self.own = base / "units" / "0035_x"
-        self.other = base / "units" / "0030_y"
-        for d in (self.tree, self.own, self.other):
-            d.mkdir(parents=True)
-        (self.other / "intent.md").write_text("x")
-        (self.other / "impl.md").write_text("x")
-        self.G = grant_for("integrate")
-        self.also = (str(self.own), str(self.other / "intent.md"))
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def d(self, tool, path):
-        return decide(
-            self.G, tool, {"file_path": str(path)}, str(self.tree), None, read_also=self.also
-        )
-
-    def test_a_listed_file_reads_and_its_neighbour_does_not(self):
-        self.assertEqual(self.d("Read", self.other / "intent.md"), "")
-        self.assertIn("reading outside", self.d("Read", self.other / "impl.md"))
-
-    def test_its_own_unit_folder_reads_but_is_never_written(self):
-        self.assertEqual(self.d("Read", self.own / "plan.md"), "")
-        self.assertIn("writing outside", self.d("Write", self.own / "impl.md"))
-
-    def test_the_worktree_is_written(self):
-        self.assertEqual(self.d("Write", self.tree / "a.py"), "")
-
-
 class IntentReadsWhatSpecReads(unittest.TestCase):
     """`intent` checks the idea's problem against the worktree's code, so it reads as `spec`
     reads and does nothing else."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        base = Path(self._tmp.name)
-        self.tree = base / "tree"
-        self.other = base / "units" / "0030_y"
-        for d in (self.tree, self.other):
-            d.mkdir(parents=True)
-        (self.tree / "a.py").write_text("x")
-        (self.other / "intent.md").write_text("x")
-        (self.other / "impl.md").write_text("x")
-        self.also = (str(self.other / "intent.md"),)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def d(self, stage, tool, path):
-        return decide(
-            grant_for(stage), tool, {"file_path": str(path)}, str(self.tree), read_also=self.also
-        )
 
     def test_it_holds_the_read_tools_and_nothing_beyond_reading(self):
         grant = grant_for("intent")
@@ -1019,17 +732,8 @@ class IntentReadsWhatSpecReads(unittest.TestCase):
         self.assertEqual(grant.max_turns, 40)
         self.assertEqual(grant.max_budget_usd, 4.0)
 
-    def test_it_reads_where_spec_reads_and_nowhere_else(self):
-        for tool, path in (
-            ("Read", self.tree / "a.py"),
-            ("Read", self.other / "intent.md"),
-            ("Read", self.other / "impl.md"),
-            ("Write", self.tree / "a.py"),
-        ):
-            with self.subTest(tool=tool, path=path):
-                self.assertEqual(self.d("intent", tool, path), self.d("spec", tool, path))
-        self.assertEqual(self.d("intent", "Read", self.tree / "a.py"), "")
-        self.assertIn("reading outside", self.d("intent", "Read", self.other / "impl.md"))
+    def test_it_holds_what_spec_holds(self):
+        self.assertEqual(grant_for("intent").tools, grant_for("spec").tools)
 
 
 class SpikeWritesOnlyItsScratch(unittest.TestCase):
@@ -1049,10 +753,7 @@ class SpikeWritesOnlyItsScratch(unittest.TestCase):
         self._tmp.cleanup()
 
     def d(self, tool, path):
-        also = (str(self.tree), str(self.unit))
-        return decide(
-            self.G, tool, {"file_path": str(path)}, str(self.scratch), None, read_also=also
-        )
+        return says(self.G, tool, {"file_path": str(path)}, roots=(str(self.scratch),))
 
     def test_the_grant_is_the_one_the_spec_names(self):
         self.assertEqual(self.G.tools, READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS)
@@ -1075,8 +776,8 @@ class SpikeWritesOnlyItsScratch(unittest.TestCase):
 
     def test_it_writes_its_scratch_and_nothing_it_reads(self):
         self.assertEqual(self.d("Write", self.scratch / "probe.py"), "")
-        self.assertIn("writing outside", self.d("Write", self.tree / "probe.py"))
-        self.assertIn("writing outside", self.d("Write", self.unit / "spec.md"))
+        self.assertIn(policy.WRITES, self.d("Write", self.tree / "probe.py"))
+        self.assertIn(policy.WRITES, self.d("Write", self.unit / "spec.md"))
 
 
 class TheShellIsReadAsTheShellReadsIt(unittest.TestCase):
@@ -1387,125 +1088,6 @@ class TheLabelDecidesImplsCeilings(unittest.TestCase):
         self.assertGreater(novel.max_budget_usd, novel.max_turns * 0.0568)
 
 
-class ASiblingCheckoutIsReadNotChanged(unittest.TestCase):
-    """`impl` reads the other repositories of its idea through `read_also`."""
-
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tree = Path(tmp.name) / "tree"
-        self.sibling = Path(tmp.name) / "api"
-        for d in (self.tree, self.sibling):
-            d.mkdir()
-        (self.sibling / "api.py").write_text("x = 1\n")
-        self.also = (str(self.sibling),)
-
-    def test_impl_may_read_a_sibling_checkout(self):
-        self.assertEqual(
-            decide(
-                IMPL,
-                "Read",
-                {"file_path": str(self.sibling / "api.py")},
-                str(self.tree),
-                None,
-                self.also,
-            ),
-            "",
-        )
-        self.assertEqual(
-            decide(
-                IMPL,
-                "Grep",
-                {"pattern": "x", "path": str(self.sibling)},
-                str(self.tree),
-                None,
-                self.also,
-            ),
-            "",
-        )
-
-    def test_impl_may_not_write_or_edit_there(self):
-        for tool in ("Write", "Edit"):
-            said = decide(
-                IMPL,
-                tool,
-                {"file_path": str(self.sibling / "api.py")},
-                str(self.tree),
-                None,
-                self.also,
-            )
-            self.assertIn("outside the workspace", said, tool)
-
-    def test_git_c_into_a_sibling_is_refused(self):
-        for command in (
-            f"git -C {self.sibling} commit -am x",
-            f"git -C {self.sibling}/sub status",
-            f"git -c user.name=x -C {self.sibling} status",
-            f"git --git-dir={self.sibling}/.git log",
-            f"git --work-tree {self.sibling} checkout .",
-            f"npm test && git -C {self.sibling} push",
-        ):
-            said = decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also)
-            self.assertIn("may not be pointed at", said, command)
-
-    def test_git_pointed_there_by_its_environment_or_a_chain_of_c_is_refused(self):
-        """Git reads `GIT_DIR` and `GIT_WORK_TREE`, and each `-C` goes on from the one before, so a
-        relative one lands where the chain says."""
-        for command in (
-            f"GIT_DIR={self.sibling}/.git GIT_WORK_TREE={self.sibling} git commit -am x",
-            f"GIT_WORK_TREE={self.sibling} git checkout .",
-            f"git -C / -C {str(self.sibling).lstrip('/')} commit -am x",
-            f"git -C {self.tree} -C ../api commit -am x",
-            f"git -C {self.tree.parent} --git-dir=api/.git log",
-            "git --work-tree ../api checkout .",
-            f"git -c core.worktree={self.sibling} checkout .",
-        ):
-            said = decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also)
-            self.assertIn("may not be pointed at", said, command)
-        # A variable's value is not known here, so it is refused where it would point git.
-        for command in (
-            "GIT_DIR=$S git log",
-            "git -C $S commit -am x",
-            "git --git-dir=$S/.git log",
-        ):
-            said = decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also)
-            self.assertIn("cannot read where it points", said, command)
-
-    def test_the_known_limit_of_git_into(self):
-        """What `_git_into` does not read (`.claude/rules/coscc-policy.md`): a path a
-        subcommand takes, and anything but git. Pinned, so closing one turns this red."""
-        for command in (
-            f"git worktree add {self.sibling}/x",
-            f"python -c \"open('{self.sibling}/api.py', 'w')\"",
-        ):
-            self.assertEqual(
-                decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also),
-                "",
-                command,
-            )
-
-    def test_git_c_elsewhere_and_git_without_it_still_run(self):
-        for command in (
-            f"git -C {self.tree} status",
-            "git status",
-            f"cat {self.sibling}/api.py",
-            "git log -C",
-            f"GIT_DIR={self.tree}/.git git log",
-            "git -c user.name=x -C sub status",
-            "git -C",
-        ):
-            self.assertEqual(
-                decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also),
-                "",
-                command,
-            )
-
-    def test_without_read_also_git_c_reads_as_it_did(self):
-        self.assertEqual(
-            decide(IMPL, "Bash", {"command": f"git -C {self.sibling} status"}, str(self.tree)), ""
-        )
-
-
 class ABackgroundCommandIsRefused(unittest.TestCase):
     """A step's session ends with its turn, so nothing it starts in the background is ever read
     back."""
@@ -1514,7 +1096,7 @@ class ABackgroundCommandIsRefused(unittest.TestCase):
     UNIT_DIR = "/data/units/slot/.cos/0130_x"
 
     def d(self, stage, tool_input):
-        return decide(grant_for(stage), "Bash", tool_input, "/w", self.UNIT_DIR)
+        return says(grant_for(stage), "Bash", tool_input, roots=("/w", self.UNIT_DIR))
 
     def test_run_in_background_is_refused_for_every_grant_with_bash(self):
         for stage in self.STAGES:
@@ -1541,7 +1123,7 @@ class ABackgroundCommandIsRefused(unittest.TestCase):
             "npm test & wait",
         ):
             with self.subTest(command=command):
-                self.assertIn(policy.BACKGROUND_REFUSAL, check_command(IMPL, command))
+                self.assertIn(policy.BACKGROUND_REFUSAL, says(IMPL, "Bash", {"command": command}))
 
     def test_the_other_ampersand_operators_read_as_before(self):
         for command in (
@@ -1555,32 +1137,30 @@ class ABackgroundCommandIsRefused(unittest.TestCase):
             'grep "a & b" f',
         ):
             with self.subTest(command=command):
-                self.assertEqual(check_command(IMPL, command), "")
+                self.assertEqual(says(IMPL, "Bash", {"command": command}), "")
 
 
 class AFeaturesMcpToolIsAllowedByItsExactNameAndNothingElse(unittest.TestCase):
     PING = "mcp__fake__ping"
 
-    def _decide(self, grant, tool):
-        return decide(grant, tool, {}, "/w", ())
+    def _says(self, grant, tool):
+        return says(grant, tool, {})
 
     def test_the_granted_name_is_allowed_and_only_that(self):
         grant = Grant(mcp=(self.PING,))
-        self.assertEqual(self._decide(grant, self.PING), "")
-        for tool in ("mcp__fake__other", "mcp__fake__ping2", "mcp__other__ping", "Bash", "Read"):
-            self.assertNotEqual(self._decide(grant, tool), "", tool)
+        self.assertEqual(self._says(grant, self.PING), "")
+        for tool in ("mcp__fake__other", "mcp__fake__ping2", "mcp__other__ping"):
+            self.assertNotEqual(self._says(grant, tool), "", tool)
 
     def test_it_does_not_grant_submit(self):
-        self.assertNotEqual(self._decide(Grant(mcp=(self.PING,)), policy.SUBMIT_TOOL), "")
-        self.assertEqual(
-            self._decide(Grant(mcp=(self.PING,), submits=True), policy.SUBMIT_TOOL), ""
-        )
+        self.assertNotEqual(self._says(Grant(mcp=(self.PING,)), policy.SUBMIT_TOOL), "")
+        self.assertEqual(self._says(Grant(mcp=(self.PING,), submits=True), policy.SUBMIT_TOOL), "")
 
     def test_a_plain_grant_denies_every_mcp_name(self):
         for tool in (self.PING, "mcp__fake__other", policy.SUBMIT_TOOL, "mcp__x__y"):
-            self.assertNotEqual(self._decide(Grant(), tool), "", tool)
+            self.assertNotEqual(self._says(Grant(), tool), "", tool)
             if tool != policy.SUBMIT_TOOL:
-                self.assertNotEqual(self._decide(IMPL, tool), "", tool)
+                self.assertNotEqual(self._says(IMPL, tool), "", tool)
 
     def test_mcp_is_neither_a_tool_nor_a_reason_to_open(self):
         grant = Grant(mcp=(self.PING,))
@@ -1611,7 +1191,7 @@ class AFeaturesMcpToolIsAllowedByItsExactNameAndNothingElse(unittest.TestCase):
 
 class AHelperRunsGitOnlyToRead(unittest.TestCase):
     def bash(self, command: str, agent_id: str | None) -> str:
-        return decide(IMPL, "Bash", {"command": command}, "/tmp", agent_id=agent_id)
+        return says(IMPL, "Bash", {"command": command}, ("/tmp",), agent_id, branch="x")
 
     def test_a_helpers_commit_is_refused_saying_only_the_leading_session_commits(self):
         for command in (
@@ -1646,12 +1226,8 @@ class AHelperRunsGitOnlyToRead(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command, "a1"), "")
 
-    def test_the_leading_sessions_commit_is_as_it_was(self):
+    def test_the_leading_sessions_commit_runs(self):
         self.assertEqual(self.bash("git commit -m x", None), "")
-        self.assertEqual(
-            decide(IMPL, "Bash", {"command": "git commit -m x"}, "/tmp"),
-            self.bash("git commit -m x", None),
-        )
 
 
 class TheSecretsAreOutOfEveryCommandsReach(unittest.TestCase):

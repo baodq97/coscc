@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 import os
 import shutil
 import signal
@@ -17,7 +18,7 @@ import tempfile
 import uuid
 from collections.abc import Callable
 from contextlib import aclosing, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeIs, get_args
@@ -29,16 +30,16 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     EffortLevel,
-    PermissionMode,
     ServerToolUseBlock,
     TextBlock,
     ToolUseBlock,
 )
-from claude_agent_sdk.types import HookEvent, HookMatcher, SystemPromptPreset
+from claude_agent_sdk.types import SystemPromptPreset
 
 from coscc import config as cfg
 from coscc.agent import harness, instructions, transcript
-from coscc.agent.helpers import Helpers
+from coscc.agent.helpers import Gate
+from coscc.agent.policy import Grant, Places, protected_paths
 from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.store.db import Data
@@ -85,6 +86,9 @@ def child_env(
     env.update({name: "" for name in os.environ if name.startswith("COS_")})
     env["COS_DATA_DIR"] = data_dir
     env[cfg.PROTECTED_DB_VAR] = cfg.protect(app_db)
+    # `auto`'s review on the server side: the proxy refuses it, so asking costs a request each
+    # session for nothing, and the CLI's own classifier decides either way.
+    env["CLAUDE_CODE_AUTO_MODE_SERVER"] = "0"
     if scratch is not None:
         env.update(COS_SCRATCH_RAM=scratch[0], COS_SCRATCH_DISK=scratch[1], TMPDIR=scratch[1])
     if bash:
@@ -95,8 +99,8 @@ def child_env(
 # The app closes a step's session once its turn ends, so a command must end in the foreground
 # or be killed, never be left running where nothing reads its end.
 #
-# - `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`: two roads to the background never reach
-#   `can_use_tool` (a command the CLI takes for read-only runs there unasked; a foreground
+# - `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`: two roads to the background never reach the
+#   gate's hook (a command the CLI takes for read-only runs there unasked; a foreground
 #   command past its timeout is moved there). With this set the first is refused by the CLI's
 #   own schema and the second is killed.
 # - `BASH_DEFAULT_TIMEOUT_MS`: what a call asking no `timeout` gets. The longest proof (a build
@@ -504,12 +508,21 @@ def cumulative(message: Any) -> dict[str, float]:
 MAX_BUFFER = 32 * 1024 * 1024
 
 
-def _is_permission_mode(value: str) -> TypeIs[PermissionMode]:
-    return value in get_args(PermissionMode)
-
-
 def _is_effort(value: str) -> TypeIs[EffortLevel]:
     return value in get_args(EffortLevel)
+
+
+# What `auto` is told in every session's `--settings`: its own rules, and where it runs. Inline,
+# since no settings source is loaded and the classifier reads `autoMode` from nowhere else.
+AUTO_MODE = {
+    "soft_deny": ["$defaults"],
+    "hard_deny": ["$defaults"],
+    "environment": [
+        "$defaults",
+        "The working directory is the git worktree of one unit of work; pushing and merging are "
+        "done by the app, not by the agent.",
+    ],
+}
 
 
 def _options(
@@ -517,7 +530,6 @@ def _options(
     cwd: str,
     resume: str | None,
     max_turns: int = 1,
-    can_use_tool: Any = None,
     tools: list[str] | None = None,
     max_budget_usd: float | None = None,
     workspace: str | None = None,
@@ -527,13 +539,17 @@ def _options(
     settings: str | None = None,
     *,
     data_dir: str,
+    gate: Gate,
     resume_at: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
     agents: dict[str, dict[str, Any]] | None = None,
-    hooks: dict[HookEvent, list[HookMatcher]] | None = None,
     unit_scratch: tuple[str, str] | None = None,
 ) -> ClaudeAgentOptions:
-    """Map the four knobs onto the SDK.
+    """Map the knobs onto the SDK.
+
+    Every session runs `auto`, with `gate` in front of it: its hook asks every call first, the
+    app's own MCP tools it holds are allowed by name, and `auto`'s fallback asks the gate, which
+    refuses.
 
     `fork_session=False` is written out so deleting it is a visible edit: the forking flavour
     of resume returns a *new* id and the resume guarantee fails silently.
@@ -546,7 +562,7 @@ def _options(
 
     `system_prompt` is `None` unless a caller asks: the SDK then hands the CLI an empty system
     prompt, as every chat turn and tool-less step gets. A board step with tools passes
-    `runner.CLAUDE_CODE_PRESET`; it changes nothing else, and `can_use_tool` still decides.
+    `runner.CLAUDE_CODE_PRESET`; it changes nothing else.
 
     No settings source is loaded for any session. The project's instructions come back through
     `coscc/agent/instructions.py`, written to `PROMPT_FILE` in `data_dir`: appended to the
@@ -555,25 +571,20 @@ def _options(
 
     `data_dir` is the session's own data root; building a `Data` touches no disk.
 
-    `settings` is the agent's `{"attribution": ...}` from `agents.settings_json`, passed as
-    `--settings` and only beside a preset (attribution replaces the preset's commit guidance).
+    `--settings` is `AUTO_MODE` as `autoMode`, and beside a preset the agent's `{"attribution":
+    ...}` from `agents.settings_json`, `settings` (attribution replaces the preset's commit
+    guidance).
 
     `mcp_servers` is the app's own in-process servers, `{"cos": <submit>}` for a step that
     hands back an object; `strict_mcp_config` stays, so those are the only ones.
 
-    `hooks` is the app's own in-process callbacks (`Helpers.hooks`), never a settings file's.
-    `unit_scratch` is the unit's `(ram, disk)` directories, which `child_env` puts into the
+    The hooks are the gate's own in-process callbacks, never a settings file's. `unit_scratch` is the unit's `(ram, disk)` directories, which `child_env` puts into the
     session's environment.
     """
     # A board step brings its own list from `policy.Grant`; everything else gets the app
     # default, empty. `tools=[]` and `tools=None` differ for the SDK, so test `is None`. Read
     # once so the environment below follows the same list.
     resolved = config.effective_tools() if tools is None else list(tools)
-    permission_mode = config.permission_mode()
-    if not _is_permission_mode(permission_mode):
-        raise ValueError(
-            f"permission mode {permission_mode!r} is not one of {', '.join(get_args(PermissionMode))}"
-        )
     options = ClaudeAgentOptions(
         cwd=cwd,
         # Laid over what the child would inherit. See `child_env`.
@@ -586,15 +597,15 @@ def _options(
             scratch=unit_scratch,
         ),
         tools=resolved,
-        permission_mode=permission_mode,
+        permission_mode="auto",
         resume=resume,
         fork_session=False,  # resume needs the same id back, not a branch
         model=model if model is not None else config.model,
         max_turns=max(1, int(max_turns)),
         # No source at all, not user, project, local, nor what claude.ai adds. `None` passes no
         # flag and the CLI then loads every source (machine MCP servers, skills, plugins and
-        # `permissions.allow`, which answers a `Bash` call before `can_use_tool` is asked). `[]`
-        # passes `--setting-sources=` with nothing after it.
+        # `permissions.allow`, which answers a call before `auto` is asked). `[]` passes
+        # `--setting-sources=` with nothing after it.
         setting_sources=[],
         # And no MCP server but the ones declared here: none, or the app's own `submit`.
         strict_mcp_config=True,
@@ -606,25 +617,29 @@ def _options(
         # One screenshot is one line; see `MAX_BUFFER`.
         max_buffer_size=MAX_BUFFER,
     )
-    if can_use_tool is not None:
-        # The second layer, and the one that matters: `--tools` names the built-in set only, so
-        # MCP tools reach a session created with `tools=[]`. This callback is on the path every
-        # call takes; `strict_mcp_config` keeps those tools out of init but this decides.
-        options.can_use_tool = can_use_tool
+    # `--tools` names the built-in set only, so MCP tools reach a session created with
+    # `tools=[]`; the hook is asked before every call, whatever the tool, and before `auto`.
+    options.hooks = gate.hooks()
+    options.can_use_tool = gate.can_use_tool
+    # The app's own MCP tools the grant holds skip the classifier; no command is allowed by rule.
+    options.allowed_tools = gate.allowed()
     if max_budget_usd:
         options.max_budget_usd = float(max_budget_usd)
     if mcp_servers:
         options.mcp_servers = dict(mcp_servers)
     if agents:
-        # `policy.SUBAGENTS`: helpers inside this session, held by its own `can_use_tool`.
+        # `policy.SUBAGENTS`: helpers inside this session, held by the same gate.
         options.agents = {name: AgentDefinition(**spec) for name, spec in agents.items()}
-    if hooks:
-        options.hooks = dict(hooks)
     project = instructions.read(cwd).text
     if system_prompt is not None:
         options.system_prompt = system_prompt.copy()
-        if settings is not None:
-            options.settings = settings
+    options.settings = json.dumps(
+        {
+            "autoMode": AUTO_MODE,
+            **(json.loads(settings) if settings is not None and system_prompt is not None else {}),
+        },
+        ensure_ascii=False,
+    )
     if project:
         # Through a file, never as a value in argv: the SDK passes a string or an `append` as one
         # argument and Linux refuses an `execve` argument past `MAX_ARG_STRLEN` with `E2BIG`,
@@ -697,6 +712,11 @@ class Sessions:
         # `suspend` row. `resume_after_update` clears it.
         self.paused = False
 
+    def secrets(self) -> tuple[str, ...]:
+        """What no tool of any session may reach (`policy.protected_paths`)."""
+        root = str(Data(self.config.data_dir).root)
+        return protected_paths(root, self.config.config_home, self.config.home)
+
     def created_here(self, session_id: str) -> bool:
         return session_id in self._created_here
 
@@ -752,7 +772,7 @@ class Sessions:
         text: str,
         session_id: str | None = None,
         max_turns: int = 1,
-        can_use_tool: Any = None,
+        gate: Gate | None = None,
         tools: list[str] | None = None,
         max_budget_usd: float | None = None,
         workspace: str | None = None,
@@ -766,7 +786,6 @@ class Sessions:
         spent_before: dict[str, float] | None = None,
         mcp_servers: dict[str, Any] | None = None,
         agents: dict[str, dict[str, Any]] | None = None,
-        helpers: Helpers | None = None,
         unit_scratch: tuple[str, str] | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
@@ -789,8 +808,10 @@ class Sessions:
         `session_id` (`_options`). `spent_before` is what the session cost before this client:
         `{}` makes `done.cost` the whole session's, since the CLI's total carries over a resume.
         A stream `suspend_all` paused raises `Suspended` and yields no `done`; one begun after
-        it is `Refused`. `mcp_servers` goes to `_options` as it is. `helpers` is the run's ledger of
-        helpers: its hooks go to `_options` and every `task_*` system message to it.
+        it is `Refused`. `mcp_servers` goes to `_options` as it is. `gate` stands in front of the
+        session's `auto` mode and hears every system message; with none (chat, `send`), the session
+        gets a locked one: its own tool list, its `cwd` to write. Either way this fills in the
+        secrets (`policy.protected_paths`) from this app's configuration.
         `unit_scratch` is the unit's `(ram, disk)` directories, in the session's environment
         (`child_env`); the caller made them, and the gate it passes holds the same two.
         """
@@ -804,12 +825,16 @@ class Sessions:
             flow = step
             step.cwd, step.owner, step.model = cwd, owner, resolved_model
             step.session_id = session_id or ""
+        if gate is None:
+            listed = self.config.effective_tools() if tools is None else tools
+            gate = Gate(Grant(tools=tuple(listed)), Places(roots=(cwd,)))
+        gate.places = replace(gate.places, secrets=self.secrets())
         inner = self._stream(
             cwd,
             text,
             session_id,
             max_turns,
-            can_use_tool,
+            gate,
             tools,
             max_budget_usd,
             workspace,
@@ -823,7 +848,6 @@ class Sessions:
             spent_before=spent_before,
             mcp_servers=mcp_servers,
             agents=agents,
-            helpers=helpers,
             unit_scratch=unit_scratch,
         )
         if isinstance(flow, dict):  # noqa: PLR1702 - still to split
@@ -867,7 +891,7 @@ class Sessions:
         text,
         session_id,
         max_turns,
-        can_use_tool,
+        gate: Gate,
         tools,
         max_budget_usd,
         workspace,
@@ -882,7 +906,6 @@ class Sessions:
         spent_before: dict[str, float] | None = None,
         mcp_servers: dict[str, Any] | None = None,
         agents: dict[str, dict[str, Any]] | None = None,
-        helpers: Helpers | None = None,
         unit_scratch: tuple[str, str] | None = None,
     ):
         member = workspace if workspace is not None else cwd
@@ -916,7 +939,7 @@ class Sessions:
                             cwd,
                             session_id,
                             max_turns,
-                            can_use_tool=can_use_tool,
+                            gate=gate,
                             tools=tools,
                             max_budget_usd=max_budget_usd,
                             workspace=workspace,
@@ -928,7 +951,6 @@ class Sessions:
                             resume_at=resume_at,
                             mcp_servers=mcp_servers,
                             agents=agents,
-                            hooks=helpers.hooks() if helpers is not None else None,
                             unit_scratch=unit_scratch,
                         )
                     )
@@ -993,11 +1015,11 @@ class Sessions:
                         step.recorder.message(message)
                     except Exception:
                         log.exception("the recorder failed on a message")
-                if helpers is not None and isinstance(message, sdk.SystemMessage):
+                if isinstance(message, sdk.SystemMessage):
                     try:
-                        helpers.system(message)
+                        gate.system(message)
                     except Exception:
-                        log.exception("the helpers' ledger failed on a message")
+                        log.exception("the gate failed on a system message")
                 if isinstance(message, sdk.SystemMessage) and message.subtype == "init":
                     # The id is known here, before the first reply, so an update that pauses the
                     # session now can still name it.

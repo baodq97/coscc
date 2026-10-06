@@ -4,7 +4,7 @@ A unit writes what it will commit in its worktree; everything else goes to one o
 directories the app makes before a step's session opens and removes once the unit ends:
 
 - the **ram** one, `<OS temp>/coscc-scratch-<uid>/<slot>/<unit>/`, for small throwaway files;
-  `RAM_CAP` bounds it, checked by `policy.decide` before each write;
+  `RAM_CAP` bounds it, checked by `policy.critical` before each write tool's write;
 - the **disk** one, `<data root>/scratch/<slot>/<unit>/`, beside `worktrees/`, for large files
   and what a later stage reads back. A session's `TMPDIR` points here.
 
