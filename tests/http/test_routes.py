@@ -86,6 +86,11 @@ class Surface(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(got.headers["content-type"].startswith("text/html"), path)
         self.assertEqual((await self.client.get("/api/no-such")).status_code, 404)
 
+    async def test_there_is_no_route_to_widen_what_impl_runs(self):
+        self.assertEqual((await self.client.get("/api/grants/impl")).status_code, 404)
+        got = await self.client.post("/api/grants/impl", json={"cwd": "/tmp", "allow": ["ssh"]})
+        self.assertEqual(got.status_code, 404)
+
 
 class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
     """The write surface. None of these clone -- the failures they test happen first."""

@@ -59,7 +59,6 @@ class GrantView(TypedDict):
     """What `grant_for` gives a step, to be read and never written: changing one widens what a step may do."""
 
     tools: list[str]
-    commands: list[str]
     mcp: list[str]
     submits: bool
     warning: str
@@ -111,7 +110,6 @@ def _grant_view(key: str) -> GrantView:
     grant = policy.grant_for(key)
     return GrantView(
         tools=list(grant.tools),
-        commands=list(grant.commands),
         mcp=list(grant.mcp),
         submits=grant.submits,
         warning=grant.warning,

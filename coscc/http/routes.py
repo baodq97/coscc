@@ -746,24 +746,6 @@ async def set_feature(request: Request) -> Any:
     return {"name": str(body.get("name")), "state": chosen}
 
 
-@router.get("/api/grants/impl")
-async def get_command_lists(request: Request) -> Any:
-    """`{allow, block}`: the commands `impl` gains and loses in one workspace."""
-    core = _core(request)
-    return core.ws.command_lists(core.ws.check(_cwd(request)))
-
-
-@router.post("/api/grants/impl")
-async def set_command_lists(request: Request) -> Any:
-    """`{cwd, allow, block}` replaces both lists; a name that is not a command's is a 400. Whoever
-    holds the password or a session can widen what `impl` runs in that workspace: `curl` or
-    `ssh` there reach the network through `Bash`, outside every filter."""
-    body = await kernel.body(request)
-    return _core(request).ws.set_command_lists(
-        str(body.get("cwd") or ""), body.get("allow"), body.get("block")
-    )
-
-
 # -- updating the app ----------------------------------------------------
 #
 # Whoever holds the password or a session can apply an update (which pauses every running

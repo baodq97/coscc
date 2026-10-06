@@ -11,7 +11,7 @@ import { Button, Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../comp
 
 // The models an owner picks from, as the defaults name them (`[1m]`: the long context). A row on
 // another model shows its id beside them.
-const MODELS = ["claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]", "claude-haiku-4-5-20251001"];
+const MODELS = ["claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
 export function Agents() {
@@ -249,7 +249,6 @@ function Grant({ agent }: { agent: AgentRow }) {
   return (
     <div className="card card-b">
       {list("Tools", g.tools)}
-      {list("Commands", g.commands)}
       {list("App tools", g.mcp)}
       <div className="faint" style={{ fontSize: 12.5, marginTop: 8 }}>
         {g.warning || "Set in the code, not here: widening what a step may do is a change reviewed like any other."}
