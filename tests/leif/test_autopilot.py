@@ -22,6 +22,7 @@ from coscc.http.app import Core
 from coscc.kernel import Invalid
 from coscc.runner.queue import Refused
 from coscc.agent.sessions import Sessions
+from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
 from tests.http.test_app import use_sessions, use_config
 
@@ -74,20 +75,31 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         # A pass every 5 minutes would never come in a test; the loop's first pass does.
         self.addAsyncCleanup(self.core.shutdown)
 
-    async def unit(self, slug: str, intent: str = "Status: accepted.") -> str:
+    async def unit(
+        self,
+        slug: str,
+        status: str = "accepted",
+        questions: tuple[str, ...] = (),
+        also: dict[str, str] | None = None,
+        asked: dict[str, list[str]] | None = None,
+    ) -> str:
+        """A unit whose intent stands at `status`, with `questions`; `also` and `asked` state
+        other artifacts, all as rows."""
         made = await self.core.answers.create_unit(self.ws, slug, "words for the proof")
         (Path(made["path"]) / "intent.md").write_text(
-            f"# Intent: x\nAuthor: proof. Type: fix. {intent}\n", encoding="utf-8"
+            "# Intent: x\nAuthor: proof.\n", encoding="utf-8"
         )
-        await self.ingest(made["unit"])
+        seed(
+            self.core.ws.unit_meta(),
+            self.key,
+            made["unit"],
+            statuses={"intent.md": status, **(also or {})},
+            type="fix",
+            questions={
+                k: v for k, v in {"intent.md": list(questions), **(asked or {})}.items() if v
+            },
+        )
         return made["unit"]
-
-    async def ingest(self, unit: str) -> None:
-        """Files written here by hand reach `cos.db` as a step's would."""
-        self.assertEqual(
-            await self.core.answers.ingest(self.ws, unit, {"outcome": "done", "stage": "test"}),
-            {},
-        )
 
     def rows(self, unit: str) -> list[tuple]:
         """The answers `cos.db` holds for `unit`, `(artifact, ref, answered_by, via, text)`."""
@@ -188,7 +200,7 @@ class OnTheRealLoop(_Base):
 
     async def test_a_open_question_stops_it(self):
         use_sessions(self.core, _Replies(accepted=5))
-        unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
+        unit = await self.unit("asks", questions=("Which one?",))
         self.listed(unit)
         self.core.autopilot.set_setting(self.ws, "autopilot", True)
         await self.stopped()
@@ -196,24 +208,6 @@ class OnTheRealLoop(_Base):
         [stop] = (await self.core.board(self.ws))["autopilot"]["stops"]
         self.assertEqual((stop["unit"], stop["kind"]), (unit, "a"))
         self.assertIn("intent.md question 1", stop["reason"])
-
-    async def test_a_note_under_open_questions_does_not_stop_it(self):
-        """A bullet and a numbered line with no `?` are notes, so (a) never fires."""
-        use_sessions(self.core, _Replies(accepted=1))
-        unit = await self.unit(
-            "notes",
-            "Status: accepted.\n\n## Open questions\n\n"
-            "Không còn câu hỏi mở.\n\n- Câu 1 là hạn.\n"
-            "7. Người khởi xướng vẫn nên đọc lại file này.",
-        )
-        self.listed(unit)
-        self.core.autopilot.set_setting(self.ws, "autopilot", True)
-        await self.until(lambda: len(self.starts()) >= 2, "two steps")
-        await self.settled()
-        self.assertEqual(self.starts()[0]["stage"], "spec")
-        self.assertEqual(self.starts()[0]["started_by"], "autopilot")
-        [stop] = (await self.core.board(self.ws))["autopilot"]["stops"]
-        self.assertEqual((stop["unit"], stop["kind"]), (unit, "f"))
 
     async def test_e_a_failed_step_is_not_run_again(self):
         use_sessions(self.core, _Replies(accepted=5))
@@ -268,7 +262,7 @@ class OnTheRealLoop(_Base):
         return Journal(self.config.working_dir, self.config.data_dir).records(kind="answer")
 
     async def test_each_block_writes_an_answer_record_and_only_the_last_completes(self):
-        unit = await self.unit("asked", "Status: draft.\n\n## Open questions\n\n1. Một?\n2. Hai?")
+        unit = await self.unit("asked", "draft", ("Một?", "Hai?"))
         await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
         self.assertEqual([r["completes"] for r in self.answers()], [False])
         await self.core.answers.answer(self.ws, unit, "intent.md", 2, "hai", "")
@@ -307,7 +301,7 @@ class OnTheRealLoop(_Base):
 
     async def test_the_last_answer_runs_the_draft_again_in_the_pass_it_wakes(self):
         use_sessions(self.core, _Intents())
-        unit = await self.unit("rerun", "Status: draft.\n\n## Open questions\n\n1. Một?")
+        unit = await self.unit("rerun", "draft", ("Một?",))
         self.listed(unit)
         self.core.autopilot.set_setting(self.ws, "autopilot", True)
         await self.stopped()
@@ -341,7 +335,7 @@ class OnTheRealLoop(_Base):
         use_sessions(
             self.core, _Intents("\n## Open questions\n\n1. Một?\n", questions=((1, "Một?"),))
         )
-        unit = await self.unit("kept", "Status: draft.\n\n## Open questions\n\n1. Một?")
+        unit = await self.unit("kept", "draft", ("Một?",))
         self.listed(unit)
         self.core.autopilot.set_setting(self.ws, "autopilot", True)
         await self.settled()
@@ -362,7 +356,7 @@ class OnTheRealLoop(_Base):
     async def test_an_open_question_stops_the_unit_and_opens_no_session(self):
         """The stop `a` is what a person sees; nothing answers for them."""
         use_sessions(self.core, _Intents())
-        unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
+        unit = await self.unit("asks", questions=("Which one?",))
         self.listed(unit)
         self.core.autopilot.set_setting(self.ws, "autopilot", True)
         await self.stopped()
@@ -377,17 +371,14 @@ class OnTheRealLoop(_Base):
     # --- , a draft impl asks a person ---------------------------------------
 
     async def test_a_draft_impl_is_answered_and_journalled_as_impl(self):
-        unit = await self.unit("impl-asks")
+        unit = await self.unit(
+            "impl-asks",
+            also={"spec.md": "accepted", "plan.md": "accepted", "impl.md": "draft"},
+            asked={"impl.md": ["Chạy lệnh X rồi đưa kết quả?"]},
+        )
         d = self.core.ws.unit_dir(self.ws, unit)
-        (d / "spec.md").write_text(
-            "# Spec: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8"
-        )
-        (d / "plan.md").write_text(
-            "# Plan: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8"
-        )
         before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
         (d / "impl.md").write_text(before, encoding="utf-8")
-        await self.ingest(unit)
         await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "Leif")
         # A row, and not one byte of `impl.md`.
         self.assertEqual((d / "impl.md").read_text(encoding="utf-8"), before)
@@ -402,17 +393,15 @@ class OnTheRealLoop(_Base):
         )
 
     async def impl_asks(self, slug: str) -> tuple[str, Path, str]:
-        unit = await self.unit(slug, "Status: accepted.\n\n## Open questions\n\n1. Một?")
+        unit = await self.unit(
+            slug,
+            questions=("Một?",),
+            also={"spec.md": "accepted", "plan.md": "accepted", "impl.md": "draft"},
+            asked={"impl.md": ["Chạy lệnh X rồi đưa kết quả?"]},
+        )
         d = self.core.ws.unit_dir(self.ws, unit)
-        (d / "spec.md").write_text(
-            "# Spec: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8"
-        )
-        (d / "plan.md").write_text(
-            "# Plan: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8"
-        )
         before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
         (d / "impl.md").write_text(before, encoding="utf-8")
-        await self.ingest(unit)
         return unit, d, before
 
     async def test_an_answer_to_impl_md_is_refused_while_an_impl_step_runs(self):

@@ -16,8 +16,10 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Iterable, Mapping
 from contextlib import closing
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -215,44 +217,48 @@ def make_repo(
     return proj
 
 
-def ingest_fixture(
-    work: Path, data_dir: Path, *workspaces: Path, by: str = "capture_screens"
+def seed_fixture(
+    work: Path, data_dir: Path, units: Iterable[tuple[Path, str, Mapping[str, Any]]]
 ) -> None:
-    """`0135`: a fixture's files are written by hand, and since then the board reads a unit
-    from `cos.db`, not its files. So they go in as a finished step's do: the store's import,
-    if the app has not read it yet — which also reads any answer a file carries — then an
-    ingest of every unit, which reads only what changed since."""
-    from coscc import units
+    """A fixture's units as the board holds them: rows in `cos.db`, one transition per
+    artifact state, written as `by`'s own. A unit is `(workspace, unit, kw)`, `kw` holding any
+    of `statuses` (`{artifact: state}`), `type` (an intent record), `shipped` (the merge
+    row the PR machine writes) and `questions` (`{artifact: [text]}`, numbered from 1).
+    The files a proof writes beside them are prose only; the app reads no state from them."""
     from coscc.units.meta import UnitMeta
 
     meta = UnitMeta(work, Data(data_dir))
-    for ws in workspaces:
-        key, store = str(ws.resolve()), units.root(ws, data_dir)
-        if not meta.imported(key):
-            meta.import_store(key, store)
-        for d in sorted((store / units.COS_DIR).iterdir()):
-            if d.is_dir() and d.name != "ideas":
-                meta.ingest(key, store, d.name, actor=by, session=by, source=by)
-
-
-def fixture_state(store: Path, where: Path) -> Path:
-    """`0135`: the snapshot the loop's `--state` decides on, for a store a proof wrote by hand and
-    reads with `python -m coscc.loop --root <store>`. Imported into a `cos.db` of its own under
-    `where`, as the app imports a store on its first read, and written to `where/state.json`
-    for `--state`. Made again from nothing on every call, so a unit written since is in it."""
-    import json
-    import shutil
-
-    from coscc.units.meta import UnitMeta
-
-    shutil.rmtree(where, ignore_errors=True)
-    where.mkdir(parents=True)
-    meta = UnitMeta(where, Data(where / "data"))
-    key = str(store.resolve())
-    meta.import_store(key, store)
-    path = where / "state.json"
-    path.write_text(json.dumps(meta.snapshot(key, {}), ensure_ascii=False), encoding="utf-8")
-    return path
+    for ws, unit, kw in units:
+        key = str(ws.resolve())
+        with meta.data.write() as conn:
+            meta.add_unit(conn, key, unit)
+            if kw.get("type") is not None:
+                submitted = {
+                    "run": "r",
+                    "revision": "h",
+                    "object": {"judgement": "ready", "type": kw["type"]},
+                }
+                meta.record_result(conn, key, unit, "intent", "intent.md", submitted)
+            for artifact, asked in (kw.get("questions") or {}).items():
+                conn.executemany(
+                    "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    [(meta.root, key, unit, artifact, n, t) for n, t in enumerate(asked, 1)],
+                )
+        for artifact, state in (kw.get("statuses") or {}).items():
+            meta.history.record(
+                key, unit, artifact, state, actor="fixture", session="fixture", source="fixture"
+            )
+        if kw.get("shipped"):
+            meta.history.record(
+                key,
+                unit,
+                "ship.md",
+                "accepted",
+                source="prmachine:merged",
+                guard="merge-read",
+                authority="code",
+            )
 
 
 def seed_session(data_dir: Path) -> str:

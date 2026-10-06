@@ -279,9 +279,12 @@ class AnArtifactWithARecordHasNoQuestionsYet(Base):
             )
         self.assertEqual(self.artifact("review.md")["questions"], [])
 
-    def test_an_artifact_with_no_record_has_no_answer_to_that(self):
+    def test_an_artifact_with_a_state_and_no_rows_asks_none_and_one_with_neither_is_unknown(self):
         self.meta.history.record(WS, self.UNIT, "plan.md", "accepted", source="test")
-        self.assertIsNone(self.artifact("plan.md")["questions"])
+        self.assertEqual(self.artifact("plan.md")["questions"], [])
+        self.assertNotIn(
+            "spec.md", self.meta.snapshot(WS, NAMES)["units"][f"proj/{self.UNIT}"]["artifacts"]
+        )
 
 
 class TheSnapshotDecides(Base):

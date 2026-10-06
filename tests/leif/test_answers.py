@@ -22,6 +22,12 @@ from coscc.units import scratch
 from tests.http.test_app import create_sync, unit_history
 from tests.units.test_submit import a_head, finding, submits as _submits
 from tests.http.test_app import use_sessions
+from tests.units.test_meta import seed
+
+
+def state_of(core, cwd, unit, **kw):
+    """The unit's state as rows, where the app keeps it."""
+    seed(core.ws.unit_meta(), core.ws.key(cwd), unit, **kw)
 
 
 REVIEW_ONE = (
@@ -194,6 +200,9 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         (self.dir / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
+        state_of(
+            self.core, str(self.repo), self.unit, statuses={"intent.md": "accepted"}, type="feat"
+        )
         use_sessions(self.core, Spec())
         gh = FakeGh()
 
@@ -273,6 +282,14 @@ class HowAnAnswerNamesItsQuestion(unittest.TestCase):
             "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n"
             f"## Open questions\n\n1. One?\n2. {self.LONG}\n",
             encoding="utf-8",
+        )
+        state_of(
+            self.core,
+            self.cwd,
+            self.unit,
+            statuses={"intent.md": "accepted"},
+            type="feat",
+            questions={"intent.md": ["One?", self.LONG]},
         )
 
     def answer(self, artifact, question, text="Có."):
@@ -359,9 +376,32 @@ class RecordingAnOutcome(unittest.TestCase):
             (self.dir / f"{stage}.md").write_text(
                 f"# {stage}\nStatus: accepted.\n", encoding="utf-8"
             )
-        (self.dir / "plan.md").write_text("# plan\nStatus: done.\n", encoding="utf-8")
+        (self.dir / "plan.md").write_text("# plan\nStatus: accepted.\n", encoding="utf-8")
         self.intent = self.dir / "intent.md"
         self.intent.write_text(OUTCOME_INTENT, encoding="utf-8")
+        self.finished(self.cwd, self.unit, shipped=True)
+
+    def finished(self, cwd, unit, shipped):
+        state_of(
+            self.core,
+            cwd,
+            unit,
+            statuses={
+                "intent.md": "accepted",
+                "spec.md": "accepted",
+                "plan.md": "accepted",
+                "impl.md": "accepted",
+                "pr.md": "accepted",
+                "review.md": "accepted",
+                "ship.md": "accepted",
+            },
+            type="feat",
+            shipped=shipped,
+            questions={"intent.md": ["One?"]},
+        )
+        self.core.ws.unit_meta().add_answer(
+            self.core.ws.key(cwd), unit, "intent.md", 1, "Có.", "Phong", "2026-09-24", "product"
+        )
 
     def record(self, **over):
         kw = {
@@ -446,9 +486,15 @@ class RecordingAnOutcome(unittest.TestCase):
         return ""
 
     def test_an_unfinished_unit_is_refused(self):
-        (self.dir / "plan.md").write_text("# plan\nStatus: accepted.\n", encoding="utf-8")
-        (self.dir / "ship.md").unlink()
-        self.assertIn("only on a finished unit", self.refused())
+        other = create_sync(self.core, self.cwd, "b-problem", "x")["unit"]
+        self.finished(self.cwd, other, shipped=False)
+        with self.assertRaises(Invalid) as e:
+            asyncio.run(
+                self.core.answers.record_outcome(
+                    self.cwd, other, "đạt", "agent", "npm test", "", "", "Phong"
+                )
+            )
+        self.assertIn("only on a finished unit", str(e.exception))
 
     def test_a_section_after_answers_is_refused(self):
         self.intent.write_text(OUTCOME_INTENT + "\n## Notes\n\nx\n", encoding="utf-8")

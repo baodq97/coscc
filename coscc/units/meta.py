@@ -503,6 +503,8 @@ class UnitMeta:
                 a = artifact(r)
                 if a is not None and r["to_state"] != self.machine.absent:
                     a["status"] = r["to_state"]
+                    # The rows are its questions: an artifact the app holds a state for, with none, asks none.
+                    a["questions"] = []
                     # Whose skip it was: the loop stops the unit unless a person's.
                     if r["to_state"] == "skipped":
                         a["authority"] = r["authority"]

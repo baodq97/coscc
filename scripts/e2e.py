@@ -39,6 +39,7 @@ from scripts.proof_harness import (
     make_repo,
     require_browser,
     say,
+    seed_fixture,
     seed_session,
 )
 
@@ -55,15 +56,17 @@ def intent(title: str) -> str:
 
 
 def load_fixture(api: httpx.Client, root: Path, data_dir: Path, *repos: Path) -> None:
-    """One unit in each workspace, made through the app's own route, then ingested."""
-    from scripts.proof_harness import ingest_fixture
-
+    """One unit in each workspace, made through the app's own route, then stated as rows."""
+    units = []
     for repo in repos:
         api.post("/api/workspaces", json={"name": repo.name}).raise_for_status()
         made = api.post("/api/units", json={"cwd": str(repo), "slug": "alpha", "brief": "e2e"})
         made.raise_for_status()
         (Path(made.json()["path"]) / "intent.md").write_text(intent("alpha"), encoding="utf-8")
-    ingest_fixture(root, data_dir, *repos, by="e2e")
+        units.append(
+            (repo, made.json()["unit"], {"statuses": {"intent.md": "accepted"}, "type": "feat"})
+        )
+    seed_fixture(root, data_dir, units)
 
 
 def open_studio(context, base: str, path: str):

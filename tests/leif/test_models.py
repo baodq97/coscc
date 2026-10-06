@@ -13,6 +13,7 @@ from coscc.config import Config
 from coscc.kernel import Invalid
 from coscc.http.app import Core
 from tests.http.test_app import create_sync
+from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
 
 
@@ -48,7 +49,14 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent\nAuthor: t.\n", encoding="utf-8"
+        )
+        seed(
+            self.core.ws.unit_meta(),
+            self.core.ws.key(str(self.repo)),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
 
     def _run(self, stage: str):
