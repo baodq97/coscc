@@ -42,10 +42,10 @@ def issued(row, roots=("/tmp/ws",), scratch=None, mcp=(), **fields) -> policy.Gr
     )
 
 
-def says(row, tool, tool_input, roots=("/tmp/ws",), agent_id=None, **fields) -> str:
+def says(row, tool, tool_input, roots=("/tmp/ws",), agent_id=None, kind="worker", **fields) -> str:
     """What `critical` says of one call, the run's grant issued from `row` with `roots` and
-    `fields`."""
-    return policy.critical(issued(row, roots, **fields), tool, tool_input, agent_id)
+    `fields`; a helper's (`agent_id`) is a `worker` unless `kind` says otherwise."""
+    return policy.critical(issued(row, roots, **fields), tool, tool_input, agent_id, kind)
 
 
 class OnlyImplAndOnlyAutonomous(unittest.TestCase):
@@ -886,9 +886,11 @@ class _Unit(unittest.TestCase):
         )
         self.grant = issued(IMPL, **self.places)
 
-    def critical(self, tool, tool_input, grant=IMPL, places=None, agent_id=None) -> str:
+    def critical(
+        self, tool, tool_input, grant=IMPL, places=None, agent_id=None, kind="worker"
+    ) -> str:
         fields = self.places if places is None else places
-        return policy.critical(issued(grant, **fields), tool, tool_input, agent_id)
+        return policy.critical(issued(grant, **fields), tool, tool_input, agent_id, kind)
 
     def bash(self, command, **kw) -> str:
         return self.critical("Bash", {"command": command}, **kw)
@@ -1439,6 +1441,26 @@ class TheScratchIsKnownByItsTwoNames(_Unit):
 
 class TheHelperRulesHold(_Unit):
     """Who may be started, what a helper runs, and nothing in the background."""
+
+    def test_a_helper_holds_no_mcp_tool_but_peers_and_a_scout_writes_nothing(self):
+        vault = ("mcp__vault__vault_exec",)
+        for tool in ("mcp__cos__submit", *vault):
+            with self.subTest(tool=tool):
+                self.assertEqual(says(IMPL, tool, {}, mcp=vault), "")
+                said = says(IMPL, tool, {}, mcp=vault, agent_id="a1")
+                self.assertTrue(said.startswith(policy.HELD), said)
+        self.assertEqual(says(IMPL, policy.PEERS_TOOL, {}, agent_id="a1"), "")
+        path = str(self.tree / "x.py")
+        write = {"file_path": path, "content": "x"}
+        edit = {"file_path": path, "old_string": "a", "new_string": "b"}
+        for tool, tool_input in (("Write", write), ("Edit", edit), ("Bash", {"command": "ls"})):
+            with self.subTest(tool=tool):
+                self.assertEqual(self.critical(tool, tool_input, agent_id="a1"), "")
+                for kind in ("scout", ""):
+                    said = self.critical(tool, tool_input, agent_id="a1", kind=kind)
+                    self.assertTrue(said.startswith(policy.HELPERS), said)
+        read = self.critical("Read", {"file_path": path}, agent_id="a1", kind="scout")
+        self.assertEqual(read, "")
 
     def test_only_a_named_helper_in_the_foreground_from_the_leading_session(self):
         self.assertEqual(self.critical("Agent", {"subagent_type": "worker"}), "")

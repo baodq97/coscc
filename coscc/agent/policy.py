@@ -1371,12 +1371,20 @@ def record(grant: Grant) -> dict:
     }
 
 
-def critical(grant: Grant, tool: str, tool_input: dict, agent_id: str | None) -> str:
+def critical(
+    grant: Grant, tool: str, tool_input: dict, agent_id: str | None, kind: str = ""
+) -> str:
     """ "" unless the call is one every session is refused, else why, opening with its item.
 
-    `agent_id` is the CLI's, set when one of `SUBAGENTS` made the call. Reads only the run's
-    grant: no command list and no read boundary; what is not here is for `auto` to judge.
+    `agent_id` is the CLI's, set when one of `SUBAGENTS` made the call, and `kind` that helper's
+    type: a helper holds no MCP tool but `PEERS_TOOL`, and writes or runs a command only when its
+    kind's own tools list the tool (a `scout` neither). Reads only the run's grant: no command list
+    and no read boundary; what is not here is for `auto` to judge.
     """
+    if agent_id is not None:
+        reason = _helper_tool_refused(tool, kind)
+        if reason:
+            return reason
     if tool.startswith("mcp__"):
         if tool in grant.mcp:
             return ""
@@ -1403,6 +1411,15 @@ def critical(grant: Grant, tool: str, tool_input: dict, agent_id: str | None) ->
         if tool_input.get("run_in_background"):
             return f"{HELPERS}: run_in_background is refused: {BACKGROUND_REFUSAL}"
         return bash_refused(grant, str(tool_input.get("command") or ""), agent_id)
+    return ""
+
+
+def _helper_tool_refused(tool: str, kind: str) -> str:
+    """Why a helper of `kind` may not call `tool`, beyond the grant it shares with its session."""
+    if tool.startswith("mcp__"):
+        return "" if tool == PEERS_TOOL else f"{HELD}: a helper holds only {PEERS_TOOL}"
+    if tool in WRITE_TOOLS + EXEC_TOOLS and tool not in SUBAGENTS.get(kind, {}).get("tools", ()):
+        return f"{HELPERS}: a {kind or 'helper of no known kind'} may not use {tool}"
     return ""
 
 

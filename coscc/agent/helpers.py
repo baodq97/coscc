@@ -340,10 +340,16 @@ class Gate:
         self.helpers = helpers
         self.before_push = before_push
 
-    def refused(self, tool_name: str, tool_input: dict, agent_id: str | None) -> str:
-        """Why the hook denies this call, or ""."""
+    def refused(
+        self, tool_name: str, tool_input: dict, agent_id: str | None, kind: str = ""
+    ) -> str:
+        """Why the hook denies this call, or "". `kind` is the helper's type as the call names it,
+        else as the run's helpers learnt it."""
+        if agent_id is not None and not kind and self.helpers is not None:
+            seen = self.helpers.seen.get(agent_id)
+            kind = seen.kind if seen is not None else ""
         reason = (self.helpers or Helpers()).refused(tool_name, tool_input) or critical(
-            self.grant, tool_name, tool_input, agent_id
+            self.grant, tool_name, tool_input, agent_id, kind
         )
         if reason or self.before_push is None or not pushes(self.grant, tool_name, tool_input):
             return reason
@@ -359,7 +365,8 @@ class Gate:
             tool_name = str(hook_input.get("tool_name") or "")
             tool_input = hook_input.get("tool_input") or {}
             agent_id = hook_input.get("agent_id")
-            reason = self.refused(tool_name, tool_input, agent_id)
+            kind = str(hook_input.get("agent_type") or "")
+            reason = self.refused(tool_name, tool_input, agent_id, kind)
             if not reason:
                 self._let_through(tool_name, tool_input, agent_id)
         except Exception as e:

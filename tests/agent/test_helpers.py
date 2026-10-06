@@ -15,7 +15,16 @@ from claude_agent_sdk._internal.query import Query
 from claude_agent_sdk.types import _hooks_to_internal_format
 
 from coscc.agent import sessions
-from coscc.agent.helpers import KINDS, MESSAGE_LINES, PROTOCOL, Denials, Gate, Helpers, malformed
+from coscc.agent.helpers import (
+    KINDS,
+    MESSAGE_LINES,
+    PROTOCOL,
+    Denials,
+    Gate,
+    Helper,
+    Helpers,
+    malformed,
+)
 from coscc.agent.policy import BACKGROUND_REFUSAL, HOST, SUBAGENTS, Grant
 from coscc.config import Config
 
@@ -75,7 +84,9 @@ def _ask(gate: Gate, event: str, hook_input: dict) -> dict:
     return transport.written[-1]["response"]["response"]
 
 
-def _pre(gate: Gate, tool: str, tool_input: dict, agent_id: str | None = None) -> str:
+def _pre(
+    gate: Gate, tool: str, tool_input: dict, agent_id: str | None = None, kind: str = "worker"
+) -> str:
     """The reason the hook denied the call, or "" when it said nothing."""
     said = _ask(
         gate,
@@ -85,7 +96,7 @@ def _pre(gate: Gate, tool: str, tool_input: dict, agent_id: str | None = None) -
             "tool_name": tool,
             "tool_input": tool_input,
             "tool_use_id": "toolu_1",
-            **({"agent_id": agent_id, "agent_type": "worker"} if agent_id else {}),
+            **({"agent_id": agent_id, "agent_type": kind} if agent_id else {}),
         },
     )
     out = said.get("hookSpecificOutput") or {}
@@ -218,6 +229,19 @@ class APushTheGrantAllowsAsksTheGuardsAgain(unittest.TestCase):
 
         gate = Gate(replace(IMPL, branch="feat/x"), Denials(), before_push=boom)
         self.assertIn("refused", _pre(gate, "Bash", {"command": "git push origin feat/x"}))
+
+
+class AHelperIsHeldToItsKind(unittest.TestCase):
+    """The kind comes with the call, else from the run's helpers: a `scout` writes nothing."""
+
+    def test_the_kind_the_ledger_learnt_holds_a_call_that_names_none(self):
+        ledger = Helpers()
+        ledger.seen["a1"] = Helper("a1", kind="scout")
+        ledger.seen["a2"] = Helper("a2", kind="worker")
+        gate = _gate(ledger)
+        self.assertIn("scout may not use Bash", gate.refused("Bash", {"command": "ls"}, "a1"))
+        self.assertEqual(gate.refused("Bash", {"command": "ls"}, "a2"), "")
+        self.assertIn("scout", _pre(_gate(Helpers()), "Bash", {"command": "ls"}, "a3", "scout"))
 
 
 class TheGateRecordsEveryDenial(unittest.TestCase):
