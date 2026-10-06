@@ -7,10 +7,11 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from coscc.agent import agents, harness
 from coscc.units import submit
+from coscc.units.contracts import BranchType
 from coscc.agent.policy import is_prose_stage
 from coscc.runner.review import (
     INCOMPLETE_SECTIONS,
@@ -993,10 +994,8 @@ def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
         "`{n, text}` with the number the file gives it; `[]` when there is none.",
     ]
     if stage == "intent":
-        fields.append(
-            "- `type`: the branch type of the unit (`feat`, `fix`, `docs`, `refactor`, `test`, "
-            "`chore`, `perf`, `build`, `ci` or `revert`)."
-        )
+        types = ", ".join(f"`{t}`" for t in get_args(BranchType))
+        fields.append(f"- `type`: the branch type of the unit, one of {types}.")
         fields.append(
             "- `fix`: only for a clear fix: `{reproduction, expected: {source, text}, actual}`, "
             "the command that shows it, what the code in `source` (`path` or `path:L1-L2`, in "

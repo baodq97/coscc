@@ -228,6 +228,13 @@ class TheBlockNamesEveryDeclaredField(unittest.TestCase):
             for field in out["fields"]:
                 self.assertIn(f"`{field.rstrip('?')}`", block, f"{agent}.{field}")
 
+    def test_the_intent_block_lists_the_branch_types_the_schema_takes(self):
+        from coscc.runner import prompt
+
+        block = prompt.submit_block("intent", "intent.md", writes_own=False)
+        listed = ", ".join(f"`{t}`" for t in get_args(contracts.BranchType))
+        self.assertIn(listed, block)
+
 
 class TheSchemasAreGenerated(unittest.TestCase):
     def test_an_artifact_names_its_sender_and_takes_nothing_else(self):
