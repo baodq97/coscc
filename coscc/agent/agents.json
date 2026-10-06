@@ -4,45 +4,150 @@
       "glyph": "ᛜ",
       "name": "Ingwaz",
       "meaning": "seed",
-      "role": "Records the problem in the originator's own words and proposes no solution."
+      "role": "Records the problem in the originator's own words and proposes no solution.",
+      "output": {
+        "kind": "artifact",
+        "version": 1,
+        "fields": {
+          "judgement": {"enum": ["ready", "not-ready"]},
+          "questions": {"list": {"n": "number", "text": "text"}}
+        }
+      }
     },
     "intent": {
       "glyph": "ᚾ",
       "name": "Nauthiz",
       "meaning": "need",
-      "role": "States the problem and the outcome that would prove it solved, and decides no design."
+      "role": "States the problem and the outcome that would prove it solved, and decides no design.",
+      "output": {
+        "kind": "artifact",
+        "version": 1,
+        "fields": {
+          "judgement": {"enum": ["ready", "not-ready"]},
+          "questions": {"list": {"n": "number", "text": "text"}}
+        }
+      }
     },
     "spec": {
       "glyph": "ᚲ",
       "name": "Kenaz",
       "meaning": "torch: knowledge and craft",
-      "role": "Decides the requirements and the shape of the solution, and writes no code and no plan."
+      "role": "Decides the requirements and the shape of the solution, and writes no code and no plan.",
+      "output": {
+        "kind": "artifact",
+        "version": 1,
+        "fields": {
+          "judgement": {"enum": ["ready", "not-ready"]},
+          "questions": {"list": {"n": "number", "text": "text"}},
+          "unmeasured": {"list": "U[0-9]+"}
+        }
+      }
     },
     "spike": {
       "glyph": "ᛈ",
-      "name": "Perthro"
+      "name": "Perthro",
+      "output": {
+        "kind": "artifact",
+        "version": 1,
+        "fields": {
+          "judgement": {"enum": ["ready", "not-ready"]},
+          "questions": {"list": {"n": "number", "text": "text"}},
+          "verdicts": {"list": {"id": "U[0-9]+", "verdict": {"enum": ["holds", "fails"]}}}
+        }
+      }
     },
     "plan": {
       "glyph": "ᚱ",
       "name": "Raidho",
       "meaning": "journey: the right road in the right order",
-      "role": "Orders the work and names its proof, and writes no code."
+      "role": "Orders the work and names its proof, and writes no code.",
+      "output": {
+        "kind": "artifact",
+        "version": 1,
+        "fields": {
+          "judgement": {"enum": ["ready", "not-ready"]},
+          "questions": {"list": {"n": "number", "text": "text"}}
+        }
+      }
     },
     "impl": {
       "glyph": "ᚢ",
       "name": "Uruz",
       "meaning": "the strength that gives shape",
-      "role": "Builds what the accepted plan names and nothing beyond it."
+      "role": "Builds what the accepted plan names and nothing beyond it.",
+      "output": {
+        "kind": "artifact",
+        "version": 1,
+        "fields": {
+          "judgement": {"enum": ["ready", "not-ready"]},
+          "questions": {"list": {"n": "number", "text": "text"}},
+          "needs_person": {"list": "F[0-9]+"}
+        }
+      }
     },
     "review": {
       "glyph": "ᛏ",
       "name": "Tiwaz",
       "meaning": "Tyr: justice and judgement",
-      "role": "Judges the change and never edits code."
+      "role": "Judges the change and never edits code.",
+      "output": {
+        "kind": "review",
+        "version": 1,
+        "fields": {
+          "verdict": {"enum": ["pass", "changes-requested", "needs-person"]},
+          "findings": {
+            "list": {
+              "id": "F[0-9]+",
+              "state": {"enum": ["open", "fixed", "needs-person", "claim-rejected", "answered"]},
+              "fixed_in": "([0-9a-f]{7,40})?",
+              "severity": {"enum": ["high", "medium", "low"]},
+              "rule": "(S[0-9]+)?",
+              "path": "text",
+              "lines": "text",
+              "text": "text"
+            }
+          },
+          "screens": {
+            "list": {
+              "path": ".*\\.png",
+              "size": "[0-9]+x[0-9]+",
+              "address": "text",
+              "result": "text"
+            }
+          }
+        }
+      }
     },
     "integrate": {
       "glyph": "ᚷ",
-      "name": "Gebo"
+      "name": "Gebo",
+      "output": {
+        "kind": "session",
+        "version": 1,
+        "fields": {
+          "needs_person": {"list": {"commit": "text", "why": "text"}}
+        }
+      }
+    }
+  },
+  "sessions": {
+    "estimate": {
+      "output": {
+        "kind": "session",
+        "version": 1,
+        "fields": {
+          "units": {
+            "list": {
+              "unit": "text",
+              "value": "number",
+              "effort": "text",
+              "similar": {"list": "text"},
+              "basis": "text",
+              "relations": {"list": {"type": "text", "other": "text", "reason": "text"}}
+            }
+          }
+        }
+      }
     }
   }
 }

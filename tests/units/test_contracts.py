@@ -1,0 +1,266 @@
+"""Each agent's output declaration: checked at load, the `submit` schemas generated from it."""
+
+from __future__ import annotations
+
+import ast
+import copy
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+
+from coscc.agent.agents import DEFAULT_PATH
+from coscc.units import contracts
+from coscc.units.contracts import ContractError
+
+
+def _shipped() -> dict[str, Any]:
+    return json.loads(DEFAULT_PATH.read_text(encoding="utf-8"))
+
+
+def _load(raw: dict[str, Any]) -> dict[str, contracts.Output]:
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "agents.json"
+        path.write_text(json.dumps(raw), encoding="utf-8")
+        return contracts.load(path)
+
+
+def _output(raw: dict[str, Any], agent: str) -> dict[str, Any]:
+    return (
+        raw["agents"][agent]["output"]
+        if agent in raw["agents"]
+        else raw["sessions"][agent]["output"]
+    )
+
+
+def _refusal(raw: dict[str, Any]) -> str:
+    try:
+        _load(raw)
+    except ContractError as e:
+        return str(e)
+    raise AssertionError("the load was not refused")
+
+
+class TheShippedDeclarationsLoad(unittest.TestCase):
+    def test_every_agent_row_and_the_estimate_declare_an_output(self):
+        declared = contracts.load(DEFAULT_PATH)
+        self.assertEqual(set(_shipped()["agents"]) | {"estimate"}, set(declared))
+        self.assertEqual(declared["spec"]["kind"], "artifact")
+        self.assertEqual(declared["review"]["kind"], "review")
+        self.assertEqual(declared["integrate"]["kind"], "session")
+
+
+class RemovingAFieldRefusesTheLoad(unittest.TestCase):
+    def test_each_field_the_engine_reads_names_its_reader(self):
+        declared = contracts.load(DEFAULT_PATH)
+        cases = 0
+        for agent, out in declared.items():
+            read = {**contracts.READS.get(out["kind"], {}), **contracts.READS.get(agent, {})}
+            for field, (reader, _) in read.items():
+                raw = _shipped()
+                del _output(raw, agent)["fields"][field]
+                self.assertEqual(
+                    _refusal(raw),
+                    f"contract-field-missing: {agent}.{field} (read by {reader})",
+                )
+                cases += 1
+        # judgement and questions for six artifacts, three review fields, and one field each
+        # for spec, spike, impl, integrate and estimate.
+        self.assertEqual(cases, 6 * 2 + 3 + 5)
+
+    def test_spec_without_unmeasured_names_the_spike_rule(self):
+        raw = _shipped()
+        del raw["agents"]["spec"]["output"]["fields"]["unmeasured"]
+        self.assertEqual(
+            _refusal(raw), "contract-field-missing: spec.unmeasured (read by spike-holds)"
+        )
+
+    def test_an_optional_field_the_engine_reads_is_missing(self):
+        raw = _shipped()
+        fields = raw["agents"]["impl"]["output"]["fields"]
+        fields["needs_person?"] = fields.pop("needs_person")
+        self.assertEqual(
+            _refusal(raw), "contract-field-missing: impl.needs_person (read by impl-claim)"
+        )
+
+    def test_a_row_with_no_output_is_refused(self):
+        raw = _shipped()
+        del raw["agents"]["plan"]["output"]
+        self.assertIn("contract-field-missing: plan.output", _refusal(raw))
+
+    def test_a_sub_field_a_reader_names_is_missing(self):
+        raw = _shipped()
+        del raw["agents"]["spike"]["output"]["fields"]["verdicts"]["list"]["verdict"]
+        self.assertEqual(
+            _refusal(raw), "contract-field-missing: spike.verdicts.verdict (read by spike-holds)"
+        )
+
+
+class AWrongTypeRefusesTheLoad(unittest.TestCase):
+    def test_a_read_field_of_another_type(self):
+        raw = _shipped()
+        raw["agents"]["spec"]["output"]["fields"]["unmeasured"] = "text"
+        self.assertTrue(
+            _refusal(raw).startswith("contract-bad-type: spec.unmeasured: "), _refusal(raw)
+        )
+
+    def test_an_enum_the_reader_does_not_know(self):
+        raw = _shipped()
+        raw["agents"]["review"]["output"]["fields"]["verdict"] = {"enum": ["pass", "maybe"]}
+        self.assertTrue(_refusal(raw).startswith("contract-bad-type: review.verdict: "))
+
+    def test_a_bad_pattern_a_bad_version_and_a_bad_kind(self):
+        raw = _shipped()
+        raw["agents"]["plan"]["output"]["fields"]["note"] = "U[0-9"
+        self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.note: "))
+        raw = _shipped()
+        raw["agents"]["plan"]["output"]["version"] = 0
+        self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.version: "))
+        raw = _shipped()
+        raw["agents"]["plan"]["output"]["kind"] = "proposal"
+        self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.kind: "))
+
+    def test_an_artifact_does_not_declare_who_sent_it(self):
+        raw = _shipped()
+        raw["agents"]["plan"]["output"]["fields"]["stage"] = "text"
+        self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.stage: "))
+
+
+class AnUnknownWordRefusesTheLoad(unittest.TestCase):
+    def test_a_lowercase_word_that_is_no_type(self):
+        for word in ("string", "int", "texts"):
+            raw = _shipped()
+            raw["agents"]["plan"]["output"]["fields"]["note"] = word
+            self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.note: "), word)
+
+    def test_a_field_named_list_or_enum_and_an_empty_object(self):
+        for bad in ({"list": "text", "x": "text"}, {"enum": ["a"], "y": "text"}, {}):
+            raw = _shipped()
+            raw["agents"]["plan"]["output"]["fields"]["note"] = bad
+            self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.note"), bad)
+
+    def test_an_enum_of_no_words_and_a_bad_name(self):
+        raw = _shipped()
+        raw["agents"]["plan"]["output"]["fields"]["note"] = {"enum": []}
+        self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.note: "))
+        raw = _shipped()
+        raw["agents"]["plan"]["output"]["fields"]["Note"] = "text"
+        self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.Note: "))
+
+
+class AnOptionalFieldIsNotRequired(unittest.TestCase):
+    def test_a_trailing_question_mark_leaves_the_field_out_of_required(self):
+        out = contracts.check(
+            "planted", {"kind": "session", "version": 1, "fields": {"a": "text", "b?": "number"}}
+        )
+        schema = contracts.schema_of("planted", out)
+        self.assertEqual(schema["required"], ["a"])
+        self.assertEqual(set(schema["properties"]), {"a", "b"})
+        jsonschema.validate({"a": "x"}, schema)
+        jsonschema.validate({"a": "x", "b": 2}, schema)
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate({"a": "x", "c": 1}, schema)
+
+
+# Each declaration's version and the hash of its kind and fields. A change to a declaration
+# changes its hash: bump its version, add the migration of the stored records, then pin both.
+PINNED = {
+    "idea": (1, "608eff07e373"),
+    "intent": (1, "608eff07e373"),
+    "spec": (1, "c50763129465"),
+    "spike": (1, "f77fe54c7b07"),
+    "plan": (1, "608eff07e373"),
+    "impl": (1, "947bed5afb16"),
+    "review": (1, "c88ced722098"),
+    "integrate": (1, "9e29819d42c2"),
+    "estimate": (1, "cd5fc053a8e3"),
+}
+
+
+class AChangedDeclarationNeedsANewVersion(unittest.TestCase):
+    def test_each_declaration_is_pinned_with_its_version(self):
+        declared = contracts.load(DEFAULT_PATH)
+        now = {a: (o["version"], contracts.fingerprint(o)) for a, o in declared.items()}
+        self.assertEqual(now, PINNED)
+
+    def test_a_changed_field_changes_the_hash(self):
+        out = contracts.output("spec")
+        changed = copy.deepcopy(out)
+        changed["fields"]["questions"] = {"list": {"n": "number"}}
+        self.assertNotEqual(contracts.fingerprint(out), contracts.fingerprint(changed))
+
+    def test_a_record_of_another_version_is_refused(self):
+        with self.assertRaises(ContractError) as e:
+            contracts.check_stored("spec", 2)
+        self.assertEqual(str(e.exception), "output-version: spec stored v2, declared v1")
+        contracts.check_stored("spec", 1)
+
+
+class TheBlockNamesEveryDeclaredField(unittest.TestCase):
+    def test_the_prompt_teaches_each_field_the_schema_asks_for(self):
+        from coscc.runner import prompt
+
+        for agent, out in contracts.load(DEFAULT_PATH).items():
+            if out["kind"] == "artifact":
+                block = prompt.submit_block(agent, f"{agent}.md", writes_own=False)
+            elif out["kind"] == "review":
+                block = prompt.round_block()
+            else:
+                continue
+            for field in out["fields"]:
+                self.assertIn(f"`{field.rstrip('?')}`", block, f"{agent}.{field}")
+
+
+class TheSchemasAreGenerated(unittest.TestCase):
+    def test_an_artifact_names_its_sender_and_takes_nothing_else(self):
+        schema = contracts.schema("spec")
+        self.assertEqual(schema["properties"]["stage"], {"type": "string", "enum": ["spec"]})
+        self.assertEqual(schema["required"], ["stage", "judgement", "questions", "unmeasured"])
+        self.assertIs(schema["additionalProperties"], False)
+        obj = {"stage": "spec", "judgement": "ready", "questions": [], "unmeasured": ["U1"]}
+        jsonschema.validate(obj, schema)
+        for bad in ({**obj, "stage": "plan"}, {**obj, "unmeasured": ["X1"]}, {**obj, "id": 1}):
+            with self.assertRaises(jsonschema.ValidationError):
+                jsonschema.validate(bad, schema)
+
+    def test_reads_keeps_only_what_the_engine_decides_on(self):
+        obj = {"stage": "spike", "judgement": "ready", "questions": [], "verdicts": []}
+        self.assertEqual(
+            contracts.reads("spike", obj), {"judgement": "ready", "questions": [], "verdicts": []}
+        )
+        self.assertEqual(contracts.reads("plan", {**obj, "verdicts": [1]})["judgement"], "ready")
+        self.assertNotIn("verdicts", contracts.reads("plan", obj))
+
+    def test_a_feature_session_is_added_once_and_its_name_is_not_taken_twice(self):
+        out = {"kind": "session", "version": 1, "fields": {"items": {"list": "text"}}}
+        try:
+            contracts.add("planted-contract", out)
+            contracts.add("planted-contract", out)
+            self.assertEqual(contracts.schema("planted-contract")["required"], ["items"])
+            with self.assertRaises(ValueError):
+                contracts.add("planted-contract", {**out, "version": 2})
+            with self.assertRaises(ContractError):
+                contracts.add(
+                    "planted-bad", {"kind": "session", "version": 1, "fields": {"a": "str"}}
+                )
+        finally:
+            contracts.ADDED.pop("planted-contract", None)
+
+
+class NoHandWrittenSchema(unittest.TestCase):
+    def test_submit_holds_no_json_schema_literal(self):
+        from coscc.units import submit
+
+        tree = ast.parse(Path(submit.__file__).read_text(encoding="utf-8"))
+        literal = [
+            n.lineno
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Dict)
+            and any(
+                isinstance(k, ast.Constant) and k.value in ("type", "properties") for k in n.keys
+            )
+        ]
+        self.assertEqual(literal, [])
