@@ -68,18 +68,18 @@ and `prefs`. The two halves meet through `coscc.loop status/next/gate` called as
 | spike | draft, accepted, rejected; only when the spec record's `unmeasured` is not empty | AGENT (prose); verdicts and round from the record |
 | plan | draft, accepted, rejected; its record names `impl`, `files`, `steps`, `rests_on` | AGENT (prose) |
 | impl | draft, accepted, rejected | AGENT (tools; writes the file itself) |
-| pr | draft, accepted, rejected; `PR: <url>` (`:38,469`) | AGENT (tools, runs `gh pr create`) |
+| pr | draft, accepted, rejected; the pull request is the PR machine's `open` row (`branch-named`), never read from `pr.md` | CODE (the PR machine) |
 | review | draft, changes-requested, accepted, rejected; rounds `## Round N` + `Verdict: pass/changes-requested/needs-person/incomplete` (`:43,517-522`) | AGENT (prose); `incomplete` by the app's closing turn |
-| ship | draft, accepted, rejected; `Round:`, `Refused:` (`:44,728`) | AGENT (tools, runs `gh pr merge`) |
+| ship | draft, accepted, rejected; the round and a refusal are the `ship-ready` / `merge-refused` rows | CODE (the PR machine) |
 
 Derived states (CODE, recomputed each read):
 
 - **settled** = accepted | skipped; **missing** file vs **unreadable** (a file with no status row: no record was handed back for it).
-- **stale** = intent has a `### Rerun` block whose `Stale:` hash equals the artifact's current text hash (`:886-898`).
+- **stale** = a person's `rerun` row (`unit_decisions`) names the artifact at the record it still holds: its latest `outputs` row, `review_rounds` row or `branch-named` transition (`stale_marks`).
 - **held** = last valid `### Paused|Dropped|Resumed` block in intent `## Answers` (`:193-229`); moves active→paused/dropped, paused→dropped/active, dropped→paused (`:200`).
 - **rejected** anywhere closes the unit (`:1239`).
 - **open questions** = numbered items with `?` under `## Open questions` without a `### Câu N` answer (`:112-126,348`). They gate nothing in `coscc.loop`; a *draft* does (`:451,1255`).
-- **review rounds used** / **out of rounds** (`COS_REVIEW_ROUNDS`, default 3, plus `### More rounds`) (`:1345-1364`).
+- **review rounds used** / **out of rounds** (`COS_REVIEW_ROUNDS`, default 3, plus the `more-rounds` rows of `unit_decisions`); rounds come only from `review_rounds`.
 - **dependency merged** = the snapshot's `merged` for that unit: the PR machine's `merge-read` row, or, for a unit it never moved, a `ship.md: accepted` from the `0135` import or a `ship` session (`0139` R5, `units/meta.py` `snapshot`).
 
 ### 1.2 `next` — first match wins (`loop:1190-1322`)
@@ -111,14 +111,14 @@ rebase + CI red → impl; changes-requested → impl if code must change, else r
 
 - every stage: not held; every earlier required stage exists, is settled and not stale; spike only when required; plan waits for every `U<n>` the spike record gives `holds`.
 - impl: + every unit it depends on is merged (`:2094`); a link is a row, never read from `intent.md`.
-- review: + `PR:` present, not out of rounds, `gh pr checks --required` all green (empty = not green; red branch-name check = unfixable) (`:1669-1746`).
+- review: + a pull request recorded, not out of rounds, `gh pr checks --required` all green (empty = not green; red branch-name check = unfixable) (`:1669-1746`).
 - ship: + last verdict pass, no open finding but fixed/answered/non-blocking low, no demoted severity, reviewed sha named and still the head (or a clean rebase with green CI), not behind `origin/main`, UI screens block valid when UI files changed, `S<n>` findings block (`:1791-1906`). Open gate prints `--match-head-commit <sha>`.
 
 ### 1.4 Rerun (`loop:2286-2334`)
 
 intent, spec, spike, plan, pr can be rerun from the board when accepted and not stale; the app
-appends `### Rerun` with `Stale:` hashes for that artifact and every later one on disk — so
-they all become stale.
+writes one `rerun` row naming the record that artifact and every later one present holds
+(`coscc.loop rerun` prints them) — so they all become stale until each writes a new record.
 
 ## 2. Step (per run) — app, `coscc/runner/steps.py`, `coscc/runner/step.py`
 
@@ -195,7 +195,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 
 | Machine | States | Transitions / decided by | Recorded |
 |---|---|---|---|
-| **Questions & answers** | open → answered | detection CODE (`coscc.loop`); answer PERSON `POST /api/units/answer` appends `### Câu N` / `### F<n>` (`Answers.answer` in `coscc/leif/answers.py`) | `questions`, `answer` |
+| **Questions & answers** | open → answered | detection CODE (`coscc.loop`); answer PERSON or DELEGATED `POST /api/units/answer` writes a `unit_answers` row with `by` (`person` \| `delegated`) and `name` (`Answers.answer` in `coscc/leif/answers.py`) | `questions`, `answer` |
 | **Holds** | active, paused, dropped | PERSON `POST /api/units/hold`; dropped → CODE closes the PR and removes the worktree (`units/hold.py:99-165`) | `### Paused…` block + `hold` row |
 | **PR / CI / integrate** | unknown, conflicting, red-after-integration, behind, current (`github/integrate.py:80-111`) | read by `gh pr list` on each board read, `gh pr checks` ≤ every 60 s per head, and the 300 s pass — no dedicated poller. `behind` → CODE `gh pr update-branch`; conflicting / red / refused / diverged head → **AGENT Gebo** (120 turns, $8, leased push) (`coscc/github/integration.py` `_integrate_body`, `integrate_gebo`); Gebo's `[needs-person]` lines set the outcome (since `0136`, the object it hands back through `submit`) | `integration`, `start`/`end` |
 | **Review loop** | round n: changes-requested → impl → CI → review n+1 … pass → ship | verdict and severities AGENT; rounds counted CODE; clean-rebase re-review skip CODE (0067) | review.md, `pr-comment` |
@@ -213,10 +213,10 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 | agent → app (prose stages) | SDK stream → reply text | markdown: `# <Stem>: title`, sections; the `submit` record | the title (`reply.py`); the record, checked against its declaration |
 | agent → app (tool stages) | the agent's `Write` tool | markdown file; the `submit` record | the record, checked against its declaration |
 | agent → app (estimate, Gebo) | the `submit` tool call (`0136`) | an object | JSON + CODE validation |
-| app ↔ coscc.loop | subprocess | JSON on stdout (`status`, `next`, `pr-text`, `rerun`, `screens`); `gate` = prose lines on stdout/stderr, exit 0/1/2, merged into one string by the app (`board.py:352`) | JSON / substring |
+| app ↔ coscc.loop | subprocess | JSON on stdout (`status`, `next`, `rerun`, `screens`); `gate` = prose lines on stdout/stderr, exit 0/1/2, merged into one string by the app (`board.py:352`) | JSON / substring |
 | app ↔ GitHub | `gh` subprocess | `--json` fields; PR comments with a hidden marker `<!-- coscc-review unit=U round=N -->` | JSON |
 | person ↔ app | REST, SSE (`/api/stream`, a run's `follow`) and NDJSON streams (`/api/board/run`, `/api/chat`, `/api/notices/follow`) | NDJSON `{type, …}` | JSON |
-| agent ↔ agent | artifacts on disk | review rounds `## Round N` / `Reviewed: <sha>. Verdict: …` / `- F<k> [state] path:line — severity — text`; `### Rerun` notes | regex in **three** places (`loop:517`, `review.py:13`, `priorfindings.py:29`) |
+| agent ↔ agent | artifacts on disk | review rounds `## Round N` / `Reviewed: <sha>. Verdict: …` / `- F<k> [state] path:line — severity — text` (the loop reads only `review_rounds`) | regex in **three** places (`loop:517`, `review.py:13`, `priorfindings.py:29`) |
 | everything → history | SQLite `runs` | JSON record per kind (`start`, `end`, `attempt`, `autopilot-pick`, `autopilot-stop`, `integration`, `answer`, `hold`, `shortlist`, …) | JSON |
 
 ## 6. What the as-is map shows
@@ -238,12 +238,13 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
   swallowed (`Answers.ingest` in `coscc/leif/answers.py`). Review transitions are likely never recorded.
 - Three `## Round` patterns disagree (`loop:517` strict vs `review.py:13`, `priorfindings.py:29` loose).
 - After a repair or closing turn, `cost_usd` is the session total but tokens/turns are the first turn's (`runner/__init__.py:228`).
-- `answered_by` is free text, unchecked (`Answers.answer` in `coscc/leif/answers.py`).
 
 **Structural facts the redesign must answer:**
 
 - Unit state lives in files and is recomputed by regex on every read; app facts live in the DB.
   Holds, reruns, answers and more-rounds are *both* a markdown block and (some of them) a row.
+  *M2 P5: each is only a row (`unit_holds`, `unit_answers`, `unit_decisions`); no block is
+  appended to a file, and the loop reads no artifact text.*
 - Three triggers drive the autopilot (timer, end, answer); several events that change what it
   should do (hold, shortlist) do not nudge it.
 - `overlap` sees only running steps, not open PRs. *Fixed by `0136` R22: an `impl` whose

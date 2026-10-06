@@ -10,10 +10,10 @@ uv run ruff format && uv run ruff check --fix  # before commit
 uv run python -m coscc.loop <command>:
   status [--json] · gate <unit> <stage> [--json]   # 0 open, 1 blocked with reasons, 2 misuse
   next <unit> · new-path <slug> · new-idea <slug> · unit-branch <unit>
-  pr-text <unit> · rerun <unit> [<stage>] · check-branch [name] · check-tag <tag> · check-version
+  rerun <unit> [<stage>] · check-branch [name] · check-tag <tag> · check-version
 ```
 
-The deciding commands (`status`, `gate`, `next`, `rerun`, `unit-branch`, `pr-text`) need the
+The deciding commands (`status`, `gate`, `next`, `rerun`, `unit-branch`) need the
 app's snapshot: `uv run coscc state <workspace> | ... --state -`. Most take `--root <dir>`;
 `gate` and `next` take `--repo <dir>`. Branch on `reasons` codes (`coscc/units/guards.py`), never
 on their words.

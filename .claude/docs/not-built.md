@@ -23,8 +23,9 @@ Read this before adding a route, a button or a grant.
   feature off each write a row and start no other stage. The autopilot, when a workspace turns
   it on, starts the next stage through the same gate, never releases, and is refused beyond
   loopback.
-- **Answers reach gates.** An answer is a row rendered into the next prompt. A finding answer
-  also feeds a gate, so one agent's round plus an answer anyone with the
+- **Answers reach gates.** An answer is a row rendered into the next prompt, with `by`
+  (`person` or `delegated`) written as sent: a label, not an identity check, and no gate reads it.
+  A finding answer also feeds a gate, so one agent's round plus an answer anyone with the
   password can write is part of what opens a merge.
 - **A screenshot is an agent's look,** not a person's.
 - **Say what a new route can do,** to whom, at what cost, and where the trace is. Prefer a row
