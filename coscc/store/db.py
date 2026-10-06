@@ -35,7 +35,7 @@ from typing import Any, Iterator
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
 # 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped; 13: `stage_results` becomes `outputs`).
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -217,8 +217,8 @@ CREATE TABLE IF NOT EXISTS unit_links (
     pos       INTEGER NOT NULL
 )""",
     """CREATE INDEX IF NOT EXISTS unit_links_scope ON unit_links (root, workspace, unit)""",
-    """-- The questions under an artifact's `## Open questions`, replaced per artifact on each
--- read. Whether the section is there at all is `unit_seen.questions`.
+    """-- The questions of an artifact's last record, replaced per artifact on each
+-- record. An artifact with a record and no rows here has no question.
 CREATE TABLE IF NOT EXISTS unit_questions (
     root      TEXT NOT NULL,
     workspace TEXT NOT NULL,
@@ -264,9 +264,7 @@ CREATE TABLE IF NOT EXISTS unit_holds (
     """CREATE INDEX IF NOT EXISTS unit_holds_scope ON unit_holds (root, workspace, unit, id)""",
     """CREATE UNIQUE INDEX IF NOT EXISTS unit_holds_once
     ON unit_holds (once_key) WHERE once_key <> ''""",
-    """-- A field that could not be read, and why. `raw` is the word read, when there
--- was one (a status outside the artifact's set). `field` `ingest` is an ingest that failed;
--- the board shows it, `/settings` does not.
+    """-- A record that could not be applied, and why: `field` is `ingest`. The board shows it.
 CREATE TABLE IF NOT EXISTS unit_unknowns (
     root      TEXT NOT NULL,
     workspace TEXT NOT NULL,
@@ -274,21 +272,9 @@ CREATE TABLE IF NOT EXISTS unit_unknowns (
     artifact  TEXT NOT NULL,
     field     TEXT NOT NULL,
     reason    TEXT NOT NULL,
-    raw       TEXT,
     at        TEXT NOT NULL
 )""",
     """CREATE INDEX IF NOT EXISTS unit_unknowns_scope ON unit_unknowns (root, workspace, unit)""",
-    """-- The text of each artifact as last read, by its SHA-256, so an ingest reads
--- only what changed. `questions` is 1 when it had a `## Open questions` section.
-CREATE TABLE IF NOT EXISTS unit_seen (
-    root      TEXT NOT NULL,
-    workspace TEXT NOT NULL,
-    unit      TEXT NOT NULL,
-    artifact  TEXT NOT NULL,
-    sha256    TEXT NOT NULL,
-    questions INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (root, workspace, unit, artifact)
-)""",
     """-- An agent's output as the `submit` tool received it, under the contract version it was written to. `object` is the whole
 -- object as JSON; `judgement` is beside it so a guard can narrow without parsing. `revision`
 -- is the SHA-256 the app took of the artifact when the object arrived. Where the
@@ -622,6 +608,7 @@ class Data:
                     conn.execute(statement)
                 self._records_v2(conn)
                 self._links_v15(conn)
+                self._status_v16(conn)
                 for table, column, declaration in _COLUMNS:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
@@ -675,6 +662,18 @@ class Data:
             if "unit_links" in statement:
                 conn.execute(statement)
         conn.executemany("INSERT INTO unit_links VALUES (?, ?, ?, ?, ?, ?)", kept)
+
+    @staticmethod
+    def _status_v16(conn: sqlite3.Connection) -> None:
+        """16: what a file fed is gone (`unit_seen`, the `raw` column, the import's `migrations`
+        keys, every unknown but `ingest`), and a stored `done` is `accepted`."""
+        conn.execute("DROP TABLE IF EXISTS unit_seen")
+        if "raw" in {r[1] for r in conn.execute("PRAGMA table_info(unit_unknowns)")}:
+            conn.execute("DELETE FROM unit_unknowns WHERE field <> 'ingest'")
+            conn.execute("ALTER TABLE unit_unknowns DROP COLUMN raw")
+        conn.execute("DELETE FROM migrations WHERE key LIKE 'unit-meta:%'")
+        conn.execute("UPDATE transitions SET to_state = 'accepted' WHERE to_state = 'done'")
+        conn.execute("UPDATE transitions SET from_state = 'accepted' WHERE from_state = 'done'")
 
     def version(self) -> int:
         with self.connect() as conn:

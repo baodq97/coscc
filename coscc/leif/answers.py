@@ -22,7 +22,7 @@ from coscc.github import prcomment, prscope, prsync
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
-from coscc.units.meta import MetaError, UnitMeta
+from coscc.units.meta import UnitMeta
 from coscc.store.journal import BadRecord, Journal
 from coscc.store.db import Busy
 from coscc.units import submit
@@ -279,49 +279,33 @@ class Answers:
     async def ingest(
         self, cwd: str, unit: str, done: dict[str, Any], wrote: str | None = None
     ) -> dict[str, Any]:
-        """The one read of a unit's files after a step that finished, prose or not: what
-        changed goes into `cos.db` through `coscc.loop meta`.
+        """The record a finished step handed back, written to `cos.db`; no file is read.
 
-        The step still ends as it ended, but a failure is not dropped: the `done` item
-        carries `ingest_error`, and a `unit_unknowns` row tells the snapshot.
-
-        A step whose run submitted a stage result takes its artifact's status and questions
-        from that object, through `transitions.apply` and guard `stage-result`, never from
-        the file. A guard that closes is a failure like any other here.
+        A run that ended `done` and submitted for `wrote` goes through `transitions.apply` and
+        guard `stage-result` (or `review-round`); any other step writes nothing. The step still
+        ends as it ended, but a failure is not dropped: the `done` item carries `ingest_error`,
+        and a `unit_unknowns` row tells the snapshot. A guard that closes is a failure here.
         """
         if done.get("outcome") != "done":
+            return {}
+        submitted = done.get("submitted")
+        if not (wrote and submitted):
             return {}
         meta = self.ws.unit_meta()
         workspace = self.ws.key(cwd)
         stage = str(done.get("stage") or "")
-        submitted = done.get("submitted") if wrote else None
         try:
-            await asyncio.to_thread(
-                meta.ingest,
-                workspace,
-                self.ws.units_root(cwd),
-                unit,
-                actor=f"stage:{stage}",
-                session=str(done.get("session_id") or "") or UNKNOWN,
-                source=f"run:{stage}",
-                wrote=None if submitted else wrote,
-                decided=(wrote,) if wrote and submitted else (),
-            )
-            if wrote and submitted:
-                apply = self._apply_round if stage == submit.ROUND else self._apply_result
-                await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
+            apply = self._apply_round if stage == submit.ROUND else self._apply_result
+            await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
             return {}
-        except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
-            # One fixed sentence on the card and the step, the error in the log: `MetaError`
-            # carries the loop's stderr or its argv, `Busy` the database's path.
-            # A `BadTransition` names a status and nothing else.
-            log.warning("%s in %s could not be read after its step: %s", unit, workspace, e)
+        except (BadTransition, Busy, sqlite3.Error) as e:
+            # One fixed sentence on the card and the step, the error in the log: `Busy` carries
+            # the database's path, a `BadTransition` names a status and nothing else.
+            log.warning("%s in %s could not be recorded after its step: %s", unit, workspace, e)
             if isinstance(e, BadTransition):
-                reason = str(e) or "a status it read is not one the app records"
-            elif isinstance(e, (Busy, sqlite3.Error)):
-                reason = "the database could not be written"
+                reason = str(e) or "a status it handed back is not one the app records"
             else:
-                reason = "its files could not be read"
+                reason = "the database could not be written"
             try:
                 meta.ingest_failed(workspace, unit, reason)
             except Busy, sqlite3.Error, OSError:

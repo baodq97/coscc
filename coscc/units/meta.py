@@ -1,33 +1,28 @@
 """A unit's metadata, kept in `cos.db`, and the snapshot `coscc.loop --state` reads.
 
-Four writers and one reader:
+Writers and one reader:
 
-- `import_store`, once per store: everything the loop's `meta` reads off its markdown, in one
-  `Data.write()` keyed in `migrations`, so it can neither run twice nor stop halfway.
-- `ingest`, at the end of every step that finished: what changed in one unit's files.
-- `add_answer` and `add_hold`: a person's answer or hold, which no file carries.
+- `add_unit`, `link`: a unit's row and its links, when the app opens it.
+- `record_result` and `record_round`: what a finished step handed back, in the caller's transaction.
+- `add_answer` and `add_hold`: a person's answer or hold.
 - `snapshot`: the JSON `--state` reads, from the tables and the fold over `transitions`.
 
-There is no parser here: every read of a file is the loop's `meta`.
+No file is read here: a unit's state is its rows.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, TypedDict
 
 from coscc.store.db import Data, now
-from coscc.loop import run
 from coscc.store.journal import Intervention, Journal
 from coscc.units import UNIT_RE, backlog, contracts
 from coscc.units.history import History
 from coscc.units.states import Machine
-
-# Seconds. Like `board.TIMEOUT`, turns a hung child into an error rather than bounding the work.
-TIMEOUT = 30.0
 
 SOURCE = "import:0135"
 # The source every row of the PR machine carries (`prmachine.Machine._apply`), the guards that
@@ -40,24 +35,6 @@ MERGED = "merge-read"
 SHIPPED_BEFORE_THE_MACHINE = (SOURCE, "run:ship")
 
 _ONE = "root = ? AND workspace = ? AND unit = ?"
-
-
-class MetaError(RuntimeError):
-    """The loop's `meta` gave no answer, carrying what it said."""
-
-
-def read(store: str | Path, *args: str) -> dict[str, Any]:
-    """`python -m coscc.loop --root <store> meta [args]`, parsed, using this app's own loop."""
-    try:
-        done = run.ask_sync(["--root", str(store), "meta", *args], timeout=TIMEOUT)
-    except (OSError, TimeoutError) as e:
-        raise MetaError(f"coscc.loop meta did not run: {e}") from e
-    if done.code != 0:
-        raise MetaError((done.err or done.out).strip() or f"coscc.loop meta exited {done.code}")
-    try:
-        return json.loads(done.out)
-    except ValueError as e:
-        raise MetaError(f"coscc.loop meta printed no JSON: {e}") from e
 
 
 class OutputRecord(TypedDict):
@@ -81,21 +58,6 @@ def _spike_round(objects: Iterable[str]) -> int:
     return 1 + failed
 
 
-def _no_status(artifact: str, raw: str | None, machine: Machine) -> str:
-    if raw is None:
-        return "carries no Status line"
-    return machine.refuse(artifact, raw) or f'status "{raw}" is not one the app records'
-
-
-def authority_of(via: str | None) -> str:
-    """The authority of an answer read from a file, which does not say whose it was.
-
-    An answer an earlier version wrote from precedent (`Via: precedent.`) is `agent`; any other
-    is `person`. Read only on an import, and by the once-per-store classification of rows an
-    older import left unknown."""
-    return "agent" if via == "precedent" else "person"
-
-
 class UnitMeta:
     """The metadata of every unit under one working folder, as `History` is its transitions.
 
@@ -114,100 +76,12 @@ class UnitMeta:
         self.machine = self.history.machine
         self.root = str(self.history.working_dir)
 
-    def import_key(self, workspace: str) -> str:
-        return f"unit-meta:0135:{self.root}/{workspace}"
-
-    def authority_key(self, workspace: str) -> str:
-        return f"unit-meta:0136-authority:{self.root}/{workspace}"
-
-    def classify_answers(self, workspace: str) -> None:
-        """Once per store: classify the answers an older import read from files, as `authority_of` does."""
-        key = self.authority_key(workspace)
-        if self.data.has_run(key):
-            return
-        with self.data.write() as conn:
-            if self.data.has_run(key, conn):
-                return
-            rows = conn.execute(
-                "SELECT id, via FROM unit_answers WHERE root = ? AND workspace = ? AND authority = 'unknown'",
-                (self.root, workspace),
-            ).fetchall()
-            conn.executemany(
-                "UPDATE unit_answers SET authority = ? WHERE id = ?",
-                [(authority_of(r["via"]), r["id"]) for r in rows],
-            )
-            Data.mark_run(conn, key)
-
-    def imported(self, workspace: str) -> bool:
-        return self.data.has_run(self.import_key(workspace))
-
-    def import_store(self, workspace: str, store: str | Path) -> list[dict[str, Any]] | None:
-        """Every directory under the store's `.cos/`, read once, in one transaction.
-
-        Returns the fields that could not be read, `(unit, artifact, field, reason, raw)`, or
-        `None` when the store was imported already.
-        """
-        key = self.import_key(workspace)
-        if self.data.has_run(key):
-            self.classify_answers(workspace)
-            return None
-        found = read(store)
-        with self.data.write() as conn:
-            if self.data.has_run(key, conn):
-                return None
-            unknowns: list[dict[str, Any]] = []
-            for unit, meta in sorted((found.get("units") or {}).items()):
-                unknowns += self._apply(conn, workspace, unit, meta, imported=True)
-            Data.mark_run(conn, key)
-            # Its answers were classified as they were read, just above.
-            Data.mark_run(conn, self.authority_key(workspace))
-        return unknowns
-
-    def ingest(
-        self,
-        workspace: str,
-        store: str | Path,
-        unit: str,
-        *,
-        actor: str,
-        session: str,
-        source: str,
-        wrote: str | None = None,
-        decided: Collection[str] = (),
-    ) -> list[dict[str, Any]]:
-        """Read one unit's files through the loop's `meta`, and write what changed.
-
-        Only an artifact whose text differs from the last one read (`unit_seen`) is written:
-        a transition when the fold differs from its status, its questions, and from
-        `intent.md` its `Type:` and links. `wrote`, the artifact the step itself writes, always
-        gets its transition. Answers and holds are not read. An artifact in `decided` takes
-        its status and questions from the object its run submitted (`record_result`).
-        Raises `MetaError` or `sqlite3.Error`; the caller records the failure.
-        """
-        found = read(store, unit)
-        meta = (found.get("units") or {}).get(unit) or {}
-        with self.data.write() as conn:
-            conn.execute(
-                f"DELETE FROM unit_unknowns WHERE {_ONE} AND field = 'ingest'",
-                (self.root, workspace, unit),
-            )
-            return self._apply(
-                conn,
-                workspace,
-                unit,
-                meta,
-                imported=False,
-                provenance={"actor": actor, "session": session, "source": source},
-                wrote=wrote,
-                decided=decided,
-            )
-
     def ingest_failed(self, workspace: str, unit: str, reason: str) -> None:
         """An ingest that failed, as a row the snapshot turns into a problem on the card."""
         with self.data.write() as conn:
             conn.execute(
-                "INSERT INTO unit_unknowns (root, workspace, unit, artifact, field, reason, raw, at) "
-                "VALUES (?, ?, ?, '', 'ingest', ?, NULL, ?)",
+                "INSERT INTO unit_unknowns (root, workspace, unit, artifact, field, reason, at) "
+                "VALUES (?, ?, ?, '', 'ingest', ?, ?)",
                 (self.root, workspace, unit, reason, now()),
             )
 
@@ -226,172 +100,6 @@ class UnitMeta:
                 now(),
             ),
         )
-
-    def _apply(
-        self,
-        conn: sqlite3.Connection,
-        workspace: str,
-        unit: str,
-        meta: Mapping[str, Any],
-        *,
-        imported: bool,
-        provenance: Mapping[str, str] | None = None,
-        wrote: str | None = None,
-        decided: Collection[str] = (),
-    ) -> list[dict[str, Any]]:
-        """Write one unit's `meta` output. Returns the fields it could not read."""
-        scope = (self.root, workspace, unit)
-        at = now()
-        self.add_unit(conn, workspace, unit)
-        seen = {
-            r["artifact"]: r["sha256"]
-            for r in conn.execute(f"SELECT artifact, sha256 FROM unit_seen WHERE {_ONE}", scope)
-        }
-        latest = self.history._latest(conn)
-        unknowns: list[dict[str, Any]] = []
-        items: list[dict[str, Any]] = []
-        changed = [
-            (artifact, a)
-            for artifact, a in (meta.get("artifacts") or {}).items()
-            if seen.get(artifact) != a.get("sha256") or artifact == wrote
-        ]
-        for artifact, a in changed:
-            conn.execute(
-                f"DELETE FROM unit_unknowns WHERE {_ONE} AND artifact = ?", (*scope, artifact)
-            )
-            if artifact in decided:
-                # Its `Status:` and `## Open questions` are prose for a reader now.
-                conn.execute(
-                    "INSERT INTO unit_seen (root, workspace, unit, artifact, sha256, questions) VALUES (?, ?, ?, ?, ?, 1) "
-                    "ON CONFLICT (root, workspace, unit, artifact) DO UPDATE SET sha256 = excluded.sha256",
-                    (*scope, artifact, str(a.get("sha256") or "")),
-                )
-                continue
-            status, raw = a.get("status"), a.get("raw")
-            if status is not None and self.machine.refuse(artifact, status) is None:
-                if (
-                    artifact == wrote
-                    or latest.get((workspace, unit, artifact), self.machine.absent) != status
-                ):
-                    item = {
-                        "workspace": workspace,
-                        "unit": unit,
-                        "artifact": artifact,
-                        "to_state": status,
-                    }
-                    if imported:
-                        item.update(
-                            actor=SOURCE,
-                            session=SOURCE,
-                            source=SOURCE,
-                            once_key=f"{SOURCE}:{workspace}/{unit}/{artifact}",
-                        )
-                    else:
-                        item.update(provenance or {})
-                    items.append(item)
-            else:
-                unknowns.append(
-                    {
-                        "unit": unit,
-                        "artifact": artifact,
-                        "field": "status",
-                        "reason": _no_status(artifact, raw, self.machine),
-                        "raw": raw,
-                    }
-                )
-            conn.execute(
-                f"DELETE FROM unit_questions WHERE {_ONE} AND artifact = ?", (*scope, artifact)
-            )
-            questions = a.get("questions")
-            conn.executemany(
-                "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text) VALUES (?, ?, ?, ?, ?, ?)",
-                [(*scope, artifact, int(q["n"]), str(q["text"])) for q in questions or []],
-            )
-            conn.execute(
-                "INSERT OR REPLACE INTO unit_seen (root, workspace, unit, artifact, sha256, questions) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (*scope, artifact, str(a.get("sha256") or ""), 0 if questions is None else 1),
-            )
-        if "intent.md" in dict(changed) and "type" in meta:
-            kind = meta.get("type")
-            # A run that submitted its intent hands the type to `record_result`.
-            recorded = (
-                "intent.md" in decided
-                or conn.execute(
-                    f"SELECT 1 FROM outputs WHERE {_ONE} AND agent = 'intent'", scope
-                ).fetchone()
-            )
-            if not recorded:
-                conn.execute(
-                    f"UPDATE unit_meta SET type = ? WHERE {_ONE}", (kind or "unknown", *scope)
-                )
-            if kind is None and not recorded:
-                unknowns.append(
-                    {
-                        "unit": unit,
-                        "artifact": "intent.md",
-                        "field": "type",
-                        "reason": "intent.md declares no Type",
-                        "raw": None,
-                    }
-                )
-        if imported:
-            for i, a in enumerate(meta.get("answers") or []):
-                self._answer(
-                    conn,
-                    workspace,
-                    unit,
-                    a["artifact"],
-                    a["id"] or str(a["n"]),
-                    a["text"],
-                    a["by"],
-                    a["date"],
-                    a["via"],
-                    f"{SOURCE}:{workspace}/{unit}/{a['artifact']}/answer/{i}",
-                    authority=authority_of(a["via"]),
-                )
-            for i, h in enumerate(meta.get("holds") or []):
-                if h.get("by") is None:
-                    unknowns.append(
-                        {
-                            "unit": unit,
-                            "artifact": "intent.md",
-                            "field": "hold",
-                            "reason": f"hold block {i + 1} has no Decided by line",
-                            "raw": None,
-                        }
-                    )
-                    continue
-                self._hold(
-                    conn,
-                    workspace,
-                    unit,
-                    h["state"],
-                    h["reason"],
-                    h["by"],
-                    h["date"],
-                    h["via"],
-                    f"{SOURCE}:{workspace}/{unit}/hold/{i}",
-                )
-        self.history.record_in(conn, items)
-        conn.executemany(
-            "INSERT INTO unit_unknowns (root, workspace, unit, artifact, field, reason, raw, at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    self.root,
-                    workspace,
-                    u["unit"],
-                    u["artifact"],
-                    u["field"],
-                    u["reason"],
-                    u["raw"],
-                    at,
-                )
-                for u in unknowns
-            ],
-        )
-        return unknowns
 
     def record_result(
         self,
@@ -426,11 +134,6 @@ class UnitMeta:
         conn.executemany(
             "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text) VALUES (?, ?, ?, ?, ?, ?)",
             [(*scope, artifact, int(q["n"]), str(q["text"])) for q in obj.get("questions") or []],
-        )
-        conn.execute(
-            "INSERT INTO unit_seen (root, workspace, unit, artifact, sha256, questions) VALUES (?, ?, ?, ?, '', 1) "
-            "ON CONFLICT (root, workspace, unit, artifact) DO UPDATE SET questions = 1",
-            (*scope, artifact),
         )
         if stage == "intent" and obj.get("type"):
             conn.execute(f"UPDATE unit_meta SET type = ? WHERE {_ONE}", (str(obj["type"]), *scope))
@@ -617,13 +320,12 @@ class UnitMeta:
         by,
         date,
         via,
-        once_key="",
         authority="unknown",
     ) -> None:
         conn.execute(
-            "INSERT OR IGNORE INTO unit_answers "
-            "(root, workspace, unit, artifact, ref, text, answered_by, date, via, once_key, authority) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO unit_answers "
+            "(root, workspace, unit, artifact, ref, text, answered_by, date, via, authority) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 self.root,
                 workspace,
@@ -634,16 +336,15 @@ class UnitMeta:
                 by,
                 date,
                 via,
-                once_key,
                 authority,
             ),
         )
 
-    def _hold(self, conn, workspace, unit, state, reason, by, date, via, once_key="") -> None:
+    def _hold(self, conn, workspace, unit, state, reason, by, date, via) -> None:
         conn.execute(
-            "INSERT OR IGNORE INTO unit_holds (root, workspace, unit, move, reason, decided_by, date, via, once_key) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (self.root, workspace, unit, state, reason, by, date, via, once_key),
+            "INSERT INTO unit_holds (root, workspace, unit, move, reason, decided_by, date, via) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (self.root, workspace, unit, state, reason, by, date, via),
         )
 
     def add_answer(
@@ -686,20 +387,6 @@ class UnitMeta:
             return self._hold(conn, workspace, unit, state, reason, by, date, via)
         with self.data.write() as c:
             self._hold(c, workspace, unit, state, reason, by, date, via)
-
-    def unknowns(self, workspaces: Iterable[str] | None = None) -> list[dict[str, Any]]:
-        """Every field an import could not read, for `/settings`. Not failed ingests."""
-        sql = "SELECT workspace, unit, artifact, field, reason, raw FROM unit_unknowns WHERE root = ? AND field <> 'ingest'"
-        args: list[Any] = [self.root]
-        wanted = list(workspaces) if workspaces is not None else None
-        if wanted is not None:
-            sql += f" AND workspace IN ({', '.join('?' for _ in wanted)})"
-            args += wanted
-        with self.data.connect() as conn:
-            return [
-                dict(r)
-                for r in conn.execute(sql + " ORDER BY workspace, unit, artifact, field", args)
-            ]
 
     def outputs(self, workspace: str, unit: str) -> list[OutputRecord]:
         """The latest output of each agent for a unit, oldest first: the unit page's second tab."""
@@ -805,7 +492,7 @@ class UnitMeta:
                     None
                     if e is None
                     else e["artifacts"].setdefault(
-                        r["artifact"], {"status": None, "raw": None, "questions": None}
+                        r["artifact"], {"status": None, "questions": None}
                     )
                 )
 
@@ -859,6 +546,9 @@ class UnitMeta:
                 if a is not None:
                     contracts.check_stored(r["agent"], r["version"])
                     a["result"] = contracts.reads(r["agent"], json.loads(r["object"]))
+                    # A record has no questions of its own to ask until its rows say so.
+                    if a["questions"] is None:
+                        a["questions"] = []
                     if r["agent"] == "spike":
                         earlier = conn.execute(
                             "SELECT object FROM outputs WHERE root = ? AND workspace = ? AND unit = ? "
@@ -883,6 +573,8 @@ class UnitMeta:
                         "findings": [],
                     }
                     a.setdefault("rounds", []).append(by_id[r["id"]])
+                    if a["questions"] is None:
+                        a["questions"] = []
             for r in rows(
                 "SELECT f.round, f.finding, f.label, f.fixed_in, f.severity, f.rule, f.path, f.lines, f.text "
                 "FROM review_findings f JOIN review_rounds ON f.round = review_rounds.id WHERE {where} ORDER BY f.rowid"
@@ -901,19 +593,13 @@ class UnitMeta:
                         }
                     )
             for r in rows(
-                "SELECT workspace, unit, artifact, questions FROM unit_seen WHERE {where}"
-            ):
-                a = artifact(r)
-                if a is not None and r["questions"]:
-                    a["questions"] = []
-            for r in rows(
                 "SELECT workspace, unit, artifact, n, text FROM unit_questions WHERE {where} ORDER BY rowid"
             ):
                 a = artifact(r)
                 if a is not None:
                     a["questions"] = [*(a["questions"] or []), {"n": r["n"], "text": r["text"]}]
             for r in rows(
-                "SELECT workspace, unit, artifact, field, reason, raw FROM unit_unknowns WHERE {where}"
+                "SELECT workspace, unit, artifact, field, reason FROM unit_unknowns WHERE {where}"
             ):
                 e = entry(r)
                 if e is None:
@@ -921,9 +607,6 @@ class UnitMeta:
                 e["unknowns"].append(
                     {"artifact": r["artifact"], "field": r["field"], "reason": r["reason"]}
                 )
-                a = artifact(r)
-                if a is not None and r["field"] == "status" and r["raw"] is not None:
-                    a["raw"] = r["raw"]
             for r in rows(
                 "SELECT workspace, unit, kind, ref FROM unit_links WHERE {where} ORDER BY pos"
             ):
