@@ -350,9 +350,7 @@ async def run(
         await _abandon(recorder)
         raise
     except asyncio.CancelledError, GeneratorExit:
-        out.status, out.detail = "cancelled", "the run was cancelled before it ended"
-        await _abandon(recorder)
-        _end(ctx, agent, given, stage, out, denials, models_used, terminal, {"run": out.run})
+        await _cancelled(ctx, agent, given, stage, out, denials, models_used, terminal, recorder)
         raise
     except Refused as e:
         out.status, out.detail = "refused", str(e)
@@ -360,7 +358,11 @@ async def run(
         log.exception("the %s session failed", agent.key)
         out.detail = f"the session failed: {e}"
     out.turns = out.cost.get("turns")
-    extra = dict(await finish(out)) if finish is not None else {}
+    try:
+        extra = await _finished(finish, out, agent.key)
+    except asyncio.CancelledError:
+        await _cancelled(ctx, agent, given, stage, out, denials, models_used, terminal, recorder)
+        raise
     if out.status != "done":
         out.output = None
     closed = await _close(recorder, out)
@@ -368,6 +370,36 @@ async def run(
         closed.update(guard=submit_mod.RUN_SUBMITTED, submitted=submit_mod.submitted(channel))
     _end(ctx, agent, given, stage, out, denials, models_used, terminal, {**closed, **extra})
     yield ("done", out)
+
+
+async def _finished(finish: Finish | None, out: Run, key: str) -> dict[str, Any]:
+    """What the run's `finish` adds to its `end`; a `finish` that fails fails the run, and the
+    `end` is still written."""
+    if finish is None:
+        return {}
+    try:
+        return dict(await finish(out))
+    except Exception as e:
+        log.exception("the %s run's finish failed", key)
+        out.status, out.detail = "failed", f"the run's finish failed: {e}"
+        return {}
+
+
+async def _cancelled(
+    ctx: Ctx,
+    agent: Agent,
+    given: Input,
+    stage: str,
+    out: Run,
+    denials: Denials,
+    models_used: list[str],
+    terminal: str,
+    recorder: Recorder | None,
+) -> None:
+    """A cancel during the session or its `finish`: the run ends `cancelled` and leaves `LIVE`."""
+    out.status, out.detail = "cancelled", "the run was cancelled before it ended"
+    await _abandon(recorder)
+    _end(ctx, agent, given, stage, out, denials, models_used, terminal, {"run": out.run})
 
 
 def _stream(

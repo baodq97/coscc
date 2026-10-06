@@ -142,6 +142,21 @@ class EachStatus(Base):
             (end["status"], end["detail"], end["written"]), ("failed", "nothing written", 0)
         )
 
+    def test_a_finish_that_fails_or_is_cancelled_still_ends_the_run(self):
+        async def fails(got):
+            raise RuntimeError("gh is down")
+
+        got = self.go(Fake(obj={"units": []}), finish=fails)[-1][1]
+        self.assertEqual((got.status, got.output), ("failed", None))
+
+        async def cancelled(got):
+            raise asyncio.CancelledError
+
+        with self.assertRaises(asyncio.CancelledError):
+            self.go(Fake(obj={"units": []}), finish=cancelled)
+        self.assertEqual([e["status"] for e in self.rows("end")], ["failed", "cancelled"])
+        self.assertNotIn(got.run, run_mod.LIVE)
+
 
 class TheRunIsRecorded(Base):
     def test_a_run_with_no_unit_has_its_events(self):
