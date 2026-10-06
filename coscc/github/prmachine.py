@@ -330,7 +330,7 @@ def ci_held(history: History, workspace: str, number: int, head: str) -> dict[st
 
 def open_prs(history: History, workspace: str) -> list[dict[str, Any]]:
     """`{unit, number, files}` for `autopilot.pick`, from the machine's own rows; `files` a set, as
-    `planmap.files_of` gives a plan's.
+    the autopilot reads a plan record's.
     """
     out = []
     for name, now in watched(history, workspace):

@@ -40,7 +40,6 @@ EFFORT_PREFIX = "effort:"
 TURNS_PREFIX = "turns:"
 BUDGET_PREFIX = "budget:"
 NOVEL_SUFFIX = ":novel"
-NOVEL = "novel"
 # Gebo is no stage and has no row in `models.json`: it runs `impl`'s base row unless its own
 # key is overridden.
 FALLS_BACK = {"integrate": "impl"}
@@ -218,7 +217,7 @@ def resolve(
     The `<name>:novel` keys are consulted only when `label` is `novel`. `trial_model` is taken,
     as `TRIAL`, when no key has a model override and `COS_MODEL` is unset.
     """
-    keys = ([name + NOVEL_SUFFIX] if label == NOVEL else []) + [name]
+    keys = ([name + NOVEL_SUFFIX] if label == policy.NOVEL else []) + [name]
     keys += [FALLS_BACK[name]] if name in FALLS_BACK else []
 
     def pick(field: str, overrides: Mapping[str, Value]) -> tuple[str | None, str]:
@@ -241,7 +240,7 @@ def resolve(
 def ceiling_key(stage: str, label: str | None) -> str:
     """The row a step's ceilings are overridden under: `<stage>:novel` for a `novel` step of a
     stage `NOVEL_CEILINGS` names, else the stage."""
-    if label == NOVEL and stage in policy.NOVEL_CEILINGS:
+    if label == policy.NOVEL and stage in policy.NOVEL_CEILINGS:
         return stage + NOVEL_SUFFIX
     return stage
 
@@ -354,7 +353,7 @@ def agent_config(
     rows: list[ConfigRow] = []
     for name, fields in rows_fields.items():
         base = name.removesuffix(NOVEL_SUFFIX)
-        label = NOVEL if name != base else None
+        label = policy.NOVEL if name != base else None
         model, model_source, effort, effort_source = resolve(
             base, label, overrides["model"], overrides["effort"], defaults, env_model
         )
@@ -400,3 +399,57 @@ def rows_for(stages: Iterable[str]) -> list[str]:
         if i >= after_plan:
             out.append(name + NOVEL_SUFFIX)
     return out + [ESTIMATE, CHAT]
+
+
+# The label of a step, from the plan's record. The files where a mistake costs the most force
+# `novel`: `coscc/agent/sessions.py` stands for `_options` (a list of files cannot name a
+# function), `coscc/loop/rules.py` for the gates that decide a unit.
+SECURITY_SURFACE = (
+    "coscc/agent/policy.py",
+    "coscc/agent/sessions.py",
+    "coscc/loop/rules.py",
+    ".claude/settings.json",
+)
+# Where a step's label came from: the record's `impl`; `forced` by a file of `SECURITY_SURFACE`;
+# `escalated`, a routine impl that stopped on `max_turns` before (a budget stop does not
+# escalate); `missing`, no plan record, run as `novel`.
+DECLARED, FORCED, ESCALATED, MISSING = "declared", "forced", "escalated", "missing"
+
+
+def _stopped_at_max_turns(end: dict[str, Any], before: Iterable[dict[str, Any]]) -> bool:
+    """An `end` that was `exhausted` on `max_turns`."""
+    if end.get("outcome") != "exhausted":
+        return False
+    terminal = end.get("terminal")
+    if terminal is None:
+        for rec in reversed(list(before)):
+            if rec.get("kind") == "attempt":
+                terminal = rec.get("terminal")
+                break
+            if rec.get("kind") in ("start", "end"):
+                break
+    return "max_turns" in str(terminal or "").lower()
+
+
+def label_of(
+    stage: str,
+    stages: list[str],
+    plan: Mapping[str, Any] | None,
+    impl_history: list[dict[str, Any]],
+) -> tuple[str | None, str | None, str | None]:
+    """`(label_declared, label, label_source)` for one step; `(None, None, None)` at or before
+    `plan`, whose record is not written yet. `plan` is the plan's record (`contracts.Plan`). `impl_history` is the unit's run log records for
+    `impl`, oldest first."""
+    if "plan" not in stages or stage not in stages or stages.index(stage) <= stages.index("plan"):
+        return None, None, None
+    if plan is None:
+        return MISSING, policy.NOVEL, MISSING
+    said = plan["impl"]
+    if set(plan["files"]) & set(SECURITY_SURFACE):
+        return said, policy.NOVEL, FORCED
+    if said == policy.ROUTINE and stage == "impl":
+        history = [r for r in impl_history if r.get("stage") == "impl"]
+        for i, rec in enumerate(history):
+            if rec.get("kind") == "end" and _stopped_at_max_turns(rec, history[:i]):
+                return said, policy.NOVEL, ESCALATED
+    return said, said, DECLARED

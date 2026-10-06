@@ -11,16 +11,16 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, TypedDict
 
-from coscc.agent import agents, labels, models, modeltrial, policy
+from coscc.agent import agents, models, modeltrial, policy
 from coscc.config import Config
 from coscc.kernel import OWNER, Invalid
 from coscc.leif import decide
 from coscc.store.db import Busy, Data, Unusable
 from coscc.store.journal import BadRecord, Journal
 from coscc.units import board as board_reader
+from coscc.units.contracts import Plan
 from coscc.units.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
@@ -232,7 +232,7 @@ class Agents:
                 (
                     v["ceilings"]["max_budget_usd"]
                     for v in variants
-                    if mine and mine[0].get("label") == models.NOVEL
+                    if mine and mine[0].get("label") == policy.NOVEL
                     if v["ceilings"]["max_budget_usd"]
                 ),
                 config_row["ceilings"]["max_budget_usd"],
@@ -428,7 +428,13 @@ class Models:
         )
 
     def stage_config(
-        self, stage: str, stages: list[str], directory: Path, journal: Journal, key: str, unit: str
+        self,
+        stage: str,
+        stages: list[str],
+        plan: Plan | None,
+        journal: Journal,
+        key: str,
+        unit: str,
     ) -> dict[str, Any]:
         """The label a step runs under, the model and effort it resolves to, and for `impl`
         which run of the unit's this is. Called after the gate, before any money is spent.
@@ -440,14 +446,8 @@ class Models:
         and `trial_record` says which arm and what was asked for; the model the session really
         ran is filled in once its `init` names it. Any other step has no `trial_record` key.
         """
-        try:
-            plan_text: str | None = (Path(directory) / "plan.md").read_text(
-                encoding="utf-8", errors="replace"
-            )
-        except OSError:
-            plan_text = None
         history = [r for r in journal.records(key, unit) if r.get("stage") == "impl"]
-        label_declared, label, label_source = labels.label_for(stage, stages, plan_text, history)
+        label_declared, label, label_source = models.label_of(stage, stages, plan, history)
         arm = modeltrial.arm(unit) if modeltrial.applies(stage, label) else None
         trial_kw = {"trial_model": modeltrial.model_for(stage, label, arm)} if arm else {}
         model, model_source, effort, effort_source = models.resolve(

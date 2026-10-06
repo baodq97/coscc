@@ -37,7 +37,7 @@ class CreatingAnIdea(Fixture):
         text = ideas.read_text(made["path"])
         self.assertEqual(
             text,
-            "# Idea: one feature\nAuthor: the originator. Status: accepted.\n\n"
+            "# Idea: one feature\nAuthor: the originator.\n\n"
             "## In their own words\n\nbackend adds, frontend calls\n",
         )
         self.assertEqual(ideas.create_idea(WS, "two", "b", self.data)["id"], "0002_two")

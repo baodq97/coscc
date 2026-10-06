@@ -34,17 +34,40 @@ from tests.loop.test_model import (
     asked,
     branched,
     green_probe,
+    impl_text,
+    known,
+    claim_record,
+    read,
     low,
     ok,
     review_art,
     round3,
     round_,
     state_of_root,
-    tree_after_round_two,
     REVIEW_HEAD,
     ROUND1,
     ROUND2,
 )
+
+
+def tree_after_round_two(tmp_path, review, claims=("F2", "F3")):
+    """A unit right after its second review round, as files on disk, impl's record claiming
+    `claims` only a person can close."""
+    d = tmp_path / str(len(list(tmp_path.iterdir()))) / "qroot" / ".cos" / "0001_q"
+    d.mkdir(parents=True)
+    files = {
+        "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+        "spec.md": "# S\nStatus: accepted.\n",
+        "plan.md": "# P\nStatus: accepted.\n",
+        "impl.md": impl_text(),
+        "pr.md": "# PR: fix(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n",
+        "review.md": review,
+    }
+    for f, text in files.items():
+        (d / f).write_text(text)
+    statuses = {f: "accepted" for f in files} | {"review.md": "changes-requested"}
+    return read(d, "0001_q", known(statuses, type="fix", records=claim_record(*claims)))
+
 
 # --- the open lows and the findings not fixed -------------------------------------------
 
@@ -669,6 +692,15 @@ class Tree17:
         self.root = tmp_path / f"t{len(list(tmp_path.iterdir()))}"
         self.dir = self.root / ".cos" / self.name
         self.dir.mkdir(parents=True)
+        self.entry = known(
+            {
+                **dict.fromkeys(
+                    ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md"), "accepted"
+                ),
+                "review.md": "changes-requested",
+            },
+            questions={"intent.md": ["Một?"]},
+        )
         files = {
             "intent.md": "# Intent: x\nType: feat. Status: accepted.\n\n## Open questions\n\n"
             "1. Một?\n",
@@ -684,7 +716,7 @@ class Tree17:
 
     def run(self, limit, *args):
         argv = [*args, "--root", str(self.root), "--state", "-"]
-        state = json.dumps(state_of_root(self.root))
+        state = json.dumps(state_of_root(self.root, {self.name: self.entry}))
         return python(argv, stdin=state, environ=env(COS_REVIEW_ROUNDS=str(limit)))
 
     def used(self, limit):

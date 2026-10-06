@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 from pathlib import Path
 from unittest import mock
 
@@ -58,13 +59,19 @@ def seed(
     type: str | None = None,
     shipped: bool = False,
     questions: Mapping[str, Sequence[str]] | None = None,
+    plan: Mapping[str, Any] | None = None,
 ) -> None:
     """Test glue: a unit in the state a test names, as rows. `statuses` is `{artifact: state}`,
     each one transition (source `test`); `type` is an intent record, as `record_result` writes
     it; `shipped` is the merge row the PR machine writes; `questions` is `{artifact: [text]}`,
-    numbered from 1. A file the test writes beside it is prose."""
+    numbered from 1; `plan` is a plan record's fields over `impl: novel` and empty lists. A
+    file the test writes beside it is prose."""
     with meta.data.write() as conn:
         meta.add_unit(conn, ws, unit)
+        if plan is not None:
+            obj = {"judgement": "ready", "questions": [], "impl": "novel", "files": [],
+                   "steps": [], "rests_on": [], **plan}  # fmt: skip
+            meta.record_result(conn, ws, unit, "plan", "plan.md", {"object": obj})
         if type is not None:
             submitted = {
                 "run": "r",
@@ -423,6 +430,34 @@ class TheOutputsTheLoopReads(Base):
             self.artifact("spec.md")["result"],
             {"judgement": "ready", "questions": [], "unmeasured": []},
         )
+
+    def test_the_plan_is_its_latest_record(self):
+        self.assertIsNone(self.meta.plan(WS, self.UNIT))
+        step = {"title": "a", "paths": ["a.py"], "report": "r"}
+        for impl in ("novel", "routine"):
+            self.record(
+                "plan",
+                {"judgement": "ready", "questions": [], "impl": impl, "files": ["a.py", "b.py"],
+                 "steps": [step], "rests_on": ["U1"], "extra": 1},
+            )  # fmt: skip
+        self.assertEqual(
+            self.meta.plan(WS, self.UNIT),
+            {"impl": "routine", "files": ["a.py", "b.py"], "steps": [step], "rests_on": ["U1"]},
+        )
+        self.assertEqual(self.artifact("plan.md")["result"]["rests_on"], ["U1"])
+        with self.data.write() as conn:
+            conn.execute("UPDATE outputs SET version = 1 WHERE agent = 'plan'")
+        with self.assertRaises(ContractError) as raised:
+            self.meta.plan(WS, self.UNIT)
+        self.assertEqual(raised.exception.code, "output-version")
+
+    def test_a_skip_carries_its_reason(self):
+        self.meta.history.record(
+            WS, self.UNIT, "spec.md", "skipped", source="skip", authority="person",
+            inputs={"authority": "person", "reason": "one file, no schema"},
+        )  # fmt: skip
+        spec = self.artifact("spec.md")
+        self.assertEqual((spec["status"], spec["reason"]), ("skipped", "one file, no schema"))
 
     def test_the_app_counts_the_spike_round(self):
         self.spike("fails", "holds")

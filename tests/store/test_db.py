@@ -699,10 +699,6 @@ class TheRunningAppsDatabaseIsNotOpened(unittest.TestCase):
             self.assertEqual(Data(self.tmp / "app").version(), SCHEMA_VERSION)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class V16DropsWhatTheFilesFed(unittest.TestCase):
     def test_a_v15_database_loses_what_a_file_fed_and_done_becomes_accepted(self):
         with tempfile.TemporaryDirectory() as d:
@@ -757,3 +753,44 @@ class V16DropsWhatTheFilesFed(unittest.TestCase):
                 moves,
                 [("not started", "accepted"), ("accepted", "accepted"), ("draft", "accepted")],
             )
+
+
+class V17PlanRecordsBecomeV2(unittest.TestCase):
+    def test_a_v1_plan_gains_its_label_empty_lists_and_the_specs_unmeasured(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.connect() as conn:
+                rows = (
+                    ("0001_a", "spec", 1, '{"unmeasured": ["U9"]}'),
+                    ("0001_a", "spec", 1, '{"unmeasured": ["U1"]}'),
+                    ("0001_a", "plan", 1, '{"judgement": "ready"}'),
+                    ("0002_b", "plan", 1, '{"judgement": "ready"}'),
+                )
+                for unit, agent, version, obj in rows:
+                    conn.execute(
+                        "INSERT INTO outputs (at, root, workspace, unit, agent, version, run, "
+                        "revision, judgement, object) "
+                        "VALUES ('t', '/w', 'p', ?, ?, ?, 'r', 'h', 'ready', ?)",
+                        (unit, agent, version, obj),
+                    )
+                conn.execute("PRAGMA user_version=16")
+
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                plans = conn.execute(
+                    "SELECT unit, version, json_extract(object, '$.impl') AS impl, "
+                    "json_type(object, '$.files') AS files, json_type(object, '$.steps') AS steps, "
+                    "json_extract(object, '$.rests_on') AS rests_on FROM outputs "
+                    "WHERE agent = 'plan' ORDER BY unit"
+                ).fetchall()
+            self.assertEqual(
+                [tuple(r) for r in plans],
+                [
+                    ("0001_a", 2, "novel", "array", "array", '["U1"]'),
+                    ("0002_b", 2, "novel", "array", "array", "[]"),
+                ],
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

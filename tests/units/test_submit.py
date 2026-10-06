@@ -10,7 +10,7 @@ from typing import Any
 
 import jsonschema
 
-from coscc.units import contracts, submit
+from coscc.units import contracts, guards, submit
 from coscc.units.contracts import ContractError
 from coscc.units.submit import AGAIN, Channel
 
@@ -32,6 +32,8 @@ def _filled(channel: Channel | submit.Collector, fields: dict[str, Any]) -> dict
         obj["unmeasured"] = []
     if channel.stage == "spike":
         obj["verdicts"] = []
+    if channel.stage == "plan":
+        obj.update(impl="novel", files=[], steps=[], rests_on=[])
     return {**obj, **fields}
 
 
@@ -54,6 +56,39 @@ async def submits(kw: dict[str, Any], **fields: Any) -> dict[str, Any] | None:
             "is_error": True,
         }
     return await channel.handle(obj)
+
+
+class APlanStepNamesOnlyItsFiles(unittest.TestCase):
+    """A step's paths are files of the plan's `files`, and no path is in two steps."""
+
+    def submit(self, **fields: Any) -> dict[str, Any]:
+        with tempfile.TemporaryDirectory() as d:
+            channel = Channel(run="r", stage="plan", directory=d, artifact="plan.md", own=False)
+            channel.verdict = lambda *_: guards.OPEN  # ty: ignore[invalid-assignment]
+            return asyncio.run(channel.handle(_filled(channel, fields)))
+
+    def step(self, title: str, *paths: str) -> dict[str, Any]:
+        return {"title": title, "paths": list(paths), "report": "done"}
+
+    def test_a_step_naming_a_path_outside_files_is_refused_with_the_path(self):
+        said = self.submit(files=["a.py"], steps=[self.step("one", "a.py", "x.py")])
+        self.assertTrue(said.get("is_error"), said)
+        self.assertIn("x.py", said["content"][0]["text"])
+        self.assertIn("one", said["content"][0]["text"])
+
+    def test_a_path_in_two_steps_is_refused_with_the_path(self):
+        said = self.submit(
+            files=["a.py", "b.py"], steps=[self.step("one", "a.py"), self.step("two", "a.py")]
+        )
+        self.assertTrue(said.get("is_error"), said)
+        self.assertIn("a.py", said["content"][0]["text"])
+
+    def test_disjoint_steps_inside_files_are_taken(self):
+        said = self.submit(
+            files=["a.py", "b.py", "c.py"],
+            steps=[self.step("one", "a.py"), self.step("two", "b.py")],
+        )
+        self.assertFalse(said.get("is_error"), said)
 
 
 class EveryToolTakesTheDeclaredSchema(unittest.TestCase):

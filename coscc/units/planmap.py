@@ -1,6 +1,6 @@
 """The files a plan changes, as they stand, for its `impl` step.
 
-Lists each file the plan's `## Files that change` names with its line count and, for Python
+Lists each file the plan's record names in `files` with its line count and, for Python
 and JavaScript, the line each top-level and class-level definition starts on. It returns the
 prompt section and the record `Runner.run` puts into `start`. It reads only inside the tree.
 """
@@ -15,9 +15,6 @@ import tokenize
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import labels
-from coscc.git.drift import files_section
-
 log = logging.getLogger(__name__)
 
 # The bytes of the whole section, advice aside: twice what earlier reviews once took.
@@ -30,16 +27,6 @@ _JS = (
     re.compile(r"^(?:export\s+)?(?:default\s+)?(class)\s+(\w+)"),
     re.compile(r"^(?:export\s+)?(const)\s+(\w+)\s*="),
 )
-
-
-def files_of(plan_text: str | None) -> set[str] | None:
-    """The paths under `plan.md ## Files that change`, or `None` when there are none to read.
-
-    `None` overlaps with everything. Only tokens that look like a path count:
-    `labels.listed_paths` keeps every word of the section.
-    """
-    found = {p for p in labels.listed_paths(plan_text) if "/" in p or re.search(r"\.\w+$", p)}
-    return found or None
 
 
 def _empty() -> dict[str, Any]:
@@ -95,35 +82,24 @@ def definitions(name: str, text: str) -> list[tuple[int, str]]:
     return out
 
 
-def _paths(plan_text: str) -> list[str]:
-    """The plan's paths in the order the section first names them; `::name` is cut."""
-    section = files_section(plan_text) or ""
-    seen: dict[str, int] = {}
-    for token in files_of(plan_text) or ():
-        path = token.split("::", 1)[0]
-        at = section.find(token)
-        at = len(section) if at < 0 else at
-        seen[path] = min(at, seen.get(path, at))
-    return sorted(seen, key=lambda p: (seen[p], p.encode()))
-
-
 def _join(lines: list[str]) -> int:
     return len("\n".join(lines).encode("utf-8"))
 
 
-def select(plan_text: str, tree: str | os.PathLike[str]) -> tuple[str, dict[str, Any]]:
-    """`(section, record)`: one entry per file the plan names, never over `CAP_BYTES`.
+def select(files: list[str], tree: str | os.PathLike[str]) -> tuple[str, dict[str, Any]]:
+    """`(section, record)`: one entry per file of `files`, in order and once each, never over
+    `CAP_BYTES`.
 
     The record is `{bytes, files, full, short, new, outside}`. A path resolving outside `tree`
     is counted `outside` and never opened; a directory is skipped; a missing path with a `/`
     is `new`. Files get a whole entry while it fits, then only a short line each.
     """
-    if files_section(plan_text) is None:
+    if not files:
         return "", _empty()
     base = Path(tree).expanduser().resolve()
     record = _empty()
     entries: list[tuple[str, str]] = []
-    for path in _paths(plan_text):
+    for path in dict.fromkeys(files):
         target = (base / path).resolve()
         if target != base and base not in target.parents:
             record["outside"] += 1
@@ -167,10 +143,10 @@ def select(plan_text: str, tree: str | os.PathLike[str]) -> tuple[str, dict[str,
     return section, record
 
 
-def for_step(plan_path: str | os.PathLike[str], tree: str | os.PathLike[str]) -> dict[str, Any]:
+def for_step(files: list[str], tree: str | os.PathLike[str]) -> dict[str, Any]:
     """`{plan_map, plan_map_record}` for `Runner.run`. Never raises: a failure is no section and a record with `error`."""
     try:
-        section, record = select(Path(plan_path).read_text(encoding="utf-8"), tree)
+        section, record = select(files, tree)
     except Exception as e:
         # Recorded, never a reason to refuse the step.
         log.exception("the plan map could not be read")

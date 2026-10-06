@@ -69,9 +69,9 @@ class TheDefaultIsTheSetInUseToday(unittest.TestCase):
         # `coscc/loop/model.py` `settled`. Counted on this, so a disagreement here moves
         # 0013's whole number.
         machine = states.default()
-        for state in ("accepted", "skipped", "done"):
+        for state in ("accepted", "skipped"):
             self.assertTrue(machine.is_settled(state), state)
-        for state in ("draft", "rejected", machine.absent):
+        for state in ("draft", "rejected", "done", machine.absent):
             self.assertFalse(machine.is_settled(state), state)
 
     def test_the_definition_lives_inside_the_package_so_a_wheel_can_carry_it(self):

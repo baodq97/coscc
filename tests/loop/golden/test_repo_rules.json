@@ -221,7 +221,7 @@
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[fix(0041): add]#1": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title's type is \\\"fix\\\", but intent.md declares Type: feat — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - the title's type is \\\"fix\\\", but the intent's type is feat — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_review_gate_checks_the_title_before_it_asks_gh[fix(0041): add]#2": [
@@ -721,23 +721,23 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#5": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - intent.md declares no Type, so the title's type \\\"feat\\\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: ship cannot proceed for 0040_widget\",\"  - the intent has handed back no type, so the title's type \\\"feat\\\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#6": [
   1,
-  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - pr.md names no pull request — the pr stage opens one and writes PR: <url>\",\"  - intent.md declares no Type, so the title's type \\\"feat\\\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
+  "{\"ok\":false,\"lines\":[\"blocked: review cannot proceed for 0040_widget\",\"  - pr.md names no pull request — the pr stage opens one and writes PR: <url>\",\"  - the intent has handed back no type, so the title's type \\\"feat\\\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\"],\"reasons\":[\"gate-closed\"]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#7": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"intent.md declares no Type, so the title's type \\\"feat\\\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"the intent has handed back no type, so the title's type \\\"feat\\\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\",\"blocked\":true,\"reasons\":[\"missing\"],\"lane\":\"full\",\"enteredFast\":false,\"laneMissing\":[]}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_unit_with_no_branch_or_no_pull_request#8": [
   1,
   "",
-  "blocked: ship cannot proceed for 0040_widget\n  - intent.md declares no Type, so the title's type \"feat\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\n"
+  "blocked: ship cannot proceed for 0040_widget\n  - the intent has handed back no type, so the title's type \"feat\" cannot be checked against it — the pr stage writes the # PR: line of pr.md again\n"
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_already_merged#1": [
   0,

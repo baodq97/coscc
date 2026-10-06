@@ -62,5 +62,5 @@ $ <the command, exactly as run>
 
 ## Done when
 
-A planner can cite `spike.md ## U<n>` for every step resting on a question, and each block reruns
+A planner can rest each step on a measured `U<n>` (the plan's `rests_on`), and each block reruns
 to the same result.

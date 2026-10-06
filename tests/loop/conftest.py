@@ -105,7 +105,13 @@ def expect(argv, *, environ=None, stdin=None, cwd=REPO) -> Ran:
     table = json.loads(_golden_file(_Test.nodeid).read_text())
     # A new case has no golden to be held to: it asserts fixed values instead.
     assert key in table, f"no golden for {key}: assert what the command says in the test"
-    assert [got.code, _plain(got.out), _plain(got.err)] == table[key], f"argv: {argv}"
+    said, want = [got.code, _plain(got.out), _plain(got.err)], table[key]
+    if os.environ.get(CONTRADICT):
+        # A digest is of the file's text, which the contradiction changed; it decides nothing.
+        said, want = (
+            [c, *(_DIGEST.sub("sha256:<digest>", t) for t in r)] for c, *r in (said, want)
+        )
+    assert said == want, f"argv: {argv}"
     return got
 
 
@@ -118,6 +124,7 @@ def entry(
     answers: list | None = None,
     unknowns: list | None = None,
     merged: bool = False,
+    shipped: bool = False,
     **artifact_fields: dict,
 ) -> dict:
     """A snapshot entry as `UnitMeta.snapshot` builds it: `{file: status}` and the rest.
@@ -136,11 +143,26 @@ def entry(
         "answers": answers or [],
         "unknowns": unknowns or [],
         "merged": merged,
+        "shipped": shipped,
     }
 
 
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+# Set by `test_reads_no_artifact`: every header then says what no row says, so a decision read
+# from a file's text instead of the snapshot shows as a changed golden.
+CONTRADICT = "COS_LOOP_CONTRADICT"
+
+
 def header(title: str, status: str, kind: str = "Intent", extra: str = "") -> str:
-    """A first line and a header line as the skills write them."""
+    """A first line and a header line as the skills write them. Under `CONTRADICT`, a status
+    and a type no row holds, a skip reason and a spike citation, and an open question; `pr.md`
+    keeps its lines, which become the pull request's body."""
+    if os.environ.get(CONTRADICT):
+        status = "rejected"
+        if kind != "PR":
+            extra = f"Type: docs. Spec: skipped (contradiction). Cites spike.md ## U1.\n{extra}"
+            tail = "\n## Open questions\n1. Is this read?\n\n"
+            return f"# {kind}: {title}\n{extra}Author: test. Status: {status}.\n{tail}"
     return f"# {kind}: {title}\n{extra}Author: test. Status: {status}.\n"
 
 

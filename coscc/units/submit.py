@@ -76,6 +76,21 @@ def round_problem(obj: Mapping[str, Any]) -> str:
     return ""
 
 
+def plan_problem(obj: Mapping[str, Any]) -> str:
+    """What a plan's steps say that its schema cannot rule out, `""` when nothing: a step naming
+    a path its `files` do not, or one path in two steps."""
+    files = set(obj.get("files") or ())
+    seen: dict[str, str] = {}
+    for step in obj.get("steps") or ():
+        for path in step["paths"]:
+            if path not in files:
+                return f"step {step['title']!r} names {path}, which `files` does not list."
+            if path in seen:
+                return f"{path} is in two steps, {seen[path]!r} and {step['title']!r}."
+            seen[path] = step["title"]
+    return ""
+
+
 def revision(directory: str | Path, artifact: str, *, own: bool) -> str:
     """One hash of the unit's artifacts as they are on disk now.
 
@@ -187,6 +202,9 @@ class Channel:
         elif obj.get("stage") != self.stage:
             self.refused += 1
             return refusal(f"this run is {self.stage}; the object names {obj.get('stage')!r}.")
+        elif self.stage == "plan" and (problem := plan_problem(obj)):
+            self.refused += 1
+            return refusal(problem)
         taken = revision(self.directory, self.artifact, own=self.own)
         if self.own and not (self.directory / self.artifact).exists():
             self.refused += 1

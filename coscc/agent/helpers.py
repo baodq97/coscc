@@ -62,8 +62,8 @@ _PATH = re.compile(r"[\w~-]*[/.][\w.~/-]*\w")
 # In the leading session's prompt and in every `worker`'s, the same words.
 PROTOCOL = """# Working with helpers
 
-When the plan's `## Parallelization` names two or more steps, finish and commit the steps of
-`## Order of work` first. Then start one `worker` per parallel step with `Agent`, all in the same
+When the prompt's `# The plan's parallel steps` names two or more steps, first finish and commit
+the plan's files no step names. Then start one `worker` per parallel step with `Agent`, all in the same
 turn and never with `run_in_background`: the step's name as `description`, its paths and what it
 reports in the prompt. Once all are done, read each one's diff, commit, and run
 `## Verification` once on the whole worktree. Only the leading session commits: a helper runs

@@ -1,8 +1,8 @@
 """Codes beside the words, the workflows a red check is read against, one idea over several units
-and repositories, the pull request's title, the metadata `meta` prints and the lane a unit walks.
+and repositories, the pull request's title, the lane a unit walks.
 
-A deciding command is handed the snapshot the app would build of the files under
-`--root` and of the stores named as peers, from `meta`'s own readers.
+A deciding command is handed the snapshot the app would build: each unit's rows, stated by the
+test as `known` entries, `{"<workspace>/<name>": entry}` (the workspace of `--root` is empty).
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from coscc.loop.model import (
     read_unit,
     title_problem,
 )
-from coscc.loop.paths import unit_meta
 from coscc.loop.probe import make_probe
 from coscc.loop.repo_rules import branch_checks
 from coscc.loop.rules import gate_answer, next_answer
@@ -39,13 +38,13 @@ from tests.loop.test_model import (
     PR,
     art,
     branched,
-    entry_from,
     green_probe,
-    hold_block,
+    hold,
+    known,
     moved_to,
     ok,
     passed,
-    question_tree,
+    read,
     review_art,
     round_,
     unit,
@@ -54,22 +53,29 @@ from tests.loop.test_model import (
 # --- the suite's glue -------------------------------------------------------------------
 
 
-def state_for(stores: dict[str, Path], own: str = "", links: dict | None = None) -> dict:
+def state_for(
+    stores: dict[str, Path],
+    own: str = "",
+    links: dict | None = None,
+    entries: dict[str, dict] | None = None,
+) -> dict:
     """The snapshot of the stores `{workspace: <root>/.cos}`; `own` is the one the command reads.
-    `links` are the rows the press wrote, `{unit: {"idea": ..., "dependsOn": [...]}}`, of `own`."""
+    `entries` are the units' rows, `{"<workspace>/<name>": known(...)}`; a directory with none has
+    no rows. `links` are the rows the press wrote, `{unit: {"idea": ..., "dependsOn": [...]}}`,
+    of `own`."""
     units = {}
     for ws, cos in stores.items():
         if not cos.exists():
             continue
         for d in sorted(cos.iterdir()):
             if d.is_dir() and d.name != "ideas":
-                units[f"{ws}/{d.name}"] = entry_from(unit_meta(str(d)))
+                units[f"{ws}/{d.name}"] = (entries or {}).get(f"{ws}/{d.name}") or known()
     for name, linked in (links or {}).items():
         units[f"{own}/{name}"]["links"] = {"idea": None, "dependsOn": None, **linked}
     return {"workspace": own, "workspaces": [w for w in stores if w], "units": units}
 
 
-def state_of_roots(root, peers=(), links=None) -> dict:
+def state_of_roots(root, peers=(), links=None, units=None) -> dict:
     """The snapshot of the store at `root` and of `peers`, `(workspace, root)` pairs."""
     at = Path(root).resolve()
     own = next((n for n, d in peers if Path(d).resolve() == at), "")
@@ -77,29 +83,42 @@ def state_of_roots(root, peers=(), links=None) -> dict:
     for n, d in peers:
         if n != own:
             stores[n] = Path(d).resolve() / ".cos"
-    return state_for(stores, own, links)
+    return state_for(stores, own, links, units)
 
 
-def ask(*argv, peers=(), records=None, links=None):
-    """A deciding command on `--root`, handed the snapshot of it and of `peers`; `records` are
-    the submitted records of the own store's units, `{unit: {file: {"result": ...}}}`, and `links`
-    the rows of its units."""
+def ask(*argv, peers=(), records=None, links=None, units=None):
+    """A deciding command on `--root`, handed the snapshot of it and of `peers`; `units` are the
+    units' `known` entries, `records` the submitted records of the own store's units,
+    `{unit: {file: {"result": ...}}}`, and `links` the rows of its units."""
     words = [str(a) for a in argv]
     root = words[words.index("--root") + 1]
-    state = state_of_roots(root, peers, links)
+    state = state_of_roots(root, peers, links, units)
     for name, files in (records or {}).items():
         arts = state["units"][f"{state['workspace']}/{name}"]["artifacts"]
         for f, rec in files.items():
-            arts.setdefault(f, {"status": None, "raw": None, "questions": None}).update(rec)
+            arts.setdefault(f, {"status": None, "questions": None}).update(rec)
     return python([*words, "--state", "-"], stdin=json.dumps(state))
 
 
-def read_in(dir_: Path, name: str, root: Path, peers=(), links=None) -> dict:
-    """`read_unit` of `dir_` under `name`, in the snapshot of the store at `root` and `peers`."""
+def read_in(dir_: Path, name: str, root: Path, peers=(), links=None, entry=None) -> dict:
+    """`read_unit` of `dir_` under `name`, in the snapshot of the store at `root` and `peers`;
+    `entry` is the unit's `known` entry."""
     state = state_of_roots(root, peers, links)
-    entry = state["units"][f"{state['workspace']}/{name}"] = entry_from(unit_meta(str(dir_)))
-    entry["links"] = {"idea": None, "dependsOn": None, **(links or {}).get(name, {})}
+    own = state["workspace"]
+    state["units"][f"{own}/{name}"] = {
+        **(entry or known()),
+        "links": state["units"][f"{own}/{name}"]["links"],
+    }
     return read_unit(str(dir_), name, state)
+
+
+def tree(tmp_path: Path, files: dict[str, str], entry: dict) -> dict:
+    """`read_unit` of a unit holding `files`, its rows `entry`."""
+    d = tmp_path / "qroot" / ".cos" / "0001_q"
+    d.mkdir(parents=True)
+    for f, text in files.items():
+        (d / f).write_text(text)
+    return read(d, "0001_q", entry)
 
 
 def make_store(tmp_path: Path, units: dict) -> Path:
@@ -223,7 +242,7 @@ def test_next_and_gate_name_ci_a_person_a_merge_made_and_a_closed_unit_by_code()
     assert gate_answer(passed(), "ship", merged_probe())["reasons"] == ["recording-ship"]
     has(next_answer(passed(), merged_probe()), "recording-ship")
     assert gate_answer(passed(), "ship", green_probe())["reasons"] == []
-    assert next_answer(branched({**CHAIN, "plan.md": art("done")}))["reasons"] == ["finished"]
+    assert next_answer({**branched(CHAIN), "shipped": True})["reasons"] == ["finished"]
     has(next_answer(branched({**CHAIN, "spec.md": art("rejected")})), "closed")
     # The words stay where they were: `next_step` and `check_gate` hand out no codes.
     assert "reasons" not in next_step(branched(CHAIN), pending)
@@ -277,23 +296,31 @@ def to_impl():
     }
 
 
+def to_impl_rows():
+    """The rows of `to_impl()`."""
+    return known({"intent.md": "accepted", "spec.md": "skipped", "plan.md": "accepted"})
+
+
 # The rows the press wrote for the unit that waits: its idea, and the unit it depends on.
 Y_LINKS = {"0001_y": {"idea": "b/ideas/0001_f.md", "dependsOn": ["a/0001_x"]}}
 
 
-def pair(tmp_path, ship="draft", a_intent=None):
-    """Workspace `a` holds the unit depended on; `b` holds the unit that waits."""
-    files = {"intent.md": a_intent or intent_for("accepted")}
+def pair(tmp_path, ship="draft", a_intent="accepted", a_holds=None):
+    """Workspace `a` holds the unit depended on; `b` holds the unit that waits. The third is the
+    rows of both."""
+    files = {"intent.md": intent_for(a_intent)}
+    rows = {"intent.md": a_intent}
     if ship:
         files["ship.md"] = f"# Ship\nStatus: {ship}.\n"
+        rows["ship.md"] = ship
     a = make_store(tmp_path, {"0001_x": files})
     b = make_store(tmp_path, {"0001_y": to_impl()})
-    return a, b
+    return a, b, {"a/0001_x": known(rows, holds=a_holds), "/0001_y": to_impl_rows()}
 
 
 def test_a_child_unit_carries_idea_and_depends_on_in_status_json(tmp_path):
-    a, b = pair(tmp_path)
-    out = ask("--root", b, "status", "--json", peers=[("a", a)], links=Y_LINKS).out
+    a, b, units = pair(tmp_path)
+    out = ask("--root", b, "status", "--json", peers=[("a", a)], links=Y_LINKS, units=units).out
     [u] = json.loads(out)["units"]
     assert u["idea"] == "b/ideas/0001_f.md"
     assert "repo" not in u
@@ -304,8 +331,9 @@ def test_a_child_unit_carries_idea_and_depends_on_in_status_json(tmp_path):
 
 
 def test_a_unit_without_links_has_none_of_the_keys(tmp_path):
-    a, _ = pair(tmp_path)
-    [u] = json.loads(ask("--root", a, "status", "--json").out)["units"]
+    a, _, units = pair(tmp_path)
+    own = {"/0001_x": units["a/0001_x"]}
+    [u] = json.loads(ask("--root", a, "status", "--json", units=own).out)["units"]
     for key in ["idea", "repo", "dependsOn"]:
         assert key not in u, key
 
@@ -319,7 +347,8 @@ def test_a_unit_ref_is_a_name_alone_or_a_workspace_and_a_name():
 def test_a_dependency_in_a_workspace_the_app_does_not_know_is_a_problem(tmp_path):
     b = make_store(tmp_path, {"0002_p": to_impl()})
     links = {"0002_p": {"dependsOn": ["c/0001_z", "0002_p", "b/0002_p"]}}
-    [u] = json.loads(ask("--root", b, "status", "--json", links=links).out)["units"]
+    units = {"/0002_p": to_impl_rows()}
+    [u] = json.loads(ask("--root", b, "status", "--json", links=links, units=units).out)["units"]
     problems = "\n".join(u["problems"])
     assert re.search(r"c/0001_z — the app has no workspace named c", problems)
     assert re.search(r"0002_p — a unit cannot depend on itself", problems)
@@ -328,12 +357,13 @@ def test_a_dependency_in_a_workspace_the_app_does_not_know_is_a_problem(tmp_path
 
 @pytest.mark.parametrize("ship", ["draft", None])
 def test_impl_gate_stays_shut_while_the_dependencys_ship_is_not_accepted(tmp_path, ship):
-    a, b = pair(tmp_path, ship=ship)
-    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS)
+    a, b, units = pair(tmp_path, ship=ship)
+    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS, units=units)
     assert out.code == 1, str(ship)
     assert re.search(r"waits on a/0001_x: not merged: the app holds no merge of it", out.err)
     # `plan` is not `impl`: the wait closes nothing else.
-    assert ask("--root", b, "gate", "0001_y", "plan", peers=[("a", a)], links=Y_LINKS).code == 0
+    plan = ask("--root", b, "gate", "0001_y", "plan", peers=[("a", a)], links=Y_LINKS, units=units)
+    assert plan.code == 0
 
 
 def test_a_dependency_opens_on_the_merged_row_not_on_ship_md(tmp_path):
@@ -343,8 +373,8 @@ def test_a_dependency_opens_on_the_merged_row_not_on_ship_md(tmp_path):
         )
 
     def asked_with(ship, merged):
-        a, b = pair(tmp_path, ship=ship)
-        state = state_of_roots(b, [("a", a)], Y_LINKS)
+        a, b, units = pair(tmp_path, ship=ship)
+        state = state_of_roots(b, [("a", a)], Y_LINKS, units)
         state["units"]["a/0001_x"]["merged"] = merged
         return gate(state, b)
 
@@ -354,52 +384,60 @@ def test_a_dependency_opens_on_the_merged_row_not_on_ship_md(tmp_path):
     for ship in ["draft", None]:
         assert asked_with(ship, True).code == 0, f"merged with ship.md {ship}"
     # An entry that carries no `merged` at all is not merged.
-    a, b = pair(tmp_path, ship="accepted")
-    state = state_of_roots(b, [("a", a)], Y_LINKS)
+    a, b, units = pair(tmp_path, ship="accepted")
+    state = state_of_roots(b, [("a", a)], Y_LINKS, units)
     del state["units"]["a/0001_x"]["merged"]
     assert gate(state, b).code == 1
 
 
 def test_impl_gate_opens_once_the_dependencys_ship_is_accepted(tmp_path):
-    a, b = pair(tmp_path, ship="accepted")
-    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS)
+    a, b, units = pair(tmp_path, ship="accepted")
+    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS, units=units)
     assert out.code == 0, out.err
-    nxt = json.loads(ask("--root", b, "next", "0001_y", peers=[("a", a)], links=Y_LINKS).out)
+    peers = [("a", a)]
+    nxt = json.loads(
+        ask("--root", b, "next", "0001_y", peers=peers, links=Y_LINKS, units=units).out
+    )
     assert nxt["stage"] == "impl"
     assert "why" not in nxt, "why is carried only by a wait"
 
 
 def test_a_workspace_the_snapshot_does_not_name_shuts_impl_and_says_so(tmp_path):
-    _, b = pair(tmp_path, ship="accepted")
-    out = ask("--root", b, "gate", "0001_y", "impl", links=Y_LINKS)
+    _, b, units = pair(tmp_path, ship="accepted")
+    out = ask("--root", b, "gate", "0001_y", "impl", links=Y_LINKS, units=units)
     assert out.code == 1
     assert re.search(r"waits on a/0001_x: the app has no workspace named a", out.err)
 
 
 def test_a_dropped_dependency_shuts_impl_and_says_dropped(tmp_path):
-    dropped = f"{intent_for('accepted')}\n## Answers\n{hold_block('Dropped', 'Not needed.')}"
-    a, b = pair(tmp_path, ship=None, a_intent=dropped)
-    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS)
+    a, b, units = pair(tmp_path, ship=None, a_holds=[hold("dropped", "Not needed.")])
+    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS, units=units)
     assert out.code == 1
     assert re.search(r"waits on a/0001_x: dropped", out.err)
-    a, b = pair(tmp_path, ship=None, a_intent=intent_for("rejected"))
+    a, b, units = pair(tmp_path, ship=None, a_intent="rejected")
     assert re.search(
         r"waits on a/0001_x: rejected: its intent\.md is rejected",
-        ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS).err,
+        ask(
+            "--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS, units=units
+        ).err,
     )
 
 
-def related(tmp_path, intent, change=None):
+def related(tmp_path, intent, change=None, holds=None):
     """A unit ready for `impl`; the snapshot says it depends, by a relation of the backlog, on a
-    second one, whose `impl` is done and whose `intent.md` is `intent`."""
+    second one, whose `impl` is done and whose `intent.md` has the status `intent`."""
     b = make_store(
         tmp_path,
         {
             "0001_y": to_impl(),
-            "0002_x": {"intent.md": intent, "impl.md": "# Impl\nStatus: accepted.\n"},
+            "0002_x": {"intent.md": intent_for(intent), "impl.md": "# Impl\nStatus: accepted.\n"},
         },
     )
-    state = state_of_roots(b)
+    units = {
+        "/0001_y": to_impl_rows(),
+        "/0002_x": known({"intent.md": intent, "impl.md": "accepted"}, holds=holds),
+    }
+    state = state_of_roots(b, units=units)
     state["units"]["/0001_y"]["links"]["backlog"] = [{"ref": "0002_x", "source": "backlog"}]
     if change:
         change(state)
@@ -414,7 +452,7 @@ def related(tmp_path, intent, change=None):
 
 
 def test_a_backlog_relation_to_a_unit_not_shipped_shuts_impl_and_merged_opens_it(tmp_path):
-    state, gate = related(tmp_path, intent_for("accepted"))
+    state, gate = related(tmp_path, "accepted")
     shut = gate()
     assert shut.code == 1
     assert re.search(
@@ -426,11 +464,8 @@ def test_a_backlog_relation_to_a_unit_not_shipped_shuts_impl_and_merged_opens_it
 
 
 def test_a_backlog_relation_to_a_rejected_or_dropped_unit_holds_nothing(tmp_path):
-    for intent in [
-        intent_for("rejected"),
-        f"{intent_for('accepted')}\n## Answers\n{hold_block('Dropped', 'Not needed.')}",
-    ]:
-        _, gate = related(tmp_path, intent)
+    for intent, holds in [("rejected", None), ("accepted", [hold("dropped", "Not needed.")])]:
+        _, gate = related(tmp_path, intent, holds=holds)
         out = gate("--json")
         assert out.code == 0, out.err
         assert json.loads(out.out)["reasons"] == []
@@ -442,7 +477,8 @@ def test_a_relation_to_an_idea_dropped_before_its_intent_reads_dropped(tmp_path)
             tmp_path,
             {"0001_y": to_impl(), "0002_x": {"idea.md": "# Idea: x\nStatus: accepted.\n"}},
         )
-        state = state_of_roots(b)
+        units = {"/0001_y": to_impl_rows(), "/0002_x": known({"idea.md": "accepted"})}
+        state = state_of_roots(b, units=units)
         state["units"]["/0001_y"]["links"]["dependsOn"] = list(depends) or None
         state["units"]["/0002_x"]["holds"] = [
             {"state": "dropped", "reason": "gộp vào 0055", "by": "Leif", "date": "2026-10-05"}
@@ -475,7 +511,12 @@ def test_status_carries_the_source_of_a_backlog_dependency_and_a_unit_with_none_
             "0003_z": {"intent.md": intent_for("accepted")},
         },
     )
-    state = state_of_roots(b)
+    units = {
+        "/0001_y": to_impl_rows(),
+        "/0002_x": known({"intent.md": "accepted"}),
+        "/0003_z": known({"intent.md": "accepted"}),
+    }
+    state = state_of_roots(b, units=units)
     state["units"]["/0001_y"]["links"].update(
         dependsOn=["0003_z"], backlog=[{"ref": "0002_x", "source": "backlog"}]
     )
@@ -530,8 +571,18 @@ def test_a_red_check_that_sends_the_work_back_to_impl_waits_on_the_dependency_to
         },
     )
 
+    rows = known(
+        {
+            "intent.md": "accepted",
+            "spec.md": "skipped",
+            "plan.md": "accepted",
+            "impl.md": "accepted",
+            "pr.md": "accepted",
+        }
+    )
+
     def read(name):
-        return read_in(b / ".cos" / name, name, b, [("a", a)], Y_LINKS)
+        return read_in(b / ".cos" / name, name, b, [("a", a)], Y_LINKS, rows)
 
     free = next_step(read("0002_free"), red)
     assert free["stage"] == "impl", "without a dependency, red goes back to impl"
@@ -550,7 +601,7 @@ TITLE_REFUSED = [
         r"is not <type>\(<NNNN>\): <text>",
     ),
     ("a clean rebase voids a passing review", "0049", r"is not <type>\(<NNNN>\): <text>"),
-    ("feat(0049): x", "0049", r'type is "feat", but intent\.md declares Type: fix'),
+    ("feat(0049): x", "0049", r'type is "feat", but the intent\'s type is fix'),
     ("fix(0049): x", "0048", r"names unit 0049, not 0048"),
     ("fix(0049): wip x", "0049", r'opens with "wip"'),
     ("fix(0049): WIP: x", "0049", r'opens with "wip"'),
@@ -595,16 +646,14 @@ def test_the_review_gate_is_closed_on_a_title_outside_the_grammar_before_gh_is_a
     assert g["need"][0].startswith(f'the title "{WIP}" is not <type>(<NNNN>): <text>')
     assert calls == []
     # Read off the file, as the board reads it: a pr.md with no # PR: line at all.
-    _, read = question_tree(
-        tmp_path,
-        {
-            "intent.md": "# I\nAuthor: t. Type: feat. Status: accepted.\n",
-            "spec.md": "Status: accepted.\n",
-            "plan.md": "Status: accepted.\n",
-            "impl.md": "Status: accepted.\n",
-            "pr.md": "PR: https://github.com/o/r/pull/1. Status: accepted.\n",
-        },
-    )
+    files = {
+        "intent.md": "# I\nAuthor: t. Type: feat. Status: accepted.\n",
+        "spec.md": "Status: accepted.\n",
+        "plan.md": "Status: accepted.\n",
+        "impl.md": "Status: accepted.\n",
+        "pr.md": "PR: https://github.com/o/r/pull/1. Status: accepted.\n",
+    }
+    read = tree(tmp_path, files, known({f: "accepted" for f in files}))
     assert re.search(
         r"pr\.md has no title", check_gate(read, "review", counted(green_probe(), calls))["need"][0]
     )
@@ -786,9 +835,10 @@ def test_a_spec_a_plan_or_a_left_lane_in_the_impl_record_keeps_a_fix_in_full_and
     assert lane_for(left_lane=None) == FAST
 
 
-def lane_tree(tmp_path, files, fix=FIX, left_lane=None):
-    """One store holding a unit with `files`, asked through the command line as the app asks, its
-    records saying `fix` (intent) and `left_lane` (impl)."""
+def lane_tree(tmp_path, files, statuses, fix=FIX, left_lane=None, holds=None):
+    """One store holding a unit with `files`, whose rows say `statuses` (a dict the test may
+    change), asked through the command line as the app asks, its records saying `fix` (intent)
+    and `left_lane` (impl)."""
     root = make_store(tmp_path, {"0001_x": files})
     records = {"intent.md": {"result": {"judgement": "ready", "fix": fix}}}
     if fix is None:
@@ -797,10 +847,12 @@ def lane_tree(tmp_path, files, fix=FIX, left_lane=None):
         records["impl.md"] = {"result": {"judgement": "ready", "left_lane": left_lane}}
 
     def run(*args):
-        return ask("--root", root, *args, records={"0001_x": records})
+        units = {"/0001_x": known(statuses, type="fix", holds=holds)}
+        return ask("--root", root, *args, records={"0001_x": records}, units=units)
 
     return SimpleNamespace(
         dir=root / ".cos" / "0001_x",
+        statuses=statuses,
         ask=run,
         next=lambda: json.loads(run("next", "0001_x").out),
         gate=lambda stage: json.loads(run("gate", "0001_x", stage, "--json").out),
@@ -808,7 +860,7 @@ def lane_tree(tmp_path, files, fix=FIX, left_lane=None):
 
 
 def test_a_fix_in_the_fast_lane_goes_from_its_accepted_intent_to_impl(tmp_path):
-    t = lane_tree(tmp_path, {"intent.md": intent_of()})
+    t = lane_tree(tmp_path, {"intent.md": intent_of()}, {"intent.md": "accepted"})
     n = t.next()
     assert [n["stage"], n["lane"], n["enteredFast"], n["laneMissing"]] == ["impl", "fast", True, []]
     assert t.gate("impl") == {
@@ -831,7 +883,7 @@ def test_a_fix_in_the_fast_lane_goes_from_its_accepted_intent_to_impl(tmp_path):
 
 
 def test_a_fix_in_the_fast_lane_still_waits_on_its_intent_being_accepted(tmp_path):
-    t = lane_tree(tmp_path, {"intent.md": intent_of(status="draft")})
+    t = lane_tree(tmp_path, {"intent.md": intent_of(status="draft")}, {"intent.md": "draft"})
     n = t.next()
     assert [n["stage"], n["action"], n["lane"]] == ["", "finish and accept intent.md", "fast"]
     assert t.gate("impl")["reasons"] == ["draft"]
@@ -845,13 +897,14 @@ def test_gate_impl_in_the_fast_lane_stays_shut_while_stale_held_or_a_dependency_
         "\n## Answers\n\n### Rerun\nRequested by: owner. Date: 2026-09-29. Via: product.\n"
         f"Stage: intent.\nStale: intent.md sha256:{above_answers(text)}\n"
     )
-    stale = lane_tree(tmp_path, {"intent.md": text + rerun})
+    accepted = {"intent.md": "accepted"}
+    stale = lane_tree(tmp_path, {"intent.md": text + rerun}, accepted)
     assert stale.gate("impl")["ok"] is False
     assert "stale" in stale.gate("impl")["reasons"]
     assert stale.next()["stage"] == "intent"
 
-    paused = hold_block("Paused", "chờ một bản khác")
-    held = lane_tree(tmp_path, {"intent.md": f"{text}\n## Answers\n{paused}"})
+    paused = [hold("paused", "chờ một bản khác")]
+    held = lane_tree(tmp_path, {"intent.md": text}, accepted, holds=paused)
     assert [held.gate("impl")["ok"], held.gate("impl")["reasons"]] == [False, ["paused"]]
     assert held.next()["stage"] == ""
 
@@ -864,24 +917,35 @@ def test_gate_impl_in_the_fast_lane_stays_shut_while_stale_held_or_a_dependency_
 
     records = {"0001_y": {"intent.md": {"result": {"judgement": "ready", "fix": FIX}}}}
 
-    def gate():
+    def units(ship):
+        return {
+            "a/0001_x": known({"intent.md": "accepted", "ship.md": ship}),
+            "/0001_y": known({"intent.md": "accepted"}, type="fix"),
+        }
+
+    def gate(ship):
         args = ("--root", b, "gate", "0001_y", "impl", "--json")
-        return json.loads(ask(*args, peers=peers, records=records, links=Y_LINKS).out)
+        kw = {"peers": peers, "records": records, "links": Y_LINKS, "units": units(ship)}
+        return json.loads(ask(*args, **kw).out)
 
-    def nxt():
-        return json.loads(
-            ask("--root", b, "next", "0001_y", peers=peers, records=records, links=Y_LINKS).out
-        )
+    def nxt(ship):
+        kw = {"peers": peers, "records": records, "links": Y_LINKS, "units": units(ship)}
+        return json.loads(ask("--root", b, "next", "0001_y", **kw).out)
 
-    assert [gate()["ok"], gate()["reasons"]] == [False, ["waiting-on"]]
-    assert [nxt()["stage"], nxt()["why"], nxt()["lane"]] == ["", "dependency", "fast"]
-    (a / ".cos" / "0001_x" / "ship.md").write_text("# Ship\nStatus: accepted.\n")
-    assert gate()["ok"] is True
-    assert nxt()["stage"] == "impl"
+    assert [gate("draft")["ok"], gate("draft")["reasons"]] == [False, ["waiting-on"]]
+    assert [nxt("draft")["stage"], nxt("draft")["why"], nxt("draft")["lane"]] == [
+        "",
+        "dependency",
+        "fast",
+    ]
+    assert gate("accepted")["ok"] is True
+    assert nxt("accepted")["stage"] == "impl"
 
 
 def test_a_fix_whose_intent_cites_no_source_walks_the_full_lane_from_spec(tmp_path):
-    t = lane_tree(tmp_path, {"intent.md": intent_of()}, fix=fix_with(text=""))
+    t = lane_tree(
+        tmp_path, {"intent.md": intent_of()}, {"intent.md": "accepted"}, fix=fix_with(text="")
+    )
     n = t.next()
     assert [n["stage"], n["lane"], n["enteredFast"], n["laneMissing"]] == [
         "spec",
@@ -944,6 +1008,7 @@ def test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl
             "intent.md": intent_of(),
             "impl.md": "# Impl: x\nIntent: intent.md. Author: Uruz. Status: draft.\n",
         },
+        {"intent.md": "accepted", "impl.md": "draft"},
         left_lane=LEFT,
     )
     n = t.next()
@@ -955,11 +1020,13 @@ def test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl
     ]
     assert t.gate("spec")["ok"] is True
     (t.dir / "spec.md").write_text("# Spec: x\nIntent: intent.md. Status: accepted.\n")
+    t.statuses["spec.md"] = "accepted"
     assert t.gate("plan")["ok"] is True
     assert t.next()["stage"] == "plan"
     (t.dir / "plan.md").write_text(
         "# Plan: x\nIntent: intent.md. Spec: spec.md. Status: accepted.\n"
     )
+    t.statuses["plan.md"] = "accepted"
     n = t.next()
     assert [n["stage"], n["reasons"], n["lane"]] == ["impl", ["missing"], "full"]
     assert re.search(r"leaving the fast lane", n["action"])
@@ -973,6 +1040,7 @@ def test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl
             "spec.md": (t.dir / "spec.md").read_text(),
             "plan.md": (t.dir / "plan.md").read_text(),
         },
+        dict(t.statuses),
     )
     n = t.next()
     assert [n["stage"], n["action"], n["lane"], n["laneMissing"]] == [

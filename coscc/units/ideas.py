@@ -94,11 +94,7 @@ def create_idea(
     idea_id = path.name[:-3]
     title = idea_id.split("_", 1)[-1].replace("-", " ")
     with path.open("x", encoding="utf-8") as f:
-        f.write(
-            f"# Idea: {title}\n"
-            f"Author: the originator. Status: accepted.\n\n"
-            f"{_OWN_WORDS}\n\n{text}\n"
-        )
+        f.write(f"# Idea: {title}\nAuthor: the originator.\n\n{_OWN_WORDS}\n\n{text}\n")
     return {"id": idea_id, "path": str(path)}
 
 

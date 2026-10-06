@@ -15,11 +15,8 @@ from zoneinfo import ZoneInfo
 
 from coscc.loop.model import (
     above_answers,
-    parse_answers,
     parse_reruns,
     parse_ship,
-    parse_status,
-    read_unit,
 )
 from coscc.loop.probe import UI_STANDARD
 from coscc.loop.repo_rules import screens_answer, screens_needs
@@ -33,23 +30,21 @@ from tests.loop.test_model import (
     CHAIN,
     FULL_LANE,
     SHA,
-    answer_block,
+    answer,
     art,
     branched,
     cli,
     files_in,
     green_probe,
-    hold_block,
+    hold,
+    known,
     impl_text,
     ok,
-    parse_hold,
     passed,
     read,
     review_art,
     round_,
-    state_of_root,
     unit,
-    with_answers,
 )
 
 # --- helpers ----------------------------------------------------------------------------------
@@ -65,14 +60,19 @@ def tree(tmp_path: Path, files: dict[str, str], name: str = "0001_q") -> tuple[P
     return root, d
 
 
-def run_in(root: Path, *words: str):
-    return cli(*words, "--root", str(root))
+def run_in(root: Path, *words: str, units: dict | None = None):
+    return cli(*words, "--root", str(root), units=units)
 
 
-def json_of(root: Path, *words: str):
-    out = run_in(root, *words)
+def json_of(root: Path, *words: str, units: dict | None = None):
+    out = run_in(root, *words, units=units)
     assert out.code == 0, out.err
     return json.loads(out.out)
+
+
+def answer_block(n, by, text):
+    """The text of an answer, as the app appends it under `## Answers` (the hashes read it)."""
+    return f"\n### Câu {n}\nAnswered by: {by}. Date: 2026-09-23. Via: product.\n\n{text}\n"
 
 
 def today() -> str:
@@ -117,18 +117,39 @@ RERUN_FILES = {
 }
 
 
+RERUN_STATUSES = dict.fromkeys(RERUN_FILES, "accepted")
+
+
 class RerunTree:
     """A `--root` holding one unit, and what the board does with it."""
 
-    def __init__(self, tmp_path: Path, files=None, name: str = "0003_awaiting-ship"):
+    def __init__(
+        self,
+        tmp_path: Path,
+        files=None,
+        name: str = "0003_awaiting-ship",
+        shipped=False,
+        holds=(),
+        statuses=None,
+    ):
         self.name = name
+        self.statuses = {**RERUN_STATUSES, **(statuses or {})}
+        self.shipped = shipped
+        self.holds = list(holds)
         self.root, self.dir = tree(tmp_path, RERUN_FILES if files is None else files, name)
 
+    def entry(self) -> dict:
+        entry = known(
+            self.statuses, questions={"intent.md": ["Một?"]}, holds=self.holds, type="feat"
+        )
+        entry["shipped"] = self.shipped
+        return entry
+
     def cli(self, *args: str):
-        return run_in(self.root, *args)
+        return run_in(self.root, *args, units={self.name: self.entry()})
 
     def read(self):
-        return read(self.dir, self.name)
+        return read(self.dir, self.name, self.entry())
 
     def write(self, file: str, text: str) -> None:
         (self.dir / file).write_text(text)
@@ -168,9 +189,7 @@ def test_a_rerun_block_ends_the_answer_before_it_and_is_never_an_answer():
         "### Rerun\nRequested by: owner. Date: 2026-09-26. Via: product.\nStage: pr.\n"
         f"Stale: pr.md sha256:{'c' * 64}\n"
     )
-    text = with_answers(answer_block(1, "A", "Có."), f"\n{block}", answer_block(2, "B", "Không."))
-    assert [[a["n"], a["text"]] for a in parse_answers(text)] == [[1, "Có."], [2, "Không."]]
-    assert parse_hold(text)["hold"] is None
+    text = f"## Answers\n{answer_block(1, 'A', 'Có.')}\n{block}{answer_block(2, 'B', 'Không.')}"
     assert parse_reruns(text)["reruns"] == [
         {"stage": "pr", "by": "owner", "date": "2026-09-26", "stale": {"pr.md": "c" * 64}}
     ]
@@ -255,7 +274,11 @@ def test_a_changes_requested_review_and_a_spike_the_spec_no_longer_needs_are_nev
         1, "changes-requested", ["- F1 [open] x"]
     )
     spike = "# Spike: x\nStatus: accepted.\n\n## U1\n\nVerdict: holds.\n"
-    t = RerunTree(tmp_path, {**RERUN_FILES, "review.md": review, "spike.md": spike})
+    t = RerunTree(
+        tmp_path,
+        {**RERUN_FILES, "review.md": review, "spike.md": spike},
+        statuses={"review.md": "changes-requested", "spike.md": "accepted"},
+    )
     t.append(
         "intent.md",
         "\n".join(
@@ -279,9 +302,8 @@ def test_a_shipped_unit_stays_finished_after_a_rerun_and_ignores_a_hold(tmp_path
     t.rerun("intent")
 
     def shipped():
-        state = state_of_root(t.root)
-        state["units"][f"/{t.name}"]["shipped"] = True
-        return read_unit(str(t.dir), t.name, state)
+        t.shipped = True
+        return t.read()
 
     u = t.read()
     for f in ["intent.md", "spec.md", "plan.md", "impl.md", "pr.md"]:
@@ -295,7 +317,7 @@ def test_a_shipped_unit_stays_finished_after_a_rerun_and_ignores_a_hold(tmp_path
         "blocked": False,
     }
 
-    t.append("intent.md", hold_block("Paused", "chờ"))
+    t.holds = [hold("paused", "chờ")]
     u = shipped()
     assert u["hold"] is None
     assert u["holdMoves"] == []
@@ -307,6 +329,19 @@ def test_a_shipped_unit_stays_finished_after_a_rerun_and_ignores_a_hold(tmp_path
 
 # --- a draft whose questions are all answered names its stage as `rerun` ------------------------
 
+ANSWERS_1_2 = [answer("intent.md", 1, "A", "x"), answer("intent.md", 2, "A", "y")]
+
+
+def DRAFT_ASKED(answers=(), holds=()):
+    """The row of a draft intent asking `Một?` and `Hai?`."""
+    return known(
+        {"intent.md": "draft"},
+        questions={"intent.md": ["Một?", "Hai?"]},
+        answers=list(answers),
+        holds=list(holds),
+    )
+
+
 DRAFT_INTENT = (
     "# Intent: x\nType: feat. Status: draft.\n\n## Open questions\n\n1. Một?\n2. Hai?\n\n"
     "## Answers\n"
@@ -316,19 +351,20 @@ DRAFT_INTENT = (
 class Answered:
     """A unit under `--root`, read, and what `next` prints of it."""
 
-    def __init__(self, tmp_path: Path, files: dict[str, str]):
+    def __init__(self, tmp_path: Path, files: dict[str, str], entry: dict):
         self.root, d = tree(tmp_path, files)
-        self.u = read(d, "0001_q")
+        self.entry = entry
+        self.u = read(d, "0001_q", entry)
+
+    def run(self, *words: str):
+        return run_in(self.root, *words, units={"0001_q": self.entry})
 
     def next(self) -> dict:
-        return json.loads(run_in(self.root, "next", "0001_q").out)
+        return json.loads(self.run("next", "0001_q").out)
 
 
 def test_a_draft_intent_with_every_question_answered_is_rerun_intent_and_nothing_else(tmp_path):
-    a = Answered(
-        tmp_path,
-        {"intent.md": DRAFT_INTENT + answer_block(1, "A", "x") + answer_block(2, "A", "y")},
-    )
+    a = Answered(tmp_path, {"intent.md": DRAFT_INTENT}, DRAFT_ASKED(ANSWERS_1_2))
     assert a.next() == {
         "unit": "0001_q",
         "stage": "",
@@ -341,20 +377,14 @@ def test_a_draft_intent_with_every_question_answered_is_rerun_intent_and_nothing
 
 
 def test_one_question_left_unanswered_is_no_rerun(tmp_path):
-    a = Answered(tmp_path, {"intent.md": DRAFT_INTENT + answer_block(1, "A", "x")})
+    a = Answered(tmp_path, {"intent.md": DRAFT_INTENT}, DRAFT_ASKED(ANSWERS_1_2[:1]))
     assert "rerun" not in a.next()
     assert next_step(a.u).get("rerun") is None
 
 
 def test_a_held_unit_is_no_rerun_even_with_every_question_answered(tmp_path):
     a = Answered(
-        tmp_path,
-        {
-            "intent.md": DRAFT_INTENT
-            + answer_block(1, "A", "x")
-            + answer_block(2, "A", "y")
-            + hold_block("Paused", "chờ")
-        },
+        tmp_path, {"intent.md": DRAFT_INTENT}, DRAFT_ASKED(ANSWERS_1_2, [hold("paused", "chờ")])
     )
     n = a.next()
     assert n["hold"]["state"] == "paused"
@@ -362,7 +392,9 @@ def test_a_held_unit_is_no_rerun_even_with_every_question_answered(tmp_path):
 
 
 def test_a_draft_with_no_questions_is_no_rerun(tmp_path):
-    a = Answered(tmp_path, {"intent.md": "# I\nType: feat. Status: draft.\n"})
+    a = Answered(
+        tmp_path, {"intent.md": "# I\nType: feat. Status: draft.\n"}, known({"intent.md": "draft"})
+    )
     assert "rerun" not in a.next()
 
 
@@ -371,9 +403,13 @@ def test_a_spec_draft_answered_in_full_is_rerun_spec(tmp_path):
         tmp_path,
         {
             "intent.md": "# I\nType: feat. Status: accepted.\n",
-            "spec.md": "# S\nStatus: draft.\n\n## Open questions\n\n1. Một?\n\n## Answers\n"
-            + answer_block(1, "A", "x"),
+            "spec.md": "# S\nStatus: draft.\n\n## Open questions\n\n1. Một?\n\n## Answers\n",
         },
+        known(
+            {"intent.md": "accepted", "spec.md": "draft"},
+            questions={"spec.md": ["Một?"]},
+            answers=[answer("spec.md", 1, "A", "x")],
+        ),
     )
     assert next_step(a.u)["rerun"] == "spec"
 
@@ -389,13 +425,21 @@ BEFORE_IMPL = {
 DRAFT_IMPL = "# Impl\nStatus: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
 
 
-def impl_tree(tmp_path: Path, impl: str, extra: dict | None = None) -> Answered:
-    return Answered(tmp_path, {**BEFORE_IMPL, "impl.md": impl, **(extra or {})})
+def impl_tree(tmp_path: Path, answered=0, asked=1, holds=(), plan="accepted") -> Answered:
+    """A draft `impl.md` asking `asked` questions, the first `answered` of them answered."""
+    questions = ["Chạy lệnh X rồi đưa kết quả?", "Đăng nhập rồi báo lại?"][:asked]
+    entry = known(
+        {"intent.md": "accepted", "spec.md": "accepted", "plan.md": plan, "impl.md": "draft"},
+        questions={"impl.md": questions},
+        answers=[answer("impl.md", n + 1, "A", "x") for n in range(answered)],
+        holds=list(holds),
+    )
+    return Answered(tmp_path, {**BEFORE_IMPL, "impl.md": DRAFT_IMPL}, entry)
 
 
 def test_a_draft_impl_with_an_open_question_is_listed_and_counted(tmp_path):
-    a = impl_tree(tmp_path, DRAFT_IMPL)
-    u = json_of(a.root, "status", "--json")["units"][0]
+    a = impl_tree(tmp_path)
+    u = json_of(a.root, "status", "--json", units={"0001_q": a.entry})["units"][0]
     assert [
         {"artifact": q["artifact"], "n": q["n"], "answered": q["answered"]} for q in u["questions"]
     ] == [{"artifact": "impl.md", "n": 1, "answered": False}]
@@ -404,7 +448,7 @@ def test_a_draft_impl_with_an_open_question_is_listed_and_counted(tmp_path):
 
 
 def test_a_draft_impl_answered_in_full_is_rerun_impl(tmp_path):
-    a = impl_tree(tmp_path, f"{DRAFT_IMPL}\n## Answers\n{answer_block(1, 'A', 'x')}")
+    a = impl_tree(tmp_path, answered=1)
     assert a.next() == {
         "unit": "0001_q",
         "stage": "",
@@ -417,28 +461,21 @@ def test_a_draft_impl_answered_in_full_is_rerun_impl(tmp_path):
 
 
 def test_a_draft_impl_with_one_question_unanswered_is_no_rerun(tmp_path):
-    two = DRAFT_IMPL + "2. Đăng nhập rồi báo lại?\n"
-    a = impl_tree(tmp_path, f"{two}\n## Answers\n{answer_block(1, 'A', 'x')}")
+    a = impl_tree(tmp_path, answered=1, asked=2)
     assert "rerun" not in a.next()
     assert next_step(a.u).get("rerun") is None
 
 
 def test_a_paused_or_dropped_unit_with_an_answered_draft_impl_is_no_rerun(tmp_path):
-    impl = f"{DRAFT_IMPL}\n## Answers\n{answer_block(1, 'A', 'x')}"
-    for head, state in [("Paused", "paused"), ("Dropped", "dropped")]:
-        intent = f"{BEFORE_IMPL['intent.md']}\n## Answers\n{hold_block(head, 'chờ')}"
-        n = impl_tree(tmp_path, impl, {"intent.md": intent}).next()
+    for state in ["paused", "dropped"]:
+        n = impl_tree(tmp_path, answered=1, holds=[hold(state, "chờ")]).next()
         assert n["hold"]["state"] == state
         assert "rerun" not in n
 
 
 def test_plan_draft_keeps_the_impl_gate_closed(tmp_path):
-    a = impl_tree(
-        tmp_path,
-        f"{DRAFT_IMPL}\n## Answers\n{answer_block(1, 'A', 'x')}",
-        {"plan.md": "# P\nStatus: draft.\n"},
-    )
-    out = run_in(a.root, "gate", "0001_q", "impl")
+    a = impl_tree(tmp_path, answered=1, plan="draft")
+    out = a.run("gate", "0001_q", "impl")
     assert out.code == 1
     assert 'plan.md is "draft"' in out.out + out.err
 
@@ -622,7 +659,7 @@ def ship_art(text):
     """What `read_unit` attaches, without a directory."""
     ship = parse_ship(text)
     present = ship["round"] is not None or ship["refused"] is not None
-    return {**art(parse_status(text)), **({"ship": ship} if present else {})}
+    return {**art("draft"), **({"ship": ship} if present else {})}
 
 
 def behind_by(k, git_says=None):
@@ -789,19 +826,24 @@ def test_status_offers_no_acceptance_of_a_ship_md_naming_its_round_only(tmp_path
     review = f"# Review: x\nPR: pr.md. Author: t. Status: accepted.\n\n{round_(1, 'pass')}"
 
     def status(ship):
-        root, _ = tree(
-            tmp_path,
-            {
-                "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
-                "spec.md": "Status: accepted.\n",
-                "plan.md": "Status: accepted.\n",
-                "impl.md": impl_text(""),
-                "pr.md": "PR: https://github.com/o/r/pull/7. Status: accepted.\n",
-                "review.md": review,
-                "ship.md": ship,
+        files = {
+            "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+            "spec.md": "Status: accepted.\n",
+            "plan.md": "Status: accepted.\n",
+            "impl.md": impl_text(""),
+            "pr.md": "PR: https://github.com/o/r/pull/7. Status: accepted.\n",
+            "review.md": review,
+            "ship.md": ship,
+        }
+        root, _ = tree(tmp_path, files)
+        return json_of(
+            root,
+            "status",
+            "--json",
+            units={
+                "0001_q": known(dict.fromkeys(files, "accepted") | {"ship.md": "draft"}, type="fix")
             },
-        )
-        return json_of(root, "status", "--json")["units"][0]
+        )["units"][0]
 
     refused = status(ship_draft(1))
     assert refused["next"] == {
@@ -828,21 +870,24 @@ def test_status_offers_no_acceptance_of_a_ship_md_naming_its_round_only(tmp_path
 
 
 def test_nothing_is_offered_on_a_finished_held_or_closed_unit(tmp_path):
-    done = RerunTree(tmp_path, {**RERUN_FILES, "plan.md": "# Plan: x\nStatus: done.\n"})
+    done = RerunTree(tmp_path, shipped=True)
     assert json.loads(done.cli("rerun", done.name).out) == {
         "unit": done.name,
         "offers": [],
-        "why": "the unit is finished: plan.md is done",
+        "why": "the unit is finished: it shipped",
     }
     refused = done.cli("rerun", done.name, "pr")
     assert refused.code == 1
     assert re.search(r"pr cannot be run again for .*: the unit is finished", refused.err)
 
-    held = RerunTree(tmp_path)
-    held.append("intent.md", hold_block("Paused", "chờ"))
+    held = RerunTree(tmp_path, holds=[hold("paused", "chờ")])
     assert held.offers() == []
 
-    closed = RerunTree(tmp_path, {**RERUN_FILES, "impl.md": "# Impl: x\nStatus: rejected.\n"})
+    closed = RerunTree(
+        tmp_path,
+        {**RERUN_FILES, "impl.md": "# Impl: x\nStatus: rejected.\n"},
+        statuses={"impl.md": "rejected"},
+    )
     assert re.search(
         r"impl\.md is rejected", json.loads(closed.cli("rerun", closed.name).out)["why"]
     )

@@ -61,8 +61,9 @@ from coscc.store.journal import Journal as Journal
 from coscc.units import Invalid as Invalid
 from coscc.units import cos_dir as cos_dir
 from coscc.units.contracts import Output as Output
+from coscc.units.contracts import Plan as Plan
+from coscc.units.contracts import PlanStep as PlanStep
 from coscc.store.journal import is_step as is_step
-from coscc.units.planmap import files_of as files_of
 from coscc.units.read import Asked as Asked
 from coscc.units.scratch import RAM_CAP
 
@@ -114,6 +115,8 @@ class Facts:
     # A spike's throwaway directory, else `None`.
     scratch: str | None
     resumed: bool
+    # The unit's plan record, handed to a board step's features; `None` elsewhere or with none.
+    plan: Plan | None = None
 
 
 def _any_run(_facts: Facts) -> bool:
@@ -206,6 +209,7 @@ def facts(
     watch: str | None,
     directory: Path,
     resumed: bool,
+    plan: Plan | None = None,
 ) -> Facts:
     """`watch` is set when the run is a spike, whose `cwd` is its throwaway directory."""
     return Facts(
@@ -218,6 +222,7 @@ def facts(
         directory=directory,
         scratch=cwd if watch else None,
         resumed=resumed,
+        plan=plan,
     )
 
 

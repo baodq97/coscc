@@ -44,7 +44,6 @@ from coscc.kernel import (
     State,
     Tool,
     cos_dir,
-    files_of,
     now,
 )
 from coscc.units.turnstats import changes_requested, impl_ends, read_chars, shipped_units
@@ -543,9 +542,8 @@ def _map(ctx: Ctx, facts: Facts, binary: Path, ready: Ready) -> str:
     changed = changed_files(facts.tree, ready.sha)
     if facts.stage == "review":
         return review_map(ask, ready.sha, changed, old_hunks(facts.tree, ready.sha))
-    plan = facts.directory / "plan.md"
-    named = files_of(plan.read_text(encoding="utf-8")) if plan.is_file() else None
-    return impl_map(ask, ready.sha, changed, sorted(named or ()))
+    named = facts.plan["files"] if facts.plan else []
+    return impl_map(ask, ready.sha, changed, sorted(set(named)))
 
 
 async def _render(ctx: Ctx, facts: Facts) -> str:

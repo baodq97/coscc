@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 
-from coscc.agent import labels
+from coscc.agent import policy
 
 STAGE = "impl"
 
@@ -29,7 +29,7 @@ def arm(unit: str) -> str:
 
 def applies(stage: str, label: str | None) -> bool:
     """Whether a step is in the trial: a routine `impl`, and nothing else."""
-    return stage == STAGE and label == labels.ROUTINE
+    return stage == STAGE and label == policy.ROUTINE
 
 
 def model_for(stage: str, label: str | None, arm: str) -> str | None:

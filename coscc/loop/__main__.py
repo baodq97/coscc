@@ -38,7 +38,6 @@ COMMANDS = {
     "pr-text": "branch",
     "rerun": "rerun",
     "screens": "repo_rules",
-    "meta": "paths",
     "check-branch": "branch",
     "check-tag": "branch",
     "check-version": "branch",
@@ -49,8 +48,7 @@ USAGE = [
     "  reading a .cos/ (these take --root):",
     "    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | "
     "new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | "
-    "pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | "
-    "meta [<unit> [<artifact>]...]",
+    "pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>]",
     "    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, "
     "the app's snapshot",
     "  describing this checkout (these do not):",

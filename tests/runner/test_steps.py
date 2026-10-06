@@ -338,11 +338,13 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         def __init__(self):
             self.reply = ""
             self.prompts: list[str] = []
+            # What the next `submit` hands back beyond the defaults.
+            self.fields: dict = {}
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.prompts.append(text)
             yield ("chunk", self.reply)
-            await _submits(kw)
+            await _submits(kw, **self.fields)
             yield ("done", {"session_id": "sess-42", "cost": {"output_tokens": 3}})
 
     def setUp(self):
@@ -360,10 +362,7 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
     _tree = AUnitsBaseIsTheRemoteTrunk._tree
     _run_step = AUnitsBaseIsTheRemoteTrunk._run_step
 
-    PLAN = (
-        "# Plan: a problem\nIntent: intent.md. Author: t. Status: accepted.\n\n"
-        "## Files that change\n\n| `a.py` | x |\n| `b.py:3-4` | y |\n\n## Order of work\n\n1. x\n"
-    )
+    PLAN = "# Plan: a problem\nIntent: intent.md. Author: t.\n\n## Order of work\n\n1. x\n"
 
     def _unit_with_spec(self) -> tuple[str, Path]:
         unit = self._typed_unit()
@@ -375,7 +374,9 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
     def _planned(self) -> str:
         unit, _ = self._unit_with_spec()
         self.core.sessions.reply = self.PLAN
+        self.core.sessions.fields = {"files": ["a.py", "b.py"]}
         self.assertEqual(self._run_step(unit, "plan")["outcome"], "done")
+        self.core.sessions.fields = {}
         return unit
 
     def _impl(self, unit: str) -> tuple[str, dict]:
@@ -1193,10 +1194,11 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
     """The label is read after the gate and picks the configuration; the gate is stubbed open, as
     the review tests below stub it."""
 
-    PLAN = (
-        "# Plan: a problem\nIntent: intent.md. Author: t. Status: accepted. Impl: routine.\n\n"
-        "## Files that change\n\n- {path}: a change.\n\n## Order of work\n\n1. Do it.\n"
-    )
+    def _plan(self, path: str) -> None:
+        """A routine plan whose record names `path`."""
+        state_of(
+            self.core, str(self.repo), self.made["unit"], plan={"impl": "routine", "files": [path]}
+        )
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1257,9 +1259,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         return journal.records(self.core.ws.key(str(self.repo)), kind="start")
 
     def test_a_plan_naming_the_security_surface_runs_as_novel(self):
-        (self.dir / "plan.md").write_text(
-            self.PLAN.format(path="`coscc/agent/policy.py`"), encoding="utf-8"
-        )
+        self._plan("coscc/agent/policy.py")
         self._run()
         start = self._starts()[-1]
         self.assertEqual(
@@ -1270,10 +1270,23 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.assertEqual(self.seen[-1].get("effort"), "high")
         self.assertEqual(start["impl_run"], 1)
 
-    def test_a_novel_impl_gets_the_novel_ceilings(self):
+    def test_the_label_is_the_records_whatever_plan_md_says(self):
+        self._plan("coscc/units/board.py")
         (self.dir / "plan.md").write_text(
-            self.PLAN.format(path="`coscc/agent/policy.py`"), encoding="utf-8"
+            "# Plan: x\nImpl: novel.\n\n## Files that change\n- coscc/agent/policy.py\n",
+            encoding="utf-8",
         )
+        self._run()
+        start = self._starts()[-1]
+        self.assertEqual((start["label"], start["label_source"]), ("routine", "declared"))
+
+    def test_a_unit_with_no_plan_record_runs_as_novel(self):
+        self._run()
+        start = self._starts()[-1]
+        self.assertEqual((start["label"], start["label_source"]), ("novel", "missing"))
+
+    def test_a_novel_impl_gets_the_novel_ceilings(self):
+        self._plan("coscc/agent/policy.py")
         self._run()
         start = self._starts()[-1]
         self.assertEqual((start["label"], start["label_source"]), ("novel", "forced"))
@@ -1283,9 +1296,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.assertEqual(start["max_turns"], 250)
 
     def test_a_routine_run_escalates_after_a_max_turns_stop_and_counts_its_runs(self):
-        (self.dir / "plan.md").write_text(
-            self.PLAN.format(path="`coscc/units/board.py`"), encoding="utf-8"
-        )
+        self._plan("coscc/units/board.py")
         self.terminal = "max_turns"
         self._run()
         self.terminal = None
@@ -1351,9 +1362,8 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
     `self.init` says otherwise. `coscc.loop next` is a stub that counts its calls and answers
     `self.action`, or raises `self.next_fails`."""
 
-    PLAN = AnImplStepRunsUnderThePlansLabel.PLAN
-    ROUTINE = "`coscc/units/board.py`"
-    SECURITY = "`coscc/agent/policy.py`"
+    ROUTINE = "coscc/units/board.py"
+    SECURITY = "coscc/agent/policy.py"
     OPUS, SONNET = "claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]"
 
     def setUp(self):
@@ -1396,7 +1406,12 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.dir = Path(self.made["path"])
         if plan is not None:
-            (self.dir / "plan.md").write_text(self.PLAN.format(path=plan), encoding="utf-8")
+            state_of(
+                self.core,
+                str(self.repo),
+                self.made["unit"],
+                plan={"impl": "routine", "files": [plan]},
+            )
 
     def _run(self, stage: str = "impl", arm: str = "opus-5-5"):
         from coscc.units import board as board_reader

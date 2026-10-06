@@ -28,7 +28,7 @@ from coscc.leif import decide
 from coscc.units import board as board_reader
 from coscc.units import guards
 from tests.units.test_board import _store
-from tests.units.test_board import snapshot_of
+from tests.units.test_board import snap
 from tests.http.test_app import use_sessions
 
 
@@ -554,14 +554,14 @@ class Place7(unittest.TestCase):
         "runpy.run_module('coscc.loop', run_name='__main__')\n"
     )
 
-    def _next(self, files: dict[str, str], old: str, new: str) -> dict:
+    def _next(self, files: dict[str, str], rows: dict, old: str, new: str) -> dict:
         """`next` for one unit, asked of the loop with `old` reworded in its rules."""
         with tempfile.TemporaryDirectory() as d:
             wrapper = Path(d) / "reworded.py"
             wrapper.write_text(self.REWORDED, encoding="utf-8")
             store = Path(d) / "store"
             _store(store, {"0001_x": files})
-            state = snapshot_of(store)
+            state = snap(store, {"0001_x": rows})
             argv = lambda args: [sys.executable, "-P", str(wrapper), old, new, *args]
             with mock.patch.object(loop_run, "argv", argv):
                 return asyncio.run(board_reader.next_step(store, "0001_x", state=state))
@@ -581,6 +581,7 @@ class Place7(unittest.TestCase):
                 "intent.md": "# I\nType: feat. Status: accepted.\n",
                 "spec.md": "# S\nStatus: rejected.\n",
             },
+            dict(statuses={"intent.md": "accepted", "spec.md": "rejected"}, type="feat"),
             "f\"closed — {s['name']} rejected\"",
             "f\"shut: {s['name']} was turned down\"",
         )
@@ -592,8 +593,11 @@ class Place7(unittest.TestCase):
         nxt = self._next(
             {
                 "intent.md": "# I\nType: feat. Status: accepted.\n",
-                "plan.md": "# P\nStatus: done.\n",
+                "plan.md": "# P\nStatus: accepted.\n",
             },
+            dict(
+                statuses={"intent.md": "accepted", "plan.md": "accepted"}, type="feat", shipped=True
+            ),
             '"action": "finished"',
             '"action": "all done"',
         )

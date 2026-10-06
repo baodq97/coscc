@@ -149,7 +149,7 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
     put(s, "0007_paused", accepted("plan.md"), holds=[{"state": "paused", **HOLD}])
     put(s, "0008_dropped", accepted("plan.md"), holds=[{"state": "dropped", **HOLD}])
     put(s, "0009_rejected", accepted("intent.md", **{"spec.md": "rejected"}))
-    put(s, "0010_finished", accepted("plan.md", **{"plan.md": "done"}))
+    put(s, "0010_finished", accepted("plan.md"), shipped=True)
     put(
         s,
         "0011_agent-skip",
@@ -185,9 +185,8 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
         spec_md=SPEC_U, spike_md=spike_md("fails", 2))  # fmt: skip
     put(s, "0020_spike-no-verdict", accepted("spec.md", **{"spike.md": "accepted"}),
         spec_md=SPEC_U, spike_md=spike_md(None))  # fmt: skip
-    cite = text("plan.md", "accepted", body="Dựa trên spike.md ## U1.\n")
     put(s, "0021_spike-ok", accepted("plan.md", **{"spike.md": "accepted"}),
-        texts={"plan.md": cite}, spec_md=SPEC_U, spike_md=spike_md("holds"))  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md("holds"), plan_md={"result": {"rests_on": ["U1"]}})  # fmt: skip
     put(s, "0022_spike-no-cite", accepted("plan.md", **{"spike.md": "accepted"}),
         spec_md=SPEC_U, spike_md=spike_md("holds"))  # fmt: skip
     put(s, "0024_spike-skipped-spec", accepted("intent.md", **{"spec.md": "skipped"}),
@@ -246,7 +245,7 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
         links={"idea": None, "dependsOn": ["0999_ghost", "ma/lformed", "ws/0045_depends-unknown"]})  # fmt: skip
     put(s, "0046_depends-merged", accepted("plan.md"),
         links={"idea": None, "dependsOn": ["0047_merged-one", "other/0001_far"]})  # fmt: skip
-    put(s, "0047_merged-one", accepted("ship.md", **{"plan.md": "done"}), merged=True)
+    put(s, "0047_merged-one", accepted("ship.md"), merged=True)
     put(s, "0050_no-status-line", {"intent.md": "accepted", "spec.md": None})
     put(s, "0051_odd-status", {"intent.md": "accepted", "spec.md": "wip", "plan.md": "constructor"})
     put(s, "0052_unknowns", accepted("spec.md"),

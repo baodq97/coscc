@@ -253,5 +253,80 @@ class TheBoundsOfAnOverride(unittest.TestCase):
         self.assertEqual(len(t["problems"]), 4, t["problems"])
 
 
+LOOP = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
+
+
+def _plan(impl: str = "routine", *files: str) -> dict:
+    """A plan record as `UnitMeta.plan` returns it."""
+    return {"impl": impl, "files": list(files or ("coscc/units/board.py",)), "steps": [],
+            "rests_on": []}  # fmt: skip
+
+
+def _ended(outcome: str, terminal: str | None = None) -> dict:
+    rec = {"kind": "end", "stage": "impl", "outcome": outcome}
+    return rec if terminal is None else {**rec, "terminal": terminal}
+
+
+class TheLabelIsThePlansRecord(unittest.TestCase):
+    def test_the_security_surface_is_these_four(self):
+        self.assertEqual(
+            models.SECURITY_SURFACE,
+            (
+                "coscc/agent/policy.py",
+                "coscc/agent/sessions.py",
+                "coscc/loop/rules.py",
+                ".claude/settings.json",
+            ),
+        )
+
+    def test_before_or_at_plan_there_is_no_label(self):
+        for stage in ("idea", "intent", "spec", "plan"):
+            self.assertEqual(models.label_of(stage, LOOP, _plan(), []), (None, None, None))
+
+    def test_a_file_of_the_security_surface_forces_novel(self):
+        for path in models.SECURITY_SURFACE:
+            self.assertEqual(
+                models.label_of("impl", LOOP, _plan("routine", path), []),
+                ("routine", "novel", "forced"),
+                path,
+            )
+
+    def test_no_record_runs_as_novel(self):
+        self.assertEqual(models.label_of("impl", LOOP, None, []), ("missing", "novel", "missing"))
+
+    def test_declared(self):
+        self.assertEqual(
+            models.label_of("impl", LOOP, _plan("routine"), []),
+            ("routine", "routine", "declared"),
+        )
+        self.assertEqual(
+            models.label_of("review", LOOP, _plan("novel"), []), ("novel", "novel", "declared")
+        )
+
+    def test_a_max_turns_stop_escalates_impl_only(self):
+        history = [{"kind": "start", "stage": "impl"}, _ended("exhausted", "max_turns")]
+        self.assertEqual(
+            models.label_of("impl", LOOP, _plan(), history), ("routine", "novel", "escalated")
+        )
+        self.assertEqual(
+            models.label_of("review", LOOP, _plan(), history),
+            ("routine", "routine", "declared"),
+        )
+
+    def test_a_budget_stop_does_not_escalate(self):
+        history = [{"kind": "start", "stage": "impl"}, _ended("exhausted", "max_budget_usd")]
+        self.assertEqual(models.label_of("impl", LOOP, _plan(), history)[2], "declared")
+
+    def test_an_old_end_reads_the_attempt_before_it(self):
+        history = [
+            {"kind": "start", "stage": "impl"},
+            {"kind": "attempt", "stage": "impl", "terminal": "max_turns"},
+            _ended("exhausted"),
+        ]
+        self.assertEqual(models.label_of("impl", LOOP, _plan(), history)[2], "escalated")
+        history[1]["terminal"] = "max_budget_usd"
+        self.assertEqual(models.label_of("impl", LOOP, _plan(), history)[2], "declared")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 """Which files `main` changed since a unit's plan was written.
 
-Read before an `impl` step from the run log, `plan.md` and two local `git` commands; no
+Read before an `impl` step from the run log, the plan's record and two local `git` commands; no
 session. Pure helpers plus `compute`, the only part that calls `git`.
 """
 
@@ -15,37 +15,9 @@ from coscc.git import gitops
 
 log = logging.getLogger(__name__)
 
-HEADING = "## Files that change"
 TRUNK_REF = "refs/remotes/origin/main"
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-
-
-def files_section(plan_text: str) -> str | None:
-    """`## Files that change` up to the next `## ` heading or the end, `None` without one."""
-    lines = plan_text.splitlines()
-    for i, line in enumerate(lines):
-        if line.rstrip() == HEADING:
-            end = next(
-                (j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")),
-                len(lines),
-            )
-            return "\n".join(lines[i:end])
-    return None
-
-
-def mentioned(section: str, paths: list[str]) -> list[str]:
-    """The `paths` that appear in `section` whole, not as part of a longer path.
-
-    Before a path: start of line, whitespace, `` ` ``, `(`, `|` or `*`; after it: end of line,
-    whitespace, `` ` ``, `:`, `)`, `,`, `|` or `*`. The negated class also matches at line ends.
-    """
-    found = {
-        d
-        for d in paths
-        if d and re.search(r"(?<![^\s`(|*])" + re.escape(d) + r"(?![^\s`:),|*])", section, re.M)
-    }
-    return sorted(found, key=lambda s: s.encode())
 
 
 def plan_head(records: list[dict[str, Any]]) -> tuple[str, str]:
@@ -90,7 +62,7 @@ def describe(drift: dict[str, Any]) -> str:
     plan_sha, main_sha = drift["plan_sha"], drift["main_sha"]
     lines = [
         f"The plan was written on {plan_sha}. `origin/main` is now {main_sha}. Since then "
-        "main has changed these files that the plan's `## Files that change` names:",
+        "main has changed these files that the plan's record names:",
         "",
     ]
     lines += [f"- `{f}`: `git diff {plan_sha}..{main_sha} -- {f}`" for f in files]
@@ -108,7 +80,7 @@ def describe(drift: dict[str, Any]) -> str:
 
 
 async def compute(
-    records: list[dict[str, Any]], plan_text: str | None, tree: str | Path | None
+    records: list[dict[str, Any]], files: list[str] | None, tree: str | Path | None
 ) -> dict[str, Any]:
     """`{plan_sha, main_sha, files, checked, reason}`. Never raises.
 
@@ -128,9 +100,11 @@ async def compute(
             out["reason"] = why
             return out
         out["plan_sha"] = plan_sha
-        section = files_section(plan_text or "")
-        if section is None:
-            out["reason"] = f"plan.md has no {HEADING} section"
+        if files is None:
+            out["reason"] = "the unit has no plan record"
+            return out
+        if not files:
+            out["reason"] = "the plan names no files"
             return out
         if tree is None:
             out["reason"] = "no worktree"
@@ -139,7 +113,7 @@ async def compute(
         # The ref as the step's own preparation left it; no fetch here.
         out["main_sha"] = await gitops.rev_parse(path, TRUNK_REF)
         changed = await gitops.diff_names(path, plan_sha, out["main_sha"])
-        out["files"] = mentioned(section, changed)
+        out["files"] = sorted(set(changed) & set(files), key=lambda s: s.encode())
         out["checked"] = True
         return out
     except Exception as e:

@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Iterable
 
 from coscc.leif import decide, guide
-from coscc.units import backlog, planmap, states
+from coscc.units import backlog, states
 from coscc.git import fetches
 from coscc.github import integrate, prmachine
 from coscc.git.gitops import GitError
@@ -329,12 +329,10 @@ class Autopilot:
         return now.get("ci") == "red" and (not head or now.get("head") == head)
 
     def _files(self, cwd: str, unit: str) -> set[str] | None:
-        try:
-            return planmap.files_of(
-                (self.ws.unit_dir(cwd, unit) / "plan.md").read_text(encoding="utf-8")
-            )
-        except Invalid, OSError:
-            return None
+        """The files the unit's plan record names; `None`, which overlaps with everything, when
+        it has no record or names none."""
+        plan = self.ws.unit_meta().plan(self.ws.key(cwd), unit)
+        return set(plan["files"]) or None if plan else None
 
     def cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:
         """The figures for a pass and for the board: every workspace, every starter."""

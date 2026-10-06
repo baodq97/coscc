@@ -70,8 +70,8 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
                 cases += 1
         # judgement and questions for six artifacts, three review fields, one field each for
         # spec, spike, impl, integrate and estimate, then intent's type and fix and impl's
-        # left_lane.
-        self.assertEqual(cases, 6 * 2 + 3 + 5 + 3)
+        # left_lane, and plan's impl, files, steps and rests_on.
+        self.assertEqual(cases, 6 * 2 + 3 + 5 + 3 + 4)
 
     def test_the_intents_type_names_branch_for(self):
         raw = _shipped()
@@ -86,6 +86,29 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
         raw = _shipped()
         raw["agents"]["impl"]["output"]["fields"]["left_lane?"] = "number"
         self.assertTrue(_refusal(raw).startswith("contract-bad-type: impl.left_lane: "))
+
+    def test_the_plans_fields_name_their_readers(self):
+        for field, reader in (
+            ("impl", "label_of"),
+            ("files", "label_of"),
+            ("steps", "render"),
+            ("rests_on", "evaluate"),
+        ):
+            raw = _shipped()
+            del raw["agents"]["plan"]["output"]["fields"][field]
+            self.assertEqual(
+                _refusal(raw), f"contract-field-missing: plan.{field} (read by {reader})"
+            )
+
+    def test_the_label_enum_is_the_policys(self):
+        from typing import get_args
+
+        from coscc.agent import policy
+
+        self.assertEqual(
+            _shipped()["agents"]["plan"]["output"]["fields"]["impl"],
+            {"enum": list(get_args(policy.Label))},
+        )
 
     def test_spec_without_unmeasured_names_the_spike_rule(self):
         raw = _shipped()
@@ -188,7 +211,7 @@ PINNED = {
     "intent": (2, "bb733744ab18"),
     "spec": (1, "c50763129465"),
     "spike": (1, "f77fe54c7b07"),
-    "plan": (1, "608eff07e373"),
+    "plan": (2, "6e9a474db6cb"),
     "impl": (2, "010f750cb2c2"),
     "review": (1, "c88ced722098"),
     "integrate": (1, "9e29819d42c2"),

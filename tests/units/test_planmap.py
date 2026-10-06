@@ -48,9 +48,9 @@ let other = 1;
 """
 
 
-def plan(*paths: str) -> str:
-    lines = "\n".join(f"- `{p}`: why." for p in paths)
-    return f"# Plan: x\nStatus: accepted.\n\n## Files that change\n\n{lines}\n\n## Order of work\n\n- `not/listed.py`\n"
+def plan(*paths: str) -> list[str]:
+    """The `files` of a plan's record."""
+    return list(paths)
 
 
 class TheDefinitions(unittest.TestCase):
@@ -83,7 +83,7 @@ class TheSection(unittest.TestCase):
         (self.tree / "pkg" / "b.mjs").write_text(JS, encoding="utf-8")
         (self.tree / "README.md").write_text("# x\n\ny\n", encoding="utf-8")
 
-    def test_each_file_in_the_order_the_section_names_it(self):
+    def test_each_file_in_the_order_the_record_names_it(self):
         section, record = planmap.select(plan("README.md", "pkg/m.py", "pkg/b.mjs"), self.tree)
         self.assertEqual(section.splitlines()[0], "- `README.md` — 3 lines")
         self.assertIn("- `pkg/m.py` — 24 lines\n  - 6 def top\n", section)
@@ -137,23 +137,32 @@ class TheSection(unittest.TestCase):
         self.assertNotIn("function run", section)
         self.assertEqual((record["full"], record["short"]), (1, 2))
 
-    def test_a_plan_without_the_section_is_nothing(self):
-        self.assertEqual(
-            planmap.select("# Plan: x\nStatus: accepted.\n", self.tree), ("", planmap._empty())
-        )
+    def test_a_plan_naming_no_files_is_nothing(self):
+        self.assertEqual(planmap.select([], self.tree), ("", planmap._empty()))
 
-    def test_a_plan_that_cannot_be_read_is_an_error_not_a_raise(self):
-        kw = planmap.for_step(self.root / "missing.md", self.tree)
+    def test_a_path_named_twice_is_listed_once(self):
+        section, record = planmap.select(plan("README.md", "pkg/m.py", "README.md"), self.tree)
+        self.assertEqual(section.count("README.md"), 1)
+        self.assertEqual(record["files"], 2)
+
+    def test_thirty_paths_all_get_their_line(self):
+        names = [f"pkg/n{i:02d}.py" for i in range(30)]
+        section, record = planmap.select(names, self.tree)
+        self.assertEqual((record["files"], record["new"]), (30, 30))
+        self.assertTrue(all(f"`{n}`" in section for n in names))
+
+    def test_a_failure_is_an_error_not_a_raise(self):
+        with mock.patch.object(planmap, "select", side_effect=OSError("boom")):
+            kw = planmap.for_step(["README.md"], self.tree)
         self.assertEqual(kw["plan_map"], "")
         self.assertEqual(kw["plan_map_record"]["bytes"], 0)
-        self.assertIn("FileNotFoundError", kw["plan_map_record"]["error"])
+        self.assertIn("OSError", kw["plan_map_record"]["error"])
 
-    def test_for_step_is_select_on_the_file(self):
-        p = self.root / "plan.md"
-        p.write_text(plan("README.md"), encoding="utf-8")
+    def test_for_step_is_select_on_the_records_files(self):
         section, record = planmap.select(plan("README.md"), self.tree)
         self.assertEqual(
-            planmap.for_step(p, self.tree), {"plan_map": section, "plan_map_record": record}
+            planmap.for_step(plan("README.md"), self.tree),
+            {"plan_map": section, "plan_map_record": record},
         )
 
 

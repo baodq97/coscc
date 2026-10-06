@@ -408,6 +408,25 @@ class UnitMeta:
             for r in found
         ]
 
+    def plan(self, workspace: str, unit: str) -> contracts.Plan | None:
+        """The unit's latest plan record, `None` when the plan has handed none back."""
+        with self.data.connect() as conn:
+            r = conn.execute(
+                f"SELECT version, object FROM outputs WHERE {_ONE} AND agent = 'plan' "
+                "ORDER BY id DESC LIMIT 1",
+                (self.root, workspace, unit),
+            ).fetchone()
+        if r is None:
+            return None
+        contracts.check_stored("plan", r["version"])
+        o = json.loads(r["object"])
+        return {
+            "impl": o["impl"],
+            "files": list(o["files"]),
+            "steps": list(o["steps"]),
+            "rests_on": list(o["rests_on"]),
+        }
+
     def _backlog_depends(
         self, keys: list[str], wanted: list[str] | None
     ) -> dict[tuple[str, str], list[str]]:
@@ -497,7 +516,7 @@ class UnitMeta:
                 )
 
             for r in rows(
-                "SELECT workspace, unit, artifact, to_state, authority FROM transitions WHERE id IN "
+                "SELECT workspace, unit, artifact, to_state, authority, inputs FROM transitions WHERE id IN "
                 "(SELECT MAX(id) FROM transitions WHERE {where} GROUP BY workspace, unit, artifact)"
             ):
                 a = artifact(r)
@@ -508,6 +527,7 @@ class UnitMeta:
                     # Whose skip it was: the loop stops the unit unless a person's.
                     if r["to_state"] == "skipped":
                         a["authority"] = r["authority"]
+                        a["reason"] = json.loads(r["inputs"] or "{}").get("reason") or None
             # Whether the unit is merged: the machine's own fold where it moved the unit, else a ship recorded outside it.
             moved: set[tuple[str, str]] = set()
             for r in rows(
