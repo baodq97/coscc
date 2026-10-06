@@ -15,6 +15,8 @@ paths:
   through, so the gate catches every error and refuses.
 - The critical check reads words and is a tripwire, not a sandbox: assume `python -c` walks
   past it. Keep it to the few calls that must never run; do not add enforcement by wording.
+- No list of programs is kept. A feature's command reads its own line with `kernel.bash_refused`
+  (the vault adds `strict`: no substitution at all, since it runs with secrets in it).
 - There is no read boundary: a session reads anything but the secrets, and prompts name
   artifacts by path.
 - A quoted word shaped like a command line is read again as one, since a wrapper or a remote

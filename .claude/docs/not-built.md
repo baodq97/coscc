@@ -14,6 +14,10 @@ Read this before adding a route, a button or a grant.
   calls by their words and a classifier judges the rest, so assume a program it lets run can
   walk past both. What stops a merge or a force-push on `main` is the host's ruleset, not this
   harness.
+- **No list of programs, and no route to widen one.** What a session may run is auto mode's
+  judgement plus the few critical blocks; a person adds nothing at runtime. The one place a line
+  is read strictly (no substitution at all) is the vault's `vault_exec`, since it runs with secrets
+  in it.
 - **A press starts what it names and nothing more.** A person's answer, an outcome, a review
   comment, an integration, a hold, a stop, a release, a setting, a shortlist and turning a
   feature off each write a row and start no other stage. The autopilot, when a workspace turns

@@ -10,8 +10,8 @@ a diff. The code is in git; do not copy it here.
 
 ## What you are given (trust it)
 
-The plan (accepted), the answers, the files `main` changed since the plan, the files' line maps
-and the commands this step may run are in the prompt. Do not re-read them or re-verify the plan.
+The plan (accepted), the answers, the files `main` changed since the plan, and the files' line
+maps are in the prompt. Do not re-read them or re-verify the plan.
 From the board the gate was asked (the prompt says so); at a terminal ask
 `uv run python -m coscc.loop gate <unit> impl` first and stop on non-zero.
 
