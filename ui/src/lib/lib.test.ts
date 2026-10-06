@@ -11,6 +11,9 @@ import { inUnit, merged, toolSummary } from "../screens/RunLog";
 import { moved } from "../screens/UpNext";
 import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
+import { attention, triggerWords } from "../screens/Agents";
+import { changes, get, put } from "../screens/AgentPage";
+import type { AgentRow } from "../api.gen";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -190,5 +193,33 @@ describe("features", () => {
     expect(FEATURE_UIS.vault.unit).toBeTypeOf("function");
     expect(FEATURE_UIS.scan.backlog).toBeTypeOf("function");
     expect(FEATURE_UIS.notices.topbar).toBeTypeOf("function");
+  });
+});
+
+describe("agents", () => {
+  const row = (over: Partial<AgentRow>): AgentRow =>
+    ({ key: "x", group: "stage", row: {}, builtin: {}, edited: [], problems: [], chip: "ok", ...over }) as AgentRow;
+
+  it("sets and reads one value deep in a part, dropping what is left empty", () => {
+    const model = { id: "a", effort: "low" };
+    expect(get(model, ["effort"])).toBe("low");
+    expect(put(model, ["effort"], "high")).toEqual({ id: "a", effort: "high" });
+    expect(put({ novel: { model: { id: "a" } } }, ["novel", "model", "id"], undefined)).toBeUndefined();
+    expect(put(undefined, ["novel", "ceilings", "turns"], 3)).toEqual({ novel: { ceilings: { turns: 3 } } });
+  });
+
+  it("sends only the parts the draft changed", () => {
+    expect(changes({ model: { id: "a" }, body: "same" }, { model: { id: "b" }, body: "same" })).toEqual(["model"]);
+  });
+
+  it("says when an agent runs, and what needs a look first", () => {
+    const helper = row({ key: "scout", group: "helper", row: { name: "Scout" } });
+    const impl = row({ key: "impl", row: { name: "Uruz", trigger: { state: "impl" }, helpers: ["scout"] } });
+    expect(triggerWords(impl)).toBe("on state impl");
+    expect(triggerWords(helper, [impl, helper])).toBe("started by Uruz");
+    expect(triggerWords(row({ row: { trigger: { engine: "chat" } } }))).toBe("when you talk to Leif");
+    expect(attention(row({ problems: ["bad"], chip: "failed" }))?.label).toBe("Cannot run");
+    expect(attention(row({ chip: "costly" }))?.tone).toBe("amber");
+    expect(attention(row({}))).toBeNull();
   });
 });

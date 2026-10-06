@@ -1,257 +1,141 @@
-// The team: one card an agent, with what it does and how it has done for 30 days; one page an
-// agent, where what it runs on is changed. What it may hold (its row) is shown, never written.
+// The team: every agent the app runs, one line each, grouped by what opens it. A line says when
+// the agent runs, on what, what it cost in 30 days and whether anything needs a look; the agent's
+// own page (`AgentPage.tsx`) changes any part of it.
 
-import { useState, type ReactNode } from "react";
-import type { AgentRow, ConfigRow } from "../api.gen";
-import { api, useResource } from "../lib/api";
-import { AgentAvatar } from "../lib/icons";
-import { STAGE_LABEL, ago, modelName, money, unitCode, unitTitle } from "../lib/format";
+import type { AgentRow } from "../api.gen";
+import { useResource } from "../lib/api";
+import { AgentAvatar, LeifAvatar } from "../lib/icons";
+import { modelName, money } from "../lib/format";
 import { Link } from "../lib/router";
-import { Button, Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
+import { Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
-// The models an owner picks from, as the defaults name them (`[1m]`: the long context). A row on
-// another model shows its id beside them.
-const MODELS = ["claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]"];
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+export const GROUPS: { key: AgentRow["group"]; title: string; lede: string }[] = [
+  { key: "stage", title: "Stage agents", lede: "Each opens when a unit reaches its state." },
+  { key: "engine", title: "Engine agents", lede: "The app opens these itself, or on your press." },
+  { key: "helper", title: "Helpers", lede: "Started by another agent inside its run." },
+  { key: "feature", title: "From features", lede: "A feature's own session: its feature sets it." },
+];
+
+const ENGINE_WORDS: Record<string, string> = {
+  integrate: "when a pull request conflicts or its CI goes red",
+  estimate: "when you press Propose estimates",
+  chat: "when you talk to Leif",
+};
+
+/** When an agent runs, in words: its trigger, or who starts a helper. */
+export function triggerWords(a: AgentRow, rows: AgentRow[] = []): string {
+  const t = a.row.trigger ?? {};
+  if (t.state) return `on state ${t.state}`;
+  if (t.engine) return ENGINE_WORDS[t.engine] ?? `by the engine (${t.engine})`;
+  if (a.group === "helper") {
+    const by = rows.filter((r) => (r.row.helpers ?? []).includes(a.key)).map((r) => r.row.name ?? r.key);
+    return by.length ? `started by ${by.join(", ")}` : "started by no agent";
+  }
+  return a.group === "feature" ? "on its feature's schedule" : "—";
+}
+
+/** What needs a look on a line, worst first: a problem stops its runs, then the last run's chip. */
+export function attention(a: AgentRow): { tone: "red" | "amber"; label: string } | null {
+  if (a.problems.length) return { tone: "red", label: "Cannot run" };
+  if (a.chip === "failed") return { tone: "red", label: "Last run failed" };
+  if (a.chip === "costly") return { tone: "amber", label: "Near its $ ceiling" };
+  return null;
+}
+
+export function AgentGlyph({ a, size = "" }: { a: AgentRow; size?: "" | "lg" | "xl" }) {
+  if (a.key === "leif") return <LeifAvatar size={size} />;
+  if (a.group === "stage" || a.key === "integrate") return <AgentAvatar stage={a.key} size={size} title={a.row.name} />;
+  return (
+    <span className={`av ${size}`} title={a.row.name}>
+      {a.row.glyph || (a.row.name ?? a.key).slice(0, 1)}
+    </span>
+  );
+}
+
+/** The agents of the first workspace's view: one read gives every row and the catalog. */
+export function useAgents() {
+  const ws = useResource("/api/workspaces");
+  const first = ws.data?.workspaces[0];
+  const agents = useResource("/api/agents", first ? { cwd: first.path } : {});
+  return { ws, cwd: first?.path ?? "", agents };
+}
 
 export function Agents() {
-  const ws = useResource("/api/workspaces");
-  const first = ws.data?.workspaces[0];
-  const agents = useResource(first ? "/api/agents" : null, first ? { cwd: first.path } : {});
-
+  const { agents } = useAgents();
+  const rows = agents.data?.rows ?? [];
+  const look = rows.filter((a) => attention(a));
   return (
-    <div className="page" style={{ maxWidth: 1160 }}>
-      <PageHead title="Agents" lede="Your team. Leif runs it: one agent a stage, in the order a unit moves." />
+    <div className="page" style={{ maxWidth: 1040 }}>
+      <PageHead
+        title="Agents"
+        lede="Every agent the app runs: when it runs, on what model, what it may do and what it cost. Open one to change any part; its next run uses the change."
+      />
       {agents.state === "error" ? (
         <ErrorState error={agents.error} onRetry={agents.reload} />
-      ) : agents.state === "loading" ? (
-        <SkeletonRows rows={4} />
+      ) : !agents.data ? (
+        <SkeletonRows rows={6} />
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 20 }}>
-          {agents.data.rows.map((a) => (
-            <Link key={a.key} to={`/agents/${a.key}`} className="card agent-card">
-              <div className="row">
-                <AgentAvatar stage={a.key} size="lg" title={a.name} />
-                <div className="grow">
-                  <b>{a.name}</b>
-                  <div className="faint" style={{ fontSize: 12 }}>
-                    {STAGE_LABEL[a.key] ?? a.key} · {modelName(a.config.model)} · {a.config.effort}
-                  </div>
+        <>
+          {look.length > 0 && (
+            <div className="card card-b attn" style={{ marginTop: 16 }}>
+              <b>Needs a look</b>
+              {look.map((a) => (
+                <Link key={a.key} to={`/agents/${a.key}`} className="attn-row">
+                  <Chip square tone={attention(a)!.tone}>{attention(a)!.label}</Chip>
+                  <span>{a.row.name ?? a.key}</span>
+                  <span className="faint">{a.problems[0] ?? "open it to see its runs"}</span>
+                </Link>
+              ))}
+            </div>
+          )}
+          {GROUPS.map((g) => {
+            const mine = rows.filter((a) => a.group === g.key);
+            if (!mine.length) return null;
+            return (
+              <section key={g.key}>
+                <div className="sec-h">
+                  {g.title} <span className="faint">{g.lede}</span>
                 </div>
-              </div>
-              <div className="muted" style={{ minHeight: 38 }}>
-                {a.role || a.meaning}
-              </div>
-              <div className="row" style={{ borderTop: "1px solid var(--line)", paddingTop: 8, fontSize: 12 }}>
-                <span className="grow">
-                  <b>{a.runs_30d}</b> <span className="faint">runs</span>
-                </span>
-                <span className="grow">
-                  <b>{a.runs_30d ? money(a.cost_30d / a.runs_30d) : "—"}</b> <span className="faint">a run</span>
-                </span>
-                <span>
-                  <b>{money(a.cost_30d, 0)}</b> <span className="faint">30 d</span>
-                </span>
-              </div>
-            </Link>
-          ))}
-        </div>
+                <div className="card">
+                  {mine.map((a) => (
+                    <AgentLine key={a.key} a={a} rows={rows} />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </>
       )}
     </div>
   );
 }
 
-export function AgentPage({ name }: { name: string }) {
-  const ws = useResource("/api/workspaces");
-  const first = ws.data?.workspaces[0];
-  const agents = useResource(first ? "/api/agents" : null, first ? { cwd: first.path } : {});
-  const a = agents.data?.rows.find((r) => r.key === name);
-  if (agents.state === "error") return <ErrorState error={agents.error} onRetry={agents.reload} />;
-  if (!agents.data) return <div className="page"><SkeletonRows rows={5} /></div>;
-  if (!a)
-    return (
-      <div className="page">
-        <Empty icon="team" title="No such agent">
-          The team has no {name}.
-        </Empty>
-      </div>
-    );
+function AgentLine({ a, rows }: { a: AgentRow; rows: AgentRow[] }) {
+  const look = attention(a);
   return (
-    <div className="page mid">
-      <div className="row" style={{ gap: 12 }}>
-        <AgentAvatar stage={a.key} size="xl" title={a.name} />
-        <div className="grow">
-          <h1 className="title">{a.name}</h1>
-          <div className="faint">
-            {STAGE_LABEL[a.key] ?? a.key} · {a.meaning}
-          </div>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <b>{money(a.cost_30d, 0)}</b> <span className="faint">in 30 days</span>
-          <div className="faint" style={{ fontSize: 12 }}>
-            {a.runs_30d} runs{a.runs_30d ? ` · ${money(a.cost_30d / a.runs_30d)} a run` : ""}
-          </div>
-        </div>
-      </div>
-      {a.role && <p className="muted" style={{ marginTop: 14 }}>{a.role}</p>}
-
-      <div className="sec-h">How it runs</div>
-      <Settings row={a.config} cos={agents.data.cos_model} onSaved={agents.reload} />
-      {a.variants.map((v) => (
-        <div key={v.key}>
-          <div className="sec-h">
-            On new ground <span className="faint">{v.key}</span>
-          </div>
-          <Settings row={v} cos={agents.data.cos_model} onSaved={agents.reload} />
-        </div>
-      ))}
-
-      <div className="sec-h">Recent runs</div>
-      <Runs agent={a} names={Object.fromEntries((ws.data?.workspaces ?? []).map((w) => [w.path, w.name]))} />
-
-      <div className="sec-h">What it may do</div>
-      <Holds agent={a} />
-    </div>
-  );
-}
-
-/** One row's model, effort and two ceilings: each with where it comes from, saved on its own. */
-function Settings({ row, cos, onSaved }: { row: ConfigRow; cos: string | null; onSaved: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const set = async (field: string, value: unknown) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.post("/api/agents/field", { key: row.key, field, value });
-      onSaved();
-    } catch (e) {
-      setError(e as Error);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const c = row.ceilings;
-  const has = (f: string) => row.fields.includes(f);
-  const mine = (f: string) => row.overridden[f];
-  const reset = (f: string) =>
-    mine(f) && (
-      <Button size="sm" kind="ghost" disabled={busy} onClick={() => set(f, null)}>
-        Back to default
-      </Button>
-    );
-  return (
-    <div className="card card-b">
-      {has("model") && (
-        <Field label="Model" hint={source(row.model_source, cos ? `COS_MODEL is ${modelName(cos)}` : "")}>
-          <div className="seg">
-            {MODELS.map((m) => (
-              <button key={m} className={row.model && modelName(row.model) === modelName(m) ? "on" : ""} disabled={busy} onClick={() => set("model", m)}>
-                {modelName(m)}
-              </button>
-            ))}
-          </div>
-          {row.model && !MODELS.some((m) => modelName(m) === modelName(row.model)) && <Chip square tone="plain">{row.model}</Chip>}
-          {reset("model")}
-        </Field>
-      )}
-      {has("effort") && (
-        <Field label="Effort" hint={source(row.effort_source)}>
-          <div className="seg">
-            {EFFORTS.map((e) => (
-              <button key={e} className={row.effort === e ? "on" : ""} disabled={busy} onClick={() => set("effort", e)}>
-                {e}
-              </button>
-            ))}
-          </div>
-          {reset("effort")}
-        </Field>
-      )}
-      {has("turns") && (
-        <Field label="Turns at most" hint={source(c.max_turns_source)}>
-          <NumberInput value={c.max_turns} disabled={busy} onSave={(v) => set("turns", v)} />
-          {reset("turns")}
-        </Field>
-      )}
-      {has("budget") && (
-        <Field label="Spend at most" hint={source(c.max_budget_source)}>
-          <span className="faint">$</span>
-          <NumberInput value={c.max_budget_usd} disabled={busy} onSave={(v) => set("budget", v)} />
-          {reset("budget")}
-        </Field>
-      )}
-      {error && <div style={{ color: "var(--red)", fontSize: 12.5, marginTop: 8 }}>{error.message}</div>}
-    </div>
-  );
-}
-
-/** Where a value comes from, in words: an override is yours, anything else the app's. */
-function source(from: string, extra = ""): string {
-  const said = from === "override" ? "Yours: changed on this page." : from === "none" ? "No ceiling." : from === "default" ? "The app's default." : `From ${from}.`;
-  return [said, extra].filter(Boolean).join(" ");
-}
-
-function NumberInput({ value, disabled, onSave }: { value: number | null; disabled: boolean; onSave: (v: string) => void }) {
-  const [draft, setDraft] = useState(value == null ? "" : String(value));
-  const changed = draft.trim() !== (value == null ? "" : String(value)) && draft.trim() !== "";
-  return (
-    <>
-      <input className="input sm" inputMode="decimal" style={{ width: 90 }} value={draft} onChange={(e) => setDraft(e.target.value)} />
-      {changed && (
-        <Button size="sm" kind="primary" disabled={disabled} onClick={() => onSave(draft.trim())}>
-          Save
-        </Button>
-      )}
-    </>
-  );
-}
-
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <div className="field">
-      <div>
-        <div className="lab">{label}</div>
-        {hint && <div className="hint">{hint}</div>}
-      </div>
-      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-/** The last runs in every project; `names` turns a run's workspace path into its project. */
-function Runs({ agent, names }: { agent: AgentRow; names: Record<string, string> }) {
-  if (!agent.runs.length) return <div className="card card-b faint">No runs yet.</div>;
-  return (
-    <div className="card">
-      {agent.runs.map((r) => (
-        <Link key={r.workspace + r.unit + r.at} to={`/unit/${names[r.workspace] ?? ""}/${Number(r.unit.slice(0, 4))}`} className="lrow">
-          <span className="id">{unitCode(names[r.workspace] ?? "", Number(r.unit.slice(0, 4)))}</span>
-          <span className="t">{unitTitle(r.unit)}</span>
-          <span className="meta">
-            {r.outcome !== "done" && <Chip square tone="red">{r.outcome}</Chip>} {r.cost_usd != null ? money(r.cost_usd) : ""} · {ago(r.at)}
-          </span>
-        </Link>
-      ))}
-    </div>
-  );
-}
-
-function Holds({ agent }: { agent: AgentRow }) {
-  const g = agent.row;
-  const list = (title: string, items: string[]) =>
-    items.length > 0 && (
-      <Field label={title}>
-        <span className="mono muted">{items.join(" · ")}</span>
-      </Field>
-    );
-  return (
-    <div className="card card-b">
-      {list("Tools", g.tools)}
-      <div className="faint" style={{ fontSize: 12.5, marginTop: 8 }}>
-        {g.warning || "Set in the code, not here: widening what a step may do is a change reviewed like any other."}
-      </div>
-    </div>
+    <Link to={`/agents/${a.key}`} className="agent-line">
+      <AgentGlyph a={a} />
+      <span className="who">
+        <b>{a.row.name ?? a.key}</b> <span className="faint mono">{a.key}</span>
+        <span className="when">{triggerWords(a, rows)}</span>
+      </span>
+      <span className="what">
+        {modelName(a.config.model)}
+        {a.config.effort ? ` · ${a.config.effort}` : ""}
+      </span>
+      <span className="cost">
+        {a.runs_30d ? (
+          <>
+            <b>{money(a.cost_30d)}</b> <span className="faint">· {a.runs_30d} runs</span>
+          </>
+        ) : (
+          <span className="faint">no runs in 30 d</span>
+        )}
+      </span>
+      <span className="marks">
+        {look && <Chip square tone={look.tone}>{look.label}</Chip>}
+        {a.edited.length > 0 && <Chip square tone="accent">edited</Chip>}
+      </span>
+    </Link>
   );
 }

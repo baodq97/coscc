@@ -7,7 +7,8 @@ import { Briefing } from "./screens/Briefing";
 import { Work } from "./screens/Work";
 import { UnitPage } from "./screens/UnitPage";
 import { Inbox } from "./screens/Inbox";
-import { AgentPage, Agents } from "./screens/Agents";
+import { Agents } from "./screens/Agents";
+import { AgentPage } from "./screens/AgentPage";
 import { System } from "./screens/System";
 import { MayDo } from "./screens/MayDo";
 import { NewWork } from "./screens/NewWork";
@@ -67,6 +68,7 @@ export const SCREENS: Screen[] = [
   },
   { path: "/agents", title: "Agents", nav: "Team", icon: "team", keys: "G T", render: () => <Agents /> },
   { path: "/agents/:key", title: "Agent", crumbs: (p) => ["Agents", p.key], render: (p) => <AgentPage name={p.key} /> },
+  { path: "/agents/:key/:tab", title: "Agent", crumbs: (p) => ["Agents", p.key], render: (p) => <AgentPage name={p.key} tab={p.tab} /> },
   {
     path: "/insights",
     title: "Insights",

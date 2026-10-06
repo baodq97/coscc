@@ -28,7 +28,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
   const detail = useResource(placed ? "/api/units/{name}" : null, query, { on: [""] });
   const next = useResource(placed ? "/api/units/next" : null, placed ? { cwd: placed.workspace.path, unit: placed.name } : {}, { on: [""] });
   const agents = useResource(placed ? "/api/agents" : null, placed ? { cwd: placed.workspace.path } : {});
-  const names = Object.fromEntries((agents.data?.rows ?? []).map((a) => [a.key, a.name]));
+  const names = Object.fromEntries((agents.data?.rows ?? []).map((a) => [a.key, a.row.name ?? a.key]));
   const running = boards.flatMap((b) => b.board?.running ?? []).find((r) => r.unit === placed?.name);
 
   if (loading) return <div className="page"><SkeletonRows rows={5} /></div>;
