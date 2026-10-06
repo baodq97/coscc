@@ -253,6 +253,20 @@ class Hooks:
         """`held`'s tools that this run's `when` lets through."""
         return tuple(t for t in self.held(row, facts.workspace) if t.when(facts))
 
+    def refusal(self, facts: Facts) -> str:
+        """The words of the first guard on for the run's workspace that denies it, or `""` when
+        all abstain. A guard that raises denies: a run is never let through by a check that could
+        not be made."""
+        for guard in self.on(facts.workspace).guards:
+            try:
+                words = guard.check(facts)
+            except Exception as e:
+                log.exception("guard %s of a feature failed", guard.name)
+                return f"{guard.name}: failed ({type(e).__name__})"
+            if words is not None:
+                return f"{guard.name}: {words}"
+        return ""
+
     def blocks_for(self, facts: Facts) -> tuple[Block, ...]:
         """The blocks on for the run's workspace whose tool its grant holds."""
         held = (*facts.grant.tools, *facts.grant.held)

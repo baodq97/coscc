@@ -186,6 +186,40 @@ class TheGateFailsClosed(unittest.TestCase):
         self.assertEqual(denials.count, 1)
 
 
+class APushTheGrantAllowsAsksTheGuardsAgain(unittest.TestCase):
+    """`before_push`: a session's own `git push` is refused with a guard's words (`vault-leak`),
+    and asked only for a push the grant lets through."""
+
+    def test_the_guards_words_refuse_the_push_and_silence_lets_it_through(self):
+        from dataclasses import replace
+
+        from coscc.agent.policy import GUARDED
+
+        asked: list[int] = []
+        words = ["vault-leak: the value of ws:db appears in this unit's work"]
+        grant = replace(IMPL, branch="feat/x")
+        gate = Gate(grant, Denials(), before_push=lambda: asked.append(1) or words[0])
+        push = {"command": "git push origin feat/x"}
+        said = _pre(gate, "Bash", push)
+        self.assertTrue(said.startswith(GUARDED), said)
+        self.assertIn("ws:db", said)
+        words[0] = ""
+        self.assertEqual(_pre(gate, "Bash", push), "")
+        # Not a push, or a push the grant refuses anyway: the guards are not asked.
+        self.assertEqual(_pre(gate, "Bash", {"command": "git status"}), "")
+        self.assertIn(HOST, _pre(gate, "Bash", {"command": "git push origin main"}))
+        self.assertEqual(len(asked), 2)
+
+    def test_a_guard_that_raises_refuses_the_push(self):
+        from dataclasses import replace
+
+        def boom() -> str:
+            raise RuntimeError("scan failed")
+
+        gate = Gate(replace(IMPL, branch="feat/x"), Denials(), before_push=boom)
+        self.assertIn("refused", _pre(gate, "Bash", {"command": "git push origin feat/x"}))
+
+
 class TheGateRecordsEveryDenial(unittest.TestCase):
     """The hook's, the fallback's and the classifier's, in the run's `denials`."""
 

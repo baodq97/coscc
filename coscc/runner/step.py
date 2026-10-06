@@ -1572,7 +1572,8 @@ class Runner:
                 turns_left,
                 budget_left,
                 runs_as,
-                Gate(facts.grant, denials, ledger),
+                # A session's own `git push` asks the guards again first (`vault-leak`).
+                Gate(facts.grant, denials, ledger, before_push=lambda: self.hooks.refusal(facts)),
                 own,
                 running,
                 owner,

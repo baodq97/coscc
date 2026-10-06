@@ -2440,7 +2440,7 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
             raise RuntimeError("nope")
 
         self.guarded(boom)
-        with self.assertLogs("coscc.runner.steps", "ERROR"):
+        with self.assertLogs("coscc.kernel", "ERROR"):
             self.assertEqual(self.refused(), "g: failed (RuntimeError)")
 
     def test_a_pr_step_is_refused_before_the_mechanical_path(self):

@@ -1088,6 +1088,15 @@ _GH_VALUE_FLAGS = frozenset({"-R", "--repo", "--hostname"})
 _GIT_VALUE_FLAGS = frozenset({"-C", "-c"})
 
 
+def pushes(grant: Grant, tool_name: str, tool_input: object) -> bool:
+    """Whether a call may push: a command naming `git` and `push`, on a grant holding a branch.
+    Leans towards yes, so the guards are asked before any push the grant lets through."""
+    if tool_name not in EXEC_TOOLS or not grant.branch or not isinstance(tool_input, dict):
+        return False
+    command = str(tool_input.get("command") or "")
+    return bool(re.search(r"\bgit\b", command) and re.search(r"\bpush\b", command))
+
+
 def _may_be_push(raw: list[str]) -> bool:
     """Whether `git <raw>` could be a push: a `push` with only options, or an option's value,
     in front of it. `git log --grep push` is not one.
@@ -1250,6 +1259,8 @@ HELPERS = (
     "helpers are named, in the foreground, read-only in git, and nothing runs in the background"
 )
 HELD = "only the MCP tools this session holds"
+# A push the grant allows that a feature's guard (`vault-leak`) denies, asked again at the push.
+GUARDED = "a feature's guard refuses this push"
 
 
 # What a refusal lacked, by the rule its reason opens with: the grant that would have allowed the

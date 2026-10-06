@@ -34,11 +34,13 @@ from coscc.agent.policy import (
     PEERS_TOOL,
     SEND_MESSAGE,
     SUBAGENTS,
+    GUARDED,
     WRITE_TOOLS,
     Grant,
     classified,
     critical,
     lacked,
+    pushes,
 )
 
 log = logging.getLogger(__name__)
@@ -320,25 +322,33 @@ class Denials:
 class Gate:
     """What stands in front of one session's `auto` mode: the grant issued for its run, the run's
     `Denials`, and the run's `Helpers` when it may start them. Built by the app before the
-    session opens, and dropped with it; a grant without its secrets is refused here."""
+    session opens, and dropped with it; a grant without its secrets is refused here.
+    `before_push` is the features' guards (`kernel.Hooks.refusal`), asked again before a `git push`
+    the grant lets through: its words refuse the push."""
 
     def __init__(
         self,
         grant: Grant,
         denials: Denials | None = None,
         helpers: Helpers | None = None,
+        before_push: Callable[[], str] | None = None,
     ):
         if not grant.secrets:
             raise ValueError("a gate needs a grant that names the secrets it denies")
         self.grant = grant
         self.denials = denials if denials is not None else Denials()
         self.helpers = helpers
+        self.before_push = before_push
 
     def refused(self, tool_name: str, tool_input: dict, agent_id: str | None) -> str:
         """Why the hook denies this call, or ""."""
-        return (self.helpers or Helpers()).refused(tool_name, tool_input) or critical(
+        reason = (self.helpers or Helpers()).refused(tool_name, tool_input) or critical(
             self.grant, tool_name, tool_input, agent_id
         )
+        if reason or self.before_push is None or not pushes(self.grant, tool_name, tool_input):
+            return reason
+        said = self.before_push()
+        return f"{GUARDED}: {said}" if said else ""
 
     async def pre_tool_use(
         self, hook_input: Any, _tool_use_id: str | None, _context: Any

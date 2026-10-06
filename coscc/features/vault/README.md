@@ -64,7 +64,8 @@ All behind the login; none is in `auth.EXEMPT`. Every one refuses a workspace wi
 - One prompt block, `vault`, for a run that holds the entry, but not a step taken up again. A
   secret its grant names shows its name, description and ways of passing; any other shows its
   name only. No value.
-- One guard, `vault-leak`, asked before every step; it scans when the run holds a push (the PR
+- One guard, `vault-leak`, asked before every step and again before a session's own `git push`
+  (its gate's `before_push`); it scans when the run holds a push (an impl on its branch, the PR
   machine's `pr` and `ship`, Gebo's) and abstains otherwise. It denies with the secrets' names.
 - In the studio: a *Vault* sidebar entry, and on an open unit a line naming the secrets found
   in its work, when the guard last held it.
