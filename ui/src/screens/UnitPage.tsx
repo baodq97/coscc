@@ -82,7 +82,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
           <div className={next.data.gate || next.data.blocked ? "callout amber" : "callout"} style={{ marginTop: 18 }}>
             <Icon name="arrow" size={15} />
             <div className="grow">
-              <b>Next: {next.data.stage ? stageLabel(next.data.stage) : "nothing to run"}</b>
+              <b>{next.data.stage ? `Next: ${stageLabel(next.data.stage)}` : next.data.blocked ? "Nothing can run yet" : "Nothing to run"}</b>
               <div className="muted">{next.data.action}</div>
               {next.data.gate && (
                 <div style={{ marginTop: 6 }}>
