@@ -73,7 +73,6 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
         grant per stage to check."""
         for stage in policy.PROSE_STAGES:
             grant = policy.grant_for(stage)
-            self.assertEqual(grant.commands, (), f"{stage} carries commands")
             self.assertEqual(policy.beyond_reading(grant), (), f"{stage} carries more than reading")
 
     def test_intent_spec_plan_and_review_read_and_idea_does_not(self):
@@ -1325,9 +1324,8 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
         self.assertEqual(stored[0]["max_turns_source"], "default")
 
     def test_with_no_config_the_ceilings_are_the_grants(self):
-        with tempfile.TemporaryDirectory() as d:
-            runner = Runner(sessions=object(), journal=None)
-            grant, ceilings = runner._configured(grant_for("spec"), "spec", None, d, {})
+        runner = Runner(sessions=object(), journal=None)
+        grant, ceilings = runner._configured(grant_for("spec"), "spec", None, {})
         self.assertEqual(
             (grant.max_turns, grant.max_budget_usd),
             (grant_for("spec").max_turns, grant_for("spec").max_budget_usd),
@@ -1336,67 +1334,6 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
             (ceilings["max_turns"], ceilings["max_budget_usd"]),
             (grant.max_turns, grant.max_budget_usd),
         )
-
-
-class AWorkspacesListsReachTheImplGrant(unittest.TestCase):
-    """`allow` and `block` from `cos.db` are in `Facts.commands`; the gate reads neither."""
-
-    def run_stage(self, d, stage, stored):
-        from coscc.config import Config
-        from coscc.store.db import Data
-        from coscc.kernel import Block
-
-        seen = {}
-
-        class Probe:
-            config = Config(data_dir=str(Path(d) / "data"), config_home=str(Path(d) / "cfg"))
-
-            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-                for line in ("curl -s x", "rm x"):
-                    seen[line] = await asks(kw["gate"], "Bash", {"command": line})
-                (directory / f"{stage}.md").write_text("# X\nStatus: accepted.\n", encoding="utf-8")
-                await _submits(kw)
-                yield ("done", {"session_id": "s", "cost": {}})
-
-        def render(facts: Facts) -> str:
-            seen["commands"] = facts.commands
-            return ""
-
-        Data(Probe.config.data_dir).set_pref(policy.GRANTS_PREF, stored)
-        directory = make_unit(
-            Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP"
-        )
-        hooks = Hooks(parts=(("probe", Parts(blocks=(Block("probe", render),))),))
-        r = Runner(sessions=Probe(), journal=None, hooks=hooks)
-
-        async def go():
-            async for _ in r.run(
-                workspace=d,
-                directory=directory,
-                journal_key=d,
-                unit=UNIT,
-                stage=stage,
-                artifact=f"{stage}.md",
-                stages=STAGES,
-                mode="autonomous",
-            ):
-                pass
-
-        asyncio.run(go())
-        return seen
-
-    def test_impl_runs_with_the_workspaces_lists_and_block_wins(self):
-        with tempfile.TemporaryDirectory() as d:
-            seen = self.run_stage(d, "impl", {d: {"allow": ["curl", "rm"], "block": ["rm", "git"]}})
-        self.assertIn("curl", seen["commands"])
-        self.assertNotIn("rm", seen["commands"])
-        self.assertNotIn("git", seen["commands"])
-        self.assertEqual((seen["curl -s x"], seen["rm x"]), ("", ""))
-
-    def test_another_workspaces_lists_change_nothing(self):
-        with tempfile.TemporaryDirectory() as d:
-            seen = self.run_stage(d, "impl", {"/elsewhere": {"allow": ["curl"], "block": []}})
-        self.assertEqual(seen["commands"], grant_for("impl").commands)
 
 
 class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
@@ -1796,30 +1733,7 @@ class TheScreenshotsTakenAgain(unittest.TestCase):
         self.assertIn("SCREENS-MARKER", seen[0])
 
 
-class TheCommandsAStepMayRun(unittest.TestCase):
-    """`COMMANDS_ADVICE` is prose about `policy.check_command`: each thing it says is refused is
-    refused, and what it says may run does, on `impl`'s own grant."""
-
-    def test_what_the_advice_says_is_refused_is_refused(self):
-        grant = policy.grant_for_step("impl", None)
-        for line in (
-            "cd x",
-            "timeout 5 npm test",
-            "git status; cd x",
-            "echo a > f.txt",
-            "echo $(pwd)",
-            "echo `pwd`",
-            "diff <(ls) f",
-        ):
-            with self.subTest(line=line):
-                self.assertNotEqual(policy.check_command(grant, line), "")
-
-    def test_what_it_says_may_run_runs(self):
-        grant = policy.grant_for_step("impl", None)
-        for line in ("echo a > /dev/null", "git status && npm test", "ls | wc -l"):
-            with self.subTest(line=line):
-                self.assertEqual(policy.check_command(grant, line), "")
-
+class AStepMakesItsScratch(unittest.TestCase):
     def test_a_step_makes_its_scratch_and_stops_on_one_it_may_not_use(self):
         import os
         from types import SimpleNamespace
@@ -1834,29 +1748,6 @@ class TheCommandsAStepMayRun(unittest.TestCase):
                 os.chmod(ram.parent.parent, 0o755)
                 with self.assertRaisesRegex(RunError, "did not start.*0755"):
                     Runner._scratch(fake, str(base / "repo"), UNIT)  # type: ignore[arg-type]
-
-    def test_what_it_says_may_go_to_scratch_does(self):
-        grant = policy.grant_for_step("impl", None)
-        with tempfile.TemporaryDirectory() as ram, tempfile.TemporaryDirectory() as disk:
-            for line in ("echo a > $COS_SCRATCH_RAM/f", "npm test > $COS_SCRATCH_DISK/log 2>&1"):
-                with self.subTest(line=line):
-                    said = policy.check_command(grant, line, None, (ram, disk), 2**20)
-                    self.assertEqual(said, "")
-
-    def test_the_words_an_impl_step_gets_are_its_grant(self):
-        from coscc.runner.prompt import COMMANDS_HEADING
-
-        steps = AStepCarriesItsGrantAndNothingOfTheMachine()
-        words = ", ".join(f"`{c}`" for c in policy.grant_for_step("impl", None).commands)
-        for stage in ("impl", "plan"):
-            replies = steps.Replies()
-            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
-                make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
-                steps._run(d, replies, stage=stage)
-                if stage == "impl":
-                    self.assertIn(f"{COMMANDS_HEADING}\n\n{words}\n\n", replies.prompt)
-                else:
-                    self.assertNotIn(COMMANDS_HEADING, replies.prompt)
 
 
 class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):

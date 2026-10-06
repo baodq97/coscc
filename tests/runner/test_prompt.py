@@ -724,3 +724,18 @@ class NoPromptAsksForAStatusLine(unittest.TestCase):
             drift.describe({"checked": True, "files": ["a.py"], "plan_sha": sha, "main_sha": sha}),
         ):
             self.assertNotIn("Status:", text)
+
+
+class NoCommandBlockIsComposed(unittest.TestCase):
+    def test_the_impl_prompt_lists_no_commands(self):
+        from coscc.runner import prompt as prompt_mod
+
+        self.assertFalse(hasattr(prompt_mod, "COMMANDS_ADVICE"))
+        self.assertFalse(hasattr(prompt_mod, "COMMANDS_HEADING"))
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS")
+            text, _, _ = compose_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", runs_commands=True
+            )
+        self.assertNotIn("The commands this step may run", text)
+        self.assertNotIn("one of these words", text)

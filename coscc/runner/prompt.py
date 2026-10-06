@@ -248,16 +248,6 @@ PLAN_MAP_ADVICE = (
     "need with `Read` and `offset`/`limit` instead of searching for it again. The numbers move "
     "once you edit a file."
 )
-COMMANDS_HEADING = "# The commands this step may run"
-COMMANDS_ADVICE = (
-    "Every segment of a command line, each part after `;`, `&&`, `||` or `|`, must open with "
-    "one of these words; any other is refused, `cd` and `timeout` among them. To read part of "
-    "a file, use `Read` with `offset` and `limit`. A redirect that writes a file, anywhere but "
-    "`/dev/null`, `$COS_SCRATCH_RAM` or `$COS_SCRATCH_DISK`, is refused, and so is a "
-    "command or process substitution (`$(…)`, backticks, `<(…)`): write with `Write` or "
-    "`Edit` instead."
-)
-
 # The app closes the session when a turn ends, so a step that ends its turn to wait has ended.
 SESSION_ENDS_HEADING = "# Your last turn ends this session"
 SESSION_ENDS_ADVICE = (
@@ -526,21 +516,16 @@ def _tools(
     stage: str,
     directory: Path,
     plan_map: str,
-    commands: tuple[str, ...],
     runs_commands: bool,
     state_file: str | Path | None,
     included: list[str],
 ) -> list[str]:
     """What `impl` may read and run, and what a step holding `Bash` is told about its session."""
     blocks: list[str] = []
-    # Placed only: the plan map and the grant's words are built elsewhere.
+    # Placed only: the plan map is built elsewhere.
     if plan_map and stage == "impl":
         included.append("plan-map")
         blocks.append(f"{PLAN_MAP_HEADING}\n\n{plan_map}\n\n{PLAN_MAP_ADVICE}")
-    if commands and stage == "impl":
-        included.append("commands")
-        words = ", ".join(f"`{c}`" for c in commands)
-        blocks.append(f"{COMMANDS_HEADING}\n\n{words}\n\n{COMMANDS_ADVICE}")
     if runs_commands:
         blocks.append(f"{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
         blocks.append(f"{HARNESS_HEADING}\n\n{harness_advice(directory, state_file)}")
@@ -900,7 +885,6 @@ def compose_prompt(
     rerun_note: str = "",
     app_note: str = "",
     plan_map: str = "",
-    commands: tuple[str, ...] = (),
     unfinished_round: dict[str, Any] | None = None,
     idea_note: str = "",
     siblings_note: str = "",
@@ -924,8 +908,7 @@ def compose_prompt(
     sibling checkouts `impl` may read (`impl` only); `mentions_note` the units this unit names
     and the files of each the step may read. `rerun` is true only for a stage a person
     ran again from the board, with `rerun_note` their note; `app_note` is the autopilot's own,
-    under its own heading. `plan_map` is what `planmap.for_step` built and
-    `commands` the words of the step's grant (`impl` only). `unfinished_round` is
+    under its own heading. `plan_map` is what `planmap.for_step` built. `unfinished_round` is
     `{"n", "dropped"}` of a last round the loop read as unfinished (`review` only).
     `lane` is what the gate said of the unit (`fast` or `full`). `runs_commands` is true when
     the step's grant holds `Bash`. `branch` is the unit's branch the worktree stands on, the
@@ -953,7 +936,7 @@ def compose_prompt(
         *_shared(stage, idea_note, siblings_note, mentions_note),
         *_second_artifact(directory, stage, unit_meta, included),
         *_where_you_work(stage, workspace, worktree, ceilings),
-        *_tools(stage, directory, plan_map, commands, runs_commands, state_file, included),
+        *_tools(stage, directory, plan_map, runs_commands, state_file, included),
         *_lane(stage, lane, unit_meta, included),
         *_answers(stage, directory, artifact, writes_own, unit_meta),
         *_sent_back(stage, directory, review, included, unit_meta),

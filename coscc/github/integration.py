@@ -11,7 +11,6 @@ import asyncio
 import functools
 import logging
 import uuid
-from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -20,7 +19,7 @@ from collections.abc import Callable
 from coscc import units
 from coscc.agent import agents, harness
 from coscc.agent import steps as steps_mod
-from coscc.agent.policy import grant_for, protected_paths
+from coscc.agent.policy import grant_for
 from coscc.agent.sessions import Sessions, Suspended
 from coscc.bus import Bus, Event
 from coscc.config import Config
@@ -630,7 +629,6 @@ class Integration:
                     cwd=str(tree or root),
                     watch=None,
                     directory=directory,
-                    commands=(),
                     resumed=False,
                 )
             )
@@ -816,16 +814,11 @@ class Integration:
         # The `integrate` row, read once for the prompt, the records and
         # the session's commit attribution.
         agent = self.steps.agent_of("integrate")
-        # Gebo runs no `Runner`, so its grant takes the protected paths and its two ceilings here,
+        # Gebo runs no `Runner`, so its grant takes its two ceilings here,
         # the ceilings by the function the runner asks: one taken up again keeps its owner's.
         overrides, _ = self.config_overrides()
         grant, ceilings = with_ceilings(
-            replace(
-                grant_for("integrate"),
-                protected=protected_paths(
-                    str(Data(self.config.data_dir).root), self.config.config_home, self.config.home
-                ),
-            ),
+            grant_for("integrate"),
             "integrate",
             None,
             overrides["turns"],
