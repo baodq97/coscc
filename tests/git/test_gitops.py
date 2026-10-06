@@ -21,6 +21,7 @@ from unittest import mock
 
 from coscc.git import gitops
 from coscc.git.gitops import GitError, OwnTree, check_url, child_env
+from tests.procs import left_running, sleeping
 
 # What the own tree of these tests may write.
 BRANCHES = re.compile(r"^chore/own-\d+-\d+-\d+$")
@@ -391,21 +392,6 @@ class Worktrees(FetchingTheTrunkFromARemote):
             asyncio.run(gitops.delete_merged_branch(self.repo, "main", self.main))
 
 
-def running(marker: str) -> list[str]:
-    """Command lines of the processes whose argv holds `marker`, read from /proc."""
-    found = []
-    for proc in Path("/proc").glob("[0-9]*"):
-        if proc.name == str(os.getpid()):
-            continue
-        try:
-            argv = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
-        except OSError:
-            continue
-        if marker in argv:
-            found.append(argv)
-    return found
-
-
 async def cancelled_after(coro, delay: float = 1.0) -> float:
     """Seconds the task took to end once cancelled `delay` seconds in. It must end cancelled."""
     task = asyncio.ensure_future(coro)
@@ -440,7 +426,7 @@ class CancellingAGitCommand(FetchingTheTrunkFromARemote):
 
     def _half_made_by_a_killed_add(self) -> None:
         """What a `kill -9` of `git worktree add` mid-checkout leaves behind (spike S3)."""
-        self._git(self.repo, "config", "filter.slow.smudge", "sleep 3.33; cat")
+        self._git(self.repo, "config", "filter.slow.smudge", f"sleep {sleeping('3.33')}; cat")
         self.tree.parent.mkdir(parents=True, exist_ok=True)
         add = subprocess.Popen(
             [
@@ -462,22 +448,27 @@ class CancellingAGitCommand(FetchingTheTrunkFromARemote):
         os.killpg(add.pid, signal.SIGKILL)
         add.wait()
         self._git(self.repo, "config", "--unset", "filter.slow.smudge")
-        self.assertEqual(running("sleep 3.33"), [])
+        self.assertEqual(left_running("sleep " + sleeping("3.33")), [])
 
     def test_a_fetch_cancelled_midway_ends_at_once_and_leaves_no_git(self):
-        self._git(self.repo, "config", "remote.origin.uploadpack", "sleep 3.11; git-upload-pack")
+        self._git(
+            self.repo,
+            "config",
+            "remote.origin.uploadpack",
+            f"sleep {sleeping('3.11')}; git-upload-pack",
+        )
         took = asyncio.run(cancelled_after(gitops.fetch(self.repo)))
         self.assertLess(took, 10)
-        self.assertEqual(running("sleep 3.11"), [])
+        self.assertEqual(left_running("sleep " + sleeping("3.11")), [])
 
     def test_a_worktree_add_cancelled_midway_ends_at_once_and_leaves_no_git(self):
-        self._git(self.repo, "config", "filter.slow.smudge", "sleep 3.22; cat")
+        self._git(self.repo, "config", "filter.slow.smudge", f"sleep {sleeping('3.22')}; cat")
         took = asyncio.run(cancelled_after(gitops.worktree_add(self.repo, self.tree, self.main)))
         self.assertLess(took, 10)
-        self.assertEqual(running("sleep 3.22"), [])
+        self.assertEqual(left_running("sleep " + sleeping("3.22")), [])
 
     def test_discarding_what_a_cancelled_add_left_gives_a_clean_tree_next_time(self):
-        self._git(self.repo, "config", "filter.slow.smudge", "sleep 3.44; cat")
+        self._git(self.repo, "config", "filter.slow.smudge", f"sleep {sleeping('3.44')}; cat")
         asyncio.run(cancelled_after(gitops.worktree_add(self.repo, self.tree, self.main)))
         asyncio.run(gitops.worktree_discard(self.repo, self.tree))
         self.assertFalse(self.tree.exists())
