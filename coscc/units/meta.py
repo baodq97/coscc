@@ -218,6 +218,22 @@ class UnitMeta:
         with self.data.write() as conn:
             self._write_ideas(conn, workspace, found.get("ideas"))
 
+    def add_unit(self, conn: sqlite3.Connection, workspace: str, unit: str) -> None:
+        """The unit's `unit_meta` row, once."""
+        match = UNIT_RE.fullmatch(unit)
+        conn.execute(
+            "INSERT OR IGNORE INTO unit_meta (root, workspace, unit, type, number, slug, imported_at) "
+            "VALUES (?, ?, ?, 'unknown', ?, ?, ?)",
+            (
+                self.root,
+                workspace,
+                unit,
+                int(match.group(1)) if match else None,
+                match.group(2) if match else None,
+                now(),
+            ),
+        )
+
     def _apply(
         self,
         conn: sqlite3.Connection,
@@ -233,12 +249,7 @@ class UnitMeta:
         """Write one unit's `meta` output. Returns the fields it could not read."""
         scope = (self.root, workspace, unit)
         at = now()
-        match = UNIT_RE.fullmatch(unit)
-        conn.execute(
-            "INSERT OR IGNORE INTO unit_meta (root, workspace, unit, type, number, slug, imported_at) "
-            "VALUES (?, ?, ?, 'unknown', ?, ?, ?)",
-            (*scope, int(match.group(1)) if match else None, match.group(2) if match else None, at),
-        )
+        self.add_unit(conn, workspace, unit)
         seen = {
             r["artifact"]: r["sha256"]
             for r in conn.execute(f"SELECT artifact, sha256 FROM unit_seen WHERE {_ONE}", scope)

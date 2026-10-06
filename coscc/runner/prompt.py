@@ -1003,11 +1003,12 @@ def _describe(t: contracts.FieldType) -> str:
     """A declared type in words: what `submit` takes for it."""
     if isinstance(t, str):
         return t if t == "text" else "a whole number" if t == "number" else f"text matching `{t}`"
-    shape = contracts._shape(t)
-    if shape == "enum":
-        return "one of " + ", ".join(f"`{w}`" for w in t["enum"])  # ty: ignore[invalid-argument-type]
-    if shape == "list":
-        return f"a list of {_describe(t['list'])}"  # ty: ignore[invalid-argument-type]
+    if isinstance(t, list):
+        return "one of " + ", ".join(f"`{w}`" for w in t)
+    if set(t) == {"enum"}:
+        return _describe(t["enum"])
+    if set(t) == {"list"}:
+        return f"a list of {_describe(t['list'])}"
     inner = ", ".join(
         f"{n.rstrip('?')}: {_describe(sub)}" + (" (may be left out)" if n.endswith("?") else "")
         for n, sub in t.items()

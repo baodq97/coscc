@@ -33,6 +33,22 @@ class EveryGuardIsNamed(unittest.TestCase):
                     self.assertIn(gid, guards.GUARDS, f"{machine}.{transition}")
 
 
+class AUnitOpensAcceptedOnlyFromABrief(unittest.TestCase):
+    def test_a_brief_opens_it(self):
+        self.assertEqual(guards.guard("unit-created").check({"brief": True}), OPEN)
+
+    def test_no_brief_closes_it_with_a_code(self):
+        for inputs in ({"brief": False}, {}):
+            verdict = guards.guard("unit-created").check(inputs)
+            self.assertFalse(verdict.open)
+            self.assertEqual(verdict.reasons, ("no-brief",))
+
+    def test_the_lane_names_it_for_the_create_transition(self):
+        self.assertEqual(guards.TRANSITIONS["unit"]["create"], ("unit-created",))
+        lane = states.default_lanes().lane("full")
+        self.assertEqual(lane.guard_for("unit", "create"), "unit-created")
+
+
 class TheReasonTableIsClosed(unittest.TestCase):
     def test_a_closed_verdict_with_a_code_outside_the_table_is_refused(self):
         with self.assertRaises(BadVerdict):
