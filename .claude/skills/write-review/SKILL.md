@@ -33,8 +33,8 @@ non-zero. Read the changed files, not the whole tree.
    an `incomplete` round, read its *What was not reviewed* first, then write a full round for
    this head, carrying every finding forward.
 
-**Claims.** For each open finding `impl.md ## Needs a person` claims (`- F<k>: <reason>`),
-label it: `[needs-person]` (the grant really lacks it or it costs money), or `[claim-rejected]`
+**Claims.** For each open finding impl claimed only a person can close (its `needs_person`,
+with why under `impl.md ## Needs a person`), label it: `[needs-person]` (the grant really lacks it or it costs money), or `[claim-rejected]`
 (impl could have fixed it; say why). Never leave a claim `[open]`. `[answered]` only when
 `review.md ## Answers` holds a `### F<k>` block that settles it; if not, keep it `[open]` and
 say what is missing. An `[answered]` never returns to `[needs-person]`: raise a new id.
