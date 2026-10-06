@@ -30,7 +30,7 @@ from coscc.units import transitions
 from coscc.runner.queue import Attempt, describe
 from coscc import units
 from coscc.units import scratch, worktrees
-from coscc.units import BadUnit, CannotCreate, ideas
+from coscc.units import BadUnit, CannotCreate
 from coscc.leif import decide
 from coscc.leif.autopilot import autopilot_values
 from coscc.runner.queue import Refused
@@ -328,13 +328,23 @@ class Answers:
                 pass
             return {"ingest_error": reason}
 
-    async def _open_unit(self, cwd: str, unit: str, brief: bool) -> dict[str, Any]:
-        """A new unit's `unit_meta` row and, given a brief, its `idea.md` accepted through guard
-        `unit-created`, in one transaction. A failure is told as `ingest` tells it."""
+    async def _open_unit(
+        self, cwd: str, unit: str, brief: bool, idea: str = "", depends_on: str = ""
+    ) -> dict[str, Any]:
+        """A new unit's `unit_meta` row, its `idea` and `depends` rows when opened from an idea,
+        and, given a brief, its `idea.md` accepted through guard `unit-created`, in one
+        transaction. A failure is told as `ingest` tells it."""
         meta = self.ws.unit_meta()
         workspace = self.ws.key(cwd)
+        deps = [depends_on] if depends_on else []
+
+        def opening(conn: sqlite3.Connection) -> None:
+            meta.add_unit(conn, workspace, unit)
+            if idea:
+                meta.link(conn, workspace, unit, idea, deps)
+
         try:
-            await asyncio.to_thread(self._write_opening, meta, workspace, unit, brief)
+            await asyncio.to_thread(self._write_opening, meta, workspace, unit, brief, opening)
             return {}
         except (BadTransition, Busy, sqlite3.Error, OSError) as e:
             log.warning("%s in %s could not be opened: %s", unit, workspace, e)
@@ -348,10 +358,17 @@ class Answers:
                 pass
             return {"ingest_error": reason}
 
-    def _write_opening(self, meta: UnitMeta, workspace: str, unit: str, brief: bool) -> None:
+    def _write_opening(
+        self,
+        meta: UnitMeta,
+        workspace: str,
+        unit: str,
+        brief: bool,
+        opening: Callable[[sqlite3.Connection], None],
+    ) -> None:
         if not brief:
             with meta.data.write() as conn:
-                meta.add_unit(conn, workspace, unit)
+                opening(conn)
             return
         journal = self.ws.journal() or Journal(meta.root, self.config.data_dir)
         applied = transitions.apply(
@@ -367,7 +384,7 @@ class Answers:
             authority="code",
             actor="app:create",
             source="app:create",
-            also=lambda conn: meta.add_unit(conn, workspace, unit),
+            also=opening,
         )
         if not applied.open:
             raise BadTransition(
@@ -459,16 +476,14 @@ class Answers:
         not undo the unit: the result says why under `worktree.error`.
 
         With `idea`, the unit is one side of a shared idea. Everything is checked before a
-        number is taken; the unit gets no `idea.md`, and the idea gets one line under
-        `## Units`. A failed append leaves a unit the idea does not list, which the loop
-        reports and whose `impl` it keeps shut.
+        number is taken; the unit gets no `idea.md`, and its `idea` and `depends` rows in
+        `unit_links` are what ties it to the idea (the idea file is never written).
         """
         self.ws.check(cwd)
         if depends_on and not idea:
-            raise Invalid(
-                "depends_on needs an idea: it names a unit already under the idea's Units."
-            )
-        linked = self.ideas.idea_link(cwd, idea, brief, depends_on) if idea else None
+            raise Invalid("depends_on needs an idea: it names another unit of the same idea.")
+        if idea:
+            self.ideas.idea_link(cwd, idea, brief, depends_on)
         root = Path(cwd).expanduser().resolve()
         async with self._create_locks.setdefault(units.key(cwd), asyncio.Lock()):
             reserve = [root]
@@ -489,17 +504,17 @@ class Answers:
                 }
             except (CannotCreate, BadUnit) as e:
                 raise Invalid(str(e)) from e
-            if linked is not None:
-                try:
-                    ideas.append_unit(linked["path"], linked["ws"], made["unit"], depends_on)
-                except OSError as e:
+            # The new unit's row, its idea's rows, and its `idea.md` accepted when it has a brief.
+            made.update(
+                await self._open_unit(cwd, made["unit"], bool(made.get("brief")), idea, depends_on)
+            )
+            if idea:
+                if "ingest_error" in made:
                     raise Invalid(
-                        f"{made['unit']} was made, but {idea} could not list it: {e}"
-                    ) from e
+                        f"{made['unit']} was made, but its idea link was not kept: "
+                        f"{made['ingest_error']}"
+                    )
                 made["idea"] = idea
-                self.ideas.refresh_ideas(linked["home"])
-            # The new unit's row, and its `idea.md` accepted when it has a brief.
-            made.update(await self._open_unit(cwd, made["unit"], bool(made.get("brief"))))
             try:
                 made["worktree"] = await worktrees.ensure(
                     cwd, made["unit"], None, self.config.data_dir

@@ -79,7 +79,8 @@ class AUnitWaitingOnADependency(unittest.TestCase):
         self.assertIn("dependency", decide.REASONS)
         # Anything else with no stage is still the stop `f` it was.
         self.assertEqual(
-            decide.stop_for(unit(), nxt("", "fix the idea link — x"), None, False)["kind"], "f"
+            decide.stop_for(unit(), nxt("", "finish and accept intent.md"), None, False)["kind"],
+            "f",
         )
 
 

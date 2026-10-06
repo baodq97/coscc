@@ -20,13 +20,11 @@ from coscc.loop.model import (
     WAITING_ON,
     above_answers,
     lane_of,
-    parse_idea_ref,
-    parse_links,
     parse_unit_ref,
     read_unit,
     title_problem,
 )
-from coscc.loop.paths import parse_idea, read_ideas, unit_meta
+from coscc.loop.paths import unit_meta
 from coscc.loop.probe import make_probe
 from coscc.loop.repo_rules import branch_checks
 from coscc.loop.rules import gate_answer, next_answer
@@ -56,25 +54,22 @@ from tests.loop.test_model import (
 # --- the suite's glue -------------------------------------------------------------------
 
 
-def state_for(stores: dict[str, Path], own: str = "") -> dict:
-    """The snapshot of the stores `{workspace: <root>/.cos}`; `own` is the one the command reads."""
-    units, ideas = {}, {}
+def state_for(stores: dict[str, Path], own: str = "", links: dict | None = None) -> dict:
+    """The snapshot of the stores `{workspace: <root>/.cos}`; `own` is the one the command reads.
+    `links` are the rows the press wrote, `{unit: {"idea": ..., "dependsOn": [...]}}`, of `own`."""
+    units = {}
     for ws, cos in stores.items():
         if not cos.exists():
             continue
         for d in sorted(cos.iterdir()):
             if d.is_dir() and d.name != "ideas":
                 units[f"{ws}/{d.name}"] = entry_from(unit_meta(str(d)))
-        ideas[ws] = read_ideas(str(cos)) if (cos / "ideas").exists() else []
-    return {
-        "workspace": own,
-        "workspaces": [w for w in stores if w],
-        "units": units,
-        "ideas": ideas,
-    }
+    for name, linked in (links or {}).items():
+        units[f"{own}/{name}"]["links"] = {"idea": None, "dependsOn": None, **linked}
+    return {"workspace": own, "workspaces": [w for w in stores if w], "units": units}
 
 
-def state_of_roots(root, peers=()) -> dict:
+def state_of_roots(root, peers=(), links=None) -> dict:
     """The snapshot of the store at `root` and of `peers`, `(workspace, root)` pairs."""
     at = Path(root).resolve()
     own = next((n for n, d in peers if Path(d).resolve() == at), "")
@@ -82,15 +77,16 @@ def state_of_roots(root, peers=()) -> dict:
     for n, d in peers:
         if n != own:
             stores[n] = Path(d).resolve() / ".cos"
-    return state_for(stores, own)
+    return state_for(stores, own, links)
 
 
-def ask(*argv, peers=(), records=None):
+def ask(*argv, peers=(), records=None, links=None):
     """A deciding command on `--root`, handed the snapshot of it and of `peers`; `records` are
-    the submitted records of the own store's units, `{unit: {file: {"result": ...}}}`."""
+    the submitted records of the own store's units, `{unit: {file: {"result": ...}}}`, and `links`
+    the rows of its units."""
     words = [str(a) for a in argv]
     root = words[words.index("--root") + 1]
-    state = state_of_roots(root, peers)
+    state = state_of_roots(root, peers, links)
     for name, files in (records or {}).items():
         arts = state["units"][f"{state['workspace']}/{name}"]["artifacts"]
         for f, rec in files.items():
@@ -98,25 +94,22 @@ def ask(*argv, peers=(), records=None):
     return python([*words, "--state", "-"], stdin=json.dumps(state))
 
 
-def read_in(dir_: Path, name: str, root: Path, peers=()) -> dict:
+def read_in(dir_: Path, name: str, root: Path, peers=(), links=None) -> dict:
     """`read_unit` of `dir_` under `name`, in the snapshot of the store at `root` and `peers`."""
-    state = state_of_roots(root, peers)
-    state["units"][f"{state['workspace']}/{name}"] = entry_from(unit_meta(str(dir_)))
+    state = state_of_roots(root, peers, links)
+    entry = state["units"][f"{state['workspace']}/{name}"] = entry_from(unit_meta(str(dir_)))
+    entry["links"] = {"idea": None, "dependsOn": None, **(links or {}).get(name, {})}
     return read_unit(str(dir_), name, state)
 
 
-def make_store(tmp_path: Path, units: dict, ideas: dict | None = None) -> Path:
-    """A store root whose `.cos/` holds `units`, `{name: {file: text}}`, and `ideas`."""
+def make_store(tmp_path: Path, units: dict) -> Path:
+    """A store root whose `.cos/` holds `units`, `{name: {file: text}}`."""
     root = tmp_path / f"store{len(list(tmp_path.iterdir()))}"
     (root / ".cos").mkdir(parents=True)
     for name, files in units.items():
         (root / ".cos" / name).mkdir()
         for f, text in files.items():
             (root / ".cos" / name / f).write_text(text)
-    if ideas:
-        (root / ".cos" / "ideas").mkdir()
-    for f, text in (ideas or {}).items():
-        (root / ".cos" / "ideas" / f).write_text(text)
     return root
 
 
@@ -271,132 +264,76 @@ def test_make_probe_reads_the_workflows_of_the_repository_it_is_given_and_none_w
 # --- one idea, several units, several repositories ----------------------------------------
 
 
-def intent_for(status, header=""):
-    lines = [
-        "# Intent: x",
-        f"Author: a. Type: feat. Status: {status}.",
-        *([header] if header else []),
-    ]
-    return "\n".join(lines) + "\n"
+def intent_for(status):
+    return f"# Intent: x\nAuthor: a. Type: feat. Status: {status}.\n"
 
 
-def idea_with(*lines):
-    return (
-        "# Idea: one feature\nAuthor: the originator. Status: accepted.\n\n"
-        "## In their own words\n\nboth sides\n\n## Units\n\n" + "".join(f"{ln}\n" for ln in lines)
-    )
-
-
-def to_impl(header):
-    """A unit whose next stage is `impl`, its links in its header."""
+def to_impl():
+    """A unit whose next stage is `impl`."""
     return {
-        "intent.md": intent_for("accepted", header),
+        "intent.md": intent_for("accepted"),
         "spec.md": "# Spec\nStatus: skipped.\n",
         "plan.md": "# Plan\nStatus: accepted.\n",
     }
 
 
-def pair(
-    tmp_path,
-    ship="draft",
-    a_intent=None,
-    line="- b/0001_y. Depends on: a/0001_x.",
-    header="Idea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x.",
-):
-    """Workspace `a` holds the unit depended on; `b` holds the idea and the unit that waits."""
+# The rows the press wrote for the unit that waits: its idea, and the unit it depends on.
+Y_LINKS = {"0001_y": {"idea": "b/ideas/0001_f.md", "dependsOn": ["a/0001_x"]}}
+
+
+def pair(tmp_path, ship="draft", a_intent=None):
+    """Workspace `a` holds the unit depended on; `b` holds the unit that waits."""
     files = {"intent.md": a_intent or intent_for("accepted")}
     if ship:
         files["ship.md"] = f"# Ship\nStatus: {ship}.\n"
     a = make_store(tmp_path, {"0001_x": files})
-    b = make_store(
-        tmp_path,
-        {"0001_y": to_impl(header)},
-        {"0001_f.md": idea_with("- a/0001_x.", line)},
-    )
+    b = make_store(tmp_path, {"0001_y": to_impl()})
     return a, b
 
 
-def test_a_child_unit_carries_idea_repo_and_depends_on_in_status_json(tmp_path):
+def test_a_child_unit_carries_idea_and_depends_on_in_status_json(tmp_path):
     a, b = pair(tmp_path)
-    [u] = json.loads(ask("--root", b, "status", "--json", peers=[("a", a)]).out)["units"]
-    assert u["idea"] == "ideas/0001_f.md"
-    assert u["repo"] == "b"
+    out = ask("--root", b, "status", "--json", peers=[("a", a)], links=Y_LINKS).out
+    [u] = json.loads(out)["units"]
+    assert u["idea"] == "b/ideas/0001_f.md"
+    assert "repo" not in u
     assert u["dependsOn"] == [
         {"ref": "a/0001_x", "merged": False, "why": "not merged: the app holds no merge of it"}
     ]
     assert u["problems"] == []
 
 
-def test_a_unit_without_those_headers_has_none_of_the_keys(tmp_path):
+def test_a_unit_without_links_has_none_of_the_keys(tmp_path):
     a, _ = pair(tmp_path)
     [u] = json.loads(ask("--root", a, "status", "--json").out)["units"]
     for key in ["idea", "repo", "dependsOn"]:
         assert key not in u, key
 
 
-def test_the_header_fields_read_to_whitespace_less_the_closing_dot_and_a_list_splits_on_commas():
-    text = (
-        "# Intent: x\nIdea: a/ideas/0001_f.md. Repo: b. Depends on: a/0001_x, 0002_y. "
-        "Status: accepted.\n"
-    )
-    assert parse_links(text) == {
-        "idea": "a/ideas/0001_f.md",
-        "repo": "b",
-        "dependsOn": ["a/0001_x", "0002_y"],
-    }
-    body = "# Intent: Idea: no\nStatus: accepted.\n\n## Problem\n\nRepo: body.\n"
-    assert parse_links(body) == {"idea": None, "repo": None, "dependsOn": None}
-    assert parse_idea_ref("ideas/0001_f.md") == {"ws": None, "file": "0001_f.md"}
-    assert parse_idea_ref("proj/ideas/0001_f.md") == {"ws": "proj", "file": "0001_f.md"}
-    assert parse_idea_ref("proj/ideas/0001_f") is None
-    assert parse_idea_ref("a/b/ideas/0001_f.md") is None
+def test_a_unit_ref_is_a_name_alone_or_a_workspace_and_a_name():
     assert parse_unit_ref("api/0001_x") == {"ws": "api", "name": "0001_x"}
+    assert parse_unit_ref("0001_x") == {"ws": None, "name": "0001_x"}
     assert parse_unit_ref("api/1_x") is None
 
 
-def test_a_line_under_units_that_is_not_the_grammar_is_a_problem_of_that_idea():
-    idea = parse_idea(
-        idea_with(
-            "- a/0001_x.", "- 0002_no-workspace.", "a note", "- b/0003_z. Depends on: nowhere."
-        )
-    )
-    assert idea["units"] == [{"ref": "a/0001_x", "dependsOn": []}]
-    assert len(idea["problems"]) == 3
-    assert parse_idea("# Idea: x\nStatus: accepted.\n")["problems"] == ["has no ## Units section"]
-
-
-def test_a_missing_peer_a_missing_idea_file_and_an_unlisted_unit_each_land_in_problems(tmp_path):
-    b = make_store(
-        tmp_path,
-        {
-            "0002_p": to_impl("Repo: b. Depends on: c/0001_z."),
-            "0003_q": to_impl("Idea: ideas/0009_none.md. Repo: b."),
-            "0004_r": to_impl("Idea: ideas/0001_f.md. Repo: b."),
-            "0005_s": to_impl("Idea: ideas/0001_f.md."),
-        },
-        {"0001_f.md": idea_with("- b/0005_s.")},
-    )
-    units = json.loads(ask("--root", b, "status", "--json").out)["units"]
-
-    def said(name):
-        return "\n".join(next(u for u in units if u["name"] == name)["problems"])
-
-    assert re.search(r"Depends on: c/0001_z — the app has no workspace named c", said("0002_p"))
-    assert re.search(
-        r"Idea: ideas/0009_none\.md — the app knows no /ideas/0009_none\.md", said("0003_q")
-    )
-    assert re.search(r"does not list b/0004_r under ## Units", said("0004_r"))
-    assert re.search(r"declares no Repo:", said("0005_s"))
+def test_a_dependency_in_a_workspace_the_app_does_not_know_is_a_problem(tmp_path):
+    b = make_store(tmp_path, {"0002_p": to_impl()})
+    links = {"0002_p": {"dependsOn": ["c/0001_z", "0002_p", "b/0002_p"]}}
+    [u] = json.loads(ask("--root", b, "status", "--json", links=links).out)["units"]
+    problems = "\n".join(u["problems"])
+    assert re.search(r"c/0001_z — the app has no workspace named c", problems)
+    assert re.search(r"0002_p — a unit cannot depend on itself", problems)
+    assert re.search(r"b/0002_p — the app has no workspace named b", problems)
 
 
 @pytest.mark.parametrize("ship", ["draft", None])
 def test_impl_gate_stays_shut_while_the_dependencys_ship_is_not_accepted(tmp_path, ship):
     a, b = pair(tmp_path, ship=ship)
-    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)])
+    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS)
     assert out.code == 1, str(ship)
     assert re.search(r"waits on a/0001_x: not merged: the app holds no merge of it", out.err)
     # `plan` is not `impl`: the wait closes nothing else.
-    assert ask("--root", b, "gate", "0001_y", "plan", peers=[("a", a)]).code == 0
+    assert ask("--root", b, "gate", "0001_y", "plan", peers=[("a", a)], links=Y_LINKS).code == 0
 
 
 def test_a_dependency_opens_on_the_merged_row_not_on_ship_md(tmp_path):
@@ -407,7 +344,7 @@ def test_a_dependency_opens_on_the_merged_row_not_on_ship_md(tmp_path):
 
     def asked_with(ship, merged):
         a, b = pair(tmp_path, ship=ship)
-        state = state_of_roots(b, [("a", a)])
+        state = state_of_roots(b, [("a", a)], Y_LINKS)
         state["units"]["a/0001_x"]["merged"] = merged
         return gate(state, b)
 
@@ -418,67 +355,37 @@ def test_a_dependency_opens_on_the_merged_row_not_on_ship_md(tmp_path):
         assert asked_with(ship, True).code == 0, f"merged with ship.md {ship}"
     # An entry that carries no `merged` at all is not merged.
     a, b = pair(tmp_path, ship="accepted")
-    state = state_of_roots(b, [("a", a)])
+    state = state_of_roots(b, [("a", a)], Y_LINKS)
     del state["units"]["a/0001_x"]["merged"]
     assert gate(state, b).code == 1
 
 
 def test_impl_gate_opens_once_the_dependencys_ship_is_accepted(tmp_path):
     a, b = pair(tmp_path, ship="accepted")
-    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)])
+    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS)
     assert out.code == 0, out.err
-    nxt = json.loads(ask("--root", b, "next", "0001_y", peers=[("a", a)]).out)
+    nxt = json.loads(ask("--root", b, "next", "0001_y", peers=[("a", a)], links=Y_LINKS).out)
     assert nxt["stage"] == "impl"
     assert "why" not in nxt, "why is carried only by a wait"
 
 
 def test_a_workspace_the_snapshot_does_not_name_shuts_impl_and_says_so(tmp_path):
     _, b = pair(tmp_path, ship="accepted")
-    out = ask("--root", b, "gate", "0001_y", "impl")
+    out = ask("--root", b, "gate", "0001_y", "impl", links=Y_LINKS)
     assert out.code == 1
     assert re.search(r"waits on a/0001_x: the app has no workspace named a", out.err)
-
-
-def test_a_depends_on_that_differs_from_the_ideas_line_shuts_impl(tmp_path):
-    # The idea lists no dependency; the header declares one.
-    a, b = pair(tmp_path, ship="accepted", line="- b/0001_y.")
-    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)])
-    assert out.code == 1
-    assert re.search(
-        r"lists b/0001_y with Depends on: nothing, but intent\.md declares a/0001_x"
-        r" — the two must match",
-        out.err,
-    )
-    # The header lacks the field the idea lists.
-    a, b = pair(tmp_path, ship="accepted", header="Idea: ideas/0001_f.md. Repo: b.")
-    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)])
-    assert out.code == 1
-    assert re.search(r"Depends on: a/0001_x, but intent\.md declares none", out.err)
-    assert json.loads(ask("--root", b, "next", "0001_y", peers=[("a", a)]).out)["stage"] == ""
-    # Both agree, one of them without its `<ws>`: the unit's own.
-    a, b = pair(
-        tmp_path,
-        ship="accepted",
-        line="- b/0001_y. Depends on: b/0002_z.",
-        header="Idea: ideas/0001_f.md. Repo: b. Depends on: 0002_z.",
-    )
-    (b / ".cos" / "0002_z").mkdir()
-    (b / ".cos" / "0002_z" / "intent.md").write_text(intent_for("accepted"))
-    (b / ".cos" / "0002_z" / "ship.md").write_text("# Ship\nStatus: accepted.\n")
-    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)])
-    assert out.code == 0, out.err
 
 
 def test_a_dropped_dependency_shuts_impl_and_says_dropped(tmp_path):
     dropped = f"{intent_for('accepted')}\n## Answers\n{hold_block('Dropped', 'Not needed.')}"
     a, b = pair(tmp_path, ship=None, a_intent=dropped)
-    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)])
+    out = ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS)
     assert out.code == 1
     assert re.search(r"waits on a/0001_x: dropped", out.err)
     a, b = pair(tmp_path, ship=None, a_intent=intent_for("rejected"))
     assert re.search(
         r"waits on a/0001_x: rejected: its intent\.md is rejected",
-        ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)]).err,
+        ask("--root", b, "gate", "0001_y", "impl", peers=[("a", a)], links=Y_LINKS).err,
     )
 
 
@@ -488,7 +395,7 @@ def related(tmp_path, intent, change=None):
     b = make_store(
         tmp_path,
         {
-            "0001_y": to_impl("Repo: b."),
+            "0001_y": to_impl(),
             "0002_x": {"intent.md": intent, "impl.md": "# Impl\nStatus: accepted.\n"},
         },
     )
@@ -530,12 +437,13 @@ def test_a_backlog_relation_to_a_rejected_or_dropped_unit_holds_nothing(tmp_path
 
 
 def test_a_relation_to_an_idea_dropped_before_its_intent_reads_dropped(tmp_path):
-    def on(header, backlog=()):
+    def on(depends, backlog=()):
         b = make_store(
             tmp_path,
-            {"0001_y": to_impl(header), "0002_x": {"idea.md": "# Idea: x\nStatus: accepted.\n"}},
+            {"0001_y": to_impl(), "0002_x": {"idea.md": "# Idea: x\nStatus: accepted.\n"}},
         )
         state = state_of_roots(b)
+        state["units"]["/0001_y"]["links"]["dependsOn"] = list(depends) or None
         state["units"]["/0002_x"]["holds"] = [
             {"state": "dropped", "reason": "gộp vào 0055", "by": "Leif", "date": "2026-10-05"}
         ]
@@ -546,10 +454,10 @@ def test_a_relation_to_an_idea_dropped_before_its_intent_reads_dropped(tmp_path)
 
         return run
 
-    run = on("Repo: b. Depends on: 0002_x.")
+    run = on(["0002_x"])
     y = json.loads(run("status", "--json").out)["units"][0]
     assert [[d["ref"], d["why"]] for d in y["dependsOn"]] == [["0002_x", "dropped"]]
-    run = on("Repo: b.", [{"ref": "0002_x", "source": "backlog"}])
+    run = on([], [{"ref": "0002_x", "source": "backlog"}])
     out = run("gate", "0001_y", "impl", "--json")
     assert out.code == 0, out.err
     assert json.loads(out.out)["reasons"] == []
@@ -562,13 +470,15 @@ def test_status_carries_the_source_of_a_backlog_dependency_and_a_unit_with_none_
     b = make_store(
         tmp_path,
         {
-            "0001_y": to_impl("Repo: b. Depends on: 0003_z."),
+            "0001_y": to_impl(),
             "0002_x": {"intent.md": intent_for("accepted")},
             "0003_z": {"intent.md": intent_for("accepted")},
         },
     )
     state = state_of_roots(b)
-    state["units"]["/0001_y"]["links"]["backlog"] = [{"ref": "0002_x", "source": "backlog"}]
+    state["units"]["/0001_y"]["links"].update(
+        dependsOn=["0003_z"], backlog=[{"ref": "0002_x", "source": "backlog"}]
+    )
     argv = ["--root", str(b)]
     out = python(["status", "--json", *argv, "--state", "-"], stdin=json.dumps(state))
     y, x, *_ = json.loads(out.out)["units"]
@@ -579,23 +489,6 @@ def test_status_carries_the_source_of_a_backlog_dependency_and_a_unit_with_none_
     assert "dependsOn" not in x
     gate = python(["gate", "0001_y", "impl", *argv, "--state", "-"], stdin=json.dumps(state))
     assert re.search(r"waits on 0003_z: .* \(Depends on:\)", gate.err)
-
-
-def test_an_unreadable_idea_shuts_impl_but_no_other_gate(tmp_path):
-    b = make_store(tmp_path, {"0001_y": to_impl("Idea: b/ideas/0001_gone.md. Repo: b.")})
-    own = [("b", b)]
-    for stage in ["spec", "plan"]:
-        assert ask("--root", b, "gate", "0001_y", stage, peers=own).code == 0, stage
-    out = ask("--root", b, "gate", "0001_y", "impl", peers=own)
-    assert out.code == 1
-    assert re.search(
-        r"Idea: b/ideas/0001_gone\.md cannot be read: the app knows no b/ideas/0001_gone\.md",
-        out.err,
-    )
-    nxt = json.loads(ask("--root", b, "next", "0001_y", peers=own).out)
-    assert nxt["stage"] == ""
-    assert re.search(r"^fix the idea link — ", nxt["action"])
-    assert "why" not in nxt
 
 
 # --- the pull request's title -------------------------------------------------------------
@@ -621,9 +514,9 @@ PR_MD = "\n".join(
 def test_a_red_check_that_sends_the_work_back_to_impl_waits_on_the_dependency_too(tmp_path):
     red = green_probe([{"name": "tests", "bucket": "fail"}])
 
-    def files(header, n):
+    def files(n):
         return {
-            **to_impl(header),
+            **to_impl(),
             "impl.md": "# Impl\nStatus: accepted.\n",
             "pr.md": PR_MD.replace("# PR: the pr body is taken from pr.md", f"# PR: feat({n}): x"),
         }
@@ -632,13 +525,13 @@ def test_a_red_check_that_sends_the_work_back_to_impl_waits_on_the_dependency_to
     b = make_store(
         tmp_path,
         {
-            "0001_y": files("Repo: b. Depends on: a/0001_x.", "0001"),
-            "0002_free": files("Repo: b.", "0002"),
+            "0001_y": files("0001"),
+            "0002_free": files("0002"),
         },
     )
 
     def read(name):
-        return read_in(b / ".cos" / name, name, b, [("a", a)])
+        return read_in(b / ".cos" / name, name, b, [("a", a)], Y_LINKS)
 
     free = next_step(read("0002_free"), red)
     assert free["stage"] == "impl", "without a dependency, red goes back to impl"
@@ -828,13 +721,8 @@ def fix_with(**over):
     }
 
 
-def intent_of(type="fix", status="accepted", header=None):
-    parts = [
-        "# Intent: x",
-        f"Author: t. Type: {type}. Status: {status}.",
-        *([header] if header else []),
-    ]
-    return "\n".join(parts) + "\n"
+def intent_of(type="fix", status="accepted"):
+    return f"# Intent: x\nAuthor: t. Type: {type}. Status: {status}.\n"
 
 
 def lane_for(fix=FIX, artifacts=None, left_lane=None, type="fix"):
@@ -967,26 +855,23 @@ def test_gate_impl_in_the_fast_lane_stays_shut_while_stale_held_or_a_dependency_
     assert [held.gate("impl")["ok"], held.gate("impl")["reasons"]] == [False, ["paused"]]
     assert held.next()["stage"] == ""
 
-    header = "Idea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x."
     a = make_store(
         tmp_path,
         {"0001_x": {"intent.md": intent_for("accepted"), "ship.md": "# Ship\nStatus: draft.\n"}},
     )
-    b = make_store(
-        tmp_path,
-        {"0001_y": {"intent.md": intent_of(header=header)}},
-        {"0001_f.md": idea_with("- a/0001_x.", "- b/0001_y. Depends on: a/0001_x.")},
-    )
+    b = make_store(tmp_path, {"0001_y": {"intent.md": intent_of()}})
     peers = [("a", a)]
 
     records = {"0001_y": {"intent.md": {"result": {"judgement": "ready", "fix": FIX}}}}
 
     def gate():
         args = ("--root", b, "gate", "0001_y", "impl", "--json")
-        return json.loads(ask(*args, peers=peers, records=records).out)
+        return json.loads(ask(*args, peers=peers, records=records, links=Y_LINKS).out)
 
     def nxt():
-        return json.loads(ask("--root", b, "next", "0001_y", peers=peers, records=records).out)
+        return json.loads(
+            ask("--root", b, "next", "0001_y", peers=peers, records=records, links=Y_LINKS).out
+        )
 
     assert [gate()["ok"], gate()["reasons"]] == [False, ["waiting-on"]]
     assert [nxt()["stage"], nxt()["why"], nxt()["lane"]] == ["", "dependency", "fast"]

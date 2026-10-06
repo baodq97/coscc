@@ -363,15 +363,12 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
         )
 
 
-def _store(d: Path, units: dict[str, dict[str, str]], ideas: dict[str, str] | None = None) -> Path:
+def _store(d: Path, units: dict[str, dict[str, str]]) -> Path:
     for name, files in units.items():
         unit = d / ".cos" / name
         unit.mkdir(parents=True)
         for f, text in files.items():
             (unit / f).write_text(text, encoding="utf-8")
-    for f, text in (ideas or {}).items():
-        (d / ".cos" / "ideas").mkdir(parents=True, exist_ok=True)
-        (d / ".cos" / "ideas" / f).write_text(text, encoding="utf-8")
     return d
 
 
@@ -388,19 +385,23 @@ class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
                 Path(b),
                 {
                     "0001_y": {
-                        "intent.md": "# I\nType: feat. Status: accepted.\nIdea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x.\n",
+                        "intent.md": "# I\nType: feat. Status: accepted.\n",
                         **_TO_IMPL,
                     }
                 },
-                {
-                    "0001_f.md": "# Idea: f\nStatus: accepted.\n\n## Units\n\n- a/0001_x.\n- b/0001_y. Depends on: a/0001_x.\n"
-                },
             )
             state = snapshot_of(b, [("a", a), ("b", b)])
+            # The rows the press wrote when it opened the unit.
+            state["units"]["b/0001_y"]["links"] = {
+                "idea": "b/ideas/0001_f.md",
+                "dependsOn": ["a/0001_x"],
+            }
             data = run(board.read(b, state=state))
             nxt = run(board.next_step(b, "0001_y", state=state))
         [u] = data["units"]
-        self.assertEqual((u["idea"], u["repo"], u["why"]), ("ideas/0001_f.md", "b", "dependency"))
+        self.assertEqual((u["idea"], u["why"]), ("b/ideas/0001_f.md", "dependency"))
+        self.assertNotIn("repo", u)
+        self.assertNotIn("ideas", data)
         self.assertEqual(
             u["depends_on"],
             [
@@ -410,9 +411,6 @@ class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
                     "why": "not merged: the app holds no merge of it",
                 }
             ],
-        )
-        self.assertEqual(
-            data["ideas"][0]["units"][1], {"ref": "b/0001_y", "depends_on": ["a/0001_x"]}
         )
         self.assertEqual(
             (nxt["stage"], nxt["why"], nxt["action"]),

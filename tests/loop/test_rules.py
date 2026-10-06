@@ -241,23 +241,12 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
         texts={"intent.md": text("intent.md", "draft", body=ASKED)},
         intent_md={"questions": [{"n": 1, "text": "Ai chịu trách nhiệm cho phần này?"}]})  # fmt: skip
     put(s, "0044_waits-on-dependency", accepted("plan.md"),
-        links={"idea": None, "repo": None, "dependsOn": ["0006_impl-missing"]})  # fmt: skip
+        links={"idea": None, "dependsOn": ["0006_impl-missing"]})  # fmt: skip
     put(s, "0045_depends-unknown", accepted("plan.md"),
-        links={"idea": None, "repo": "ws", "dependsOn": ["0999_ghost", "ma/lformed", "ws/0045_depends-unknown"]})  # fmt: skip
+        links={"idea": None, "dependsOn": ["0999_ghost", "ma/lformed", "ws/0045_depends-unknown"]})  # fmt: skip
     put(s, "0046_depends-merged", accepted("plan.md"),
-        links={"idea": None, "repo": "ws", "dependsOn": ["0047_merged-one", "other/0001_far"]})  # fmt: skip
+        links={"idea": None, "dependsOn": ["0047_merged-one", "other/0001_far"]})  # fmt: skip
     put(s, "0047_merged-one", accepted("ship.md", **{"plan.md": "done"}), merged=True)
-    put(s, "0048_idea-unreadable", accepted("plan.md"),
-        links={"idea": "ideas/0001_big.md", "repo": "ws", "dependsOn": None})  # fmt: skip
-    s.ideas["ws"] = [
-        {
-            "id": "0001_big",
-            "problems": ["lists a unit twice"],
-            "units": [{"ref": "ws/0049_idea-mismatch", "dependsOn": ["0047_merged-one"]}],
-        }  # fmt: skip
-    ]
-    put(s, "0049_idea-mismatch", accepted("plan.md"),
-        links={"idea": "ideas/0001_big.md", "repo": "ws", "dependsOn": None})  # fmt: skip
     put(s, "0050_no-status-line", {"intent.md": "accepted", "spec.md": None})
     put(s, "0051_odd-status", {"intent.md": "accepted", "spec.md": "wip", "plan.md": "constructor"})
     put(s, "0052_unknowns", accepted("spec.md"),
@@ -330,7 +319,7 @@ _NAMES = [
         (39, "ship-refused"), (40, "ship-draft-old"), (41, "ship-missing"),
         (42, "draft-answered"), (43, "draft-asking"), (44, "waits-on-dependency"),
         (45, "depends-unknown"), (46, "depends-merged"), (47, "merged-one"),
-        (48, "idea-unreadable"), (49, "idea-mismatch"), (50, "no-status-line"),
+        (50, "no-status-line"),
         (51, "odd-status"), (52, "unknowns"), (53, "closed-with-hold"), (54, "bad-hold-move"),
         (55, "resumed"), (56, "hold-no-reason"), (57, "no-type"), (58, "bad-type"),
         (59, "app-only"), (60, "stray"), (61, "review-limit-one"), (62, "impl-draft"),
@@ -355,10 +344,10 @@ def test_status_table_of_every_shape(world):
     assert "Problems (report these" in r.out
 
 
-def test_status_json_prints_whole_units_and_the_ideas(world):
+def test_status_json_prints_whole_units(world):
     r = expect(world.argv("status", "--json"))
     body = json.loads(r.out)
-    assert body["ideas"][0]["id"] == "0001_big"
+    assert "ideas" not in body
     assert len(body["units"]) == len(UNITS)
     assert any(u.get("moreRounds") for u in body["units"])
 
@@ -367,15 +356,6 @@ def test_status_of_an_empty_store(store):
     r = expect(store.argv("status"))
     assert r.out == "No work units yet. `write-intent` opens one.\n"
     expect(store.argv("status", "--json"))
-
-
-def test_status_of_an_empty_store_lists_the_idea_problems(store):
-    (store.cos / "ideas").mkdir()
-    store.ideas["ws"] = [{"id": "0001_big", "problems": ["no Units section", "x"], "units": []}]
-    r = expect(store.argv("status"))
-    assert "  - ideas/0001_big: no Units section" in r.out
-    r = expect(store.argv("status", "--json"))
-    assert json.loads(r.out)["ideas"][0]["problems"][0] == "no Units section"
 
 
 def test_status_with_a_unit_missing_from_the_snapshot(store):
@@ -494,7 +474,6 @@ def test_the_units_hand_out_every_code_files_alone_can(world):
         ("0011_agent-skip", "plan", ["agent-cannot-skip"]),
         ("0014_stale", "plan", ["stale"]),
         ("0044_waits-on-dependency", "impl", ["waiting-on"]),
-        ("0048_idea-unreadable", "impl", ["unreadable"]),
         ("0028_review-missing", "review", ["gate-closed"]),
         ("0017_spike-fails", "plan", ["spike-fails"]),
         ("0015_spike-missing", "plan", ["missing", "spike-missing"]),

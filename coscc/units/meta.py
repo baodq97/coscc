@@ -158,7 +158,6 @@ class UnitMeta:
             unknowns: list[dict[str, Any]] = []
             for unit, meta in sorted((found.get("units") or {}).items()):
                 unknowns += self._apply(conn, workspace, unit, meta, imported=True)
-            self._write_ideas(conn, workspace, found.get("ideas"))
             Data.mark_run(conn, key)
             # Its answers were classified as they were read, just above.
             Data.mark_run(conn, self.authority_key(workspace))
@@ -211,12 +210,6 @@ class UnitMeta:
                 "VALUES (?, ?, ?, '', 'ingest', ?, NULL, ?)",
                 (self.root, workspace, unit, reason, now()),
             )
-
-    def refresh_ideas(self, workspace: str, store: str | Path) -> None:
-        """The store's ideas again, after the app wrote one."""
-        found = read(store)
-        with self.data.write() as conn:
-            self._write_ideas(conn, workspace, found.get("ideas"))
 
     def add_unit(self, conn: sqlite3.Connection, workspace: str, unit: str) -> None:
         """The unit's `unit_meta` row, once."""
@@ -319,7 +312,7 @@ class UnitMeta:
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (*scope, artifact, str(a.get("sha256") or ""), 0 if questions is None else 1),
             )
-        if "intent.md" in dict(changed) and "links" in meta:
+        if "intent.md" in dict(changed) and "type" in meta:
             kind = meta.get("type")
             # A run that submitted its intent hands the type to `record_result`.
             recorded = (
@@ -342,14 +335,6 @@ class UnitMeta:
                         "raw": None,
                     }
                 )
-            links = meta.get("links") or {}
-            rows = [("idea", links.get("idea")), ("repo", links.get("repo"))]
-            rows += [("depends", d) for d in links.get("dependsOn") or []]
-            conn.execute(f"DELETE FROM unit_links WHERE {_ONE}", scope)
-            conn.executemany(
-                "INSERT INTO unit_links (root, workspace, unit, kind, ref, pos) VALUES (?, ?, ?, ?, ?, ?)",
-                [(*scope, k, str(ref), i) for i, (k, ref) in enumerate(rows) if ref is not None],
-            )
         if imported:
             for i, a in enumerate(meta.get("answers") or []):
                 self._answer(
@@ -578,27 +563,48 @@ class UnitMeta:
                 )
         return out
 
-    def _write_ideas(
-        self, conn: sqlite3.Connection, workspace: str, ideas: Iterable[Mapping[str, Any]] | None
+    def link(
+        self,
+        conn: sqlite3.Connection,
+        workspace: str,
+        unit: str,
+        idea: str | None,
+        depends_on: Iterable[str],
     ) -> None:
-        conn.execute(
-            "DELETE FROM idea_meta WHERE root = ? AND workspace = ?", (self.root, workspace)
-        )
+        """The unit's idea and the units it depends on, replacing what it had. The one writer of
+        `unit_links`: the press that created the unit calls it, in the transaction of its row."""
+        rows = [("idea", idea)] if idea else []
+        rows += [("depends", d) for d in depends_on]
+        scope = (self.root, workspace, unit)
+        conn.execute(f"DELETE FROM unit_links WHERE {_ONE}", scope)
         conn.executemany(
-            "INSERT INTO idea_meta (root, workspace, idea, read) VALUES (?, ?, ?, ?)",
-            [
-                (
-                    self.root,
-                    workspace,
-                    str(i["id"]),
-                    json.dumps(
-                        {k: i.get(k) for k in ("title", "status", "units", "problems")},
-                        ensure_ascii=False,
-                    ),
-                )
-                for i in ideas or []
-            ],
+            "INSERT INTO unit_links (root, workspace, unit, kind, ref, pos) VALUES (?, ?, ?, ?, ?, ?)",
+            [(*scope, k, str(ref), i) for i, (k, ref) in enumerate(rows)],
         )
+
+    def idea_units(self, idea: str) -> list[tuple[str, str, list[str]]]:
+        """`(workspace, unit, depends_on)` of every unit whose `idea` row names `idea`, in every
+        workspace of the root."""
+        with self.data.connect() as conn:
+            found = conn.execute(
+                "SELECT workspace, unit FROM unit_links WHERE root = ? AND kind = 'idea' AND ref = ? "
+                "ORDER BY workspace, unit",
+                (self.root, idea),
+            ).fetchall()
+            return [
+                (
+                    r["workspace"],
+                    r["unit"],
+                    [
+                        d[0]
+                        for d in conn.execute(
+                            f"SELECT ref FROM unit_links WHERE {_ONE} AND kind = 'depends' ORDER BY pos",
+                            (self.root, r["workspace"], r["unit"]),
+                        )
+                    ],
+                )
+                for r in found
+            ]
 
     def _answer(
         self,
@@ -782,7 +788,7 @@ class UnitMeta:
                 units[f"{name_of[r['workspace']]}/{r['unit']}"] = {
                     "artifacts": {},
                     "type": None if r["type"] == "unknown" else r["type"],
-                    "links": {"idea": None, "repo": None, "dependsOn": None},
+                    "links": {"idea": None, "dependsOn": None},
                     "holds": [],
                     "answers": [],
                     "unknowns": [],
@@ -965,18 +971,8 @@ class UnitMeta:
                             "via": r["via"],
                         }
                     )
-            ideas: dict[str, list[dict[str, Any]]] = {}
-            for r in conn.execute(
-                f"SELECT workspace, idea, read FROM idea_meta WHERE root = ? AND workspace IN "
-                f"({', '.join('?' for _ in keys)}) ORDER BY idea",
-                (self.root, *keys),
-            ):
-                ideas.setdefault(name_of[r["workspace"]], []).append(
-                    {"id": r["idea"], **json.loads(r["read"])}
-                )
         return {
             "workspace": own_name,
             "workspaces": sorted(n for n in named if n),
             "units": units,
-            "ideas": ideas,
         }

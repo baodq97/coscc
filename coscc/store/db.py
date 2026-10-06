@@ -35,7 +35,7 @@ from typing import Any, Iterator
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
 # 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped; 13: `stage_results` becomes `outputs`).
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -205,29 +205,18 @@ CREATE TABLE IF NOT EXISTS unit_meta (
     imported_at TEXT NOT NULL,
     PRIMARY KEY (root, workspace, unit)
 )""",
-    """-- `intent.md`'s `Idea:`, `Repo:` and each `Depends on:`, in the order written. Replaced
--- whole each time the intent is read. `repo` is here because the unit's line under its
--- idea's `## Units` is found by it.
+    """-- The idea a unit was opened from and each unit it depends on, in the order given. Written
+-- once, by the press that creates the unit (`UnitMeta.link`); an idea's units are the rows
+-- that name it.
 CREATE TABLE IF NOT EXISTS unit_links (
     root      TEXT NOT NULL,
     workspace TEXT NOT NULL,
     unit      TEXT NOT NULL,
-    kind      TEXT NOT NULL CHECK (kind IN ('idea', 'repo', 'depends')),
+    kind      TEXT NOT NULL CHECK (kind IN ('idea', 'depends')),
     ref       TEXT NOT NULL,
     pos       INTEGER NOT NULL
 )""",
     """CREATE INDEX IF NOT EXISTS unit_links_scope ON unit_links (root, workspace, unit)""",
-    """-- One row per file under `.cos/ideas/`: `read` is what `coscc.loop meta` read of it, as
--- JSON (`{title, status, units, problems}`), replaced whole on the next read. Not a column
--- per field: an idea has no transitions, and a `status` column here would be the current
--- state the transitions keep out of every table (`tests/units/test_history.py`).
-CREATE TABLE IF NOT EXISTS idea_meta (
-    root      TEXT NOT NULL,
-    workspace TEXT NOT NULL,
-    idea      TEXT NOT NULL,
-    read      TEXT NOT NULL,
-    PRIMARY KEY (root, workspace, idea)
-)""",
     """-- The questions under an artifact's `## Open questions`, replaced per artifact on each
 -- read. Whether the section is there at all is `unit_seen.questions`.
 CREATE TABLE IF NOT EXISTS unit_questions (
@@ -632,6 +621,7 @@ class Data:
                 for statement in _SCHEMA:
                     conn.execute(statement)
                 self._records_v2(conn)
+                self._links_v15(conn)
                 for table, column, declaration in _COLUMNS:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
@@ -669,6 +659,22 @@ class Data:
         conn.execute("UPDATE outputs SET version = 2 WHERE agent = 'impl' AND version = 1")
         if "lane" in {r[1] for r in conn.execute("PRAGMA table_info(unit_meta)")}:
             conn.execute("ALTER TABLE unit_meta DROP COLUMN lane")
+
+    @staticmethod
+    def _links_v15(conn: sqlite3.Connection) -> None:
+        """15: `idea_meta` is gone and `unit_links` is rebuilt without its `repo` rows."""
+        conn.execute("DROP TABLE IF EXISTS idea_meta")
+        (sql,) = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'unit_links'").fetchone()
+        if "'repo'" not in sql:
+            return
+        kept = conn.execute(
+            "SELECT root, workspace, unit, kind, ref, pos FROM unit_links WHERE kind != 'repo'"
+        ).fetchall()
+        conn.execute("DROP TABLE unit_links")
+        for statement in _SCHEMA:
+            if "unit_links" in statement:
+                conn.execute(statement)
+        conn.executemany("INSERT INTO unit_links VALUES (?, ?, ?, ?, ?, ?)", kept)
 
     def version(self) -> int:
         with self.connect() as conn:

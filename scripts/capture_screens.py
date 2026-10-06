@@ -337,7 +337,7 @@ def make_fixture(
 
 
 def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
-    """`proj/ideas/0001_one-feature.md`, `api/0001_backend-adds-api` opened from it, and
+    """`proj/ideas/0001_one-feature.md`, `api/0001_backend-adds-api` opened from it (its `idea` row), and
     `proj/0006_frontend-calls-api`, whose `impl` waits on the api unit: it has no `ship.md`."""
     idea = api.post(
         "/api/ideas",
@@ -355,7 +355,7 @@ def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
         raise RuntimeError(f"could not open the api unit: {back.text}")
     back_ref = f"api/{back.json()['unit']}"
     Path(back.json()["path"], "intent.md").write_text(
-        f"# Intent: backend adds api\nAuthor: the originator. Type: feat. Status: accepted.\nIdea: {ref}. Repo: api.\n",
+        "# Intent: backend adds api\nAuthor: the originator. Type: feat. Status: accepted.\n",
         encoding="utf-8",
     )
     front = api.post(
@@ -365,7 +365,7 @@ def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
     if front.status_code != 200:
         raise RuntimeError(f"could not open the frontend unit: {front.text}")
     for file, text in {
-        "intent.md": f"# Intent: frontend calls api\nAuthor: the originator. Type: feat. Status: accepted.\nIdea: {ref}. Repo: proj. Depends on: {back_ref}.\n",
+        "intent.md": "# Intent: frontend calls api\nAuthor: the originator. Type: feat. Status: accepted.\n",
         "spec.md": "# Spec: frontend calls api\nIntent: intent.md. Author: t. Status: accepted.\n",
         "plan.md": "# Plan: frontend calls api\nIntent: intent.md. Author: t. Status: accepted.\n",
     }.items():

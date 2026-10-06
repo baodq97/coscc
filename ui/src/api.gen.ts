@@ -108,7 +108,6 @@ export type Card = {
   "updated": string;
   "attention_reason": string;
   "idea": string;
-  "repo": string;
   "rank": number | null;
   "effort": string | null;
 };

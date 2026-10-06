@@ -69,6 +69,12 @@ def snapshot_of(root, peers=(), units_=None) -> dict:
         return meta.snapshot(own, names, units_)
 
 
+def _link(meta, *args):
+    """`UnitMeta.link` in a transaction of its own, as the press that opens a unit writes it."""
+    with meta.data.write() as conn:
+        meta.link(conn, *args)
+
+
 class WithSnapshot:
     """Test glue (plan step 8): `coscc/units/board.py` as a test module sees it, each question
     to the loop handed `snapshot_of` its store when the test gave no `state` — what
@@ -147,7 +153,6 @@ class TheImport(Base):
             "unit_unknowns",
             "unit_questions",
             "unit_seen",
-            "idea_meta",
             "transitions",
         )
         before = {t: self.count(t) for t in tables}
@@ -178,8 +183,9 @@ class TheImport(Base):
         )
         self.assertEqual(
             snap["units"]["proj/0017_linked"]["links"],
-            {"idea": "ideas/0001_x.md", "repo": "proj", "dependsOn": ["0010_full-loop"]},
+            {"idea": None, "dependsOn": None},
         )
+        self.assertNotIn("ideas", snap)
         self.assertEqual(
             [h["state"] for h in snap["units"]["proj/0011_paused-then-resumed"]["holds"]],
             ["paused", "active"],
@@ -191,9 +197,9 @@ class TheImport(Base):
 class TheSnapshotDecides(Base):
     def test_a_snapshot_for_one_unit_carries_it_and_what_it_depends_on(self):
         self.meta.import_store(WS, self.store)
+        _link(self.meta, WS, "0017_linked", "proj/ideas/0001_x.md", ["0010_full-loop"])
         snap = self.meta.snapshot(WS, NAMES, ["0017_linked"])
         self.assertEqual(sorted(snap["units"]), ["proj/0010_full-loop", "proj/0017_linked"])
-        self.assertEqual(snap["ideas"]["proj"][0]["id"], "0001_x")
         done = loop(
             "--root", str(self.store), "--state", "-", "next", "0017_linked", input=json.dumps(snap)
         )
@@ -239,6 +245,7 @@ class TheSnapshotDecides(Base):
 
     def test_a_snapshot_for_one_unit_carries_the_unit_its_relation_names(self):
         self.meta.import_store(WS, self.store)
+        _link(self.meta, WS, "0017_linked", "proj/ideas/0001_x.md", ["0010_full-loop"])
         self.relate("0017_linked", "0013_open-question")
         snap = self.meta.snapshot(WS, NAMES, ["0017_linked"])
         self.assertEqual(
@@ -258,6 +265,40 @@ class TheSnapshotDecides(Base):
             check=False,
         )
         self.assertIn("waiting-on", json.loads(gate.stdout)["reasons"])
+
+
+class TheIdeasUnitsAreItsRows(Base):
+    IDEA = "proj/ideas/0001_x.md"
+
+    def test_the_units_of_an_idea_are_the_rows_that_name_it_in_every_workspace(self):
+        self.meta.import_store(WS, self.store)
+        _link(self.meta, WS, "0017_linked", self.IDEA, ["proj/0010_full-loop", "other/0001_a"])
+        _link(self.meta, "/w/other", "0001_a", self.IDEA, [])
+        _link(self.meta, WS, "0010_full-loop", "proj/ideas/0002_y.md", [])
+        self.assertEqual(
+            self.meta.idea_units(self.IDEA),
+            [
+                ("/w/other", "0001_a", []),
+                (WS, "0017_linked", ["proj/0010_full-loop", "other/0001_a"]),
+            ],
+        )
+        self.assertEqual(self.meta.idea_units("proj/ideas/0009_none.md"), [])
+
+    def test_a_unit_linked_again_has_only_its_new_rows(self):
+        _link(self.meta, WS, "0017_linked", self.IDEA, ["proj/0010_full-loop"])
+        _link(self.meta, WS, "0017_linked", self.IDEA, [])
+        self.assertEqual(self.meta.idea_units(self.IDEA), [(WS, "0017_linked", [])])
+        self.assertEqual(self.count("unit_links"), 1)
+
+    def test_the_snapshot_links_carry_the_idea_and_the_dependencies_and_no_repo(self):
+        self.meta.import_store(WS, self.store)
+        _link(self.meta, WS, "0017_linked", self.IDEA, ["proj/0010_full-loop"])
+        snap = self.meta.snapshot(WS, NAMES)
+        self.assertEqual(
+            snap["units"]["proj/0017_linked"]["links"],
+            {"idea": self.IDEA, "dependsOn": ["proj/0010_full-loop"]},
+        )
+        self.assertNotIn("ideas", snap)
 
 
 class TheOutputsTheLoopReads(Base):
@@ -382,13 +423,20 @@ class TheIngest(Base):
         self.assertEqual(self.ingest("0013_open-question"), [])
         self.assertEqual((self.count("transitions"), self.count("unit_questions")), before)
 
-    def test_an_intent_read_again_replaces_its_links(self):
+    def test_ingest_writes_no_link(self):
         self.meta.import_store(WS, self.store)
         intent = self.store / ".cos" / "0017_linked" / "intent.md"
-        intent.write_text(intent.read_text().replace(" Depends on: 0010_full-loop.", ""))
+        intent.write_text(
+            intent.read_text().replace(
+                "Status:",
+                "Idea: proj/ideas/0001_x.md. Repo: proj. Depends on: 0010_full-loop. Status:",
+            )
+        )
         self.ingest("0017_linked")
-        links = self.meta.snapshot(WS, NAMES)["units"]["proj/0017_linked"]["links"]
-        self.assertEqual(links["dependsOn"], None)
+        self.assertEqual(self.count("unit_links"), 0)
+        _link(self.meta, WS, "0017_linked", "proj/ideas/0001_x.md", ["0010_full-loop"])
+        self.ingest("0017_linked")
+        self.assertEqual(self.count("unit_links"), 2)
 
     def test_an_intent_its_run_submitted_leaves_the_type_to_the_record(self):
         self.meta.import_store(WS, self.store)
@@ -486,6 +534,7 @@ class AMergeIsARow(Base):
 
     def test_a_dependency_waits_until_the_row_says_merged(self):
         self.meta.import_store(WS, self.store)
+        _link(self.meta, WS, "0017_linked", "proj/ideas/0001_x.md", ["0010_full-loop"])
         # The machine's fold wins over a ship read before it: here it closed the pull request.
         self.machine("0010_full-loop", "pr.md", "accepted", "closed", "close-read")
         unit = next(

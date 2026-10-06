@@ -88,7 +88,7 @@ Derived states (CODE, recomputed each read):
 |---|---|---|
 | finished | plan done, or every stage settled | — |
 | paused / dropped | hold | — |
-| unreadable | file without `Status:`, broken idea link | — |
+| unreadable | file without `Status:` | — |
 | needs-person | spike fails at round ≥ 2; review out of rounds; incomplete review past the limit | — |
 | spike-fails / spike-missing | spike accepted with fails / a U<n> without verdict | spec / spike |
 | missing | artifact absent | that stage |
@@ -100,7 +100,7 @@ Derived states (CODE, recomputed each read):
 | draft | "finish and accept X" (+ `rerun` when all its questions are answered and the stage is in intent/spec/spike/plan/impl) | — |
 | awaits-person / person-answered | needs-person round with unanswered / answered `F<n>` | — / review |
 | changes-requested | review asked for changes | → refined by `nextStep` |
-| dependency | any answer whose stage is impl, while a `Depends on:` unit is unmerged | — |
+| dependency | any answer whose stage is impl, while a unit it depends on (a `depends` row of `unit_links`, written when the unit was opened) is unmerged | — |
 
 `nextStep` (`:2158-2280`) refines review/ship/changes-requested with **git + gh** reads:
 CI green → review; CI red → impl; PR merged → ship "record, do not merge"; head moved after a
@@ -110,7 +110,7 @@ rebase + CI red → impl; changes-requested → impl if code must change, else r
 ### 1.3 Gates (`loop:2046-2097`) — all CODE
 
 - every stage: not held; every earlier required stage exists, is settled and not stale; spike only when required; plan waits for every `U<n>` the spike record gives `holds`.
-- impl: + idea links resolve and every `Depends on:` is merged (`:2094`).
+- impl: + every unit it depends on is merged (`:2094`); a link is a row, never read from `intent.md`.
 - review: + `PR:` present, not out of rounds, `gh pr checks --required` all green (empty = not green; red branch-name check = unfixable) (`:1669-1746`).
 - ship: + last verdict pass, no open finding but fixed/answered/non-blocking low, no demoted severity, reviewed sha named and still the head (or a clean rebase with green CI), not behind `origin/main`, UI screens block valid when UI files changed, `S<n>` findings block (`:1791-1906`). Open gate prints `--match-head-commit <sha>`.
 

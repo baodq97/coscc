@@ -60,12 +60,11 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertIn(str(data.db_path), message)
 
     def test_a_v5_database_rises_to_6_keeping_every_runs_and_transitions_row(self):
-        """6 adds the `unit_*` tables and `idea_meta`; the rows a v5 database already had in `runs`
+        """6 adds the `unit_*` tables; the rows a v5 database already had in `runs`
         and `transitions` are all still there after."""
         new = {
             "unit_meta",
             "unit_links",
-            "idea_meta",
             "unit_questions",
             "unit_answers",
             "unit_holds",
@@ -214,7 +213,7 @@ class StageResultsBecomeOutputs(unittest.TestCase):
                     )
                 conn.execute("PRAGMA user_version=12")
 
-            self.assertEqual(data.version(), 14)
+            self.assertEqual(data.version(), SCHEMA_VERSION)
             with data.connect() as conn:
                 names = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master")}
                 rows = [
@@ -253,7 +252,7 @@ class IntentRecordsRiseToV2WithTheirType(unittest.TestCase):
                     )
                 conn.execute("PRAGMA user_version=13")
 
-            self.assertEqual(data.version(), 14)
+            self.assertEqual(data.version(), SCHEMA_VERSION)
             with data.connect() as conn:
                 got = [
                     tuple(r)
@@ -273,6 +272,43 @@ class IntentRecordsRiseToV2WithTheirType(unittest.TestCase):
                 ],
             )
             self.assertNotIn("lane", cols)
+
+
+class LinksLoseRepoAndIdeaMetaGoes(unittest.TestCase):
+    def test_a_v14_database_loses_idea_meta_and_the_repo_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.connect() as conn:
+                conn.execute("DROP TABLE unit_links")
+                conn.execute(
+                    "CREATE TABLE unit_links (root TEXT NOT NULL, workspace TEXT NOT NULL, "
+                    "unit TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('idea', 'repo', "
+                    "'depends')), ref TEXT NOT NULL, pos INTEGER NOT NULL)"
+                )
+                conn.execute(
+                    "CREATE TABLE idea_meta (root TEXT, workspace TEXT, idea TEXT, read TEXT)"
+                )
+                conn.execute("INSERT INTO idea_meta VALUES ('/w', 'p', '0001_x', '{}')")
+                for pos, (kind, ref) in enumerate(
+                    [("idea", "p/ideas/0001_x.md"), ("repo", "p"), ("depends", "p/0002_b")]
+                ):
+                    conn.execute(
+                        "INSERT INTO unit_links VALUES ('/w', 'p', '0003_c', ?, ?, ?)",
+                        (kind, ref, pos),
+                    )
+                conn.execute("PRAGMA user_version=14")
+
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+                got = [
+                    tuple(r)
+                    for r in conn.execute("SELECT kind, ref, pos FROM unit_links ORDER BY pos")
+                ]
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute("INSERT INTO unit_links VALUES ('/w', 'p', 'u', 'repo', 'p', 0)")
+            self.assertNotIn("idea_meta", tables)
+            self.assertEqual(got, [("idea", "p/ideas/0001_x.md", 0), ("depends", "p/0002_b", 2)])
 
 
 class AStepsEvents(unittest.TestCase):

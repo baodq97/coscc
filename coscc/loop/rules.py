@@ -13,7 +13,6 @@ import re
 from typing import Any
 
 from coscc.loop import (
-    IDEAS,
     RERUN_STAGES,
     REVIEW_ROUNDS,
     SPIKE,
@@ -390,8 +389,6 @@ def gate_reasons(unit, stage, need, said):
         kept = links_of(unit)
         if kept["waiting"]:
             codes.append(code("waiting-on"))
-        if kept["needs"]:
-            codes.append(code("unreadable"))
     if not codes and need:
         codes.append(code("gate-closed"))
     return list(dict.fromkeys(codes))
@@ -755,11 +752,6 @@ def _join(base, name):
 
 def cmd_status(json, cos_dir, limit, state, out):
     units = read_all(cos_dir, state)
-    ideas = (
-        None
-        if not os.path.exists(os.path.join(cos_dir, IDEAS))
-        else nullish(dig(state, "ideas", state["workspace"]), [])
-    )
     rows: list[Any] = []
     for u in units:
         next_ = {k: v for k, v in decide(u, limit).items() if k not in ("rerun", "continue")}
@@ -776,20 +768,11 @@ def cmd_status(json, cos_dir, limit, state, out):
     if json:
         stages = [{k: v for k, v in s.items() if k != "lanes"} for s in STAGES]
         body = {"root": cos_dir, "stages": stages, "afterAnswers": RERUN_STAGES, "units": rows}
-        if ideas is not None and truthy(ideas):
-            body["ideas"] = ideas
         out(stringify(body, 2))
         return 0
 
-    idea_problems = [
-        f"{IDEAS}/{js(dig(i, 'id'))}: {js(p)}"
-        for i in nullish(ideas, [])
-        for p in dig(i, "problems")
-    ]
     if not units:
         out("No work units yet. `write-intent` opens one.")
-        for p in idea_problems:
-            out(f"  - {p}")
         return 0
 
     out(f"| Unit | {' | '.join(STAGE_NAMES)} | Next action |")
@@ -802,7 +785,7 @@ def cmd_status(json, cos_dir, limit, state, out):
         f"{DASH} not started"
     )
 
-    problems = [*(f"{u['name']}: {p}" for u in rows for p in u["problems"]), *idea_problems]
+    problems = [*(f"{u['name']}: {p}" for u in rows for p in u["problems"])]
     if problems:
         out("\nProblems (report these, do not infer past them):")
         for p in problems:
