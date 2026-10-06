@@ -983,15 +983,13 @@ def compose_prompt(
 # What the engine says of a field its kind requires; every other field is the agent's, and its
 # skill says what goes in it.
 _KIND_SAYS = {
-    "judgement": "`ready` when the file is finished, `not-ready` when it is not; a `not-ready` "
-    "unit stays at this stage.",
-    "questions": "Every item under `## Open questions` still waiting on a person, as `{n, text}` "
-    "with the number the file gives it; `[]` when there is none.",
+    "judgement": "`ready` when the file is finished; a `not-ready` unit stays at this stage.",
+    "questions": "Every item under `## Open questions` still waiting on a person, with the number "
+    "the file gives it; `[]` when there is none.",
     "verdict": "`pass` when nothing blocks the merge, `changes-requested` when a finding must be "
     "fixed first, `needs-person` when only a person can settle one.",
     "findings": "Every finding of this round, those an earlier round raised carried forward with "
-    "their id. `state` is `open`, `fixed`, `needs-person`, `claim-rejected` or `answered`; "
-    '`fixed_in` is the commit of a `fixed` one and `""` otherwise; `rule` is the `S<n>` of the '
+    'their id. `fixed_in` is the commit of a `fixed` one and `""` otherwise; `rule` is the `S<n>` of the '
     'UI standard it names, or `""`; `text` is what the finding says, without its id, label, '
     "place or severity.",
     "screens": "One entry per screenshot you opened, `size` as `1440x900`; `[]` when you opened "

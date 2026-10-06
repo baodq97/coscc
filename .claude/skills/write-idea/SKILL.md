@@ -5,7 +5,7 @@ description: Write the idea.md that records an observation before it is a proble
 
 # Write an idea
 
-An observation, not a solution. The only optional stage; `rejected` is a real outcome.
+An observation, not a solution. The only optional stage.
 
 ## Steps
 

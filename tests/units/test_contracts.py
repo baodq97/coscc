@@ -277,7 +277,7 @@ class TheBlockIsTheDeclaration(unittest.TestCase):
             block = self.block(agent)
             self.assertIn("`not-ready`", block, agent)
             self.assertIn("stays at this stage", block, agent)
-            self.assertIn("`{n, text}`", block, agent)
+            self.assertIn("`## Open questions`", block, agent)
 
     def test_a_review_round_block_says_what_goes_in_each_required_field(self):
         from coscc.runner import prompt

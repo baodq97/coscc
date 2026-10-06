@@ -23,8 +23,8 @@ def _round_number(section: str) -> int:
 def merge_review(existing: str, reply: str) -> str:
     """`review.md` from what is on disk and a reply carrying only the new round.
 
-    The header (everything before the first `## Round`) comes from the reply, since the status
-    moves every round. Earlier rounds come from the file, verbatim. A round in the reply whose
+    The header (everything before the first `## Round`) comes from the reply. Earlier rounds come
+    from the file, verbatim. A round in the reply whose
     number is already on disk must match it exactly, and one that differs is refused. A reply
     that adds no round is refused.
     """
@@ -212,7 +212,7 @@ def closing_prompt(head: str, number: int) -> str:
         "Reply with the title, the header line and one new round only, and nothing else — "
         "no preamble, no code fence. The earlier rounds of `review.md` are the app's to "
         "keep; do not copy them. Exactly this shape:\n\n"
-        f"- Then `## Round {number}`.\n"
+        f"- `## Round {number}`.\n"
         f"- Its first line is exactly `Reviewed: {head}. Verdict: incomplete.`\n"
         "- Then three sections, in this order: `### Reviewed so far` (every file you "
         "opened and what you concluded about it), `### Findings` (every finding you have, "

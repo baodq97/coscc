@@ -709,3 +709,18 @@ class NoPromptAsksForAStatusLine(unittest.TestCase):
                             d, directory, UNIT, stage, STAGES, f"{stage}.md", writes_own=writes_own
                         )
                         self.assertNotIn("Status:", prompt)
+
+    def test_no_reopening_turn_and_no_drift_note_carries_it(self):
+        from coscc.git import drift
+        from coscc.runner.reply import opening_prompt
+        from coscc.runner.review import closing_prompt
+
+        sha = "a" * 40
+        for text in (
+            opening_prompt("review.md", "no title"),
+            opening_prompt("spec.md", "no title"),
+            closing_prompt(sha, 2),
+            drift.describe({"checked": False, "reason": "no worktree"}),
+            drift.describe({"checked": True, "files": ["a.py"], "plan_sha": sha, "main_sha": sha}),
+        ):
+            self.assertNotIn("Status:", text)
