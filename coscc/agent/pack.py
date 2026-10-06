@@ -402,23 +402,7 @@ def _loaded() -> dict[str, dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
     for key, base in builtin.items():
         row = {**base, "edited": [], "problems": [], "builtin": base}
-        path = owner / "agents" / f"{key}.md"
-        if path.is_file():
-            try:
-                fields, body = parse(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as e:
-                row["problems"] = [f"{path}: {e}"]
-            else:
-                mine = {**base, **fields, **({BODY: body} if body else {})}
-                bad = _safely(mine)
-                if bad:
-                    # The owner's values stay out: the row is the built-in's, its runs refused.
-                    row["problems"] = [f"{path}: {r}" for r in bad]
-                else:
-                    row.update(fields)
-                    if body:
-                        row[BODY] = body
-                    row["edited"] = [*fields, *([BODY] if body else [])]
+        _lay_over(row, base, owner / "agents" / f"{key}.md")
         rows[key] = row
     owned_skills = {p.parent.name for p in (owner / "skills").glob(f"*/{SKILL_FILE}")}
     for key, row in rows.items():
@@ -429,6 +413,27 @@ def _loaded() -> dict[str, dict[str, Any]]:
     stray = sorted(p.stem for p in (owner / "agents").glob("*.md") if p.stem not in rows)
     _CACHE.update(stamp=stamp, rows=rows, stray=stray)
     return rows
+
+
+def _lay_over(row: dict[str, Any], base: Mapping[str, Any], path: Path) -> None:
+    """The owner's file `path`, if any, laid over `row`; its problems, with the built-in's values
+    kept, when it cannot be read or is no row."""
+    if not path.is_file():
+        return
+    try:
+        fields, body = parse(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        row["problems"] = [f"{path}: {e}"]
+        return
+    bad = _safely({**base, **fields, **({BODY: body} if body else {})})
+    if bad:
+        # The owner's values stay out: the row is the built-in's, its runs refused.
+        row["problems"] = [f"{path}: {r}" for r in bad]
+        return
+    row.update(fields)
+    if body:
+        row[BODY] = body
+    row["edited"] = [*fields, *([BODY] if body else [])]
 
 
 def _safely(
