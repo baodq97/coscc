@@ -143,6 +143,16 @@ class NoStageNames(unittest.TestCase):
             "data_of, files_where), or list the constant in ALLOWED with its reason",
         )
 
+    def test_a_features_screens_name_none_either(self):
+        known = keys() - BARE
+        quoted = re.compile(r"""["'](%s)(?:\.md)?["']""" % "|".join(sorted(known)))
+        found = [
+            f"{p.relative_to(ROOT).as_posix()}: {m.group(0)}"
+            for p in sorted((ROOT / "features").rglob("*.tsx"))
+            for m in quoted.finditer(p.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual(found, [])
+
     def test_every_allowance_is_used(self):
         used = set()
         known = keys()
