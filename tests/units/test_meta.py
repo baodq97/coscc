@@ -303,6 +303,33 @@ class TheOutputsTheLoopReads(Base):
         self.spike("holds", "fails")
         self.assertEqual(self.artifact("spike.md")["round"], 1)
 
+    def unit(self) -> dict:
+        return self.meta.snapshot(WS, NAMES)["units"][f"proj/{self.UNIT}"]
+
+    def test_the_intents_record_sets_the_type(self):
+        self.meta.import_store(WS, self.store)
+        self.assertEqual(self.unit()["type"], "feat")
+        self.record("intent", {"stage": "intent", "judgement": "ready", "type": "refactor"})
+        self.assertEqual(self.unit()["type"], "refactor")
+        self.record("intent", {"stage": "intent", "judgement": "ready", "type": "docs"})
+        self.assertEqual(self.unit()["type"], "docs")
+
+    def test_a_markdown_type_never_overwrites_a_record(self):
+        self.record("intent", {"stage": "intent", "judgement": "ready", "type": "docs"})
+        intent = self.store / ".cos" / self.UNIT / "intent.md"
+        intent.write_text(
+            intent.read_text().replace("Type: feat", "Type: fix") + "\n## Answers\n\nQ1: x\n"
+        )
+        self.meta.ingest(WS, self.store, self.UNIT, actor="a", session="s", source="run:intent")
+        self.assertEqual(self.unit()["type"], "docs")
+
+    def test_the_snapshot_has_no_lane(self):
+        self.meta.import_store(WS, self.store)
+        self.assertNotIn("lane", self.unit())
+        with self.data.connect() as conn:
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(unit_meta)")}
+        self.assertNotIn("lane", cols)
+
     def test_the_unit_page_gets_the_latest_output_of_each_agent(self):
         self.record("spec", {"stage": "spec", "judgement": "draft", "questions": []})
         self.record("spec", {"stage": "spec", "judgement": "ready", "questions": []})

@@ -24,6 +24,8 @@ def _filled(channel: Channel | submit.Collector, fields: dict[str, Any]) -> dict
     if channel.stage == submit.ROUND:
         return {"verdict": "pass", "findings": [], "screens": [], **fields}
     obj: dict[str, Any] = {"stage": channel.stage, "judgement": "ready", "questions": []}
+    if channel.stage == "intent":
+        obj["type"] = "feat"
     if channel.stage == "impl":
         obj["needs_person"] = []
     if channel.stage == "spec":
@@ -70,9 +72,15 @@ class EveryToolTakesTheDeclaredSchema(unittest.TestCase):
         schema = contracts.schema("intent")
         for word in ("accepted", "rejected", "done", "draft"):
             with self.assertRaises(jsonschema.ValidationError, msg=word):
-                jsonschema.validate({"stage": "intent", "judgement": word, "questions": []}, schema)
+                said = {"stage": "intent", "judgement": word, "questions": [], "type": "fix"}
+                jsonschema.validate(said, schema)
         jsonschema.validate(
-            {"stage": "intent", "judgement": "not-ready", "questions": [{"n": 1, "text": "?"}]},
+            {
+                "stage": "intent",
+                "judgement": "not-ready",
+                "questions": [{"n": 1, "text": "?"}],
+                "type": "fix",
+            },
             schema,
         )
 

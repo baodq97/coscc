@@ -992,40 +992,22 @@ def unmeasured_of(u):
     return nullish(dig(u, "artifacts", "spec.md", "unmeasured"), {"ids": []})
 
 
-LANE_FULL = re.compile(r"\bLane:\s*full\b", A)
+_SOURCE = re.compile(r"([^\s:]+)(?::(\d+)-(\d+))?", A)
 
 
-def header_of(text):
-    lines = split_lines(text)
-    end = _find(lines, lambda l: l.startswith("## "))
-    return "\n".join(lines if end == -1 else lines[:end])
+def _said(x):
+    return isinstance(x, str) and trim(x) != ""
 
 
-def fenced_filled(lines):
-    inside = None
-    for l in lines or []:
-        if re.match(r"^\s*```", l, A):
-            if inside is not None and any(trim(x) != "" for x in inside):
-                return True
-            inside = [] if inside is None else None
-        elif inside is not None:
-            inside.append(l)
-    return False
-
-
-SOURCE_LINE = re.compile(r"^Source:\s*(`?)([^\s`:]+)(?::(\d+)-(\d+))?\1\s*$", A)
-
-
-def expected_cited(lines):
-    if not lines:
+def _cited(expected):
+    """Whether `expected` says something and names one relative path outside `.cos`, with its
+    lines in order when it gives lines."""
+    if not isinstance(expected, dict) or not _said(expected.get("text")):
         return False
-    sources = [l for l in lines if trim(l).startswith("Source:")]
-    if len(sources) != 1:
-        return False
-    m = SOURCE_LINE.match(trim(sources[0]))
+    m = _SOURCE.fullmatch(str(expected.get("source") or ""))
     if not m:
         return False
-    path, start, end = m[2], m[3], m[4]
+    path, start, end = m[1], m[2], m[3]
     if (
         path.startswith("/")
         or path == ".cos"
@@ -1033,23 +1015,18 @@ def expected_cited(lines):
         or ".." in path.split("/")
     ):
         return False
-    if start is not None and (int(start) < 1 or int(end) < int(start)):
-        return False
-    return any(trim(l) != "" and not trim(l).startswith("Source:") for l in lines)
+    return start is None or (int(start) >= 1 and int(end) >= int(start))
 
 
-def lane_of(unit, intent=None, impl=None):
-    def lines(title):
-        return None if intent is None else section(intent, title)
-
+def lane_of(unit, fix=None, left_lane=None):
+    """The lane from the unit's type, intent's `fix`, which files exist, and impl's `left_lane`."""
+    fix = fix if isinstance(fix, dict) else {}
     marks = {
         "a": unit.get("type") == "fix",
-        "b": fenced_filled(lines("Reproduction")),
-        "c": expected_cited(lines("Expected")),
-        "d": any(trim(l) != "" for l in nullish(lines("Actual"), [])),
-        "e": not present(unit, "spec.md")
-        and not present(unit, "plan.md")
-        and not LANE_FULL.search(header_of(impl or "")),
+        "b": _said(fix.get("reproduction")),
+        "c": _cited(fix.get("expected")),
+        "d": _said(fix.get("actual")),
+        "e": not present(unit, "spec.md") and not present(unit, "plan.md") and not _said(left_lane),
     }
     lane = "fast" if all(marks.values()) else "full"
     entered = marks["a"] and marks["b"] and marks["c"] and marks["d"]
@@ -1437,12 +1414,9 @@ def read_unit(dir_, name, state):  # noqa: C901, PLR0915 - `readUnit` kept whole
         else:
             unit["type"] = type_
         unit["branch"] = nullish(branch_for(name, type_).get("branch"))
-    unit.update(lane_of(unit, intent=intent_text, impl=texts.get("impl.md")))
-    if (
-        unit["enteredFast"]
-        and status_of(unit, "impl.md") == "draft"
-        and LANE_FULL.search(header_of(texts.get("impl.md", "")))
-    ):
+    left_lane = dig(known, "artifacts", "impl.md", "result", "left_lane")
+    unit.update(lane_of(unit, dig(known, "artifacts", "intent.md", "result", "fix"), left_lane))
+    if unit["enteredFast"] and status_of(unit, "impl.md") == "draft" and _said(left_lane):
         unit["artifacts"]["impl.md"]["leftLane"] = True
     unit["outcome"] = None if intent_text is None else unit_outcome(intent_text)
 

@@ -197,7 +197,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
             return {
                 "blocked": True,
                 "action": (
-                    f"{_hint_word(s)} — impl.md records the fix leaving the fast lane: "
+                    f"{_hint_word(s)} — impl's left_lane has the fix leaving the fast lane: "
                     "impl runs again on plan.md"
                 ),
                 "stage": s["name"],
@@ -883,7 +883,8 @@ def cmd_gate(unit_name, stage, cos_dir, repo_dir, limit, state, json, out, err):
         err(f"No such work unit: {unit_name}")
         return 2
     probe = make_probe(repo_dir) if repo_dir else None
-    a = gate_answer(read_unit(dir_, unit_name, state), stage, probe, limit)
+    unit = read_unit(dir_, unit_name, state)
+    a = gate_answer(unit, stage, probe, limit)
     ok, need = a["ok"], a["need"]
     rebased = a.get("rebased")
     reasons = a.get("reasons", UNDEFINED)
@@ -897,6 +898,8 @@ def cmd_gate(unit_name, stage, cos_dir, repo_dir, limit, state, json, out, err):
         body = {"ok": ok, "lines": lines, "reasons": reasons}
         if rebased:
             body["rebased"] = rebased
+        if unit["lane"] == "fast":
+            body["lane"] = "fast"
         out(stringify(body))
     else:
         for line in lines:

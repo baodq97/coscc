@@ -85,11 +85,17 @@ def state_of_roots(root, peers=()) -> dict:
     return state_for(stores, own)
 
 
-def ask(*argv, peers=()):
-    """A deciding command on `--root`, handed the snapshot of it and of `peers`."""
+def ask(*argv, peers=(), records=None):
+    """A deciding command on `--root`, handed the snapshot of it and of `peers`; `records` are
+    the submitted records of the own store's units, `{unit: {file: {"result": ...}}}`."""
     words = [str(a) for a in argv]
     root = words[words.index("--root") + 1]
-    return python([*words, "--state", "-"], stdin=json.dumps(state_of_roots(root, peers)))
+    state = state_of_roots(root, peers)
+    for name, files in (records or {}).items():
+        arts = state["units"][f"{state['workspace']}/{name}"]["artifacts"]
+        for f, rec in files.items():
+            arts.setdefault(f, {"status": None, "raw": None, "questions": None}).update(rec)
+    return python([*words, "--state", "-"], stdin=json.dumps(state))
 
 
 def read_in(dir_: Path, name: str, root: Path, peers=()) -> dict:
@@ -793,38 +799,47 @@ def digest(x) -> str:
     return hashlib.sha256(stringify(x).encode()).hexdigest()[:16]
 
 
-# --- the lane a unit walks, read off its files --------------------------------------------
+# --- the lane a unit walks, read off its records -----------------------------------------
 
-# An intent carrying the three sections a fix enters the fast lane with; `None` leaves one out.
-REPRO = "```\npython -m pytest x\n```"
-EXPECTED = "Source: coscc/units/guards.py:19-30\nThe table names every code the loop hands out."
+# What intent's `fix` carries for a fix to enter the fast lane.
+FIX = {
+    "reproduction": "python -m pytest x",
+    "expected": {
+        "source": "coscc/units/guards.py:19-30",
+        "text": "The table names every code the loop hands out.",
+    },
+    "actual": "It names one fewer.",
+}
+LEFT = "The source says otherwise."
 
 
-def intent_of(
-    type="fix",
-    status="accepted",
-    header=None,
-    repro=REPRO,
-    expected=EXPECTED,
-    actual="It names one fewer.",
-):
+def fix_with(**over):
+    """`FIX` with `reproduction`, `actual`, `source` or `text` replaced; `None` drops the fix."""
+    if any(v is None for v in over.values()) and set(over) == {"fix"}:
+        return None
+    expected = {
+        "source": over.get("source", FIX["expected"]["source"]),
+        "text": over.get("text", FIX["expected"]["text"]),
+    }
+    return {
+        "reproduction": over.get("reproduction", FIX["reproduction"]),
+        "expected": expected,
+        "actual": over.get("actual", FIX["actual"]),
+    }
+
+
+def intent_of(type="fix", status="accepted", header=None):
     parts = [
         "# Intent: x",
         f"Author: t. Type: {type}. Status: {status}.",
         *([header] if header else []),
-        "",
-        *([] if repro is None else ["## Reproduction", "", repro, ""]),
-        *([] if expected is None else ["## Expected", "", expected, ""]),
-        *([] if actual is None else ["## Actual", "", actual, ""]),
     ]
-    return "\n".join(parts)
+    return "\n".join(parts) + "\n"
 
 
-def lane_for(parts=None, artifacts=None, impl=None):
-    parts = parts or {}
+def lane_for(fix=FIX, artifacts=None, left_lane=None, type="fix"):
     artifacts = artifacts or {"intent.md": art("accepted")}
-    u = {**unit(artifacts), "type": parts.get("type", "fix")}
-    return lane_of(u, intent_of(**parts), impl)
+    return lane_of({**unit(artifacts), "type": type}, fix, left_lane)
 
 
 FAST = {"lane": "fast", "enteredFast": True, "laneMissing": []}
@@ -832,67 +847,69 @@ FAST = {"lane": "fast", "enteredFast": True, "laneMissing": []}
 
 def test_a_fix_with_its_reproduction_a_cited_expected_result_and_the_actual_one_is_fast():
     assert lane_for() == FAST
-    assert lane_for({"expected": "Source: `docs/x.md`\nIt says so."}) == FAST
-    assert lane_for({"expected": "Source: README.md\nIt says so."}) == FAST
+    assert lane_for(fix_with(source="docs/x.md")) == FAST
+    assert lane_for(fix_with(source="README.md")) == FAST
 
 
 def test_a_unit_that_is_not_a_fix_is_in_the_full_lane_and_nothing_is_missing_for_it():
-    assert lane_for({"type": "feat"}) == FULL_LANE
+    assert lane_for(type="feat") == FULL_LANE
     assert lane_of({**unit({}), "type": None}) == FULL_LANE
 
 
 def test_a_fix_missing_one_mark_is_in_the_full_lane_and_lane_missing_names_that_mark():
-    def missing(parts, **opts):
-        got = lane_for(parts, **opts)
+    def missing(fix):
+        got = lane_for(fix)
         assert got["lane"] == "full"
         return got["laneMissing"]
 
-    assert missing({"repro": None}) == ["b"]
-    assert missing({"repro": "```\n\n```"}) == ["b"]
-    assert missing({"repro": "python -m pytest x"}) == ["b"]
-    assert missing({"expected": None}) == ["c"]
-    assert missing({"expected": "The table names every code."}) == ["c"]
-    assert missing({"actual": None}) == ["d"]
-    assert missing({"actual": "   "}) == ["d"]
-    assert missing({"repro": None, "expected": None, "actual": None}) == ["b", "c", "d"]
+    assert missing(fix_with(reproduction="")) == ["b"]
+    assert missing(fix_with(reproduction="  ")) == ["b"]
+    assert missing(fix_with(text="")) == ["c"]
+    assert missing(fix_with(actual="")) == ["d"]
+    assert missing(fix_with(actual="   ")) == ["d"]
+    assert missing(fix_with(reproduction="", text="", actual="")) == ["b", "c", "d"]
+    assert missing(None) == ["b", "c", "d"]
     assert lane_of({**unit({}), "type": "fix"})["laneMissing"] == ["b", "c", "d"]
 
 
 def test_the_expected_result_cites_one_relative_path_outside_cos_and_says_something_besides():
-    def c(expected):
-        return lane_for({"expected": expected})["laneMissing"]
+    def c(source):
+        return lane_for(fix_with(source=source))["laneMissing"]
 
-    assert c("Source: /etc/passwd\nIt says so.") == ["c"]
-    assert c("Source: .cos/0001_x/spec.md\nIt says so.") == ["c"]
-    assert c("Source: ../other/README.md\nIt says so.") == ["c"]
-    assert c("Source: docs/../../x.md\nIt says so.") == ["c"]
-    assert c("Source: coscc/units/guards.py:30-19\nIt says so.") == ["c"]
-    assert c("Source: coscc/units/guards.py") == ["c"]
-    assert c("Source: a.md\nSource: b.md\nIt says so.") == ["c"]
-    assert c("Source: the guards file\nIt says so.") == ["c"]
+    assert c("/etc/passwd") == ["c"]
+    assert c(".cos/0001_x/spec.md") == ["c"]
+    assert c("../other/README.md") == ["c"]
+    assert c("docs/../../x.md") == ["c"]
+    assert c("coscc/units/guards.py:30-19") == ["c"]
+    assert c("coscc/units/guards.py:0-3") == ["c"]
+    assert c("the guards file") == ["c"]
+    assert c("") == ["c"]
+    assert c("coscc/units/guards.py") == []
 
 
-def test_a_spec_a_plan_or_lane_full_in_the_impl_header_keeps_a_fix_in_full_and_it_still_entered():
+def test_a_spec_a_plan_or_a_left_lane_in_the_impl_record_keeps_a_fix_in_full_and_it_still_entered():
     left = {"lane": "full", "enteredFast": True, "laneMissing": ["e"]}
     draft = {"intent.md": art("accepted"), "spec.md": art("draft")}
-    assert lane_for({}, artifacts=draft) == left
+    assert lane_for(artifacts=draft) == left
     planned = {"intent.md": art("accepted"), "plan.md": art("accepted")}
-    assert lane_for({}, artifacts=planned) == left
-    full_header = (
-        "# Impl: x\nIntent: intent.md. Lane: full. Status: draft.\n\n## Why full\n\nBigger.\n"
-    )
-    assert lane_for({}, impl=full_header) == left
-    # Only the header decides: the words further down are prose.
-    prose = "# Impl: x\nIntent: intent.md. Status: draft.\n\n## What was built\n\nNot Lane: full.\n"
-    assert lane_for({}, impl=prose) == FAST
+    assert lane_for(artifacts=planned) == left
+    assert lane_for(left_lane=LEFT) == left
+    assert lane_for(left_lane="") == FAST
+    assert lane_for(left_lane=None) == FAST
 
 
-def lane_tree(tmp_path, files):
-    """One store holding a unit with `files`, asked through the command line as the app asks."""
+def lane_tree(tmp_path, files, fix=FIX, left_lane=None):
+    """One store holding a unit with `files`, asked through the command line as the app asks, its
+    records saying `fix` (intent) and `left_lane` (impl)."""
     root = make_store(tmp_path, {"0001_x": files})
+    records = {"intent.md": {"result": {"judgement": "ready", "fix": fix}}}
+    if fix is None:
+        records = {}
+    if left_lane is not None:
+        records["impl.md"] = {"result": {"judgement": "ready", "left_lane": left_lane}}
 
     def run(*args):
-        return ask("--root", root, *args)
+        return ask("--root", root, *args, records={"0001_x": records})
 
     return SimpleNamespace(
         dir=root / ".cos" / "0001_x",
@@ -910,6 +927,7 @@ def test_a_fix_in_the_fast_lane_goes_from_its_accepted_intent_to_impl(tmp_path):
         "ok": True,
         "lines": ["open: impl may proceed for 0001_x"],
         "reasons": [],
+        "lane": "fast",
     }
     for stage in ["spec", "spike", "plan"]:
         g = t.gate(stage)
@@ -961,11 +979,14 @@ def test_gate_impl_in_the_fast_lane_stays_shut_while_stale_held_or_a_dependency_
     )
     peers = [("a", a)]
 
+    records = {"0001_y": {"intent.md": {"result": {"judgement": "ready", "fix": FIX}}}}
+
     def gate():
-        return json.loads(ask("--root", b, "gate", "0001_y", "impl", "--json", peers=peers).out)
+        args = ("--root", b, "gate", "0001_y", "impl", "--json")
+        return json.loads(ask(*args, peers=peers, records=records).out)
 
     def nxt():
-        return json.loads(ask("--root", b, "next", "0001_y", peers=peers).out)
+        return json.loads(ask("--root", b, "next", "0001_y", peers=peers, records=records).out)
 
     assert [gate()["ok"], gate()["reasons"]] == [False, ["waiting-on"]]
     assert [nxt()["stage"], nxt()["why"], nxt()["lane"]] == ["", "dependency", "fast"]
@@ -975,7 +996,7 @@ def test_gate_impl_in_the_fast_lane_stays_shut_while_stale_held_or_a_dependency_
 
 
 def test_a_fix_whose_intent_cites_no_source_walks_the_full_lane_from_spec(tmp_path):
-    t = lane_tree(tmp_path, {"intent.md": intent_of(expected="It should name every code.")})
+    t = lane_tree(tmp_path, {"intent.md": intent_of()}, fix=fix_with(text=""))
     n = t.next()
     assert [n["stage"], n["lane"], n["enteredFast"], n["laneMissing"]] == [
         "spec",
@@ -1036,9 +1057,9 @@ def test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl
         tmp_path,
         {
             "intent.md": intent_of(),
-            "impl.md": "# Impl: x\nIntent: intent.md. Author: Uruz. Lane: full. Status: draft.\n\n"
-            "## Why full\n\nThe source says otherwise.\n",
+            "impl.md": "# Impl: x\nIntent: intent.md. Author: Uruz. Status: draft.\n",
         },
+        left_lane=LEFT,
     )
     n = t.next()
     assert [n["stage"], n["lane"], n["enteredFast"], n["laneMissing"]] == [
@@ -1058,8 +1079,16 @@ def test_an_impl_that_takes_a_fix_out_of_the_fast_lane_sends_it_to_spec_and_impl
     assert [n["stage"], n["reasons"], n["lane"]] == ["impl", ["missing"], "full"]
     assert re.search(r"leaving the fast lane", n["action"])
     assert t.gate("impl")["ok"] is True
-    # Once impl rewrites its record without the line, a spec already keeps the unit in full.
-    (t.dir / "impl.md").write_text("# Impl: x\nIntent: intent.md. Author: Uruz. Status: draft.\n")
+    # Once impl hands back its record without `left_lane`, a spec already keeps the unit in full.
+    t = lane_tree(
+        tmp_path,
+        {
+            "intent.md": intent_of(),
+            "impl.md": (t.dir / "impl.md").read_text(),
+            "spec.md": (t.dir / "spec.md").read_text(),
+            "plan.md": (t.dir / "plan.md").read_text(),
+        },
+    )
     n = t.next()
     assert [n["stage"], n["action"], n["lane"], n["laneMissing"]] == [
         "",
