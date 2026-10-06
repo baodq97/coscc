@@ -13,18 +13,15 @@ import re
 from typing import Any
 
 from coscc.loop import (
-    RERUN_STAGES,
+    DEFAULT,
     REVIEW_ROUNDS,
-    SPIKE,
     SPIKE_ROUNDS,
-    STAGE_NAMES,
-    STAGES,
     UNDEFINED,
     code,
     dig,
     js,
     nullish,
-    stage_of,
+    proc_of,
     stringify,
     truthy,
 )
@@ -32,7 +29,6 @@ from coscc.loop.model import (
     agent_skip,
     ended_of,
     every_open_claimed,
-    in_lane,
     incomplete_draft,
     last_round,
     link_needs,
@@ -42,13 +38,17 @@ from coscc.loop.model import (
     needs_person_claims,
     out_of_rounds,
     person_findings,
+    passed_over,
+    pr_of,
     present,
+    proc,
     read_all,
     read_unit,
-    required,
     review_limit,
     rounds_used,
+    route,
     settled,
+    walk,
     skipped_by,
     spike_findings,
     spike_needs,
@@ -97,11 +97,11 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
             "why": code(hold["state"]),
         }
 
-    for s in STAGES:
-        if not s.get("optional") and not required(unit, s):
-            continue
+    p = proc(unit)
+    for name in route(unit):
+        s = p.by_name[name]
         status = status_of(unit, s["file"])
-        if s.get("when") and status == "accepted":
+        if name == p.spike and status == "accepted":
             found = spike_findings(unit)
             if found["fails"] and found["round"] >= SPIKE_ROUNDS:
                 return {
@@ -117,20 +117,20 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                 return {
                     "blocked": True,
                     "action": (
-                        f"write-spec again — spike.md measured {', '.join(found['fails'])} "
-                        "does not hold"
+                        f"{_hint_word(p.by_name[p.measured or ''])} again — {s['file']} measured "
+                        f"{', '.join(found['fails'])} does not hold"
                     ),
-                    "stage": "spec",
+                    "stage": p.measured,
                     "why": code("spike-fails"),
                 }
             if found["missing"]:
                 return {
                     "blocked": True,
                     "action": (
-                        f"write-spike again — spike.md does not measure "
+                        f"{_hint_word(s)} again — {s['file']} does not measure "
                         f"{', '.join(found['missing'])}"
                     ),
-                    "stage": "spike",
+                    "stage": name,
                     "why": code("spike-missing"),
                 }
         if status is None:
@@ -177,7 +177,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                 "stage": s["name"],
                 "why": code("stale"),
             }
-        if s["file"] == "review.md" and incomplete_draft(unit):
+        if name == p.review and incomplete_draft(unit):
             used = rounds_used(unit)
             if used >= limit:
                 return {
@@ -188,24 +188,28 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                 }
             return {
                 "blocked": True,
-                "action": f"review round {js(last_round(unit)['n'])} is incomplete — write-review again",
-                "stage": "review",
+                "action": (
+                    f"review round {js(last_round(unit)['n'])} is incomplete — "
+                    f"{_hint_word(s)} again"
+                ),
+                "stage": name,
                 "why": code("review-incomplete"),
             }
         if status == "draft" and unit["artifacts"][s["file"]].get("leftLane"):
+            fast = p.fast or {"back": [], "passed": [""]}
             return {
                 "blocked": True,
                 "action": (
-                    f"{_hint_word(s)} — impl's left_lane has the fix leaving the fast lane: "
-                    "impl runs again on plan.md"
+                    f"{_hint_word(s)} — {name}'s {', '.join(fast['back'])} has the fix leaving "
+                    f"the fast lane: {name} runs again on {p.file(fast['passed'][-1])}"
                 ),
                 "stage": s["name"],
                 "why": code("missing"),
             }
         if status == "draft":
             refused = (
-                nullish(dig(unit, "artifacts", "ship.md", "ship", "round"))
-                if s["file"] == "ship.md"
+                nullish(dig(unit, "artifacts", s["file"], "ship", "round"))
+                if name == p.merge
                 else None
             )
             # A round and no `Refused:` line: ship asked GitHub to merge and has not written the
@@ -213,12 +217,12 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
             if (
                 refused is not None
                 and last_round(unit)
-                and nullish(dig(unit, "artifacts", "ship.md", "ship", "refused")) is None
+                and nullish(dig(unit, "artifacts", s["file"], "ship", "refused")) is None
             ):
-                number = nullish(dig(unit, "artifacts", "pr.md", "pr", "number"))
+                number = nullish(dig(pr_of(unit), "number"))
                 return {
                     "blocked": True,
-                    "action": f"ship is merging #{js(number) if number is not None else '?'} — wait",
+                    "action": f"{name} is merging #{js(number) if number is not None else '?'} — wait",
                     "stage": "",
                     "why": code("ship-merging"),
                 }
@@ -226,7 +230,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                 return {
                     "blocked": True,
                     "action": (
-                        f"ship after review round {js(refused)} did not merge — "
+                        f"{name} after review round {js(refused)} did not merge — "
                         "the next step says what runs now"
                     ),
                     "stage": "",
@@ -234,7 +238,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                 }
             questions = nullish(dig(unit, "artifacts", s["file"], "questions"), [])
             answered = (
-                s["name"] in RERUN_STAGES
+                "answers" in p.info[name]["rerun"]
                 and len(questions) > 0
                 and all(q["answered"] for q in questions)
             )
@@ -246,7 +250,9 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
             }
             if answered:
                 out["rerun"] = s["name"]
-            elif s["name"] == "impl" and not questions and not needs_person_claims(unit):
+            elif (
+                p.info[name]["by"] == "session" and not questions and not needs_person_claims(unit)
+            ):
                 # An impl that stopped with its draft asking nothing and handing nothing to a
                 # person has more to write; only the autopilot reads this, the board offers
                 # `stage` alone. A draft plan never gets one: its open points are a person's.
@@ -269,7 +275,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                         f"review round {js(last['n'])} left out findings an earlier round raised"
                         f" — write-review again ({used} of {limit} rounds used)"
                     ),
-                    "stage": "review",
+                    "stage": p.review,
                     "dropped": last["dropped"],
                     "why": code("review-incomplete"),
                 }
@@ -317,10 +323,10 @@ def gate_answer(unit, stage, probe=None, limit=REVIEW_ROUNDS):
     """`checkGate`, plus `reasons`, the codes `gate --json` hands out."""
     r = evaluate(unit, stage, probe, limit)
     ok, need, said = r["ok"], r["need"], r["said"]
-    target = stage_of(stage)
+    p = proc(unit)
     last = last_round(unit)
-    if ok and probe and target and target["name"] == "review" and dig(last, "verdict") == "pass":
-        ship = evaluate(unit, "ship", probe, limit)
+    if ok and probe and stage == p.review and dig(last, "verdict") == "pass":
+        ship = evaluate(unit, p.merge, probe, limit)
         stuck = pass_left_closed(unit, probe, ship)
         if stuck and not stuck["stop"]:
             return {
@@ -347,23 +353,30 @@ def gate_answer(unit, stage, probe=None, limit=REVIEW_ROUNDS):
     return {"ok": ok, "need": need, "head": said["head"], "reasons": reasons}
 
 
-def _at(name):
-    return next(i for i, s in enumerate(STAGES) if s["name"] == name)
+def _before(unit, target):
+    """The states the unit walks before `target`, in its process's order, the optional ones left out."""
+    p = proc(unit)
+    path = route(unit)
+    return [
+        p.by_name[n] for n in p.order[: p.at(target)] if n in path and not p.info[n]["optional"]
+    ]
+
+
+def _after_spike(unit, target):
+    p = proc(unit)
+    return bool(p.spike) and p.at(target) > p.at(p.spike)
 
 
 def gate_reasons(unit, stage, need, said):
     """the codes of a closed gate, never none, the first the one fixed first."""
-    target = stage_of(stage)
-    if not target:
+    p = proc(unit)
+    if p.by_name.get(stage) is None:
         return [code("unreadable")]
     if unit.get("hold"):
         return [code("dropped") if unit["hold"]["state"] == "dropped" else code("paused")]
-    codes = [] if in_lane(unit, target) else [code("not-in-lane")]
-    for s in STAGES:
-        if s["name"] == target["name"]:
-            break
-        if s.get("optional") or not required(unit, s):
-            continue
+    over = passed_over(unit, stage)
+    codes = [code(over[0])] if over and over[0] else []
+    for s in _before(unit, stage):
         status = status_of(unit, s["file"])
         if status is None:
             codes.append(code("missing"))
@@ -375,8 +388,8 @@ def gate_reasons(unit, stage, need, said):
             codes.append(code("draft"))
         elif truthy(unit["artifacts"][s["file"]].get("stale")):
             codes.append(code("stale"))
-    if _at(target["name"]) > _at(SPIKE["name"]) and spike_needs(unit):
-        fails = required(unit, SPIKE) and spike_findings(unit)["fails"]
+    if _after_spike(unit, stage) and spike_needs(unit):
+        fails = spike_findings(unit)["fails"]
         codes.append(code("spike-fails") if fails else code("spike-missing"))
     ci = said.get("ci")
     if ci == "pending":
@@ -385,7 +398,7 @@ def gate_reasons(unit, stage, need, said):
         codes.append(code("ci-red"))
     if ci == "unfixable":
         codes.extend([code("ci-unfixable"), code("needs-person")])
-    if target["name"] == "impl":
+    if stage in p.waits:
         kept = links_of(unit)
         if kept["waiting"]:
             codes.append(code("waiting-on"))
@@ -396,11 +409,11 @@ def gate_reasons(unit, stage, need, said):
 
 def evaluate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
     """`{"ok", "need", "said"}`: `said` is what `review` and `ship` learned on the way."""
-    target = stage_of(stage)
-    if not target:
+    p = proc(unit)
+    if p.by_name.get(stage) is None:
         return {
             "ok": False,
-            "need": [f'unknown stage "{js(stage)}" — use one of {", ".join(STAGE_NAMES)}'],
+            "need": [f'unknown stage "{js(stage)}" — use one of {", ".join(p.names)}'],
             "said": {},
         }
 
@@ -416,19 +429,10 @@ def evaluate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
         }
 
     need = []
-    if not in_lane(unit, target):
-        need.append(
-            f"{target['name']} is not a stage of the {js(unit.get('lane', UNDEFINED))} lane: "
-            "intent.md carries the fix's reproduction, expected and actual result, "
-            "so impl follows intent"
-        )
-    elif target.get("when") and not required(unit, target):
-        need.append(f"{target['name']} is not required: spec.md has no [unmeasured] item")
-    for s in STAGES:
-        if s["name"] == target["name"]:
-            break
-        if s.get("optional") or not required(unit, s):
-            continue
+    over = passed_over(unit, stage)
+    if over:
+        need.append(over[1])
+    for s in _before(unit, stage):
         status = status_of(unit, s["file"])
         can_skip = "skipped" in s["statuses"]
         if status is None:
@@ -450,24 +454,24 @@ def evaluate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
                 f"— run {s['name']} again first"
             )
 
-    if _at(target["name"]) > _at(SPIKE["name"]):
+    if _after_spike(unit, stage):
         need.extend(spike_needs(unit))
         if (
-            _at(target["name"]) >= _at("impl")
-            and required(unit, SPIKE)
-            and not dig(unit, "artifacts", "plan.md", "restsOn")
+            p.at(stage) > p.at(p.rests)
+            and p.spike in route(unit)
+            and not dig(unit, "artifacts", p.file(p.rests), "restsOn")
         ):
             need.append(
-                "plan.md rests on no U<n> — its record's rests_on names the spike items "
+                f"{p.file(p.rests)} rests on no U<n> — its record's rests_on names the spike items "
                 "its steps rest on"
             )
 
     said: dict = {}
-    if not need and target["name"] == "review":
+    if not need and stage == p.review:
         need.extend(review_needs(unit, probe, limit, said))
-    if not need and target["name"] == "ship":
+    if not need and stage == p.merge:
         need.extend(ship_needs(unit, probe, said))
-    if target["name"] == "impl":
+    if stage in p.waits:
         need.extend(link_needs(unit))
     return {"ok": not need, "need": need, "said": said}
 
@@ -509,6 +513,8 @@ def _none(action):
 
 
 def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepOf`
+    p = proc(unit)
+    review, merge, fixer = p.review, p.merge, p.fixer
     base = decide(unit, limit)
     why = base["why"]
     next_ = {k: v for k, v in base.items() if k != "why"}
@@ -520,18 +526,18 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
         return g
 
     def on_review(prefix):
-        g = evaluate_("review")
+        g = evaluate_(review)
         if g["said"].get("ci") == "unfixable":
             return _none("; ".join(g["need"]))
         reasons = "; ".join([*prefix, *g["need"]])
         if g["ok"]:
             return {
                 "blocked": True,
-                "action": "; ".join([*prefix, "CI is green: write-review"]),
-                "stage": "review",
+                "action": "; ".join([*prefix, f"CI is green: {p.info[str(review)]['hint']}"]),
+                "stage": review,
             }
         if g["said"].get("ci") == "red":
-            return {"blocked": True, "action": reasons, "stage": "impl"}
+            return {"blocked": True, "action": reasons, "stage": fixer}
         return _none(reasons)
 
     def again(g):
@@ -547,19 +553,19 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
         return base
 
     due = why in ("missing", "stale")
-    if due and next_["stage"] == "review":
+    if due and next_["stage"] == review:
         return on_review([next_["action"]] if why == "stale" else [])
 
     def recorded(g):
         seen["recorded"] = True
         return {
             "blocked": True,
-            "action": f"ship — {merged_line(g['said']['merged'])}",
-            "stage": "ship",
+            "action": f"{merge} — {merged_line(g['said']['merged'])}",
+            "stage": merge,
         }
 
-    if due and next_["stage"] == "ship":
-        g = evaluate_("ship")
+    if due and next_["stage"] == merge:
+        g = evaluate_(merge)
         if g["ok"] and g["said"].get("merged"):
             return recorded(g)
         if g["ok"]:
@@ -572,28 +578,28 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
         if g["said"].get("moved") or g["said"].get("screens"):
             return again(g)
         if g["said"].get("rebased") and g["said"].get("ci") == "red":
-            return {"blocked": True, "action": "; ".join(g["need"]), "stage": "impl"}
+            return {"blocked": True, "action": "; ".join(g["need"]), "stage": fixer}
         if g["said"].get("title") == "differs":
             return {
                 "blocked": True,
                 "action": f"{next_['action']} — {'; '.join(g['need'])}",
-                "stage": "ship",
+                "stage": merge,
             }
         return _none("; ".join(g["need"]))
 
     if why == "ship-merging":
         # The merge GitHub made, once the commit is here, is recorded as after any `ship`. Until
         # then a wait: what the gate still needs (the merge commit not fetched) is no refusal.
-        g = evaluate_("ship")
+        g = evaluate_(merge)
         if g["ok"] and g["said"].get("merged"):
             return recorded(g)
         seen["said"] = {}
         return next_
 
     if why == "ship-refused":
-        ship = unit["artifacts"]["ship.md"]["ship"]
+        ship = unit["artifacts"][p.file(merge)]["ship"]
         last = last_round(unit)
-        g = evaluate_("ship")
+        g = evaluate_(merge)
         if g["ok"] and g["said"].get("merged"):
             return recorded(g)
         if g["said"].get("ci") == "unfixable":
@@ -601,9 +607,9 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
         if g["said"].get("moved") or g["said"].get("screens"):
             return again(g)
         if g["said"].get("rebased") and g["said"].get("ci") == "red":
-            return {"blocked": True, "action": "; ".join(g["need"]), "stage": "impl"}
+            return {"blocked": True, "action": "; ".join(g["need"]), "stage": fixer}
         if g["said"].get("title") == "differs":
-            return {"blocked": True, "action": f"ship — {'; '.join(g['need'])}", "stage": "ship"}
+            return {"blocked": True, "action": f"{merge} — {'; '.join(g['need'])}", "stage": merge}
         if not g["ok"]:
             return _none("; ".join(g["need"]))
         cured = truthy(g["said"].get("rebased")) and re.search(
@@ -612,12 +618,13 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
         if ship["round"] < last["n"] or cured:
             return {
                 "blocked": True,
-                "action": f"ship — merge with --match-head-commit {g['said']['head']}",
-                "stage": "ship",
+                "action": f"{merge} — merge with --match-head-commit {g['said']['head']}",
+                "stage": merge,
             }
         return _none(
-            f"ship was refused: {nullish(ship['refused'], 'ship.md names no refusal')}"
-            " — finish and accept ship.md"
+            f"{merge} was refused: "
+            f"{nullish(ship['refused'], f'{p.file(merge)} names no refusal')}"
+            f" — finish and accept {p.file(merge)}"
         )
 
     if why == "awaits-person":
@@ -638,7 +645,7 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
             )
         if not probe:
             return _none(f"{next_['action']} — no repository given to tell which: pass --repo")
-        pr = nullish(dig(unit, "artifacts", "pr.md", "pr"))
+        pr = pr_of(unit)
         if not pr:
             return _none(f"{next_['action']} — no pull request is recorded to read the branch from")
         last = last_round(unit)
@@ -671,7 +678,7 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
                         f"findings of review round {js(last['n'])} are still to be fixed on the "
                         "branch, then push"
                     ),
-                    "stage": "impl",
+                    "stage": fixer,
                 }
             return on_review(
                 [
@@ -684,9 +691,9 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
                 "blocked": True,
                 "action": (
                     f"{next_['action']} — nothing outside .cos/{unit['name']}/ has reached "
-                    f"#{js(pr['number'])} since {last['reviewed'][:7]}: impl, then push"
+                    f"#{js(pr['number'])} since {last['reviewed'][:7]}: {fixer}, then push"
                 ),
-                "stage": "impl",
+                "stage": fixer,
             }
         return on_review([f"#{js(pr['number'])} moved past {last['reviewed'][:7]}"])
 
@@ -719,9 +726,9 @@ def cell(u, f):
 
 def between_pr_and_ship(unit, limit=REVIEW_ROUNDS):
     """an accepted `pr.md` naming a pull request, on a unit neither ended nor held."""
-    if status_of(unit, "pr.md") != "accepted":
+    if status_of(unit, proc(unit).file(proc(unit).pr)) != "accepted":
         return False
-    if not truthy(dig(unit, "artifacts", "pr.md", "pr")):
+    if not truthy(pr_of(unit)):
         return False
     return decide(unit, limit)["why"] not in ("finished", "rejected", "paused", "dropped")
 
@@ -737,24 +744,11 @@ def stage_at(unit, next_):
     """the stage a unit is at, for a board that draws one column per stage."""
     if next_["stage"]:
         return next_["stage"]
-    last = [s for s in STAGES if present(unit, s["file"])]
+    p = proc(unit)
+    last = [s for s in p.stages if present(unit, s["file"])]
     if last:
         return last[-1]["name"]
-    return next(s for s in STAGES if not s.get("optional") and not s.get("when"))["name"]
-
-
-PROCESS = "coscc-sdlc/full"
-
-
-def shown(u):
-    """The unit as `status --json` prints it: the lane's three keys read as its process."""
-    out = {}
-    for k, v in u.items():
-        if k == "lane":
-            out["process"] = PROCESS
-        elif k not in ("enteredFast", "laneMissing"):
-            out[k] = v
-    return out
+    return p.opener
 
 
 def _join(base, name):
@@ -769,7 +763,7 @@ def cmd_status(json, cos_dir, limit, state, out):
     for u in units:
         next_ = {k: v for k, v in decide(u, limit).items() if k not in ("rerun", "continue")}
         row = {
-            **shown(u),
+            **u,
             "next": next_,
             "at": stage_at(u, next_),
             "betweenPrAndShip": between_pr_and_ship(u, limit),
@@ -779,8 +773,13 @@ def cmd_status(json, cos_dir, limit, state, out):
         rows.append(row)
 
     if json:
-        stages = [{k: v for k, v in s.items() if k != "lanes"} for s in STAGES]
-        body = {"root": cos_dir, "stages": stages, "afterAnswers": RERUN_STAGES, "units": rows}
+        p = proc_of(DEFAULT)
+        body = {
+            "root": cos_dir,
+            "stages": p.stages,
+            "afterAnswers": p.rerun("answers"),
+            "units": rows,
+        }
         out(stringify(body, 2))
         return 0
 
@@ -788,10 +787,11 @@ def cmd_status(json, cos_dir, limit, state, out):
         out("No work units yet. `write-intent` opens one.")
         return 0
 
-    out(f"| Unit | {' | '.join(STAGE_NAMES)} | Next action |")
-    out(f"|---|{'|'.join('---' for _ in STAGE_NAMES)}|---|")
+    p = proc_of(DEFAULT)
+    out(f"| Unit | {' | '.join(p.names)} | Next action |")
+    out(f"|---|{'|'.join('---' for _ in p.names)}|---|")
     for u in rows:
-        cells = " | ".join(cell(u, s["file"]) for s in STAGES)
+        cells = " | ".join(cell(u, f) for f in p.files)
         out(f"| {u['name']} | {cells} | {u['next']['action']} |")
     out(
         "\nA accepted · d draft · c changes-requested · s skipped · x rejected · "
@@ -836,7 +836,7 @@ def cmd_next(unit_name, cos_dir, repo_dir, limit, state, out, err):
     if answer.get("why") == "dependency":
         body["why"] = answer["why"]
     body["reasons"] = answer["reasons"]
-    body["process"] = PROCESS
+    body["process"] = unit["process"]
     out(stringify(body))
     return 0
 
@@ -868,7 +868,7 @@ def open_lines(stage, unit_name, head=None, rebased=None, retry=None, merged=Non
 def cmd_gate(unit_name, stage, cos_dir, repo_dir, limit, state, json, out, err):
     if not unit_name or not stage:
         err(
-            f"usage: python -m coscc.loop gate <NNNN_slug> <{'|'.join(STAGE_NAMES)}> [--json] "
+            f"usage: python -m coscc.loop gate <NNNN_slug> <{'|'.join(proc_of(DEFAULT).names)}> [--json] "
             "[--repo <dir>] --state <file|->"
         )
         return 2
@@ -892,8 +892,9 @@ def cmd_gate(unit_name, stage, cos_dir, repo_dir, limit, state, json, out, err):
         body = {"ok": ok, "lines": lines, "reasons": reasons}
         if rebased:
             body["rebased"] = rebased
-        if unit["lane"] == "fast":
-            body["via"] = ["fast-lane"]
+        via = walk(unit)[1]
+        if via:
+            body["via"] = via
         out(stringify(body))
     else:
         for line in lines:

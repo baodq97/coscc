@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from coscc.loop import BRANCH_TYPES, STAGE_NAMES
+from coscc.loop import BRANCH_TYPES, proc_of
 from coscc.loop.branch import (
     VERSION_SOURCE,
     is_prerelease,
@@ -34,6 +34,8 @@ from coscc.loop.run import ask
 from coscc.loop.model import review_from, review_rounds
 from coscc.loop import REVIEW_ROUNDS
 from tests.loop.conftest import finding_row, pr_row, python, round_row
+
+STAGE_NAMES = proc_of(None).names
 
 # --- the suite's glue -------------------------------------------------------------------
 
@@ -820,7 +822,6 @@ def test_a_review_md_with_no_rounds_cannot_ship():
 # --- 0024: the stage a run button offers ---------------------------------------------------
 
 HEAD2 = "e" * 40
-FULL_LANE = {"lane": "full", "enteredFast": False, "laneMissing": []}
 
 
 def asked(*rounds):

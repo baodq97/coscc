@@ -1,7 +1,8 @@
 """A unit, as `read_unit` builds it: its files' prose and the app's snapshot entry.
 
-The parsers above `read_unit` through `entry_unit`, the
-links, the lane, and the review-round helpers `readUnit` and the gates share. A unit is
+The parsers above `read_unit` through `entry_unit`, the links, the walk of the unit's process
+(`route`), and the review-round helpers `readUnit` and the gates share. Which file holds what is
+asked of the unit's process (`proc`), never named here. A unit is
 a dict whose keys are inserted in a fixed order, so `status --json` prints them alike. Every
 regex that reads `\\d`, `\\w` or `\\b` is `re.ASCII`, as the loop's regexes always have.
 """
@@ -13,24 +14,24 @@ import re
 from typing import Any
 
 from coscc.loop import (
-    ARTIFACTS,
     BRANCH_TYPES,
     DECIDERS,
     IDEAS,
     REVIEW_ROUNDS,
     SLUG_MAX,
     SLUG_RE,
-    SPIKE,
-    STAGES,
     UNDEFINED,
     UNIT_RE,
-    VALID,
+    Proc,
+    conditions,
     dig,
     js,
     nullish,
+    proc_of,
     trim,
     truthy,
 )
+from coscc.units import guards
 
 A = re.ASCII
 
@@ -80,13 +81,19 @@ def join_answers(questions, answers):
     return out
 
 
+def proc(unit) -> Proc:
+    """The process the unit walks: the one its snapshot entry records."""
+    return proc_of(unit.get("process") if isinstance(unit, dict) else None)
+
+
 def unit_questions(unit):
     counted = None
-    for s in STAGES:
+    stages = proc(unit).stages
+    for s in stages:
         if dig(unit["artifacts"], s["file"], "questions") not in (None, UNDEFINED):
             counted = s["file"]
     questions = []
-    for s in STAGES:
+    for s in stages:
         for q in nullish(dig(unit["artifacts"], s["file"], "questions"), []):
             asked = {k: v for k, v in q.items() if k not in ("answered", "answer")}
             questions.append({
@@ -241,12 +248,13 @@ def ended_of(unit):
     # A unit that shipped stays finished, whatever ran again after it.
     if unit.get("shipped"):
         return "finished"
-    return "closed" if any(status_of(unit, s["file"]) == "rejected" for s in STAGES) else None
+    rejected = any(status_of(unit, f) == "rejected" for f in proc(unit).files)
+    return "closed" if rejected else None
 
 
 def entry_unit(e):
-    unit: dict[str, Any] = {"artifacts": {}}
-    for file in ARTIFACTS:
+    unit: dict[str, Any] = {"artifacts": {}, "process": nullish(dig(e, "process"))}
+    for file in proc(unit).files:
         if truthy(dig(e, "artifacts", file)):
             unit["artifacts"][file] = {"status": status_in(e, file)}
     if dig(e, "shipped") is True:
@@ -319,7 +327,9 @@ def dependency(raw, unit, state):
     other = entry_unit(e)
     if dig(other, "hold", "state") == "dropped":
         return {"ref": raw, "merged": False, "why": "dropped"}
-    rejected = next((s for s in STAGES if status_of(other, s["file"]) == "rejected"), None)
+    rejected = next(
+        (s for s in proc(other).stages if status_of(other, s["file"]) == "rejected"), None
+    )
     if rejected:
         return {"ref": raw, "merged": False, "why": f"rejected: its {rejected['file']} is rejected"}
     if dig(e, "merged") is True:
@@ -365,7 +375,7 @@ WAITING_ON = "waiting on "
 
 
 def wait_on_dependencies(unit, answer):
-    if answer.get("stage") != "impl":
+    if answer.get("stage") not in proc(unit).waits:
         return answer
     kept = links_of(unit)
     if kept["waiting"]:
@@ -396,67 +406,120 @@ def missing(u, f):
 
 
 def unmeasured_of(u):
-    return nullish(dig(u, "artifacts", "spec.md", "unmeasured"), {"ids": []})
+    return nullish(dig(u, "artifacts", proc(u).file(proc(u).measured), "unmeasured"), {"ids": []})
 
 
-_SOURCE = re.compile(r"([^\s:]+)(?::(\d+)-(\d+))?", A)
+# What `read_unit` learned of the unit's outputs that `status --json` does not carry: each
+# artifact's record (`results`) and the marks of the `fast-lane` guard. Kept as `LINKS` is.
+FACTS: dict[int, tuple[object, dict]] = {}
+
+
+def facts_of(unit):
+    kept = FACTS.get(id(unit))
+    return kept[1] if kept and kept[0] is unit else {"results": {}, "marks": None}
 
 
 def _said(x):
     return isinstance(x, str) and trim(x) != ""
 
 
-def _cited(expected):
-    """Whether `expected` says something and names one relative path outside `.cos`, with its
-    lines in order when it gives lines."""
-    if not isinstance(expected, dict) or not _said(expected.get("text")):
-        return False
-    m = _SOURCE.fullmatch(str(expected.get("source") or ""))
-    if not m:
-        return False
-    path, start, end = m[1], m[2], m[3]
-    if (
-        path.startswith("/")
-        or path == ".cos"
-        or path.startswith(".cos/")
-        or ".." in path.split("/")
-    ):
-        return False
-    return start is None or (int(start) >= 1 and int(end) >= int(start))
+def field_value(unit, name, field):
+    """The value of `field` in the last output of state `name`, as the loop reads it: `judgement`
+    and `verdict` from the status they set; a skipped state has none."""
+    p = proc(unit)
+    f = p.file(name)
+    status = status_of(unit, f)
+    if status == "skipped" or not present(unit, f):
+        return None
+    if field == "judgement":
+        return "ready" if status == "accepted" else "not-ready"
+    if field == "verdict":
+        return {"accepted": "pass", "changes-requested": "changes-requested"}.get(status)
+    if field == p.measure and name == p.measured:
+        return unmeasured_of(unit)["ids"]
+    return dig(facts_of(unit)["results"], f, field) or None
 
 
-def lane_of(unit, fix=None, left_lane=None):
-    """The lane from the unit's type, intent's `fix`, which files exist, and impl's `left_lane`."""
-    fix = fix if isinstance(fix, dict) else {}
-    marks = {
-        "a": unit.get("type") == "fix",
-        "b": _said(fix.get("reproduction")),
-        "c": _cited(fix.get("expected")),
-        "d": _said(fix.get("actual")),
-        "e": not present(unit, "spec.md") and not present(unit, "plan.md") and not _said(left_lane),
-    }
-    lane = "fast" if all(marks.values()) else "full"
-    entered = marks["a"] and marks["b"] and marks["c"] and marks["d"]
-    missing_ = [k for k, v in marks.items() if not v] if marks["a"] and lane == "full" else []
-    return {"lane": lane, "enteredFast": entered, "laneMissing": missing_}
+def _is(value, want):
+    if want == "non-empty":
+        return bool(value) and (not isinstance(value, str) or _said(value))
+    if want == "empty":
+        return not _is(value, "non-empty")
+    return value == want
 
 
-def in_lane(unit, s):
-    return "lanes" not in s or nullish(unit.get("lane"), "full") in s["lanes"]
+def fast_marks(unit):
+    """The `fast-lane` guard's marks for the unit, `None` when its process has no such branch."""
+    return facts_of(unit)["marks"]
 
 
-def required(unit, s):
-    if not in_lane(unit, s):
-        return False
-    if not s.get("when"):
-        return not s.get("optional")
-    if status_of(unit, "spec.md") == "skipped":
-        return False
-    return len(unmeasured_of(unit)["ids"]) > 0
+def holds(unit, name, c):
+    """Whether condition `c` of a way out of state `name` holds for the unit."""
+    if "field" in c:
+        return _is(field_value(unit, name, c["field"]), c["is"])
+    g = c.get("guard")
+    if g == "fast-lane":
+        marks = fast_marks(unit)
+        return bool(marks) and all(marks.values())
+    if g == "spike-holds":
+        found = spike_findings(unit)
+        return not found["fails"] and not found["missing"]
+    if g == "dependency-merged":
+        return not links_of(unit)["waiting"]
+    return True
+
+
+def walk(unit):
+    """`(path, via)`: the states the unit walks from its process's start, and the guards of the
+    ways it took off the main line. From each state the first way on (to a state not walked yet)
+    whose `when` holds is taken, else the last such, the main line."""
+    p = proc(unit)
+    path, via, at = [], [], p.start
+    while at is not None and at not in path:
+        path.append(at)
+        ways = [e for e in p.info[at]["next"] if e["to"] not in path]
+        if not ways:
+            break
+        taken = next(
+            (e for e in ways if all(holds(unit, at, c) for c in conditions(e.get("when")))),
+            ways[-1],
+        )
+        if taken is not ways[-1]:
+            via += [c["guard"] for c in conditions(taken.get("when")) if "guard" in c]
+        at = taken["to"]
+    return path, via
+
+
+def route(unit):
+    return walk(unit)[0]
+
+
+def passed_over(unit, name):
+    """Why state `name` is off the unit's walk, `(code, words)`, or `None` when it is on it or
+    nothing says why."""
+    p = proc(unit)
+    path = route(unit)
+    if name in path:
+        return None
+    fast = p.fast
+    if fast and name in fast["over"] and fast["from"] in path:
+        at = path.index(fast["from"])
+        if path[at + 1 : at + 2] == [fast["to"]]:
+            return (
+                "not-in-lane",
+                f"{name} is not a stage of the fast lane: {p.file(fast['from'])} carries the fix's "
+                f"reproduction, expected and actual result, so {fast['to']} follows {fast['from']}",
+            )
+    when = (p.by_name.get(name) or {}).get("when")
+    if when:
+        source = next((e["from"] for e in p.into[name]), None)
+        return ("", f"{name} is not required: {p.file(source)} has no [{when}] item")
+    return None
 
 
 def spike_findings(unit):
-    spike = nullish(dig(unit, "artifacts", "spike.md", "spike"), {"round": None, "items": {}})
+    p = proc(unit)
+    spike = nullish(dig(unit, "artifacts", p.file(p.spike), "spike"), {"round": None, "items": {}})
     fails = []
     missing_ids = []
     reasons = []
@@ -464,14 +527,15 @@ def spike_findings(unit):
         item = dig(spike, "items", id_)
         if not item:
             missing_ids.append(id_)
-            reasons.append(f"{id_}: the spike record does not measure {id_}")
+            reasons.append(f"{id_}: the {p.spike} record does not measure {id_}")
         elif dig(item, "verdict") is None:
             missing_ids.append(id_)
-            reasons.append(f"{id_}: the spike record gives no verdict for {id_}")
+            reasons.append(f"{id_}: the {p.spike} record gives no verdict for {id_}")
         elif item["verdict"] == "fails":
             fails.append(id_)
             reasons.append(
-                f"{id_}: spike.md measured that it does not hold — spec.md must be rewritten on it"
+                f"{id_}: {p.file(p.spike)} measured that it does not hold — "
+                f"{p.file(p.measured)} must be rewritten on it"
             )
     return {
         "round": nullish(dig(spike, "round"), 1),
@@ -483,20 +547,26 @@ def spike_findings(unit):
 
 def spike_needs(unit):
     need = []
-    if not required(unit, SPIKE):
+    p = proc(unit)
+    if not p.spike or p.spike not in route(unit):
         return need
-    status = status_of(unit, "spike.md")
+    status = status_of(unit, p.file(p.spike))
     if status != "accepted":
         said = "missing" if status is None else f'"{status}"'
         need.extend(
-            f"{id_}: spike.md is {said}, not accepted" for id_ in unmeasured_of(unit)["ids"]
+            f"{id_}: {p.file(p.spike)} is {said}, not accepted"
+            for id_ in unmeasured_of(unit)["ids"]
         )
         return need
     return [*need, *spike_findings(unit)["reasons"]]
 
 
+def review_file(unit):
+    return proc(unit).file(proc(unit).review)
+
+
 def review_of(unit):
-    return nullish(dig(unit, "artifacts", "review.md", "review", "rounds"), [])
+    return nullish(dig(unit, "artifacts", review_file(unit), "review", "rounds"), [])
 
 
 def last_round(unit):
@@ -507,7 +577,7 @@ def last_round(unit):
 def incomplete_draft(unit):
     last = last_round(unit)
     return (
-        status_of(unit, "review.md") == "draft"
+        status_of(unit, review_file(unit)) == "draft"
         and last is not None
         and last["verdict"] == "incomplete"
     )
@@ -521,28 +591,33 @@ def rounds_used(unit):
     waived = any(r["verdict"] == "needs-person" for r in rounds)
     last = rounds[-1] if rounds else None
     unfinished = bool(last and last.get("unfinished"))
-    floor = (status_of(unit, "review.md") == "changes-requested" and not unfinished) or (
+    floor = (status_of(unit, review_file(unit)) == "changes-requested" and not unfinished) or (
         (incomplete_draft(unit) or unfinished) and any(r["verdict"] is None for r in rounds)
     )
     return max(asked, 1 if floor and not waived else 0)
 
 
 def review_limit(unit, limit=REVIEW_ROUNDS):
-    return limit + nullish(dig(unit, "artifacts", "review.md", "roundsGranted"), 0)
+    return limit + nullish(dig(unit, "artifacts", review_file(unit), "roundsGranted"), 0)
 
 
 def out_of_rounds(unit, limit):
     return (
-        status_of(unit, "review.md") == "changes-requested" or incomplete_draft(unit)
+        status_of(unit, review_file(unit)) == "changes-requested" or incomplete_draft(unit)
     ) and rounds_used(unit) >= review_limit(unit, limit)
 
 
 def person_answers(unit):
-    return set(nullish(dig(unit, "artifacts", "review.md", "personAnswers"), []))
+    return set(nullish(dig(unit, "artifacts", review_file(unit), "personAnswers"), []))
 
 
 def needs_person_claims(unit):
-    return nullish(dig(unit, "artifacts", "impl.md", "needsPerson"), [])
+    return nullish(dig(unit, "artifacts", proc(unit).file(proc(unit).fixer), "needsPerson"), [])
+
+
+def pr_of(unit):
+    """The pull request the unit's `open-pr` state recorded, or `None`."""
+    return nullish(dig(unit, "artifacts", proc(unit).file(proc(unit).pr), "pr"))
 
 
 def against_standard(text):
@@ -580,7 +655,7 @@ def non_blocking_ids(unit):
 
 
 def person_findings(unit):
-    if status_of(unit, "review.md") != "changes-requested":
+    if status_of(unit, review_file(unit)) != "changes-requested":
         return None
     last = last_round(unit)
     if not last or last["verdict"] != "needs-person":
@@ -687,12 +762,15 @@ def branch_for(unit_name, type_):
 
 
 def _artifact(unit, known, file):
+    p = proc(unit)
+    name = file.removesuffix(".md")
+    fields = p.info[name]["fields"]
     status = status_in(known, file)
     if status is None:
         unit["problems"].append(NO_STATUS.format(file=file))
-    elif status not in VALID[file]:
+    elif status not in p.valid[file]:
         unit["problems"].append(
-            f'{file} has status "{js(status)}", not one of {", ".join(VALID[file])}'
+            f'{file} has status "{js(status)}", not one of {", ".join(p.valid[file])}'
         )
     a: dict[str, Any] = {
         "status": status,
@@ -704,9 +782,9 @@ def _artifact(unit, known, file):
     by = nullish(dig(known, "artifacts", file, "authority"))
     if status == "skipped" and by not in DECIDERS:
         a["agentSkip"] = {"by": by}
-    if file == "pr.md":
+    if name == p.pr:
         a["pr"] = nullish(dig(known, "artifacts", file, "pr"))
-    if file == "review.md":
+    if name == p.review:
         a["review"] = review_from(nullish(dig(known, "artifacts", file, "rounds"), []))
         answers = answers_in(known, file)
         ids = [a_.get("id") for a_ in answers if not ("id" in a_ and a_["id"] is None)]
@@ -715,14 +793,14 @@ def _artifact(unit, known, file):
         if granted > 0:
             a["roundsGranted"] = granted
     result = nullish(dig(known, "artifacts", file, "result"))
-    if file == "impl.md":
+    if name == p.fixer:
         # Only the ids: a claim's sentence quotes its finding (`person_findings`).
         a["needsPerson"] = [{"id": i} for i in nullish(dig(result, "needs_person"), [])]
-    if file == "spec.md":
-        ids = list(nullish(dig(result, "unmeasured"), []))
+    if name == p.measured:
+        ids = list(nullish(dig(result, p.measure), []))
         if ids:
             a["unmeasured"] = {"ids": ids}
-    if file == "spike.md":
+    if name == p.spike and "verdicts" in fields:
         a["spike"] = {
             "round": nullish(dig(known, "artifacts", file, "round")),
             "items": {
@@ -730,11 +808,11 @@ def _artifact(unit, known, file):
                 for v in nullish(dig(result, "verdicts"), [])
             },
         }
-    if file == "ship.md":
+    if name == p.merge:
         ship = nullish(dig(known, "artifacts", file, "ship"))
         if ship and (ship.get("round") is not None or ship.get("refused") is not None):
             a["ship"] = ship
-    if file == "plan.md" and required(unit, SPIKE):
+    if name == p.rests and "rests_on" in fields and p.spike in route(unit):
         a["restsOn"] = list(nullish(dig(result, "rests_on"), []))
     questions = join_answers(
         nullish(dig(known, "artifacts", file, "questions")), answers_in(known, file)
@@ -750,7 +828,7 @@ def stale_marks(unit, known):
         record = dig(known, "artifacts", file, "record")
         if not reruns or record in (None, UNDEFINED) or not settled(status_of(unit, file)):
             continue
-        if file == "spike.md" and not unmeasured_of(unit)["ids"]:
+        if file == proc(unit).file(proc(unit).spike) and not unmeasured_of(unit)["ids"]:
             continue
         by = next((r for r in reversed(reruns) if dig(r, "stale", file) == record), None)
         if by:
@@ -760,8 +838,15 @@ def stale_marks(unit, known):
 def read_unit(dir_, name, state):  # noqa: PLR0915 - `readUnit` kept whole
     """`readUnit`: `state` is the snapshot, the one source; the directory says which artifacts
     are present."""
-    unit: dict[str, Any] = {"name": name, "artifacts": {}, "problems": []}
     known = nullish(entry_of(state, state["workspace"], name), NO_ENTRY)
+    p = proc_of(nullish(dig(known, "process")))
+    unit: dict[str, Any] = {"name": name, "artifacts": {}, "problems": [], "process": p.ref}
+    results = {
+        f: dig(known, "artifacts", f, "result")
+        for f in p.files
+        if isinstance(dig(known, "artifacts", f, "result"), dict)
+    }
+    FACTS[id(unit)] = (unit, {"results": results, "marks": None})
     match = UNIT_RE.fullmatch(name)
     if not match:
         unit["problems"].append("directory name does not match NNNN_<slug>")
@@ -769,10 +854,11 @@ def read_unit(dir_, name, state):  # noqa: PLR0915 - `readUnit` kept whole
         unit["number"] = int(match[1])
         unit["slug"] = match[2]
 
-    for file in ARTIFACTS:
+    for file in p.files:
         if os.path.exists(os.path.join(dir_, file)):
             _artifact(unit, known, file)
-    has_intent = present(unit, "intent.md")
+    opener = p.file(p.opener)
+    has_intent = present(unit, opener)
     for file, a in nullish(dig(known, "artifacts"), {}).items():
         if not dig(a, "status") or file in unit["artifacts"]:
             continue
@@ -795,22 +881,23 @@ def read_unit(dir_, name, state):  # noqa: PLR0915 - `readUnit` kept whole
     unit["personFindings"] = nullish(person_findings(unit), [])
     unit["nonBlocking"] = non_blocking(unit)
 
-    stray = [f for f in sorted(os.listdir(dir_)) if f not in ARTIFACTS]
+    stray = [f for f in sorted(os.listdir(dir_)) if f not in p.files]
     if stray:
         unit["problems"].append(f"unexpected file(s): {', '.join(stray)}")
 
     unit["phase"] = "started"
-    if not unit["artifacts"].get("intent.md"):
-        idea = unit["artifacts"].get("idea.md")
-        idea_valid = (
-            bool(idea) and idea["status"] is not None and idea["status"] in VALID["idea.md"]
+    if not unit["artifacts"].get(opener):
+        at = p.at(p.opener)
+        before = [unit["artifacts"].get(f) for f in p.files[:at]]
+        valid = any(
+            a and a["status"] is not None and a["status"] in p.valid[f]
+            for f, a in zip(p.files[:at], before)
         )
-        at = next(i for i, s in enumerate(STAGES) if s["name"] == "intent")
-        later = any(present(unit, s["file"]) for s in STAGES[at + 1 :])
-        if idea_valid and not later:
+        later = any(present(unit, f) for f in p.files[at + 1 :])
+        if valid and not later:
             unit["phase"] = "pre-intent"
         else:
-            unit["problems"].append("no intent.md — every unit opens with one")
+            unit["problems"].append(f"no {opener} — every unit opens with one")
     else:
         type_ = nullish(dig(known, "type"))
         if type_ is None:
@@ -822,10 +909,21 @@ def read_unit(dir_, name, state):  # noqa: PLR0915 - `readUnit` kept whole
         else:
             unit["type"] = type_
         unit["branch"] = nullish(branch_for(name, type_).get("branch"))
-    left_lane = dig(known, "artifacts", "impl.md", "result", "left_lane")
-    unit.update(lane_of(unit, dig(known, "artifacts", "intent.md", "result", "fix"), left_lane))
-    if unit["enteredFast"] and status_of(unit, "impl.md") == "draft" and _said(left_lane):
-        unit["artifacts"]["impl.md"]["leftLane"] = True
+    unit["process"] = unit.pop("process")
+    if p.fast:
+        target = p.file(p.fast["to"])
+        back = any(_said(dig(results, target, f)) for f in p.fast["back"])
+        marks = guards.fast_lane_marks(
+            {
+                "type": unit.get("type"),
+                "fix": dig(results, p.file(p.fast["from"]), "fix"),
+                "bypassed": back or any(present(unit, p.file(n)) for n in p.fast["passed"]),
+            }
+        )
+        FACTS[id(unit)][1]["marks"] = marks
+        entered = all(marks[k] for k in "abcd")
+        if entered and status_of(unit, target) == "draft" and back:
+            unit["artifacts"][target]["leftLane"] = True
 
     # An idea is held too; with no intent.md a problem names no file.
     held = fold_holds(nullish(dig(known, "holds"), []))
@@ -837,7 +935,7 @@ def read_unit(dir_, name, state):  # noqa: PLR0915 - `readUnit` kept whole
         unit["shipped"] = True
     ended = ended_of(unit)
     if ended and unit["hold"]:
-        carrier = "intent.md" if has_intent else "the unit"
+        carrier = opener if has_intent else "the unit"
         unit["problems"].append(
             f"{carrier} carries a hold block, but the unit is {ended} — it is ignored"
         )

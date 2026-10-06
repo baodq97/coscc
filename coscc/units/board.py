@@ -178,6 +178,8 @@ async def read(
             "name": u.get("name", ""),
             "number": u.get("number"),
             "slug": u.get("slug"),
+            # The process the unit walks, `<pack>/<name>`, as its row records it.
+            "process": str(u.get("process") or ""),
             "stages": _stage_rows(stages, u.get("artifacts") or {}),
             # Carried through rather than recomputed.
             "next": (u.get("next") or {}).get("action", ""),

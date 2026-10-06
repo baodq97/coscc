@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import json
 
-from coscc.loop import RERUNNABLE
+from coscc.loop import proc_of
 from tests.loop.conftest import UnitStore, entry, expect, header, python, rerun_row
+
+RERUNNABLE = proc_of(None).rerun("fresh")
 
 UNIT = "0001_x"
 KINDS = {

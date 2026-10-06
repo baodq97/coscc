@@ -15,10 +15,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from coscc.loop import STAGE_NAMES, stringify
+from coscc.units import guards
+
+from coscc.loop import proc_of, stringify
+from coscc.loop import model
 from coscc.loop.model import (
     WAITING_ON,
-    lane_of,
     parse_unit_ref,
     read_unit,
 )
@@ -31,7 +33,6 @@ from tests.loop.test_model import (
     check_gate,
     next_step,
     CHAIN,
-    FULL_LANE,
     SHA,
     PR,
     art,
@@ -45,8 +46,9 @@ from tests.loop.test_model import (
     fr,
     review_art,
     round_,
-    unit,
 )
+
+STAGE_NAMES = proc_of(None).names
 
 # --- the suite's glue -------------------------------------------------------------------
 
@@ -665,44 +667,37 @@ def intent_of(type="fix", status="accepted"):
     return f"# Intent: x\nAuthor: t. Type: {type}. Status: {status}.\n"
 
 
-def lane_for(fix=FIX, artifacts=None, left_lane=None, type="fix"):
-    artifacts = artifacts or {"intent.md": art("accepted")}
-    return lane_of({**unit(artifacts), "type": type}, fix, left_lane)
-
-
-FAST = {"lane": "fast", "enteredFast": True, "laneMissing": []}
+def missing_marks(fix=FIX, bypassed=False, type="fix"):
+    """The `fast-lane` guard's marks that do not hold."""
+    marks = guards.fast_lane_marks({"type": type, "fix": fix, "bypassed": bypassed})
+    return [k for k, v in marks.items() if not v]
 
 
 def test_a_fix_with_its_reproduction_a_cited_expected_result_and_the_actual_one_is_fast():
-    assert lane_for() == FAST
-    assert lane_for(fix_with(source="docs/x.md")) == FAST
-    assert lane_for(fix_with(source="README.md")) == FAST
+    assert missing_marks() == []
+    assert missing_marks(fix_with(source="docs/x.md")) == []
+    assert missing_marks(fix_with(source="README.md")) == []
+    assert guards.fast_lane({"type": "fix", "fix": FIX}).open is True
 
 
-def test_a_unit_that_is_not_a_fix_is_in_the_full_lane_and_nothing_is_missing_for_it():
-    assert lane_for(type="feat") == FULL_LANE
-    assert lane_of({**unit({}), "type": None}) == FULL_LANE
+def test_a_unit_that_is_not_a_fix_is_not_fast():
+    assert missing_marks(type="feat") == ["a"]
+    assert guards.fast_lane({"type": "feat", "fix": FIX}).reasons == ("not-in-lane",)
 
 
-def test_a_fix_missing_one_mark_is_in_the_full_lane_and_lane_missing_names_that_mark():
-    def missing(fix):
-        got = lane_for(fix)
-        assert got["lane"] == "full"
-        return got["laneMissing"]
-
-    assert missing(fix_with(reproduction="")) == ["b"]
-    assert missing(fix_with(reproduction="  ")) == ["b"]
-    assert missing(fix_with(text="")) == ["c"]
-    assert missing(fix_with(actual="")) == ["d"]
-    assert missing(fix_with(actual="   ")) == ["d"]
-    assert missing(fix_with(reproduction="", text="", actual="")) == ["b", "c", "d"]
-    assert missing(None) == ["b", "c", "d"]
-    assert lane_of({**unit({}), "type": "fix"})["laneMissing"] == ["b", "c", "d"]
+def test_a_fix_missing_one_mark_is_not_fast_and_the_marks_say_which():
+    assert missing_marks(fix_with(reproduction="")) == ["b"]
+    assert missing_marks(fix_with(reproduction="  ")) == ["b"]
+    assert missing_marks(fix_with(text="")) == ["c"]
+    assert missing_marks(fix_with(actual="")) == ["d"]
+    assert missing_marks(fix_with(actual="   ")) == ["d"]
+    assert missing_marks(fix_with(reproduction="", text="", actual="")) == ["b", "c", "d"]
+    assert missing_marks(None) == ["b", "c", "d"]
 
 
 def test_the_expected_result_cites_one_relative_path_outside_cos_and_says_something_besides():
     def c(source):
-        return lane_for(fix_with(source=source))["laneMissing"]
+        return missing_marks(fix_with(source=source))
 
     assert c("/etc/passwd") == ["c"]
     assert c(".cos/0001_x/spec.md") == ["c"]
@@ -715,15 +710,8 @@ def test_the_expected_result_cites_one_relative_path_outside_cos_and_says_someth
     assert c("coscc/units/guards.py") == []
 
 
-def test_a_spec_a_plan_or_a_left_lane_in_the_impl_record_keeps_a_fix_in_full_and_it_still_entered():
-    left = {"lane": "full", "enteredFast": True, "laneMissing": ["e"]}
-    draft = {"intent.md": art("accepted"), "spec.md": art("draft")}
-    assert lane_for(artifacts=draft) == left
-    planned = {"intent.md": art("accepted"), "plan.md": art("accepted")}
-    assert lane_for(artifacts=planned) == left
-    assert lane_for(left_lane=LEFT) == left
-    assert lane_for(left_lane="") == FAST
-    assert lane_for(left_lane=None) == FAST
+def test_a_state_the_branch_passes_over_keeps_a_fix_off_it_and_it_still_entered():
+    assert missing_marks(bypassed=True) == ["e"]
 
 
 def lane_tree(tmp_path, files, statuses, fix=FIX, left_lane=None, holds=None, reruns=None):
@@ -843,10 +831,9 @@ def test_review_and_ship_ask_a_fix_in_the_fast_lane_what_they_ask_one_in_the_ful
     fast_chain = {"intent.md": art("accepted"), "impl.md": art("accepted"), "pr.md": PR}
 
     def both(extra):
-        return [
-            branched({**CHAIN, **extra}),
-            {**branched({**fast_chain, **extra}), "lane": "fast"},
-        ]
+        fast = branched({**fast_chain, **extra})
+        model.FACTS[id(fast)] = (fast, {"results": {}, "marks": dict.fromkeys("abcde", True)})
+        return [branched({**CHAIN, **extra}), fast]
 
     red = green_probe([{"name": "tests", "bucket": "fail"}])
     probes = [
