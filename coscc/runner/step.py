@@ -45,6 +45,7 @@ from coscc.units import guards
 from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
 
+from coscc.runner import run as run_mod
 from coscc.runner.prompt import _read, compose_prompt, submit_prompt, PROGRESS_FILE
 from coscc.runner.review import (
     _round_number,
@@ -67,7 +68,6 @@ from coscc.runner.reply import (
     _hit_ceiling,
 )
 from coscc.runner.attempt import (
-    CLAUDE_CODE_PRESET,
     branch_of,
     snapshot,
     _head_of,
@@ -449,32 +449,24 @@ async def _compose(
     return head, prompt, envelope
 
 
-def _session_kw(
-    workspace: str,
-    cwd: str,
+def _runs_as(
+    stage: str,
+    grant: Grant,
     model: str | None,
     effort: str | None,
-    grant: Grant,
     agent: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """What every session of a step is given beyond its prompt, each named only when it differs."""
-    # The same condition that decides whether a gate and a tool list are sent.
-    preset = CLAUDE_CODE_PRESET if grant.opens_anything else None
-    # Only beside a preset: a tool-less session's argv is unchanged.
-    settings = agents.settings_json(agent) if agent is not None and preset else None
-    return {
-        # Only named when it differs, so a stand-in `stream` without a `workspace` parameter keeps
-        # working for a plain step.
-        **({"workspace": workspace} if cwd != workspace else {}),
-        # The same: a stand-in with no `model` parameter keeps working for a step nobody resolved a
-        # model for.
-        **({"model": model} if model is not None else {}),
-        **({"effort": effort} if effort is not None else {}),
-        # And again: a tool-less step passes nothing, so it gets the session it always got.
-        **({"system_prompt": dict(preset)} if preset else {}),
-        # Only a preset session with an agent row passes it.
-        **({"settings": settings} if settings is not None else {}),
-    }
+) -> run_mod.Agent:
+    """The step as `run_mod` opens its session: Claude Code's system prompt for a grant that opens
+    anything, and the commit attribution only beside it, so a tool-less session's argv is
+    unchanged."""
+    return run_mod.Agent(
+        stage,
+        grant,
+        model=model,
+        effort=effort,
+        settings=agents.settings_json(agent) if agent is not None else None,
+        preset=grant.opens_anything,
+    )
 
 
 def _turn_kw(
@@ -582,31 +574,6 @@ def config_sources(
         "max_turns_source": ceilings["max_turns_source"],
         "max_budget_source": ceilings["max_budget_source"],
     }
-
-
-def tell_config(
-    recorder: Any,
-    model: str | None,
-    effort: str | None,
-    sources: Mapping[str, str],
-    turns: int,
-    budget: float | None,
-) -> None:
-    """The recorder's `config` event: the values the session about to open is handed, with where
-    each came from (`config_sources`). Nothing here may change the step."""
-    try:
-        recorder.config(
-            model=model,
-            model_source=sources["model_source"],
-            effort=effort,
-            effort_source=sources["effort_source"],
-            max_turns=turns,
-            max_turns_source=sources["max_turns_source"],
-            max_budget_usd=budget,
-            max_budget_source=sources["max_budget_source"],
-        )
-    except Exception:
-        log.exception("the config of a session was not recorded")
 
 
 def _owner(
@@ -1615,11 +1582,11 @@ class Runner:
             meta=meta,
             state_file=state_file,
         )
-        kw = _session_kw(workspace, cwd, model, effort, grant, agent)
         channel = _channel_for(
             grant, recorder, stage, directory, artifact, head, open_ids, claims_round
         )
         grant, servers = self._with_tools(grant, channel, facts, ledger)
+        runs_as = _runs_as(stage, grant, model, effort, agent)
         start_at = self._write_start(
             was.get("start_at"),
             resume,
@@ -1707,11 +1674,10 @@ class Runner:
                 session_id,
                 turns_left,
                 budget_left,
-                grant,
+                runs_as,
                 denials,
                 watch,
                 directory,
-                kw,
                 running,
                 owner,
                 resume,
@@ -1807,7 +1773,7 @@ class Runner:
                 grant=grant,
                 head=head,
                 agent=agent,
-                kw=kw,
+                kw=dict(run_mod.session_kw(runs_as, cwd, workspace)),
                 owner=owner,
                 resume=resume,
                 turn_kind=turn_kind,
@@ -1992,11 +1958,10 @@ class Runner:
         session_id: str,
         turns_left: int,
         budget_left: float | None,
-        grant: Grant,
+        runs_as: run_mod.Agent,
         denials: Denials,
         watch: str | None,
         directory: Path,
-        kw: dict[str, Any],
         running: steps.Running | None,
         owner: dict[str, Any],
         resume: dict[str, Any] | None,
@@ -2014,11 +1979,13 @@ class Runner:
         has none).
 
         The recorder is handed the segment's `config` first, so it comes before any SDK event: the
-        model and effort as `kw` has them, the two ceilings as the session gets them, and the
-        sources the owner keeps."""
+        model and effort it runs on, the two ceilings as the session gets them, and the sources
+        the owner keeps."""
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
         if recorder is not None:
-            tell_config(recorder, kw.get("model"), kw.get("effort"), owner, turns_left, budget_left)
+            run_mod.tell_config(
+                recorder, runs_as.model, runs_as.effort, owner, turns_left, budget_left
+            )
         if turn_kind in ("opening", "closing"):
             return nothing()
         made = self._scratch(workspace, unit)
@@ -2030,16 +1997,16 @@ class Runner:
             ram_cap=scratch_mod.RAM_CAP,
             branch="" if watch else await branch_of(cwd),
         )
-        return self.sessions.stream(
+        return run_mod.open_session(
+            self.sessions,
+            runs_as,
             cwd,
             prompt,
-            session_id or None,
-            max_turns=turns_left,
-            gate=Gate(grant, places, denials, ledger),
-            # The grant's list, `[]` when empty: `None` would fall back to `COS_TOOLS`.
-            tools=list(grant.tools),
-            max_budget_usd=budget_left,
-            **kw,
+            session_id,
+            turns=turns_left,
+            budget=budget_left,
+            gate=Gate(runs_as.grant, places, denials, ledger),
+            workspace=workspace,
             # Only a board step has a row.
             **({"step": running.handle, "owner": owner} if running is not None else {}),
             # Only on a step taken up again.
@@ -2287,21 +2254,20 @@ class Runner:
                 or modeltrial.NEVER_STARTED,
             )
         if journal is not None and record:
-            journal.finished(
+            run_mod.ended(
+                journal,
                 journal_key,
                 unit,
                 stage,
-                outcome,
+                run_mod.status_of(outcome),
+                outcome=outcome,
+                agent=stage,
                 session_id=session_id,
+                model=kw.get("model"),
+                denials=denials,
+                cost=cost_fields,
                 artifact=artifact if outcome == "done" else None,
                 detail=detail or None,
-                denials=denials.count,
-                denied=denials.reasons or None,
-                # Every step that may run a command says how many it was refused for running in the
-                # background, zero included.
-                **({"background": denials.background} if "Bash" in grant.tools else {}),
-                # The calls `auto` is estimated to have sent to its classifier: its time signal.
-                classified=denials.classified,
                 models_used=models_used or None,
                 terminal=terminal or None,
                 **(
@@ -2312,7 +2278,6 @@ class Runner:
                     if outcome == "stopped"
                     else {}
                 ),
-                **cost_fields,
                 # The `Author:` the artifact carries, as written: `""` for none, never checked against the
                 # table and never a reason to refuse.
                 **(

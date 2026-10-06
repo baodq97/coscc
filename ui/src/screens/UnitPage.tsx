@@ -103,7 +103,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         ) : tab === "outputs" ? (
           <Outputs outputs={d.outputs} names={names} />
         ) : (
-          <Timeline detail={d} names={names} live={running?.stage} cwd={placed.workspace.path} unit={placed.name} />
+          <Timeline detail={d} names={names} live={running?.stage} cwd={placed.workspace.path} />
         )}
       </div>
       <aside className="props">
@@ -285,9 +285,9 @@ function FieldValue({ value }: { value: unknown }) {
 
 type Item = { at: string; key: string; node: ReactNode };
 
-function Timeline({ detail, names, live, cwd, unit }: { detail: Detail; names: Record<string, string>; live?: string; cwd: string; unit: string }) {
+function Timeline({ detail, names, live, cwd }: { detail: Detail; names: Record<string, string>; live?: string; cwd: string }) {
   const items: Item[] = [
-    ...detail.runs.map((r, i) => ({ at: r.ended || r.started, key: `run-${i}`, node: <RunItem run={r} name={names[r.stage] ?? r.stage} live={!r.ended && r.stage === live} cwd={cwd} unit={unit} /> })),
+    ...detail.runs.map((r, i) => ({ at: r.ended || r.started, key: `run-${i}`, node: <RunItem run={r} name={names[r.stage] ?? r.stage} live={!r.ended && r.stage === live} cwd={cwd} /> })),
     ...answeredGroups(detail.answers).map((g, i) => ({ at: g.date, key: `ans-${i}`, node: <AnswerItem group={g} /> })),
   ].sort((a, b) => b.at.localeCompare(a.at));
   if (!items.length)
@@ -305,7 +305,7 @@ function Timeline({ detail, names, live, cwd, unit }: { detail: Detail; names: R
   );
 }
 
-function RunItem({ run, name, live, cwd, unit }: { run: UnitRun; name: string; live: boolean; cwd: string; unit: string }) {
+function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: boolean; cwd: string }) {
   const [shown, setShown] = useState(live);
   const stopped = run.ended && run.outcome !== "done";
   const verb = live ? "is working on" : stopped ? run.outcome : "finished";
@@ -338,7 +338,7 @@ function RunItem({ run, name, live, cwd, unit }: { run: UnitRun; name: string; l
             {shown ? "Hide what it did" : "What it did"}
           </button>
         )}
-        {run.run && shown && <RunLog cwd={cwd} unit={unit} run={run.run} live={live} />}
+        {run.run && shown && <RunLog cwd={cwd} run={run.run} live={live} />}
       </div>
     </div>
   );

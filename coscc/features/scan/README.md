@@ -13,8 +13,9 @@ schedule's tick are all in it. Its Proposals panel on Up next is `ui/index.tsx`.
    (pending, accepted, dismissed with why; newest first, 2,000 characters at most, the count cut
    recorded) and at most 25 interventions, oldest first.
 4. Opens one `scan` session (`Ctx.agents.session`): the grant `scan` in `coscc/agent/policy.py`, the
-   model of the Agents page row `estimate`, `submit` only, 2 turns, $0.68. It is a run in the run
-   log like the estimate's, so `/cost` counts it.
+   session's own row (`SESSION.model`, unless the Agents page overrides `scan`), `submit` only,
+   2 turns, $0.68. It is a run (`coscc/runner/run.py`) like every agent's, so Insights counts it
+   and opens it.
 5. Keeps each proposal that keeps the rules (`problems_of`), at most 8, as `pending`; records why
    the rest were dropped; moves the cursor to the last intervention the prompt held. A session
    that handed back no object is `failed` and the cursor stays.

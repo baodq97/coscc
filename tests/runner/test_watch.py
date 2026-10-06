@@ -12,6 +12,7 @@ from coscc.runlog import events as events_mod
 from coscc.config import Config
 from coscc.kernel import Invalid
 from coscc.http.app import Core
+from coscc.runner.run import LIVE
 from tests.http.test_app import create_sync
 from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
@@ -53,7 +54,6 @@ class AStepCanBeWatched(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = self.made["unit"]
-        self.other = create_sync(self.core, str(self.repo), "another", "words")["unit"]
         (Path(self.made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
         )
@@ -72,32 +72,26 @@ class AStepCanBeWatched(unittest.TestCase):
             self.release = asyncio.Event()
             reader = asyncio.create_task(self._drain())
             while (
-                not self.core.steps.recorders
+                not self._live()
                 # The `config` event, then the refusals.
-                or next(iter(self.core.steps.recorders.values())).seq < self.N + 1
+                or next(iter(self._live().values())).seq < self.N + 1
             ):
                 await asyncio.sleep(0.01)
-            [run] = list(self.core.steps.recorders)
+            [run] = list(self._live())
             listed = self.core.boards.running(ws)["running"][self.unit][0]["run"]
             steps_run = self.core.steps.running_steps(ws)[0]["run"]
-            live = self.core.watch.events_page(ws, self.unit, run)
-            older = self.core.watch.events_page(
-                ws, self.unit, run, before=live["first_seq"], limit=9999
-            )
-            one = self.core.watch.events_page(ws, self.unit, run, seq=7)
-            with self.assertRaises(Invalid):
-                self.core.watch.events_page(ws, self.other, run)
+            live = self.core.watch.events_page(ws, run)
+            older = self.core.watch.events_page(ws, run, before=live["first_seq"], limit=9999)
+            one = self.core.watch.events_page(ws, run, seq=7)
             followed: list[int] = []
 
             async def follow():
-                async for kind, batch in self.core.watch.follow_events(
-                    ws, self.unit, run, after=100
-                ):
+                async for kind, batch in self.core.watch.follow_events(ws, run, after=100):
                     self.assertEqual(kind, "events")
                     followed.extend(e["seq"] for e in batch)
 
             # The follower is subscribed before the step goes on.
-            recorder = self.core.steps.recorders[run]
+            recorder = LIVE[run]
             others = len(recorder.subscribers)
             follower = asyncio.create_task(follow())
             for _ in range(500):
@@ -107,18 +101,18 @@ class AStepCanBeWatched(unittest.TestCase):
             self.release.set()
             await reader
             await asyncio.wait_for(follower, 10)
-            after = self.core.watch.events_page(ws, self.unit, run)
-            after_older = self.core.watch.events_page(
-                ws, self.unit, run, before=live["first_seq"], limit=9999
-            )
-            ended = [i async for i in self.core.watch.follow_events(ws, self.unit, run, after=0)]
+            after = self.core.watch.events_page(ws, run)
+            after_older = self.core.watch.events_page(ws, run, before=live["first_seq"], limit=9999)
+            ended = [i async for i in self.core.watch.follow_events(ws, run, after=0)]
             return run, listed, steps_run, live, older, one, followed, after, after_older, ended
 
         run, listed, steps_run, live, older, one, followed, after, after_older, ended = asyncio.run(
             go()
         )
         self.assertEqual((listed, steps_run), (run, run))
-        self.assertEqual(live["status"], "running")
+        self.assertEqual(
+            (live["status"], live["unit"], after["unit"]), ("running", self.unit, self.unit)
+        )
         self.assertEqual([e["seq"] for e in live["events"]], list(range(self.N - 198, self.N + 2)))
         self.assertTrue(live["has_older"])
         self.assertEqual(len(older["events"]), events_mod.PAGE_MAX)
@@ -133,10 +127,15 @@ class AStepCanBeWatched(unittest.TestCase):
         self.assertEqual(after_older["events"], older["events"])
         self.assertEqual([k for k, _ in ended], ["status"])
         self.assertEqual(ended[0][1]["status"], "ended")
-        self.assertEqual(self.core.steps.recorders, {})
+        self.assertEqual(self._live(), {})
         [start] = [r for r in self.core.ws.journal().records(kind="start")]
         [end] = [r for r in self.core.ws.journal().records(kind="end")]
         self.assertEqual((start["run"], end["run"], end["events_lost"]), (run, run, 0))
+
+    def _live(self):
+        """The recorders of this test's workspace that run now."""
+        key = self.core.ws.key(str(self.repo))
+        return {run: r for run, r in LIVE.items() if r.workspace == key}
 
     async def _drain(self):
         async for _ in self.core.steps.run_step(str(self.repo), self.unit, "spec"):
@@ -144,9 +143,9 @@ class AStepCanBeWatched(unittest.TestCase):
 
     def test_a_run_nobody_knows_is_refused_and_a_step_the_gate_closes_leaves_no_recorder(self):
         with self.assertRaises(Invalid):
-            self.core.watch.events_page(str(self.repo), self.unit, "nope")
+            self.core.watch.events_page(str(self.repo), "nope")
         with self.assertRaises(Invalid):
-            self.core.watch.events_page(str(self.repo), self.unit, "")
+            self.core.watch.events_page(str(self.repo), "")
 
         async def refused():
             async for _ in self.core.steps.run_step(str(self.repo), self.unit, "ship"):
@@ -154,4 +153,4 @@ class AStepCanBeWatched(unittest.TestCase):
 
         with self.assertRaises(Invalid):
             asyncio.run(refused())
-        self.assertEqual(self.core.steps.recorders, {})
+        self.assertEqual(self._live(), {})

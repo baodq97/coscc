@@ -334,8 +334,11 @@ class TakingUpAfterAnUpdate(_Base):
             rows = self.journal.records(self.key, kind="resume")
             self.assertEqual({r["result"] for r in rows}, {"failed"})
             self.assertTrue(all(r["detail"] for r in rows))
-            # An estimate had a `start`; each ends `failed`. A chat turn had none.
-            self.assertEqual(sorted(e["stage"] for e in self.ends()), ["estimate", "estimate"])
+            # Each had a `start`, and each ends `failed`.
+            self.assertEqual(
+                sorted(e["agent"] for e in self.ends()), ["chat", "chat", "estimate", "estimate"]
+            )
+            self.assertEqual({e["status"] for e in self.ends()}, {"failed"})
 
     def test_a_session_of_a_kind_no_owner_takes_up_ends_failed(self):
         self.paused("precedent")
@@ -406,7 +409,7 @@ class TakingUpAfterAnUpdate(_Base):
         [call] = streamed
         self.assertEqual((call["session_id"], call["resume_at"], call["max_turns"]), (SID, "u2", 1))
 
-    def test_a_chat_turn_with_its_one_turn_used_is_not_taken_up(self):
+    def test_a_chat_turn_with_its_one_turn_used_opens_nothing_and_ends_at_its_ceiling(self):
         streamed: list[dict] = []
 
         async def stream(cwd, text, session_id=None, **kw):
@@ -416,13 +419,18 @@ class TakingUpAfterAnUpdate(_Base):
 
         self.core.sessions.stream = stream  # type: ignore[method-assign]
         self.paused("chat", api_calls=1)
-        [said] = self.up()
+
+        async def go():
+            said = await self.core.resume.resume_after_update()
+            await asyncio.gather(*list(resume_mod._TASKS))
+            return said
+
+        [said] = asyncio.run(go())
         self.assertEqual(streamed, [])
-        self.assertEqual(said["result"], "failed")
-        self.assertIn("error_max_turns", said["detail"])
-        [row] = self.journal.records(self.key, kind="resume")
-        self.assertEqual(row["result"], "failed")
-        self.assertEqual(self.ends(), [])
+        self.assertEqual(said["result"], "resumed")
+        [end] = self.ends()
+        self.assertEqual((end["agent"], end["status"]), ("chat", "paused-budget"))
+        self.assertIn("error_max_turns", end["detail"])
 
     def test_a_refused_resume_ends_failed_without_a_new_session(self):
         # The CLI refusing the id, or `Sessions` finding another in `init`, is the end.

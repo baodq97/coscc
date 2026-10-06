@@ -38,11 +38,12 @@ from coscc.kernel import (
     Runs,
     Settings,
     State,
-    Submitted,
+    Run,
     Units,
     arm_of,
 )
 from coscc.runner import queue
+from coscc.runner import run as run_mod
 from coscc.runner.interventions import interventions
 from coscc.update.updater import refuse_while_updating
 from coscc.units.workspaces import Workspaces
@@ -200,19 +201,26 @@ def ctx_of(core: Core, feature: Feature) -> Ctx:
             limit,
         )
 
-    async def session(workspace: str, kind: str, prompt: str) -> Submitted:
-        """The estimate's session (`Backlog.submitting`), held by an attempt of `kind`."""
+    async def session(workspace: str, kind: str, prompt: str) -> Run:
+        """One run of the feature's session `kind` (`run_mod.run`), held by an attempt of `kind`."""
         key = workspace_key(workspace)
         refuse_while_updating(core.updater)
         journal = core.ws.journal()
         if journal is None:
             raise Invalid("no working folder is set, so a session cannot be recorded")
+        own = next((s for s in feature.sessions if s.kind == kind), None)
+        if own is None:
+            raise Invalid(f"{feature.name} has no session {kind!r}")
         attempt = core.holds.attempts.open(kind, key, "", kind)["id"]
         core.holds.attempts.move(attempt, "running")
         outcome = "failed"
-        got = Submitted(None, {}, "", "the session ended before it handed anything back")
+        got = Run("cancelled", detail="the session ended before it handed anything back")
         try:
-            stream = core.backlog.submitting(workspace, key, journal, kind, prompt)
+            stream = run_mod.run(
+                core.models.agent(kind, policy.grant_for(kind), own.model, own.effort),
+                run_mod.Input(workspace, prompt, key, channel=submit.Collector(kind)),
+                ctx=run_mod.Ctx(core.sessions, journal, core.config.data_dir),
+            )
             try:
                 async for item, payload in stream:
                     if item == "done":
@@ -223,8 +231,8 @@ def ctx_of(core: Core, feature: Feature) -> Ctx:
         except Suspended:
             # What it spent is read off its transcript only after this, and lands in the run
             # log's `end` once the app is back (`Resume._end_unresumed`).
-            got = Submitted(
-                None, {}, "", "an update paused the session; what it spent is in the run log"
+            got = Run(
+                "cancelled", detail="an update paused the session; what it spent is in the run log"
             )
         except asyncio.CancelledError:
             outcome = "interrupted"

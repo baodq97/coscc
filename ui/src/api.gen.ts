@@ -506,6 +506,7 @@ export type StepEvent = {
   "seq": number;
   "at": number;
   "kind": string;
+  "agent_id"?: string;
   "role"?: string;
   "text"?: string;
   "thinking"?: string;
@@ -643,12 +644,12 @@ export type Get = {
   "/api/features/shown": Shown[];
   "/api/insights": Insights;
   "/api/release": ReleaseView | null;
+  "/api/runs/{run}": EventsPage;
   "/api/scan/proposals": Proposals;
   "/api/settings/autopilot": AutopilotSettings;
   "/api/units": Cards;
   "/api/units/next": NextStep;
   "/api/units/{name}": Detail;
-  "/api/units/{name}/runs/{run}": EventsPage;
   "/api/update": UpdateStatus;
   "/api/vault/leaks": Leaks;
   "/api/vault/secrets": Secrets;

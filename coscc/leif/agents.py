@@ -17,6 +17,7 @@ from coscc.agent import agents, models, modeltrial, policy
 from coscc.config import Config
 from coscc.kernel import OWNER, Invalid
 from coscc.leif import decide
+from coscc.runner import run as run_mod
 from coscc.store.db import Busy, Data, Unusable
 from coscc.store.journal import BadRecord, Journal
 from coscc.units import board as board_reader
@@ -405,6 +406,39 @@ class Models:
     def effort_overrides(self) -> tuple[dict[str, models.Value], list[str]]:
         return models.overrides_from(
             Data(self.config.data_dir).pref_rows(models.EFFORT_PREFIX), models.EFFORT_PREFIX
+        )
+
+    def agent(
+        self,
+        key: str,
+        grant: policy.Grant,
+        model: str | None = None,
+        effort: str | None = None,
+    ) -> run_mod.Agent:
+        """The `run` agent of a session no stage runs: the estimate, a feature's session (whose own
+        `model` and `effort` stand where no override and no shipped row name one) and chat, on the
+        grant's own ceilings."""
+        defaults, _ = models.load_defaults()
+        defaults.setdefault(key, {"model": model, "effort": effort})
+        model, model_source, effort, effort_source = models.resolve(
+            key,
+            None,
+            self.model_overrides()[0],
+            self.effort_overrides()[0],
+            defaults,
+            self.config.model,
+        )
+        return run_mod.Agent(
+            key,
+            grant,
+            model=model,
+            effort=effort,
+            sources={
+                "model_source": model_source,
+                "effort_source": effort_source,
+                "max_turns_source": models.DEFAULT,
+                "max_budget_source": models.DEFAULT if grant.max_budget_usd else models.NONE,
+            },
         )
 
     def model_for(self, name: str) -> tuple[str | None, str]:

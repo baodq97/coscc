@@ -1,5 +1,6 @@
 // What one run did, call by call: the agent's words, each tool it used and on what, what was
-// refused or failed, and how it ended. A running run is followed live; an ended one is read once.
+// refused or failed, and how it ended. Any agent's run, with a unit or none (an estimate, a scan,
+// a chat turn). A running run is followed live; an ended one is read once.
 
 import { useEffect, useRef, useState } from "react";
 import type { EventsPage, StepEvent } from "../api.gen";
@@ -35,7 +36,7 @@ function firstLine(content: unknown): string {
   return text.trim().split("\n")[0].slice(0, 200);
 }
 
-export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; run: string; live: boolean }) {
+export function RunLog({ cwd, run, live }: { cwd: string; run: string; live: boolean }) {
   const [page, setPage] = useState<EventsPage | null>(null);
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [error, setError] = useState<Error | null>(null);
@@ -43,14 +44,14 @@ export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; ru
 
   useEffect(() => {
     api
-      .get("/api/units/{name}/runs/{run}", { cwd, name: unit, run, limit: PAGE })
+      .get("/api/runs/{run}", { cwd, run, limit: PAGE })
       .then((p) => {
         setPage(p);
         setEvents((now) => merged(p.events, now));
         setFollowing(p.status === "running");
       })
       .catch(setError);
-  }, [cwd, unit, run]);
+  }, [cwd, run]);
 
   const last = useRef(0);
   last.current = events.length ? events[events.length - 1].seq : 0;
@@ -59,7 +60,7 @@ export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; ru
   useEffect(() => {
     if (!following || !ready) return;
     const query = new URLSearchParams({ cwd, after: String(last.current) });
-    const source = new EventSource(`/api/units/${encodeURIComponent(unit)}/runs/${encodeURIComponent(run)}/follow?${query}`);
+    const source = new EventSource(`/api/runs/${encodeURIComponent(run)}/follow?${query}`);
     source.onmessage = (m) => setEvents((now) => merged(now, JSON.parse(m.data) as StepEvent[]));
     // The server ends each stream after a while, or cuts a reader that fell behind: follow again
     // from what has arrived. `done` and `status` mean the run is no longer running here.
@@ -76,7 +77,7 @@ export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; ru
     source.addEventListener("done", over);
     source.addEventListener("status", over);
     return () => source.close();
-  }, [following, ready, round, cwd, unit, run]);
+  }, [following, ready, round, cwd, run]);
 
   // Opens at the end, where a reader looks first; while following, stays there unless scrolled up.
   const box = useRef<HTMLDivElement>(null);
@@ -97,7 +98,7 @@ export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; ru
 
   const older = async () => {
     try {
-      const p = await api.get("/api/units/{name}/runs/{run}", { cwd, name: unit, run, limit: PAGE, before: String(events[0]?.seq ?? "") });
+      const p = await api.get("/api/runs/{run}", { cwd, run, limit: PAGE, before: String(events[0]?.seq ?? "") });
       setEvents((now) => merged(p.events, now));
       setPage((was) => (was ? { ...was, has_older: p.has_older } : p));
     } catch (e) {
@@ -107,6 +108,7 @@ export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; ru
 
   if (error) return <ErrorState error={error} />;
   if (!page) return <SkeletonRows rows={3} />;
+  const unit = page.unit;
   if (page.status === "purged") return <div className="faint rl-note">The events of this run were cleared on {page.purged_at?.slice(0, 10)}.</div>;
   if (!events.length) return <div className="faint rl-note">{page.status === "none" ? "This run recorded nothing: the app went down before its first event." : "No events yet."}</div>;
   return (
@@ -126,14 +128,22 @@ export function RunLog({ cwd, unit, run, live }: { cwd: string; unit: string; ru
 }
 
 function Line({ event: e, unit }: { event: StepEvent; unit: string }) {
+  // A helper's call reads as the helper's.
+  const who = e.agent_id ? <span className="faint">helper · </span> : null;
   switch (e.kind) {
     case "config":
       return <div className="rl-l faint">opened with {[e.model, e.effort].filter(Boolean).join(" · ") || "the defaults"}</div>;
     case "text":
-      return e.role === "user" ? null : <div className="rl-l rl-say">{inUnit(e.text ?? "", unit)}</div>;
+      return e.role === "user" ? null : (
+        <div className="rl-l rl-say">
+          {who}
+          {inUnit(e.text ?? "", unit)}
+        </div>
+      );
     case "tool_use":
       return (
         <div className="rl-l mono">
+          {who}
           <span className="rl-tool">{e.name?.replace(/^mcp__\w+?__/, "")}</span> {inUnit(toolSummary(e.input), unit)}
         </div>
       );

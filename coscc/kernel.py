@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, get_args
 
@@ -82,16 +82,26 @@ STREAM_SECONDS = 30.0
 OWNER = "owner"
 
 
-@dataclass(frozen=True)
-class Submitted:
-    """What one session that hands back an object left: the object, or `None` and `failure`
-    saying why there is none; what it cost (`journal.COST_FIELDS` and `cost_usd`); and its
-    session id, `run`."""
+# How a run of an agent ended (`coscc/runner/run.py`). `paused-budget`: it stopped at one of its
+# two ceilings.
+Status = Literal["done", "paused-budget", "failed", "refused", "cancelled"]
+STATUSES: tuple[Status, ...] = get_args(Status)
 
-    object: dict[str, Any] | None
-    cost: dict[str, Any]
-    run: str
-    failure: str = ""
+
+@dataclass
+class Run:
+    """What one run of an agent left (`coscc/runner/run.py`): how it ended; its output (the object
+    it handed back through `submit`, or chat's reply), `None` unless `done`; what it cost
+    (`journal.COST_FIELDS` and `cost_usd`, `{}` when unknown); its turns; its session id; why, when
+    it is not `done`; and its id in the run log (`run`), what `/api/runs/{run}` opens."""
+
+    status: Status
+    output: Any = None
+    cost: dict[str, Any] = field(default_factory=dict)
+    turns: int | None = None
+    session: str = ""
+    detail: str = ""
+    run: str = ""
 
 
 SERVER = re.compile(r"[a-z][a-z0-9-]*")
@@ -278,11 +288,11 @@ class Runs:
 
 @dataclass(frozen=True)
 class Agents:
-    # `(workspace path, kind, prompt)`: one paid session under the grant `kind` that hands its
-    # object back through `submit`, recorded in the run log as the estimate is. `Invalid` while
-    # another such session of the workspace runs or an update is under way. One an update
-    # paused hands back no cost: the run log's `end` holds it.
-    session: Callable[[str, str, str], Awaitable[Submitted]]
+    # `(workspace path, kind, prompt)`: one run of the feature's `Session` `kind`
+    # (`coscc/runner/run.py`), which hands its object back through `submit`, as `Run.output`.
+    # `Invalid` while another such session of the workspace runs or an update is under way. One an
+    # update paused is `cancelled`, with no cost: the run log's `end` holds it.
+    session: Callable[[str, str, str], Awaitable[Run]]
 
 
 @dataclass(frozen=True)
@@ -348,6 +358,10 @@ class Session:
     output: Output
     # What the `submit` tool tells the session it is for.
     purpose: str
+    # Its own row: the model and effort it runs on unless the Agents page overrides them under
+    # `kind`; `None` is the app's default.
+    model: str | None = None
+    effort: str | None = None
     # Whether `grant.max_turns` holds below the floor a submitting session gets, because one
     # more turn could pass its budget; a refused object is then not submitted again.
     own_turns: bool = False

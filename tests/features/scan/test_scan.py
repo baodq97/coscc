@@ -10,7 +10,7 @@ from pathlib import Path
 from coscc.store.db import Data
 from coscc.features import scan
 from coscc.http.plugin import create_tables
-from coscc.kernel import Agents, Invalid, Runs, Settings, Submitted, Units
+from coscc.kernel import Agents, Invalid, Run, Runs, Settings, Units
 from tests.features.ctx import ctx_for
 from coscc.store.journal import Intervention, Journal
 from coscc.agent import policy
@@ -55,7 +55,7 @@ class _Feature(unittest.IsolatedAsyncioTestCase):
         self.found: list[Intervention] = []
         self.asked: list[tuple[str, int]] = []
         self.prompts: list[str] = []
-        self.reply = Submitted({"proposals": []}, {"cost_usd": 0.3}, "s1")
+        self.reply = Run("done", {"proposals": []}, {"cost_usd": 0.3}, session="s1")
         self.units: list[tuple[str, str]] = []
         self.hours = {"scan": 24}
         self.on = True
@@ -64,7 +64,7 @@ class _Feature(unittest.IsolatedAsyncioTestCase):
             self.asked.append((after, limit))
             return [i for i in self.found if i.at > after][:limit]
 
-        async def session(cwd: str, kind: str, prompt: str) -> Submitted:
+        async def session(cwd: str, kind: str, prompt: str) -> Run:
             self.assertEqual(kind, "scan")
             self.prompts.append(prompt)
             return self.reply
@@ -109,7 +109,9 @@ class NothingNewOpensNoSession(_Feature):
 class ThePromptIsBounded(_Feature):
     async def test_at_most_25_and_the_cursor_moves_to_the_last_one_taken(self):
         self.found = found(30)
-        self.reply = Submitted({"proposals": [proposal(["rerun:runs:1"])]}, {"cost_usd": 0.3}, "s1")
+        self.reply = Run(
+            "done", {"proposals": [proposal(["rerun:runs:1"])]}, {"cost_usd": 0.3}, session="s1"
+        )
         run = await scan.scan(self.ctx, WS, "owner")
         self.assertEqual((run["outcome"], run["taken"]), ("done", scan.LIMIT))
         self.assertLessEqual(len(self.prompts[0]), scan.PROMPT_MAX)
@@ -145,7 +147,7 @@ class TheObjectIsChecked(_Feature):
             proposal([], slug="no-source"),
         ]
         good = proposal(["rerun:runs:1", "rerun:runs:2"])
-        self.reply = Submitted({"proposals": [*bad, good]}, {"cost_usd": 0.3}, "s1")
+        self.reply = Run("done", {"proposals": [*bad, good]}, {"cost_usd": 0.3}, session="s1")
         run = await scan.scan(self.ctx, WS, "owner")
         self.assertEqual(len(run["rejected"]), len(bad))
         (kept,) = self.store.proposals(WS)
@@ -158,13 +160,13 @@ class TheObjectIsChecked(_Feature):
     async def test_past_eight_a_proposal_is_dropped(self):
         self.found = found(1)
         many = [proposal(["rerun:runs:1"], slug=f"p{n}") for n in range(10)]
-        self.reply = Submitted({"proposals": many}, {"cost_usd": 0.3}, "s1")
+        self.reply = Run("done", {"proposals": many}, {"cost_usd": 0.3}, session="s1")
         run = await scan.scan(self.ctx, WS, "owner")
         self.assertEqual((len(self.store.proposals(WS)), len(run["rejected"])), (8, 2))
 
     async def test_no_object_fails_the_scan_its_cost_kept_and_the_cursor_still(self):
         self.found = found(3)
-        self.reply = Submitted(None, {"cost_usd": 0.4}, "s1", "no-submission")
+        self.reply = Run("failed", None, {"cost_usd": 0.4}, session="s1", detail="no-submission")
         run = await scan.scan(self.ctx, WS, "owner")
         self.assertEqual(
             (run["outcome"], run["cost_usd"], run["detail"]), ("failed", 0.4, "no-submission")
@@ -173,7 +175,7 @@ class TheObjectIsChecked(_Feature):
 
     async def test_a_scan_over_a_dollar_turns_the_schedule_off_and_says_why(self):
         self.found = found(1)
-        self.reply = Submitted({"proposals": []}, {"cost_usd": 1.2}, "s1")
+        self.reply = Run("done", {"proposals": []}, {"cost_usd": 1.2}, session="s1")
         run = await scan.scan(self.ctx, WS, "schedule")
         self.assertTrue(run["stopped"])
         self.assertEqual(self.hours["scan"], 0)
@@ -183,9 +185,9 @@ class TheObjectIsChecked(_Feature):
         self.found = found(1)
         gate = asyncio.Event()
 
-        async def slow(cwd: str, kind: str, prompt: str) -> Submitted:
+        async def slow(cwd: str, kind: str, prompt: str) -> Run:
             await gate.wait()
-            return Submitted({"proposals": []}, {}, "s1")
+            return Run("done", {"proposals": []}, {}, session="s1")
 
         ctx = ctx_for(
             units=self.ctx.units,
@@ -208,7 +210,9 @@ class APersonDecides(_Feature):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.found = found(2)
-        self.reply = Submitted({"proposals": [proposal(["rerun:runs:1"])]}, {"cost_usd": 0.3}, "s1")
+        self.reply = Run(
+            "done", {"proposals": [proposal(["rerun:runs:1"])]}, {"cost_usd": 0.3}, session="s1"
+        )
         await scan.scan(self.ctx, WS, "owner")
         (self.p,) = self.store.proposals(WS)
 

@@ -504,7 +504,6 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
     """Plan step 7, with a stand-in `stream`: what the session is handed, and what it yields."""
 
     def test_the_session_gets_the_gate_and_the_ceilings(self):
-        import asyncio
 
         from coscc.agent.policy import grant_for
 
@@ -530,30 +529,14 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         from coscc.units import submit
 
         collector = submit.Collector("integrate")
-
-        async def go():
-            out = []
-            async for item in ig.run_gebo(
-                FakeSessions(),
-                tree="/t",
-                workspace="/w",
-                prompt="p",
-                grant=grant_for("integrate"),
-                lease=("feat/x", HEAD),
-                model=None,
-                channel=collector,
-            ):
-                out.append(item)
-            return out
-
-        out = asyncio.run(go())
+        out, end = self._gebo(FakeSessions(), grant_for("integrate"), collector)
         self.assertEqual(seen["max_turns"], 120)
         self.assertEqual(seen["cwd"], "/t")
+        self.assertEqual(seen["workspace"], "/w")
         self.assertEqual(seen["push_ok"], "")
         self.assertIn("lease", seen["push_bad"])
         self.assertEqual(seen["submit"], "")
-        end = out[-1][1]
-        self.assertEqual(end["reply"], "[needs-person] C vs D")
+        self.assertEqual(out[0], ("chunk", "[needs-person] C vs D"))
         self.assertEqual(end["denials"], 1)
         # The object's words, never the reply's.
         self.assertEqual(ig.needs_person_of(collector.object()), ["A vs B"])
@@ -572,22 +555,43 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
                 await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {}})
 
-        async def go():
-            return [
-                item
-                async for item in ig.run_gebo(
-                    FakeSessions(),
-                    tree="/t",
-                    workspace="/w",
-                    prompt="p",
-                    grant=grant_for("integrate"),
-                    lease=("feat/x", HEAD),
-                    model=None,
-                )
-            ]
+        from coscc.units import submit
 
-        end = asyncio.run(go())[-1][1]
+        _, end = self._gebo(FakeSessions(), grant_for("integrate"), submit.Collector("integrate"))
         self.assertEqual((end["denials"], end["background"]), (2, 1))
+
+    def _gebo(self, sessions, grant, collector):
+        """Gebo's session as `Integration.integrate_gebo` runs it, and its `end` row."""
+        import tempfile
+
+        from coscc.agent.policy import Places
+        from coscc.runner import run as run_mod
+        from coscc.store.journal import Journal
+
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = Journal(tmp, Path(tmp) / "data")
+
+            async def go():
+                return [
+                    item
+                    async for item in run_mod.run(
+                        run_mod.Agent("integrate", grant, preset=True),
+                        run_mod.Input(
+                            "/t",
+                            "p",
+                            "w",
+                            workspace_dir="/w",
+                            unit="u",
+                            places=Places(roots=("/t",), branch="feat/x", lease=HEAD),
+                            channel=collector,
+                        ),
+                        ctx=run_mod.Ctx(sessions, journal),
+                    )
+                ]
+
+            out = asyncio.run(go())
+            [end] = [r for r in journal.records("w") if r["kind"] == "end"]
+        return out, end
 
     def test_gebo_is_told_once(self):
         """Gebo's session ends with its turn, as a board step's does."""

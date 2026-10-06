@@ -5,28 +5,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 from coscc.units import backlog
 from coscc.units import board as board_reader
 from coscc.units import hold as hold_rules
 from coscc.units import submit as submit_mod
-from coscc.units.submit import RUN_SUBMITTED, submitted
 from coscc.units.board import Unavailable
 from coscc.store.journal import BadRecord, Journal, timelines_of
 from coscc.store.db import Busy
 from coscc.agent.policy import grant_for
-from coscc.agent import models
-from coscc.agent.helpers import Gate
-from coscc.agent.policy import Places
-from coscc.runner.reply import CEILING_MARKERS
-from coscc.agent.sessions import StepHandle, Suspended
-from coscc.runner.resume import resume_kwargs
-from coscc.runner.step import nothing
+from coscc.runner import run as run_mod
 from coscc.update.updater import refuse_while_updating
 from coscc.kernel import OWNER
-from coscc.kernel import Invalid, Submitted
+from coscc.kernel import Invalid, Run
 
 from coscc.bus import Bus
 from coscc.config import Config
@@ -266,20 +259,21 @@ class Backlog:
             # What `record` wrote and refused, and what failed.
             kept: dict[str, Any] = {"written": 0, "rejected": [], "failed": None}
 
-            def record(got: Submitted) -> str | None:
-                """Each valid part of the object, before the `end`; what failed, if anything."""
+            async def record(got: Run) -> Mapping[str, Any]:
+                """Each valid part of the object, before the `end`; what failed, if anything, is
+                the run's failure."""
                 parsed: dict[str, Any] = {
                     "records": [],
                     "rejected": [],
-                    "failed": got.failure or None,
+                    "failed": None if got.status == "done" else got.detail,
                 }
-                if not got.failure:
+                if got.status == "done":
                     parsed = backlog.parse_proposal(
-                        got.object,
+                        got.output,
                         waiting,
                         names,
                         found,
-                        got.run,
+                        got.session,
                         backlog.relations_of(rows),
                         workspace=key,
                         undetermined=left_out,
@@ -309,15 +303,28 @@ class Backlog:
                         kept["written"] += 1
                     except Invalid as e:
                         kept["rejected"].append({"unit": rec["unit"], "reason": str(e)})
-                return parsed["failed"]
+                if parsed["failed"] and got.status == "done":
+                    got.status, got.detail = "failed", parsed["failed"]
+                return {}
 
-            got = Submitted(None, {}, "")
-            stream = self.submitting(cwd, key, journal, "estimate", prompt, record, resume)
+            got = Run("cancelled")
+            stream = run_mod.run(
+                self.models.agent("estimate", grant_for("estimate")),
+                run_mod.Input(
+                    cwd,
+                    prompt,
+                    key,
+                    channel=submit_mod.Collector("estimate"),
+                    resume=resume,
+                ),
+                ctx=run_mod.Ctx(self.sessions, journal, self.config.data_dir),
+                finish=record,
+            )
             try:
                 async for kind, payload in stream:
                     if kind == "chunk":
                         yield ("chunk", payload)
-                    else:
+                    elif kind == "done":
                         got = payload
             finally:
                 await stream.aclose()
@@ -328,7 +335,8 @@ class Backlog:
                 "workspace": key,
                 "unit": "",
                 "stage": "estimate",
-                "session_id": got.run,
+                "session_id": got.session,
+                "run": got.run,
                 "cost_usd": cost.get("cost_usd"),
                 "turns": cost.get("turns"),
                 "written": kept["written"],
@@ -347,158 +355,6 @@ class Backlog:
             raise
         finally:
             self.holds.attempts.move(attempt, "ended", outcome)
-
-    async def submitting(
-        self,
-        cwd: str,
-        key: str,
-        journal: Journal,
-        kind: str,
-        prompt: str,
-        after: Callable[[Submitted], str | None] = lambda got: got.failure or None,
-        resume: Mapping[str, Any] | None = None,
-    ) -> AsyncGenerator[tuple[str, Any], None]:
-        """One session of `kind`, a grant of `policy.SUBMITTING_SESSIONS`, that hands its object
-        back through `submit` on the model of the Agents page row `estimate`; its reply is never
-        read. Yields each `chunk`, then `("done", Submitted)`.
-
-        Writes `start`/`end` (stage `kind`, unit `""`) so Activity counts the money. A session
-        over a ceiling, or one that handed back no object, is a `Submitted` with `failure`.
-        `after(submitted)` runs before the `end` and says what failed, `None` for `done`; it is
-        where the estimate writes its records. A `start` left with no `end` gets a `cancelled`
-        one on the way out; an update that paused the session raises `Suspended` and writes
-        none, its `suspend` row being the end.
-        """
-        grant = grant_for(kind)
-        defaults, _ = models.load_defaults()
-        model, model_source, effort, effort_source = models.resolve(
-            models.ESTIMATE,
-            None,
-            self.models.model_overrides()[0],
-            self.models.effort_overrides()[0],
-            defaults,
-            self.config.model,
-        )
-        started = ended = False
-        start_at = ((resume or {}).get("owner") or {}).get("start_at")
-        try:
-            if resume is None:
-                try:
-                    start_at = journal.started(
-                        key,
-                        "",
-                        kind,
-                        "manual",
-                        started_by="person",
-                        prompt_chars=len(prompt),
-                        granted=[],
-                        max_turns=grant.max_turns,
-                        model=model,
-                        model_source=model_source,
-                        effort=effort,
-                        effort_source=effort_source,
-                    ).get("at")
-                    started = True
-                except BadRecord, Busy:
-                    pass
-            else:
-                # The `start` was written before the update; this ends it.
-                started = True
-            ask = resume_kwargs(dict(resume) if resume is not None else None, grant, prompt)
-            used_up = ask.pop("used_up", "")
-            end, failure = {}, ""
-            # The object handed back, never the reply's words.
-            collector = submit_mod.Collector(kind)
-            try:
-                async for item, payload in (
-                    nothing()
-                    if used_up
-                    else self.sessions.stream(
-                        cwd,
-                        ask.pop("text"),
-                        ask.pop("session_id"),
-                        tools=[],
-                        # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses
-                        # every one but `submit`.
-                        gate=Gate(grant, Places(roots=(cwd,))),
-                        step=StepHandle(),
-                        mcp_servers={submit_mod.SERVER: collector.server()},
-                        owner={
-                            "kind": kind,
-                            "workspace": key,
-                            "workspace_dir": cwd,
-                            "unit": "",
-                            "stage": kind,
-                            "start_at": start_at,
-                        },
-                        **ask,
-                        **({"model": model} if model is not None else {}),
-                        **({"effort": effort} if effort is not None else {}),
-                    )
-                ):
-                    if item == "chunk":
-                        yield ("chunk", payload)
-                    elif item == "session":
-                        end["session_id"] = str(payload)
-                    elif item == "done":
-                        end.update(
-                            session_id=payload.get("session_id", end.get("session_id", "")),
-                            cost=payload.get("cost") or {},
-                            terminal_reason=str(payload.get("terminal_reason") or ""),
-                        )
-            except Suspended:
-                # An update paused it and wrote its `suspend` row; no `end` here.
-                ended = True
-                raise
-            except Exception as e:
-                # Recorded as the reason.
-                log.exception("the %s session failed", kind)
-                failure = f"the session failed: {e}"
-            if used_up and not failure:
-                failure = f"the session stopped at a ceiling ({used_up}) before the update"
-            cost = end.get("cost") or {}
-            terminal = end.get("terminal_reason", "")
-            if not failure and any(m in terminal for m in CEILING_MARKERS):
-                failure = f"the session stopped at a ceiling ({terminal}); nothing was recorded"
-            # No object, nothing recorded, whatever the reply says.
-            if not failure and not submitted(collector):
-                failure = (
-                    backlog.NO_OBJECT
-                    if kind == "estimate"
-                    else f"no-submission: the session handed back no {kind} through submit"
-                )
-            got = Submitted(
-                None if failure else collector.object(), cost, end.get("session_id", ""), failure
-            )
-            detail = after(got)
-            try:
-                journal.finished(
-                    key,
-                    "",
-                    kind,
-                    "failed" if detail else "done",
-                    session_id=got.run,
-                    detail=detail,
-                    guard=RUN_SUBMITTED,
-                    **cost,
-                )
-                ended = True
-            except BadRecord, Busy:
-                pass
-            yield ("done", got)
-        finally:
-            if started and not ended:
-                try:
-                    journal.finished(
-                        key,
-                        "",
-                        kind,
-                        "cancelled",
-                        detail=f"the {'proposal' if kind == 'estimate' else kind} ended "
-                        "before its reply was read",
-                    )
-                except BadRecord, Busy:
-                    pass
 
     async def start_branch(self, cwd: str, unit: str) -> Cut:
         """Cut this unit's branch in the workspace and switch to it.

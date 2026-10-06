@@ -59,7 +59,7 @@ SESSION = Session(
         max_turns=2,
         max_budget_usd=0.68,
         warning="Scanning opens one paid session (2 turns, $0.68 ceiling, about $1 at most) on "
-        "the model of the Agents page row `estimate`.",
+        "the model of the Agents page row `scan`.",
     ),
     {
         "kind": "session",
@@ -78,6 +78,9 @@ SESSION = Session(
     },
     "Hand the app the work you propose, each item with the interventions it gathers.",
     own_turns=True,
+    # What the estimate runs on, which scans ran on before they had a row of their own.
+    model="claude-opus-5-5[1m]",
+    effort="medium",
 )
 # The bounds of a scan's input, its output, a dismissal and its cost.
 LIMIT = 25
@@ -469,21 +472,21 @@ async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
         stopped = cost > CAP_USD and ctx.settings.schedule(cwd) != 0
         if stopped:
             ctx.settings.set_schedule(cwd, 0)
-        if got.object is None:
+        if got.status != "done":
             return await asyncio.to_thread(
                 store.record,
                 key,
                 by,
                 "failed",
                 cost=cost,
-                session=got.run,
+                session=got.session,
                 cut=cut,
                 stopped=stopped,
-                detail=got.failure,
+                detail=got.detail,
             )
         ids = {i.id for i in taken}
         kept, rejected = [], []
-        for n, p in enumerate(got.object.get("proposals") or [], start=1):
+        for n, p in enumerate((got.output or {}).get("proposals") or [], start=1):
             said = (
                 problems_of(p, ids)
                 if n <= PROPOSALS_MAX
@@ -499,7 +502,7 @@ async def scan(ctx: Ctx, cwd: str, by: str) -> Run:
             by,
             "done",
             cost=cost,
-            session=got.run,
+            session=got.session,
             taken=taken,
             cut=cut,
             rejected=rejected,

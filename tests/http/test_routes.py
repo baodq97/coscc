@@ -17,6 +17,7 @@ import httpx
 from coscc.kernel import Feature
 from coscc.http.app import build
 from coscc.config import Config
+from coscc.runner.run import LIVE
 from tests.http.test_app import seed_unit, use_sessions
 
 
@@ -371,35 +372,35 @@ class WatchingARunOverHttp(unittest.IsolatedAsyncioTestCase):
         self.recorder = Recorder("r1", None, "/tmp", key, "0001_a", "impl")
         for i in range(3):
             self.recorder.denied("Bash", {"command": f"c{i}"}, "not granted")
-        self.core.watch.recorders["r1"] = self.recorder
+        LIVE["r1"] = self.recorder
 
     async def asyncTearDown(self):
+        LIVE.pop("r1", None)
         await self.client.aclose()
 
     async def test_a_page_is_the_last_events_oldest_first(self):
-        r = await self.client.get("/api/units/0001_a/runs/r1", params={"cwd": "/tmp", "limit": "2"})
+        r = await self.client.get("/api/runs/r1", params={"cwd": "/tmp", "limit": "2"})
         self.assertEqual(r.status_code, 200)
         page = r.json()
         self.assertEqual(
-            (page["status"], page["stage"], page["has_older"]), ("running", "impl", True)
+            (page["status"], page["unit"], page["stage"], page["has_older"]),
+            ("running", "0001_a", "impl", True),
         )
         self.assertEqual([e["seq"] for e in page["events"]], [2, 3])
         self.assertEqual(page["events"][0]["input"], {"command": "c1"})
         self.assertEqual(page["events"][0]["reason"], "not granted")
 
-    async def test_a_run_of_another_unit_or_a_bad_number_is_a_400(self):
-        other = await self.client.get("/api/units/0002_b/runs/r1", params={"cwd": "/tmp"})
+    async def test_a_run_of_another_workspace_or_a_bad_number_is_a_400(self):
+        self.recorder.workspace = "elsewhere"
+        other = await self.client.get("/api/runs/r1", params={"cwd": "/tmp"})
         self.assertEqual(other.status_code, 400)
-        bad = await self.client.get(
-            "/api/units/0001_a/runs/r1", params={"cwd": "/tmp", "before": "x"}
-        )
+        self.recorder.workspace = self.core.ws.key("/tmp")
+        bad = await self.client.get("/api/runs/r1", params={"cwd": "/tmp", "before": "x"})
         self.assertEqual(bad.status_code, 400)
 
     async def test_following_gives_what_is_past_after_then_says_it_is_over(self):
         self.recorder.closed = True
-        r = await self.client.get(
-            "/api/units/0001_a/runs/r1/follow", params={"cwd": "/tmp", "after": "1"}
-        )
+        r = await self.client.get("/api/runs/r1/follow", params={"cwd": "/tmp", "after": "1"})
         self.assertEqual(r.headers["content-type"].split(";")[0], "text/event-stream")
         blocks = r.text.split("\n\n")
         [batch] = [b for b in blocks if b.startswith("data: ")]

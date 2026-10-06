@@ -788,6 +788,7 @@ class Sessions:
         mcp_servers: dict[str, Any] | None = None,
         agents: dict[str, dict[str, Any]] | None = None,
         unit_scratch: tuple[str, str] | None = None,
+        recorder: Any = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -815,6 +816,7 @@ class Sessions:
         secrets (`policy.protected_paths`) from this app's configuration.
         `unit_scratch` is the unit's `(ram, disk)` directories, in the session's environment
         (`child_env`); the caller made them, and the gate it passes holds the same two.
+        `recorder` hears every message of a stream with no `step` (chat); a step's is its handle's.
         """
         if self.paused:
             raise Refused(PAUSED)
@@ -850,6 +852,7 @@ class Sessions:
             mcp_servers=mcp_servers,
             agents=agents,
             unit_scratch=unit_scratch,
+            recorder=step.recorder if step is not None else recorder,
         )
         if isinstance(flow, dict):  # noqa: PLR1702 - still to split
             turn = flow
@@ -908,6 +911,7 @@ class Sessions:
         mcp_servers: dict[str, Any] | None = None,
         agents: dict[str, dict[str, Any]] | None = None,
         unit_scratch: tuple[str, str] | None = None,
+        recorder: Any = None,
     ):
         member = workspace if workspace is not None else cwd
         if not self.membership(member):
@@ -1010,10 +1014,10 @@ class Sessions:
             first_call: dict[str, int] | None = None
             await live.client.query(text)
             async for message in live.client.receive_response():
-                if step is not None and step.recorder is not None:
+                if recorder is not None:
                     # Synchronous and swallowing: the kinds this yields, and when, are unchanged.
                     try:
-                        step.recorder.message(message)
+                        recorder.message(message)
                     except Exception:
                         log.exception("the recorder failed on a message")
                 if isinstance(message, sdk.SystemMessage):

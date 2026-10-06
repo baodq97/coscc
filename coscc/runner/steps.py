@@ -26,6 +26,7 @@ from coscc.runlog import events
 from coscc.runner.attempt import describe_attempt
 from coscc.runner.queue import MACHINES, STOPPABLE, Attempt, Holds, Refused, describe
 from coscc.runner.reply import RunError
+from coscc.runner.run import LIVE
 from coscc.runner.step import Runner, check_started_by
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, Data, now as _now
@@ -317,9 +318,6 @@ class Steps:
         # The click's own `Running`, while `open` may hand its attempt to the scheduler.
         self._opening: steps_mod.Running | None = None
         holds.attempts.launchers["step"] = lambda row: self.launch(row, self._prepare)
-        # The recorder of every running board step, by `run`: what `events_page` reads and
-        # `follow_events` subscribes to. A step leaves it when `drive` ends; then the tables answer.
-        self.recorders: dict[str, events.Recorder] = {}
 
     async def after_end(self, cwd: str, unit: str, stage: str, key: str) -> None:
         """After a step's `done` and its `end`: a `questions` record when the unit is left with
@@ -1233,7 +1231,7 @@ class Steps:
         )
         running.run = run
         running.handle.recorder = recorder
-        self.recorders[run] = recorder
+        LIVE[run] = recorder
         self.holds.attempts.move(running.attempt, "running", run=run)
         self.seal_attempt(running)
         running.task = asyncio.create_task(
@@ -1334,7 +1332,7 @@ class Steps:
             return
         del self.tasks[running.attempt]
         # Never started, so it wrote nothing and has nothing to say.
-        self.recorders.pop(running.run, None)
+        LIVE.pop(running.run, None)
         if running.stop_requested:
             self.holds.attempts.move(running.attempt, "ended", "stopped")
         self.tell(
@@ -1470,7 +1468,7 @@ class Steps:
                     else:
                         await recorder.close("failed", "the step ended without an outcome")
                 if recorder is not None:
-                    self.recorders.pop(recorder.run, None)
+                    LIVE.pop(recorder.run, None)
                 if ended_done and not going_down and stage not in NOT_STEPS:
                     # After the runner's `end`, which it writes before it yields `done`, and
                     # after the attempt ended: the board read it costs holds neither the
@@ -1610,7 +1608,7 @@ class Steps:
             run, Data(self.config.data_dir), str(journal.working_dir), key, unit, stage
         )
         running.run, running.handle.recorder = run, recorder
-        self.recorders[run] = recorder
+        LIVE[run] = recorder
         self.holds.attempts.set_run(attempt, run)
         rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
         end_fields = None

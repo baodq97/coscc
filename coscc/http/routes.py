@@ -275,8 +275,8 @@ async def chat(request: Request) -> Any:
     """**Opens a paid Claude session** in a workspace's folder, or continues one the app may
     resume: `{cwd, text, session_id?}`. One turn on the `chat` row's model; the tools it gets
     are the chat setting's. Streams NDJSON: `chunk` lines, `tool` lines (`name`), then `done`
-    with the `session_id`. A dropped reader ends the turn. The trace is a `chat` record in the
-    run log. Refused while the app updates."""
+    with the `session_id` and the `run`. A dropped reader ends the turn. The turn is a run of the
+    `chat` agent, with its `start` and `end` in the run log. Refused while the app updates."""
     body = await kernel.body(request)
     cwd, text = str(body.get("cwd") or ""), str(body.get("text") or "")
     core = _core(request)
@@ -569,14 +569,14 @@ def _number(request: Request, name: str) -> int | None:
     return int(value)
 
 
-@router.get("/api/units/{name}/runs/{run}", response_model=EventsPage)
-async def get_run_events(name: str, run: str, request: Request) -> Any:
-    """The last `limit` events one run of a unit recorded, oldest first; `before` pages back,
-    `seq` reads one event whole. Everything the step saw: commands, paths, thoughts, output."""
+@router.get("/api/runs/{run}", response_model=EventsPage)
+async def get_run_events(run: str, request: Request) -> Any:
+    """The last `limit` events one run of the workspace recorded, any agent's, with a unit or none
+    (`unit` is `""`), oldest first; `before` pages back, `seq` reads one event whole. Everything
+    the run saw: commands, paths, thoughts, output."""
     limit = _number(request, "limit")
     return _core(request).watch.events_page(
         _cwd(request),
-        name,
         run,
         before=_number(request, "before"),
         seq=_number(request, "seq"),
@@ -584,15 +584,15 @@ async def get_run_events(name: str, run: str, request: Request) -> Any:
     )
 
 
-@router.get("/api/units/{name}/runs/{run}/follow")
-async def follow_run(name: str, run: str, request: Request) -> StreamingResponse:
+@router.get("/api/runs/{run}/follow")
+async def follow_run(run: str, request: Request) -> StreamingResponse:
     """The events of a running run past `after` as server-sent events, a batch a message, until
     its `end`; then `event: done`. `event: status` (the page) when it is not running here, `event:
     cut` (`{from}`) when this reader fell behind. Ends like `/api/stream` after
     `STREAM_LIFETIME_SECONDS` with `event: end`, and the page follows again from what it has."""
     loop = asyncio.get_running_loop()
     follow = _core(request).watch.follow_events(
-        _cwd(request), name, run, after=_number(request, "after") or 0, gather=0.3
+        _cwd(request), run, after=_number(request, "after") or 0, gather=0.3
     )
 
     async def events() -> AsyncIterator[str]:
