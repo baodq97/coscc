@@ -967,7 +967,7 @@ class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
 
         class Probe:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **given):
-                seen.update(given)
+                seen.update(given, prompt=text)
                 yield ("chunk", "# Spike: x\nSpec: spec.md. Status: accepted.\n\n## U1\n")
                 await _submits(given)
                 yield ("done", {"session_id": "s", "cost": {}})
@@ -995,6 +995,7 @@ class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
                 pass
 
         asyncio.run(go())
+        self.prompt = seen["prompt"]
         return seen["gate"], directory
 
     def _tree(self, root: str) -> Path:
@@ -1014,6 +1015,8 @@ class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
         self.assertEqual(gate.places.lease, "")
         self.assertEqual(gate.grant.tools, grant_for("impl").tools)
         self.assertIsNotNone(gate.helpers)
+        # The prompt names the one push this gate lets through.
+        self.assertIn("`git push origin feat/x`", self.prompt)
 
     def test_a_spike_writes_its_cwd_and_pushes_nothing(self):
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as scratch:

@@ -214,6 +214,23 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
             prompt, _ = self.prompt(d, "changes-requested")
             self.assertIn("then push the branch", prompt)
 
+    def test_impl_is_told_the_one_push_the_app_lets_through(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+            directory = Path(d) / ".cos" / UNIT
+            told, _, _ = compose_prompt(
+                d, directory, UNIT, "impl", STAGES, "impl.md", writes_own=True, branch="feat/x"
+            )
+            plain, _, _ = compose_prompt(
+                d, directory, UNIT, "impl", STAGES, "impl.md", writes_own=True
+            )
+            review, _, _ = compose_prompt(
+                d, directory, UNIT, "review", STAGES, "review.md", branch="feat/x"
+            )
+        self.assertIn("# Pushing\n\nPush with `git push origin feat/x`.", told)
+        self.assertNotIn("# Pushing", plain)
+        self.assertNotIn("# Pushing", review)
+
     def test_a_review_that_passed_is_not_sent_back(self):
         with tempfile.TemporaryDirectory() as d:
             prompt, included = self.prompt(d, "accepted")

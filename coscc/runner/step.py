@@ -416,6 +416,7 @@ async def _compose(
         # owner.
         return str(was.get("head") or ""), str(resume.get("message") or ""), [], []
     head = await _head_of(watch or cwd)
+    branch = await branch_of(cwd) if stage == "impl" and not watch else ""
     prompt, included, pointed = compose_prompt(
         cwd,
         directory,
@@ -447,6 +448,7 @@ async def _compose(
         unit_meta=meta,
         state_file=state_file,
         blocks=blocks,
+        branch=branch,
     )
     return head, prompt, included, pointed
 
