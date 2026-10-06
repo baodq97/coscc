@@ -216,15 +216,15 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
     async def test_no_route_writes_a_grant(self):
-        # A grant is shown, never written.
+        # A row is shown, never written; a grant is the engine's, per run.
         before = (await self.page())["rows"]
-        for field in ("tools", "commands", "mcp", "submits", "warning", "grant"):
+        for field in ("tools", "commands", "mcp", "submits", "warning", "grant", "row"):
             r = await self.client.post(
                 "/api/agents/field", json={"key": "impl", "field": field, "value": ["Bash"]}
             )
             self.assertEqual(r.status_code, 400, field)
         self.assertEqual(
-            [r["grant"] for r in (await self.page())["rows"]], [r["grant"] for r in before]
+            [r["row"] for r in (await self.page())["rows"]], [r["row"] for r in before]
         )
         writes = [
             route.path
@@ -1982,9 +1982,11 @@ class FeatureStatesOverHttp(unittest.IsolatedAsyncioTestCase):
                 on_set=lambda _c, ws, state: self.told.append((ws, state)),
             ),
         )
-        patch = mock.patch("coscc.features.FEATURES", plugins)
-        patch.start()
-        self.addCleanup(patch.stop)
+        from tests.features.ctx import rows_without_feature_tools
+
+        for patch in (mock.patch("coscc.features.FEATURES", plugins), rows_without_feature_tools()):
+            patch.start()
+            self.addCleanup(patch.stop)
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=build(self.config)), base_url="http://t"
         )

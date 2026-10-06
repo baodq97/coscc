@@ -85,26 +85,27 @@ def routes(ctx: Ctx):
     return router.routes
 
 
-def no_ship(facts: Facts) -> str | None:
-    return "no ship yet" if facts.stage == "ship" else None
+def no_push(facts: Facts) -> str | None:
+    return "no push yet" if facts.grant.branch else None
 
 
 FEATURE = Feature(
-    "bookmarks", routes, tables=(TABLE,), agent=lambda _: Parts(guards=(Guard("b", no_ship),))
+    "bookmarks", routes, tables=(TABLE,), agent=lambda _: Parts(guards=(Guard("b", no_push),))
 )
 ```
 
 ```python
 class TheGuardOnlyDenies(unittest.TestCase):
-    def test_it_denies_ship_and_abstains_elsewhere(self):
-        self.assertTrue(bookmarks.no_ship(mock.Mock(spec=Facts, stage="ship")))
-        self.assertIsNone(bookmarks.no_ship(mock.Mock(spec=Facts, stage="impl")))
+    def test_it_denies_a_push_and_abstains_elsewhere(self):
+        self.assertTrue(bookmarks.no_push(mock.Mock(spec=Facts, grant=Grant(branch="feat/x"))))
+        self.assertIsNone(bookmarks.no_push(mock.Mock(spec=Facts, grant=Grant())))
 ```
 
 Rules: a feature imports only `coscc.kernel` and its own folder, never another feature, and owns the tables it creates; at most 3 files; `## What the agent sees` in its doc when it
 has agent parts; a blocking tool handler awaits `asyncio.to_thread`; a handler that runs a
-line an agent wrote reads it with `kernel.bash_refused` and its own `Places`; a guard only denies or
-abstains.
+line an agent wrote reads it with `kernel.bash_refused` and a `Grant` of its own; a part reads the
+run's grant (`facts.grant`), never its agent's name; a tool is a catalog entry a row names; a guard
+only denies or abstains.
 
 ## Tests
 

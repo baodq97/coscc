@@ -505,7 +505,7 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
 
     def test_the_session_gets_the_gate_and_the_ceilings(self):
 
-        from coscc.agent.policy import grant_for
+        from coscc.agent.policy import row_for
 
         seen: dict = {}
 
@@ -529,7 +529,7 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         from coscc.units import submit
 
         collector = submit.Collector("integrate")
-        out, end = self._gebo(FakeSessions(), grant_for("integrate"), collector)
+        out, end = self._gebo(FakeSessions(), row_for("integrate"), collector)
         self.assertEqual(seen["max_turns"], 120)
         self.assertEqual(seen["cwd"], "/t")
         self.assertEqual(seen["workspace"], "/w")
@@ -546,7 +546,7 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         )
 
     def test_gebo_counts_the_background_runs_it_was_refused(self):
-        from coscc.agent.policy import grant_for
+        from coscc.agent.policy import row_for
 
         class FakeSessions:
             async def stream(self, cwd, prompt, session_id, **kw):
@@ -557,14 +557,13 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
 
         from coscc.units import submit
 
-        _, end = self._gebo(FakeSessions(), grant_for("integrate"), submit.Collector("integrate"))
+        _, end = self._gebo(FakeSessions(), row_for("integrate"), submit.Collector("integrate"))
         self.assertEqual((end["denials"], end["background"]), (2, 1))
 
-    def _gebo(self, sessions, grant, collector):
+    def _gebo(self, sessions, row, collector):
         """Gebo's session as `Integration.integrate_gebo` runs it, and its `end` row."""
         import tempfile
 
-        from coscc.agent.policy import Places
         from coscc.runner import run as run_mod
         from coscc.store.journal import Journal
 
@@ -575,14 +574,15 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
                 return [
                     item
                     async for item in run_mod.run(
-                        run_mod.Agent("integrate", grant, preset=True),
+                        run_mod.Agent("integrate", row, preset=True),
                         run_mod.Input(
                             "/t",
                             "p",
                             "w",
                             workspace_dir="/w",
                             unit="u",
-                            places=Places(roots=("/t",), branch="feat/x", lease=HEAD),
+                            branch="feat/x",
+                            lease=HEAD,
                             channel=collector,
                         ),
                         ctx=run_mod.Ctx(sessions, journal),

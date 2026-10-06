@@ -18,7 +18,7 @@ from collections.abc import Callable, Mapping
 from coscc import units
 from coscc.agent import agents, harness
 from coscc.agent import steps as steps_mod
-from coscc.agent.policy import grant_for
+from coscc.agent.policy import row_for
 from coscc.agent.sessions import Sessions
 from coscc.bus import Bus
 from coscc.config import Config
@@ -26,9 +26,8 @@ from coscc.git import fetches, gitops
 from coscc.git.gitops import GitError
 from coscc.github import integrate, prmachine
 from coscc.github.integrate import open_prs_once
-from coscc.kernel import Invalid, facts as facts_of
+from coscc.kernel import Grant, Invalid, facts as facts_of
 from coscc.runner.queue import Attempt, Holds, Refused
-from coscc.agent.policy import Places
 from coscc.kernel import Run
 from coscc.runner import run as run_mod
 from coscc.runner.run import NO_SUBMISSION
@@ -340,7 +339,7 @@ class Integration:
                 u.get("rounds") or [],
                 review_status,
                 gebo or fallback,
-                grant_for("integrate").warning,
+                row_for("integrate").warning,
                 fallback=fallback,
                 name=(self.steps.agent_of("integrate") or {}).get("name", ""),
             ),
@@ -626,12 +625,14 @@ class Integration:
                     workspace=cwd,
                     workspace_key=key,
                     unit=unit,
-                    stage="integrate",
+                    agent="integrate",
                     run="",
                     cwd=str(tree or root),
                     watch=None,
                     directory=directory,
                     resumed=False,
+                    # Gebo, and a mechanical rebase, push the unit's branch.
+                    grant=Grant(branch=branch),
                 )
             )
             if refusal:
@@ -816,11 +817,11 @@ class Integration:
         # The `integrate` row, read once for the prompt, the records and
         # the session's commit attribution.
         agent = self.steps.agent_of("integrate")
-        # Gebo runs no `Runner`, so its grant takes its two ceilings here,
+        # Gebo runs no `Runner`, so its row takes its two ceilings here,
         # the ceilings by the function the runner asks: one taken up again keeps its owner's.
         overrides, _ = self.config_overrides()
-        grant, ceilings = with_ceilings(
-            grant_for("integrate"),
+        row, ceilings = with_ceilings(
+            row_for("integrate"),
             "integrate",
             None,
             overrides["turns"],
@@ -886,7 +887,7 @@ class Integration:
         stream = run_mod.run(
             run_mod.Agent(
                 "integrate",
-                grant,
+                row,
                 model=model,
                 effort=effort,
                 sources=config_sources(ceilings, model_source, effort_source, was),
@@ -914,8 +915,10 @@ class Integration:
                     "completion": completion,
                     "rel": rel,
                 },
-                # Gebo writes only its `tree` and pushes only `branch`, with a lease bound to its head.
-                places=Places(roots=(str(tree),), branch=branch, lease=head_before),
+                # Gebo's grant: it writes only its `tree` (its `cwd`) and pushes only `branch`,
+                # with a lease bound to its head.
+                branch=branch,
+                lease=head_before,
                 channel=collector,
                 resume=resume,
             ),

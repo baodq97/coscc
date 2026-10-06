@@ -12,6 +12,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -1268,6 +1269,11 @@ class ADeadStepKeepsItsTurns(unittest.TestCase):
         self.assertEqual(attempt["cost_usd"], 0.4)
 
 
+def _nothing(grant):
+    """`grant` without where it runs and what it denies: what is left is what it grants."""
+    return replace(grant, cwd="", secrets=(), home="")
+
+
 REPAIRED_PLAN = (
     "# Plan: x\nIntent: intent.md. Spec: spec.md. Author: t. Status: accepted. Impl: routine.\n\n"
     "## Order of work\n\nPHẦN-SỬA\n"
@@ -1400,7 +1406,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         _, [end], _, _, _ = self.go(sessions)
         self.assertEqual(end["denials"], 1)
         self.assertEqual(end["denied"], [f"mcp__x__y: {policy.HELD}: mcp__x__y is not one"])
-        self.assertEqual(sessions.calls[1]["gate"].grant, policy.Grant())
+        self.assertEqual(_nothing(sessions.calls[1]["gate"].grant), policy.Grant())
 
     def _paused_repair(self, spent_usd):
         # An update paused the repair turn; its main reply is the pieces before it.

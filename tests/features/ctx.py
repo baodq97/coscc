@@ -31,3 +31,23 @@ def ctx_for(**given: Any) -> Ctx:
     if given:
         raise TypeError(f"not a handle of Ctx: {', '.join(given)}")
     return Ctx(**handles)
+
+
+def rows_without_feature_tools() -> Any:
+    """`policy.ROWS` with every feature's catalog name taken out, as a patch: an app built with a
+    list of features that leaves one out would stop, since a row naming a tool no catalog holds
+    stops the build."""
+    from dataclasses import replace
+    from unittest import mock
+
+    from coscc.agent import policy
+    from coscc.kernel import BUILTINS
+
+    names = {t.name for t in BUILTINS}
+    return mock.patch.dict(
+        policy.ROWS,
+        {
+            k: replace(r, tools=tuple(t for t in r.tools if t in names))
+            for k, r in policy.ROWS.items()
+        },
+    )

@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.features import parallel
-from coscc.kernel import Facts, Plan
+from coscc.kernel import Facts, Grant, Hooks, Plan
 
 
 def _plan(*steps: tuple[str, list[str], str]) -> Plan:
@@ -20,8 +20,8 @@ def _plan(*steps: tuple[str, list[str], str]) -> Plan:
     }
 
 
-def _facts(plan: Plan | None, stage: str = "impl", directory: Path | None = None) -> Facts:
-    return mock.Mock(spec=Facts, stage=stage, plan=plan, directory=directory or Path("/nowhere"))
+def _facts(plan: Plan | None, directory: Path | None = None) -> Facts:
+    return mock.Mock(spec=Facts, plan=plan, directory=directory or Path("/nowhere"))
 
 
 TWO = _plan(
@@ -50,8 +50,12 @@ class TheBlockIsTheRecordsSteps(unittest.TestCase):
         self.assertEqual(parallel.render(_facts(_plan())), "")
         self.assertEqual(parallel.render(_facts(None)), "")
 
-    def test_another_stage_gets_no_block(self):
-        self.assertEqual(parallel.render(_facts(TWO, stage="review")), "")
+    def test_a_run_whose_grant_holds_no_agent_gets_no_block(self):
+        hooks = Hooks(parts=(("parallel", parallel.FEATURE.agent(mock.Mock())),))
+        for tools, shown in ((("Read",), False), (("Read", "Agent"), True)):
+            with self.subTest(tools=tools):
+                facts = mock.Mock(spec=Facts, workspace="/w", grant=Grant(tools=tools))
+                self.assertEqual(bool(hooks.blocks_for(facts)), shown)
 
     def test_a_section_in_plan_md_that_the_record_does_not_hold_is_not_read(self):
         with tempfile.TemporaryDirectory() as d:

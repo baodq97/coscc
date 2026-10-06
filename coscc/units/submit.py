@@ -21,7 +21,7 @@ from coscc.units import contracts, guards
 
 SERVER = "cos"
 TOOL = "submit"
-# The name the session's gate is asked with, and so what `policy.allowed_mcp` holds.
+# The name the session's gate is asked with, and so what `Grant.mcp` holds.
 NAME = f"mcp__{SERVER}__{TOOL}"
 
 # With this sentence in the error sessions submit again after one more turn; without it, often not.
@@ -44,7 +44,7 @@ ROUND_STATES = {
     "needs-person": "changes-requested",
 }
 
-# The sessions that are no stage and hand back an object, each by its grant's name, with what
+# The sessions that are no stage and hand back an object, each by its row's name, with what
 # its tool says it is for; the schema is generated from its declaration (`contracts`). A
 # feature adds its own (`add_session`). The estimate's fields are checked by
 # `backlog.parse_proposal`: the declaration holds types, the app its rules.

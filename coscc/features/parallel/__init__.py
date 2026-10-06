@@ -1,7 +1,7 @@
 """Parallel: the steps of a plan's record, handed to impl.
 
-The block names the steps to impl's leading session only when there are two or more, which is
-when it starts one `worker` for each; how the agents talk is the kernel's
+The block names the steps to a run whose grant holds `Agent` (impl's leading session) only when
+there are two or more, which is when it starts one `worker` for each; how the agents talk is the kernel's
 (`coscc/agent/helpers.py`). `submit` refuses a plan whose steps name a path outside its
 `files`, or one path twice.
 """
@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from coscc.kernel import Block, Facts, Feature, Parts
 
+# The tool the block teaches: the run starts its workers with it.
+AGENT = "Agent"
+
 
 def render(facts: Facts) -> str:
-    """impl's block: the steps, when the plan's record names two or more."""
-    found = facts.plan["steps"] if facts.stage == "impl" and facts.plan else []
+    """The steps, when the plan's record names two or more."""
+    found = facts.plan["steps"] if facts.plan else []
     if len(found) < 2:
         return ""
     parts = [
@@ -37,6 +40,6 @@ def render(facts: Facts) -> str:
 FEATURE = Feature(
     "parallel",
     lambda _ctx: [],
-    agent=lambda _ctx: Parts(blocks=(Block("parallel", render),)),
+    agent=lambda _ctx: Parts(blocks=(Block("parallel", render, tool=AGENT),)),
     summary="Lets impl start one helper per parallel step of a plan's record.",
 )

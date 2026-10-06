@@ -17,7 +17,7 @@ export type AgentRow = {
   "config": ConfigRow;
   "variants": ConfigRow[];
   "skill": string;
-  "grant": GrantView;
+  "row": RowView;
   "last": RunView | null;
   "runs": RunView[];
   "runs_30d": number;
@@ -269,13 +269,6 @@ export type EventsPage = {
   "purged_at": string | null;
 };
 
-export type GrantView = {
-  "tools": string[];
-  "mcp": string[];
-  "submits": boolean;
-  "warning": string;
-};
-
 export type HoldView = {
   "state": string;
   "by": string;
@@ -435,6 +428,12 @@ export type Round = {
   "unfinished": boolean;
 };
 
+export type RowView = {
+  "tools": string[];
+  "submits": boolean;
+  "warning": string;
+};
+
 export type Run = {
   "id": number;
   "at": string;
@@ -553,6 +552,8 @@ export type StepEvent = {
   "content"?: unknown;
   "tool"?: string;
   "reason"?: string;
+  "lacked"?: string;
+  "granted"?: string[];
   "n"?: number;
   "model"?: string | null;
   "effort"?: string | null;

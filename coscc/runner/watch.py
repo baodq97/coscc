@@ -37,6 +37,10 @@ class StepEvent(TypedDict):
     content: NotRequired[Any]
     tool: NotRequired[str]
     reason: NotRequired[str]
+    # A `denied`'s: the grant the refusal lacked (`policy.lacked`), "" when its rule names none.
+    lacked: NotRequired[str]
+    # A `config`'s: what the run was granted, one phrase each (`policy.granted`).
+    granted: NotRequired[list[str]]
     n: NotRequired[int]
     model: NotRequired[str | None]
     effort: NotRequired[str | None]

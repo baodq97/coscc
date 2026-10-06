@@ -21,7 +21,7 @@ from coscc.agent.sessions import Sessions, Suspended
 from coscc.bus import Bus
 from coscc.config import Config
 from coscc.git import drift, fetches, gitops
-from coscc.kernel import OWNER, Facts, Hooks, Invalid, facts as facts_of
+from coscc.kernel import OWNER, Facts, Grant, Hooks, Invalid, facts as facts_of
 from coscc.runlog import events
 from coscc.runner.attempt import describe_attempt
 from coscc.runner.queue import MACHINES, STOPPABLE, Attempt, Holds, Refused, describe
@@ -646,7 +646,7 @@ class Steps:
                 workspace=cwd,
                 workspace_key=key,
                 unit=unit,
-                stage=stage,
+                agent=stage,
                 run="",
                 cwd=str(owner.get("scratch") or owner.get("tree") or cwd),
                 watch=owner.get("watch"),
@@ -831,12 +831,17 @@ class Steps:
                     workspace=cwd,
                     workspace_key=key,
                     unit=unit,
-                    stage=stage,
+                    agent=stage,
                     run="",
                     cwd=work,
                     watch=None,
                     directory=self.ws.unit_dir(cwd, unit),
                     resumed=False,
+                    # A step the PR machine does itself pushes the unit's branch: the guards see
+                    # that push. A session's own grant is issued once it opens (`Runner`).
+                    grant=Grant(branch=str((tree or {}).get("branch") or "HEAD"))
+                    if stage in MECHANICAL
+                    else None,
                 )
             )
             if refusal:
@@ -1066,9 +1071,10 @@ class Steps:
         return await worktrees.refresh_base(cwd, unit, self.config.data_dir)
 
     def feature_refusal(self, facts: Facts) -> str:
-        """The words of the first feature guard that denies this run, or `""` when all abstain. A
-        guard that raises denies: a run is never let through by a check that could not be made."""
-        for guard in self.hooks.for_step(facts.stage, facts.workspace).guards:
+        """The words of the first feature guard on for the run's workspace that denies it, or `""`
+        when all abstain. A guard that raises denies: a run is never let through by a check that
+        could not be made."""
+        for guard in self.hooks.on(facts.workspace).guards:
             try:
                 words = guard.check(facts)
             except Exception as e:

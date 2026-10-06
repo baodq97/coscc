@@ -15,7 +15,7 @@ from coscc.units import submit as submit_mod
 from coscc.units.board import Unavailable
 from coscc.store.journal import BadRecord, Journal, timelines_of
 from coscc.store.db import Busy
-from coscc.agent.policy import grant_for
+from coscc.agent.policy import row_for
 from coscc.runner import run as run_mod
 from coscc.update.updater import refuse_while_updating
 from coscc.kernel import OWNER
@@ -309,7 +309,7 @@ class Backlog:
 
             got = Run("cancelled")
             stream = run_mod.run(
-                self.models.agent("estimate", grant_for("estimate")),
+                self.models.agent("estimate", row_for("estimate")),
                 run_mod.Input(
                     cwd,
                     prompt,

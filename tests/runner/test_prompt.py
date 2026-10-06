@@ -360,7 +360,7 @@ def _golden_prompt(stage: str) -> str:
 
     with tempfile.TemporaryDirectory() as d:
         directory = _golden_unit(Path(d))
-        grant = policy.grant_for_step(stage, "routine")
+        grant = policy.row_for_step(stage, "routine")
         with mock.patch.object(runner_prompt, "skill_for", lambda s: f"RULES-FOR-{s}"):
             prompt, included = compose_prompt(
                 d,

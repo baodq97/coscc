@@ -14,6 +14,7 @@ from coscc.kernel import Agents, Invalid, Run, Runs, Settings, Units
 from tests.features.ctx import ctx_for
 from coscc.store.journal import Intervention, Journal
 from coscc.agent import policy
+from coscc.runner import run as run_mod
 from coscc.units import backlog, submit
 
 WS = "/ws"
@@ -307,7 +308,7 @@ class ItsSessionIsDeclaredHere(unittest.TestCase):
     """What the core once named for scan: its grant, its output declaration, its slug rules."""
 
     def setUp(self):
-        policy.add_session(scan.NAME, scan.SESSION.grant, scan.SESSION.own_turns)
+        policy.add_session(scan.NAME, scan.SESSION.row, scan.SESSION.own_turns)
         submit.add_session(scan.NAME, scan.SESSION.output, scan.SESSION.purpose)
 
     def test_its_output_is_a_declared_session_of_proposals(self):
@@ -319,15 +320,16 @@ class ItsSessionIsDeclaredHere(unittest.TestCase):
         self.assertIs(item["additionalProperties"], False)
 
     def test_the_grant_opens_nothing_and_keeps_its_two_turns(self):
-        g = policy.grant_for(scan.NAME)
+        g = policy.row_for(scan.NAME)
         self.assertFalse(g.opens_anything)
         self.assertTrue(g.submits)
         self.assertEqual((g.max_turns, g.max_budget_usd), (2, 0.68))
         self.assertIn("paid session", g.warning)
-        places = policy.Places(roots=("/w",))
         self.assertEqual(g.tools, ())
-        self.assertEqual(policy.critical(g, places, "mcp__cos__submit", {}, None), "")
-        self.assertIn(policy.HELD, policy.critical(g, places, "mcp__cos__other", {}, None))
+        grant = run_mod.issue(g, None, cwd="/w")
+        self.assertEqual((grant.write, grant.helpers), ((), ()))
+        self.assertEqual(policy.critical(grant, "mcp__cos__submit", {}, None), "")
+        self.assertIn(policy.HELD, policy.critical(grant, "mcp__cos__other", {}, None))
 
     def test_the_collector_keeps_proposals_and_refuses_a_bare_one(self):
         good = {

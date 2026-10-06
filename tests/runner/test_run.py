@@ -9,7 +9,10 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from coscc.agent.policy import Grant
+from unittest import mock
+
+from coscc.agent import policy
+from coscc.agent.policy import Row
 from coscc.agent.sessions import Refused, Suspended
 from coscc.runner import run as run_mod
 from coscc.store.db import Data
@@ -61,7 +64,7 @@ class Base(unittest.TestCase):
         (root / "work").mkdir()
         self.data_dir = root / "data"
         self.journal = Journal(root / "work", Data(self.data_dir))
-        self.agent = run_mod.Agent("estimate", Grant(max_turns=4, max_budget_usd=1.0), model="m")
+        self.agent = run_mod.Agent("estimate", Row(max_turns=4, max_budget_usd=1.0), model="m")
 
     def go(self, sessions, channel=True, finish=None, **given):
         collector = submit.Collector("estimate") if channel else None
@@ -177,13 +180,77 @@ class TheRunIsRecorded(Base):
 
     def test_chat_keeps_its_client_and_its_output_is_its_reply(self):
         sessions = Fake()
-        agent = run_mod.Agent("chat", Grant(tools=("Read",)))
+        agent = run_mod.Agent("chat", Row(tools=("Read",)))
         got = self.go(sessions, channel=False, agent=agent, keep=True, session_id="s0")[-1][1]
         call = sessions.calls[0]
         self.assertEqual((got.status, got.output), ("done", "said"))
         self.assertEqual((call["session_id"], call["recorder"].run), ("s0", got.run))
         self.assertNotIn("step", call)
         self.assertEqual(self.rows("end")[0]["agent"], "chat")
+
+
+class TheRunIsIssuedItsGrant(Base):
+    """`issue`: the per-run grant, nothing beyond what the row holds and where the run stands."""
+
+    IMPL = policy.row_for("impl")
+
+    def test_a_grant_without_its_secrets_is_never_issued(self):
+        with mock.patch.object(run_mod, "secrets_of", return_value=()):
+            with self.assertRaises(ValueError):
+                run_mod.issue(Row(), Fake(), cwd="/w")
+
+    def test_a_row_without_a_write_tool_writes_nowhere(self):
+        for key in ("plan", "spec", "intent", "review", "estimate"):
+            with self.subTest(key=key):
+                g = run_mod.issue(policy.row_for(key), Fake(), cwd="/w", unit_dir="/u")
+                self.assertEqual((g.write, g.scratch, g.helpers), ((), None, ()))
+                self.assertTrue(g.secrets)
+
+    def test_a_writing_row_writes_its_cwd_and_its_unit_and_with_bash_its_scratch(self):
+        g = run_mod.issue(self.IMPL, Fake(), cwd="/w", unit_dir="/u", scratch=("/r", "/d"))
+        self.assertEqual((g.cwd, g.write, g.scratch), ("/w", ("/w", "/u"), ("/r", "/d")))
+        self.assertGreater(g.ram_cap, 0)
+        writes = Row(tools=("Read", "Write"))
+        g = run_mod.issue(writes, Fake(), cwd="/w", unit_dir="/u", scratch=("/r", "/d"))
+        self.assertEqual((g.write, g.scratch), (("/w", "/u"), None))
+
+    def test_helpers_and_peers_come_only_with_agent_and_submit_with_an_output(self):
+        g = run_mod.issue(self.IMPL, Fake(), cwd="/w")
+        self.assertEqual(g.helpers, tuple(policy.SUBAGENTS))
+        self.assertEqual(g.mcp, (policy.SUBMIT_TOOL, policy.PEERS_TOOL))
+        g = run_mod.issue(policy.row_for("review"), Fake(), cwd="/w")
+        self.assertEqual((g.helpers, g.mcp), ((), (policy.SUBMIT_TOOL,)))
+
+    def test_a_lease_needs_a_branch_and_features_stay_out_of_the_cli_tools(self):
+        g = run_mod.issue(self.IMPL, Fake(), cwd="/w", lease="abc")
+        self.assertEqual((g.branch, g.lease), ("", ""))
+        g = run_mod.issue(
+            self.IMPL,
+            Fake(),
+            cwd="/w",
+            branch="feat/x",
+            features=("vault", "codegraph"),
+            held=("vault",),
+            mcp=("mcp__vault__vault_exec",),
+            use=(("vault", "ws:db"),),
+        )
+        self.assertNotIn("vault", g.tools)
+        self.assertIn("Bash", g.tools)
+        self.assertEqual(g.held, ("vault",))
+        self.assertEqual(
+            policy.granted(g)[1:],
+            ["push: feat/x", "helpers: scout, worker", "submit", "vault: ws:db"],
+        )
+
+    def test_the_start_and_the_first_event_say_what_was_granted(self):
+        agent = run_mod.Agent("estimate", policy.row_for("estimate"), model="m")
+        got = self.go(Fake(obj={"units": []}), agent=agent)[-1][1]
+        [start] = self.rows("start")
+        self.assertEqual(start["grants"]["mcp"], [policy.SUBMIT_TOOL])
+        self.assertEqual(start["grants"]["granted"], ["submit"])
+        self.assertEqual(start["grants"]["write"], [])
+        self.assertNotIn("secrets", start["grants"])
+        self.assertEqual(start["run"], got.run)
 
 
 class Resuming(Base):

@@ -757,11 +757,25 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
         cost_usd=8.0,
         detail="stopped at the ceiling: error_max_budget_usd",
     )
+    # An impl run with its events, `/run/proj/capture-impl-1`: what it was granted, and a push
+    # its grant did not hold.
+    journal.started(key, "0004_finished", "impl", "autonomous", run="capture-impl-1")
+    _run_events(work, data_dir, key, "0004_finished", "impl", "capture-impl-1")
+    journal.finished(
+        key, "0004_finished", "impl", "done", agent="impl", status="done", run="capture-impl-1",
+        turns=10, cost_usd=0.40, **_tokens(100_000),
+    )  # fmt: skip
     for _ in range(3):
         journal.started(key, "0004_finished", "impl", "autonomous")
         journal.finished(
             key, "0004_finished", "impl", "done", turns=10, cost_usd=0.40, **_tokens(100_000)
         )
+    # Two secrets on `/feature/vault`, kept by name with no value: one impl may use, one spike may.
+    from coscc.vault import Store
+
+    store = Store(Data(data_dir), config_home=str(data_dir / "cfg"), home=str(data_dir / "home"))
+    store.create("ws:db", key, "the staging database", stages=("impl",))
+    store.create("ws:deploy-key", key, "pushes the preview build", stages=("spike",))
     # The last `impl` run of all is this failed one, so `/agents` shows `impl` as `failed`
     # (a stage's chip is its last run's); `spec` ended `done` above and is `ok`.
     journal.started(key, "0004_finished", "impl", "autonomous")
@@ -771,16 +785,24 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
 def _run_events(
     work: Path, data_dir: Path, key: str, unit: str, stage: str, run: str, outcome: str = "done"
 ) -> None:
-    """A short run's events as the recorder stores them: its config, a read, a refusal, its words
-    and its end."""
+    """A short run's events as the recorder stores them: its config with what it was granted, a
+    read, a refusal naming the grant it lacked, its words and its end."""
+    from coscc.agent import policy
     from coscc.store.db import Data
 
     data, at = Data(data_dir), int(time.time() * 1000)
     data.step_run_open(run, str(Path(work).resolve()), key, unit, stage, at)
+    if stage == "impl":
+        granted = ["write: worktree, unit folder, scratch", "push: feat/finished", "helpers: scout, worker", "submit", "vault: ws:db", "codegraph"]  # fmt: skip
+        refusal = ("Bash", {"command": "git push origin main"}, f"{policy.HOST}: a push may only name `origin feat/finished`", "push")  # fmt: skip
+    else:
+        granted = ["submit"] if stage != "chat" else []
+        refusal = ("Write", {"file_path": "notes.md"}, f"{policy.WRITES}: this session has no place to write", "write")  # fmt: skip
+    tool, tool_input, reason, lacked = refusal
     said = [
-        ("config", {"model": "claude-opus-5-5[1m]", "effort": "medium"}),
+        ("config", {"model": "claude-opus-5-5[1m]", "effort": "medium", "granted": granted}),
         ("tool_use", {"id": "t1", "name": "Read", "input": {"file_path": "README.md"}}),
-        ("denied", {"tool": "Bash", "input": {"command": "curl x"}, "reason": "not granted"}),
+        ("denied", {"tool": tool, "input": tool_input, "reason": reason, "lacked": lacked}),
         ("text", {"text": "Three units are ready to estimate; 0002 waits on its question."}),
         ("result", {"num_turns": 2, "cost_usd": 0.11, "terminal_reason": "completed"}),
         ("end", {"outcome": outcome, "detail": ""}),

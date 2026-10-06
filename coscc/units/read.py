@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 from coscc.agent import agents
-from coscc.agent.policy import grant_for
+from coscc.agent.policy import row_for
 from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.git import gitops
@@ -857,7 +857,7 @@ class Board:
             backlog.undetermined(timelines, data["units"]),
         )
         per_unit = folded.pop("per_unit")
-        data["backlog"] = {**folded, "propose_warning": grant_for("estimate").warning}
+        data["backlog"] = {**folded, "propose_warning": row_for("estimate").warning}
         for unit in data["units"]:
             unit["backlog"] = per_unit.get(unit["name"]) or {
                 "rank": None,

@@ -125,7 +125,7 @@ function VaultPage({ workspace }: { workspace: Workspace }) {
               <tr>
                 <th>Name</th>
                 <th>Kept for</th>
-                <th>Used by</th>
+                <th>Agents that may use it</th>
                 <th>Passed as</th>
                 <th>Value</th>
                 <th />
@@ -207,7 +207,7 @@ function VaultPage({ workspace }: { workspace: Workspace }) {
           </label>
           <fieldset>
             <legend>Access</legend>
-            <Checks label="Used by" name="stage" options={v.stages} on={["impl"]} />
+            <Checks label="Agents that may use it" name="stage" options={v.stages} on={["impl"]} />
             <Checks label="Passed as" name="mode" options={v.modes} on={["env", "file"]} />
             <label>
               <input type="checkbox" name="broker" value="1" /> Broker: passed as ssh only
@@ -249,7 +249,7 @@ function Access({ s, stages, modes, busy, onClose, onSave }: { s: Meta; stages: 
   );
   return (
     <Dialog title={`Access of ${s.name}`} onClose={onClose}>
-      {group("Used by", stages, stage, setStage)}
+      {group("Agents that may use it", stages, stage, setStage)}
       {s.broker ? <div className="muted">Passed as ssh only.</div> : group("Passed as", modes, mode, setMode)}
       <div className="dlg-f">
         <Button onClick={onClose}>Cancel</Button>

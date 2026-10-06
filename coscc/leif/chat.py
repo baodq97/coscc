@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, TypedDict
 
 from coscc.agent import models
 from coscc.agent import sessions as reader
-from coscc.agent.policy import Grant
+from coscc.agent.policy import Row
 from coscc.agent.sessions import Sessions
 from coscc.config import Config
 from coscc.kernel import Invalid, Run
@@ -54,7 +54,7 @@ class Chat:
         ws: Workspaces,
         sessions: Sessions,
         refuse_updating: Callable[[], None],
-        agent_for: Callable[[str, Grant], run_mod.Agent],
+        agent_for: Callable[[str, Row], run_mod.Agent],
     ) -> None:
         self.config = config
         self.ws = ws
@@ -109,7 +109,7 @@ class Chat:
         """
         self.check_send(cwd, text)
         agent = self.agent_for(
-            models.CHAT, Grant(tools=tuple(self.config.effective_tools()), max_turns=CHAT_TURNS)
+            models.CHAT, Row(tools=tuple(self.config.effective_tools()), max_turns=CHAT_TURNS)
         )
         if resume is not None and resume.get("model"):
             agent = replace(

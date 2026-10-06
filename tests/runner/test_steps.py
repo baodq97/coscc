@@ -2450,13 +2450,14 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
             return board_reader.Gate(True, "open: pr may proceed", (), None)
 
         async def tree(*a, **kw):
-            return str(self.repo), str(self.repo)
+            return {"path": str(self.repo), "branch": "feat/a-problem"}, str(self.repo)
 
         async def none(*a, **kw):
             return None
 
         mechanical = mock.AsyncMock()
-        self.guarded(lambda facts: "no")
+        seen = []
+        self.guarded(lambda facts: seen.append(facts.grant.branch) or "no")
         steps = self.core.steps
         with (
             mock.patch.object(steps, "_ask_gate", open_gate),
@@ -2466,6 +2467,8 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
         ):
             self.refused("pr")
         mechanical.assert_not_called()
+        # The PR machine pushes the unit's branch: the guard is told so.
+        self.assertEqual(seen, ["feat/a-problem"])
 
 
 class APrOrShipEndsThroughTheMachine(unittest.TestCase):

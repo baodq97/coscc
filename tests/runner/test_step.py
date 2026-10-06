@@ -15,13 +15,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
 from coscc.agent import policy
 from coscc.kernel import Facts, Hooks, Parts, Tool
 from coscc.store.journal import Journal
-from coscc.agent.policy import grant_for
+from coscc.agent.policy import row_for
 from coscc.runner.prompt import compose_prompt
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner
@@ -69,18 +70,23 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
     def test_no_prose_stage_can_write_or_run(self):
         """Was `..._in_either_mode`. The grant no longer depends on the mode, so there is one
         grant per stage to check."""
+        # `codegraph` is a catalog entry whose effect is `read`.
+        reads = policy.READ_TOOLS + (policy.CODEGRAPH,)
         for stage in policy.PROSE_STAGES:
-            grant = policy.grant_for(stage)
-            self.assertEqual(policy.beyond_reading(grant), (), f"{stage} carries more than reading")
+            grant = policy.row_for(stage)
+            self.assertEqual(
+                policy.beyond_reading(grant, reads), (), f"{stage} carries more than reading"
+            )
 
     def test_intent_spec_plan_and_review_read_and_idea_does_not(self):
         # All four only read, in any mode.
         readers = ("intent", "spec", "plan", "review")
         for reader in readers:
-            self.assertEqual(policy.grant_for(reader).tools, policy.READ_TOOLS)
+            builtin = tuple(t for t in policy.row_for(reader).tools if t != policy.CODEGRAPH)
+            self.assertEqual(builtin, policy.READ_TOOLS)
         for stage in policy.PROSE_STAGES:
             if stage not in readers:
-                self.assertEqual(policy.grant_for(stage).tools, (), f"{stage} carries tools")
+                self.assertEqual(policy.row_for(stage).tools, (), f"{stage} carries tools")
 
     def test_the_guard_lets_the_plan_stage_through_with_its_read_tools(self):
         """The half a grant-table test cannot cover.
@@ -202,10 +208,10 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
     def test_the_app_still_writes_the_plan_artifact(self):
         """The reason `plan` gets no write tools. If the session wrote `plan.md` itself,
         an unaccepted plan could author the thing that authorizes it."""
-        self.assertTrue(policy.grant_for("plan").app_writes_artifact)
+        self.assertTrue(policy.row_for("plan").app_writes_artifact)
 
     def test_an_unknown_stage_is_locked_rather_than_open(self):
-        grant = policy.grant_for("a-stage-invented-tomorrow")
+        grant = policy.row_for("a-stage-invented-tomorrow")
         self.assertFalse(grant.opens_anything)
         self.assertEqual(grant.max_turns, 1)
         self.assertEqual(grant.max_budget_usd, 0.0)
@@ -216,8 +222,8 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
         A prose stage with tools would stop being covered without anything
         failing, so the runner checks rather than trusting the table it just read.
         """
-        original = dict(policy.GRANTS)
-        policy.GRANTS["spec"] = policy.Grant(tools=("Write",))
+        original = dict(policy.ROWS)
+        policy.ROWS["spec"] = policy.Row(tools=("Write",))
         try:
             with tempfile.TemporaryDirectory() as d:
                 make_unit(Path(d), intent_md="Status: accepted.\nI")
@@ -242,8 +248,8 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                 # 2026-09-23 `plan` holds three.
                 self.assertIn("must not carry Write", str(caught.exception))
         finally:
-            policy.GRANTS.clear()
-            policy.GRANTS.update(original)
+            policy.ROWS.clear()
+            policy.ROWS.update(original)
 
 
 class AStepRecordsTheCommitItRanOn(unittest.TestCase):
@@ -783,10 +789,12 @@ class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tree = self._tree(d)
             gate, directory = self._run(tree, d, "impl", cwd=str(tree))
-        self.assertEqual(gate.places.roots, (str(tree), str(directory)))
-        self.assertEqual(gate.places.branch, "feat/x")
-        self.assertEqual(gate.places.lease, "")
-        self.assertEqual(gate.grant.tools, grant_for("impl").tools)
+        self.assertEqual(gate.grant.write, (str(tree), str(directory)))
+        self.assertEqual(gate.grant.branch, "feat/x")
+        self.assertEqual(gate.grant.lease, "")
+        self.assertEqual(
+            gate.grant.tools, tuple(t for t in row_for("impl").tools if t[0].isupper())
+        )
         self.assertIsNotNone(gate.helpers)
         # The prompt names the one push this gate lets through.
         self.assertIn("`git push origin feat/x`", self.prompt)
@@ -795,8 +803,8 @@ class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as scratch:
             tree = self._tree(d)
             gate, _ = self._run(tree, d, "spike", cwd=scratch, watch=str(tree))
-        self.assertEqual(gate.places.roots, (scratch,))
-        self.assertEqual(gate.places.branch, "")
+        self.assertEqual(gate.grant.write, (scratch,))
+        self.assertEqual(gate.grant.branch, "")
         self.assertIsNone(gate.helpers)
 
     def test_a_worktree_on_the_trunk_pushes_nothing(self):
@@ -804,7 +812,7 @@ class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
             tree = self._tree(d)
             subprocess.run(["git", "-C", str(tree), "switch", "-q", "main"], check=True)
             gate, _ = self._run(tree, d, "impl", cwd=str(tree))
-        self.assertEqual(gate.places.branch, "")
+        self.assertEqual(gate.grant.branch, "")
 
 
 class AnImplReadsItsSiblings(unittest.TestCase):
@@ -1054,7 +1062,11 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
         self.assertEqual(config["max_turns_source"], "override")
         # The first event of the run, before anything the session said.
         self.assertEqual((stored[0]["kind"], stored[0]["seq"]), ("config", 1))
-        self.assertEqual(set(config) - {"run", "seq", "at", "kind"}, self.CONFIG_FIELDS)
+        self.assertEqual(
+            set(config) - {"run", "seq", "at", "kind"}, self.CONFIG_FIELDS | {"granted"}
+        )
+        # The first line says what the run was granted: a plan reads, so only `submit`.
+        self.assertEqual(config["granted"], ["submit"])
         self.assertEqual(
             {k: config[k] for k in self.CONFIG_FIELDS},
             {
@@ -1064,7 +1076,7 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
                 "effort_source": "default",
                 "max_turns": 30,
                 "max_turns_source": "override",
-                "max_budget_usd": grant_for("spec").max_budget_usd,
+                "max_budget_usd": row_for("spec").max_budget_usd,
                 "max_budget_source": "default",
             },
         )
@@ -1090,7 +1102,7 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
     def test_the_other_rows_overrides_change_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             probe, _, stored = self.run_spec(d, {"turns:impl": 30, "turns:impl:novel": 40})
-        self.assertEqual(probe.max_turns, grant_for("spec").max_turns)
+        self.assertEqual(probe.max_turns, row_for("spec").max_turns)
         self.assertEqual(stored[0]["max_turns_source"], "default")
 
     def test_a_bad_value_is_skipped_and_the_step_starts_on_the_default(self):
@@ -1098,22 +1110,22 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as d:
                 probe, final, stored = self.run_spec(d, {"turns:spec": bad})
                 self.assertEqual(final["outcome"], "done", final)
-                self.assertEqual(probe.max_turns, grant_for("spec").max_turns)
+                self.assertEqual(probe.max_turns, row_for("spec").max_turns)
                 self.assertEqual(stored[0]["max_turns_source"], "default")
 
     def test_a_store_that_cannot_be_read_is_no_override(self):
         with tempfile.TemporaryDirectory() as d:
             probe, final, stored = self.run_spec(d, {"turns:spec": 30}, break_store=True)
         self.assertEqual(final["outcome"], "done", final)
-        self.assertEqual(probe.max_turns, grant_for("spec").max_turns)
+        self.assertEqual(probe.max_turns, row_for("spec").max_turns)
         self.assertEqual(stored[0]["max_turns_source"], "default")
 
     def test_with_no_config_the_ceilings_are_the_grants(self):
         runner = Runner(sessions=object(), journal=None)
-        grant, ceilings = runner._configured(grant_for("spec"), "spec", None, {})
+        grant, ceilings = runner._configured(row_for("spec"), "spec", None, {})
         self.assertEqual(
             (grant.max_turns, grant.max_budget_usd),
-            (grant_for("spec").max_turns, grant_for("spec").max_budget_usd),
+            (row_for("spec").max_turns, row_for("spec").max_budget_usd),
         )
         self.assertEqual(
             (ceilings["max_turns"], ceilings["max_budget_usd"]),
@@ -1137,7 +1149,7 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.kw = kw
             stage, directory = self.stage, self.directory
-            if grant_for(stage).app_writes_artifact:
+            if row_for(stage).app_writes_artifact:
                 title = stage.capitalize()
                 body = f"# {title}: x\nStatus: accepted.\n"
                 if stage == "review":
@@ -1175,7 +1187,7 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
         return probe, final
 
     def test_every_stage_with_tools_gets_the_preset(self):
-        with_tools = [s for s in STAGES if grant_for(s).opens_anything]
+        with_tools = [s for s in STAGES if row_for(s).opens_anything]
         # Pinned, so a change to the grant table turns this red rather than quietly
         # leaving a stage out of what it checks.
         self.assertEqual(with_tools, ["intent", "spec", "spike", "plan", "impl", "review"])
@@ -1302,7 +1314,7 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
                 )
 
     def test_the_step_hands_the_grants_ceilings_to_the_prompt(self):
-        g = grant_for("spike")
+        g = row_for("spike")
         seen = []
 
         class Fake:
@@ -1658,12 +1670,15 @@ class AStepAnUpdatePaused(unittest.TestCase):
     def test_a_resumed_step_gets_a_server_made_from_resumed_facts(self):
         made = []
         tool = Tool(
-            server="fake",
-            names=("ping",),
-            stages=("plan",),
-            make=lambda facts: made.append(facts) or {"type": "sdk", "name": "fake"},
+            "fake",
+            "read",
+            "low",
+            "fake",
+            ("ping",),
+            lambda facts: made.append(facts) or {"type": "sdk", "name": "fake"},
         )
         hooks = Hooks(parts=(("fake", Parts(tools=(tool,))),))
+        _rows_naming(self, "fake", ("plan",))
         with tempfile.TemporaryDirectory() as d:
             sessions = self.GoesOn(rest=self.PLAN)
             self.run_plan(d, sessions, self.resume(), hooks=hooks)
@@ -1671,7 +1686,7 @@ class AStepAnUpdatePaused(unittest.TestCase):
             self.assertEqual(set(call["mcp_servers"]), {"cos", "fake"})
         [facts] = made
         self.assertTrue(facts.resumed)
-        self.assertEqual((facts.unit, facts.stage), (UNIT, "plan"))
+        self.assertEqual((facts.unit, facts.agent), (UNIT, "plan"))
 
     def test_a_suspended_step_writes_no_end_and_no_attempt(self):
         from coscc.agent.sessions import Suspended
@@ -1708,7 +1723,7 @@ class AStepAnUpdatePaused(unittest.TestCase):
             self.assertEqual((end["cost_usd"], end["session_cost_usd"]), (0.7, 1.2))
 
     def test_remaining_ceilings_are_the_grant_less_what_was_used(self):
-        grant = grant_for("plan")
+        grant = row_for("plan")
         with tempfile.TemporaryDirectory() as d:
             sessions = self.GoesOn(rest=self.PLAN)
             self.run_plan(d, sessions, self.resume())
@@ -1722,7 +1737,7 @@ class AStepAnUpdatePaused(unittest.TestCase):
             self.assertEqual(sessions.calls[0]["max_budget_usd"], grant.max_budget_usd)
 
     def test_a_used_up_ceiling_ends_the_step_paused_without_a_session(self):
-        grant = grant_for("plan")
+        grant = row_for("plan")
         for used, terminal in (
             ({"api_calls": grant.max_turns}, "error_max_turns"),
             ({"spent_usd": grant.max_budget_usd}, "error_max_budget_usd"),
@@ -1781,9 +1796,19 @@ class AStepAnUpdatePaused(unittest.TestCase):
             self.assertTrue(end["segments"][0]["cost_unknown"])
 
 
+def _rows_naming(test: unittest.TestCase, name: str, keys: tuple[str, ...]) -> None:
+    """`policy.ROWS` with `name` added to the rows of `keys`, for the test."""
+    rows = {k: policy.ROWS.get(k, policy.Row()) for k in keys}
+    patch = mock.patch.dict(
+        policy.ROWS, {k: replace(r, tools=(*r.tools, name)) for k, r in rows.items()}
+    )
+    patch.start()
+    test.addCleanup(patch.stop)
+
+
 class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
-    """A tool a feature declares reaches the session only on the stages it names and only while the
-    feature is on, and it never takes `submit`'s place."""
+    """A catalog tool a feature declares reaches the session only when the agent's row names it and
+    only while the feature is on, and it never takes `submit`'s place."""
 
     made: list[Facts]
 
@@ -1794,7 +1819,8 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
             self.made.append(facts)
             return {"type": "sdk", "name": f"fake-{facts.unit}"}
 
-        tool = Tool(server="fake", names=("ping",), stages=stages, make=make)
+        tool = Tool("fake", "read", "low", "fake", ("ping",), make)
+        _rows_naming(self, "fake", stages)
         return Hooks(
             parts=(("fake", Parts(tools=(tool,))),),
             enabled=lambda feature, _workspace: on and feature == "fake",
@@ -1865,11 +1891,14 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
             self.assertTrue(probe.answers["mcp__fake__ping"])
             self.assertTrue(probe.answers["mcp__cos__submit"])
             self.assertFalse(probe.answers["mcp__fake__other"])
-            self.assertEqual(probe.kw["tools"], list(policy.grant_for("impl").tools))
+            builtin = [t for t in policy.row_for("impl").tools if t[0].isupper()]
+            self.assertEqual(probe.kw["tools"], builtin)
             self.assertNotIn("mcp__fake__ping", probe.kw["tools"])
             [start] = journal.records(d, kind="start")
-            self.assertEqual(start["mcp"], ["mcp__fake__ping"])
-            self.assertEqual(start["granted"], list(policy.grant_for("impl").tools))
+            mcp = [policy.SUBMIT_TOOL, policy.PEERS_TOOL, "mcp__fake__ping"]
+            self.assertEqual(start["grants"]["mcp"], mcp)
+            self.assertEqual(start["grants"]["tools"], builtin)
+            self.assertIn("fake", start["grants"]["granted"])
 
     def test_another_stage_and_a_feature_that_is_off_get_cos_only(self):
         for name, hooks, stage in (
@@ -1885,7 +1914,8 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
                 self.assertFalse(probe.answers.get("mcp__fake__other", False))
                 # `submit` still ends the step.
                 self.assertIsNotNone(probe.submitted)
-                self.assertEqual(journal.records(d, kind="start")[0]["mcp"], [])
+                grants = journal.records(d, kind="start")[0]["grants"]
+                self.assertNotIn("mcp__fake__ping", grants["mcp"])
 
     def test_a_step_with_tools_and_no_submit_channel_still_gets_them(self):
         hooks = self._hooks(stages=("idea",))

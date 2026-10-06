@@ -1,14 +1,13 @@
-"""What a step is allowed to do, keyed on the stage it runs.
+"""Each agent's row (its tools and ceilings), the per-run `Grant`, and the critical calls.
 
-`Config` is the app's default (chat only, no tools); this table says what a board step may do
-instead.
-
-- Deny by default: a stage this table does not name gets `Grant()`: no tools, one turn, no budget.
+- `ROWS` is agent data: the catalog tools (`coscc/kernel.py`) each agent holds and its two
+  ceilings. Deny by default: a key the table does not name gets `Row()`: no tools, one turn, no
+  budget.
+- A `Grant` is what one run may do, issued by the engine as the run opens
+  (`coscc/runner/run.py`'s `issue`) and gone with it. `critical` reads only it.
 - Pure: nothing here reads the environment, the store or a request.
-- The tools go with the stage, not the mode; the mode is recorded in the journal and decides
-  nothing here.
 
-`Grant.tools` is not the whole enforcement: a list handed to the SDK covers the built-in set
+`Row.tools` is not the whole enforcement: a list handed to the SDK covers the built-in set
 only and MCP tools walk past `tools=[]`. Every session runs Claude Code's `auto` mode, and what
 no session may do whatever `auto` thinks is `critical` below, asked by the gate's hook before
 every call (`coscc/agent/helpers.py`).
@@ -35,8 +34,9 @@ PROSE_STAGES: tuple[ProseStage, ...] = get_args(ProseStage)
 
 
 @dataclass(frozen=True)
-class Grant:
-    """What one step may do. The default is the locked position."""
+class Row:
+    """One agent's data: the catalog tools it holds and its ceilings. The default is the locked
+    position. Not a permission: what a run may do is the `Grant` issued from this."""
 
     tools: tuple[str, ...] = ()
     # Chosen, not measured: they turn a loop that will not end into a named failure.
@@ -48,19 +48,9 @@ class Grant:
     # Shown on the page before the step is started: a capability from the machine's own
     # configuration is invisible in an app, so it is said where the button is.
     warning: str = ""
-    # Whether the session is handed `submit` (`coscc/units/submit.py`), the one tool beyond this
-    # grant's list the gate lets through. It writes nothing and runs nothing, and is not in
-    # `tools`: `--tools` names the built-in set, and an SDK server's tool reaches the session anyway.
+    # Whether the run is handed `submit` (`coscc/units/submit.py`). It writes nothing and runs
+    # nothing, and is not in `tools`: the kernel's own, issued with the grant.
     submits: bool = False
-    # Full names of MCP tools a feature's server holds, derived by `coscc/kernel.py`. Not in `tools`
-    # (`--tools` names the built-in set) and not in `opens_anything`.
-    mcp: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        for name in self.mcp:
-            m = MCP_NAME.fullmatch(name)
-            if m is None or m.group(1) == "cos":
-                raise ValueError(f"not a feature's MCP tool name: {name!r}")
 
     @property
     def opens_anything(self) -> bool:
@@ -91,6 +81,9 @@ LIST_AGENTS = "ListAgents"
 HANDBACK = "SubagentHandback"
 # The only `git` subcommands a helper may run: only the leading session commits.
 HELPER_GIT = ("status", "diff", "log", "show", "blame")
+# The catalog entries of two features (`coscc/features/`), as a row names them.
+VAULT = "vault"
+CODEGRAPH = "codegraph"
 # Named helpers with a bounded report, so big reads and test output stay out of the main
 # context. `sessions._options` turns each into an `AgentDefinition`. A helper gets only the
 # built-in tools its session's grant holds, so the grant carrying `Agent` lists `worker`'s.
@@ -150,16 +143,17 @@ ESTIMATE_WARNING = (
     "can rewrite any estimate, relation or the shortlist under any name they type."
 )
 
-# Only stages that appear here get anything. The rest (`idea`, any stage invented later) falls
-# through to `Grant()`. Keyed by stage alone.
-GRANTS: dict[str, Grant] = {
+# Only agents that appear here get anything. The rest (`idea`, any stage invented later) falls
+# through to `Row()`. Keyed by agent alone. Each `tools` names catalog entries
+# (`coscc/kernel.py`); one the catalog does not hold stops the app's build.
+ROWS: dict[str, Row] = {
     # The one entry whose ceilings are measured rather than chosen. Fifty turns ended three of
     # four `impl` steps mid-work (51/50 turns, $1.8-2.5, no `impl.md`); the one that finished did
     # so because earlier runs had done the work. 120 is about twice the highest real attempt,
     # and the budget goes with it: at the measured $0.047/turn a 120-turn step lands near $5.6,
     # so a $5 cap would only move the same premature stop to the other ceiling.
-    "impl": Grant(
-        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS + (AGENT_TOOL, SEND_MESSAGE),
+    "impl": Row(
+        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS + (AGENT_TOOL, SEND_MESSAGE, VAULT, CODEGRAPH),
         max_turns=120,
         max_budget_usd=8.0,
         app_writes_artifact=False,
@@ -168,7 +162,7 @@ GRANTS: dict[str, Grant] = {
     # to be verified before it is written down, and without read tools a plan names paths it
     # never saw. No write tools and no Bash: the app still writes `plan.md` from the reply,
     # which stops a plan authoring itself, and `beyond_reading` keeps that true if this widens.
-    "plan": Grant(
+    "plan": Row(
         tools=READ_TOOLS,
         # Chosen, not measured: 20 cut a plan mid-read at the ceiling ($1.08, nothing returned)
         # as what it had to read grew. The `turns` the app records is not the counter `max_turns`
@@ -180,7 +174,7 @@ GRANTS: dict[str, Grant] = {
     # `spec` reads, and only reads, for the reason `plan` does: `write-spec` requires every
     # figure to name its source and every citation a path and line range. No write tools and no
     # Bash; the app writes `spec.md` from the reply. Both ceilings are `plan`'s, not measured.
-    "spec": Grant(
+    "spec": Row(
         tools=READ_TOOLS,
         max_turns=40,
         max_budget_usd=4.0,
@@ -189,7 +183,7 @@ GRANTS: dict[str, Grant] = {
     # worktree's code before `## Problem` is written, and without read tools it restates the idea
     # about code it never opened. No write tools and no Bash; the app writes `intent.md` from
     # the reply. Both ceilings are `spec`'s, chosen, not measured.
-    "intent": Grant(
+    "intent": Row(
         tools=READ_TOOLS,
         max_turns=40,
         max_budget_usd=4.0,
@@ -203,8 +197,8 @@ GRANTS: dict[str, Grant] = {
     # counter `max_turns` stops on (see `plan`), so 80 doubles the ceiling that was hit. Runs
     # cost $0.032-0.055 a recorded turn, so 80 turns is about $2.6-4.4, and $4 would stop the
     # dearer ones before the turn ceiling; $8.0 is `impl`'s.
-    "spike": Grant(
-        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
+    "spike": Row(
+        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS + (VAULT,),
         max_turns=80,
         max_budget_usd=8.0,
         app_writes_artifact=True,
@@ -213,18 +207,18 @@ GRANTS: dict[str, Grant] = {
     # A separate agent session reviews the open pull request, before the merge. It reads and
     # only reads, like `plan`: the app still writes `review.md` from the reply. It cannot run
     # `git diff`, so it sees the working tree and `impl.md`, not the diff.
-    "review": Grant(
-        tools=READ_TOOLS,
+    "review": Row(
+        tools=READ_TOOLS + (CODEGRAPH,),
         # Chosen, not measured: 20/$2.0 stopped review sessions before they wrote a round. One that
         # still stops at it pauses, and a person's raise goes on in its session.
         max_turns=40,
         max_budget_usd=4.0,
     ),
     # No `pr` and no `ship` entry: both are the PR machine's, with no session
-    # (`coscc/github/prmachine.py`), so a step of either falls through to the locked `Grant()`.
+    # (`coscc/github/prmachine.py`), so a step of either falls through to the locked `Row()`.
     # Gebo's ceilings are chosen, not measured: impl's (120 turns, $8), to lower once real runs
     # are recorded.
-    "integrate": Grant(
+    "integrate": Row(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         max_turns=120,
         max_budget_usd=8.0,
@@ -234,7 +228,7 @@ GRANTS: dict[str, Grant] = {
     # Not a stage either: the backlog's *Propose estimates* button, one session per press. No
     # tools, like `idea`; it hands its estimate back through
     # `submit` (`SUBMITTING_SESSIONS`) and the reply is not read. Ceilings chosen, not measured.
-    "estimate": Grant(
+    "estimate": Row(
         max_turns=1,
         max_budget_usd=2.0,
         warning=ESTIMATE_WARNING,
@@ -253,15 +247,16 @@ NOVEL_CEILINGS: dict[str, tuple[int, float]] = {
 }
 
 
-def beyond_reading(grant: Grant) -> tuple[str, ...]:
-    """What a grant carries that a prose stage may not: anything beyond reading.
+def beyond_reading(row: Row, reads: tuple[str, ...] = READ_TOOLS) -> tuple[str, ...]:
+    """What a row carries that a prose stage may not: anything beyond reading. `reads` are the
+    catalog names whose effect is `read` (`kernel.Hooks.reads`).
 
     A prose stage's artifact is written by **the app** from the reply. A step holding write
     tools could write its own artifact behind the app's back, and one holding Bash is not
     a prose stage at all; reading is neither. The guard in `coscc/runner/step.py` asks
-    this rather than whether the grant is empty ("no tools" is not "no capability").
+    this rather than whether the row is empty ("no tools" is not "no capability").
     """
-    return tuple(t for t in grant.tools if t not in READ_TOOLS)
+    return tuple(t for t in row.tools if t not in reads)
 
 
 # The stages whose run hands back an object through `submit`: a stage result, or `review`'s
@@ -280,27 +275,27 @@ SUBMITTING_SESSIONS = {"estimate", "integrate"}
 OWN_TURNS: set[str] = set()
 
 
-def add_session(kind: str, grant: Grant, own_turns: bool) -> None:
+def add_session(kind: str, row: Row, own_turns: bool) -> None:
     """A feature's session (`kernel.Session`), added when the app is built; adding the same
-    one again changes nothing, and taking a name another grant holds is a `ValueError`."""
-    if GRANTS.get(kind, grant) != grant:
-        raise ValueError(f"the grant {kind!r} is taken")
-    GRANTS[kind] = grant
+    one again changes nothing, and taking a name another row holds is a `ValueError`."""
+    if ROWS.get(kind, row) != row:
+        raise ValueError(f"the row {kind!r} is taken")
+    ROWS[kind] = row
     SUBMITTING_SESSIONS.add(kind)
     if own_turns:
         OWN_TURNS.add(kind)
 
 
-def grant_for(stage: str) -> Grant:
-    """The grant for one step. A stage the table does not name is locked, not open.
+def row_for(key: str) -> Row:
+    """The row of one agent. A key the table does not name is locked, not open.
 
     A stage in `SUBMITTING` or a session in `SUBMITTING_SESSIONS` gets `submits`, and at least
     `SUBMIT_TURNS` turns, unless it is one of `OWN_TURNS`.
     """
-    grant = GRANTS.get(stage, Grant())
-    if stage not in SUBMITTING and stage not in SUBMITTING_SESSIONS:
-        return grant
-    return replace(grant, submits=True, max_turns=turns_floor(stage, grant.max_turns))
+    row = ROWS.get(key, Row())
+    if key not in SUBMITTING and key not in SUBMITTING_SESSIONS:
+        return row
+    return replace(row, submits=True, max_turns=turns_floor(key, row.max_turns))
 
 
 def turns_floor(stage: str, turns: int) -> int:
@@ -311,17 +306,17 @@ def turns_floor(stage: str, turns: int) -> int:
     return max(turns, SUBMIT_TURNS)
 
 
-def grant_for_step(stage: str, label: str | None) -> Grant:
-    """The grant for one step run under a plan's effective label.
+def row_for_step(stage: str, label: str | None) -> Row:
+    """The row for one step run under a plan's effective label.
 
     Only the exact `novel` label, on a stage `NOVEL_CEILINGS` names, changes anything, and
-    only the two ceilings: the tools and refusals are `grant_for(stage)`'s.
+    only the two ceilings: the tools are `row_for(stage)`'s.
     """
-    grant = grant_for(stage)
+    row = row_for(stage)
     if label == NOVEL and stage in NOVEL_CEILINGS:
         turns, budget = NOVEL_CEILINGS[stage]
-        return replace(grant, max_turns=turns, max_budget_usd=budget)
-    return grant
+        return replace(row, max_turns=turns, max_budget_usd=budget)
+    return row
 
 
 def is_prose_stage(stage: str) -> bool:
@@ -1257,60 +1252,133 @@ HELPERS = (
 HELD = "only the MCP tools this session holds"
 
 
-@dataclass(frozen=True)
-class Places:
-    """What one session may touch, fixed by the app as it opens; nothing here is the session's."""
+# What a refusal lacked, by the rule its reason opens with: the grant that would have allowed the
+# call, or `NEVER` for what no grant allows. `REMOVAL` is `write`'s: `rm -r` stays inside it.
+NEVER = "never granted"
+LACKED = {WRITES: "write", REMOVAL: "write", HOST: "push", HELPERS: "helpers", HELD: "mcp"}
 
-    # Where the write tools may write: the session's `cwd` first (a relative path a command names
-    # is read from there), then the unit's folder for a step that writes its own artifact.
-    roots: tuple[str, ...] = ()
-    # The unit's `(ram, disk)` directories (`coscc/units/scratch.py`), written only by a step
-    # holding Bash, the ram one while its files add up to less than `ram_cap` bytes.
+
+def lacked(reason: str) -> str:
+    """The grant a refusal names: `write`, `push`, `helpers`, `mcp`; `NEVER` for a secret; "" for
+    a refusal that is not the hook's rule (a line it could not read, `auto`'s own)."""
+    if reason.startswith(SECRETS):
+        return NEVER
+    return next((g for rule, g in LACKED.items() if reason.startswith(rule)), "")
+
+
+@dataclass(frozen=True)
+class Grant:
+    """What one run may do: issued by the engine as the run opens (`coscc/runner/run.py`'s
+    `issue`), held by that session's `Gate` only, and gone with the run. Nothing here is the
+    agent's to choose, and nobody declares one. No grant, no action: the hook refuses a write, a
+    push, a helper or an MCP tool this does not hold, and reaches no path in `secrets` whatever it
+    holds."""
+
+    # Where the session runs; a relative path a command or a tool names is read from here.
+    cwd: str = ""
+    # Where the write tools and `rm -r` may write: the session's `cwd` and the unit's folder, only
+    # for a run whose row holds a write tool.
+    write: tuple[str, ...] = ()
+    # The unit's `(ram, disk)` directories (`coscc/units/scratch.py`), only for a run holding Bash,
+    # the ram one while its files add up to less than `ram_cap` bytes.
     scratch: tuple[str, str] | None = None
     ram_cap: int = 0
-    # The branch the worktree stood on as the session opened, the one `git push` may name. ""
-    # (the trunk, a detached HEAD, no worktree) pushes nothing.
+    # The push: the branch the worktree stood on as the session opened, the one `git push` may
+    # name; "" (the trunk, a detached HEAD, a spike, no worktree) pushes nothing. `lease` is Gebo's,
+    # the head its pull request had when it began: its every push carries
+    # `--force-with-lease=<branch>:<lease>`; "" refuses the flag.
     branch: str = ""
-    # Gebo's lease, the head its pull request had when it began: its every push carries
-    # `--force-with-lease=<branch>:<lease>`. "" refuses the flag.
     lease: str = ""
-    # `protected_paths`: no tool may reach one.
+    # The helper types `Agent` may start (`SUBAGENTS`), only for a run whose row holds `Agent`.
+    helpers: tuple[str, ...] = ()
+    # Full names of the MCP tools it holds: `submit`, `peers` with helpers, and the catalog tools
+    # its row lists and whose `when` admitted the run.
+    mcp: tuple[str, ...] = ()
+    # `(tool, resource)` it may use through that tool, as `("vault", "ws:db")`.
+    use: tuple[tuple[str, str], ...] = ()
+    # `protected_paths`: no tool may reach one. `issue` and `Gate` refuse a grant without them.
     secrets: tuple[str, ...] = ()
     # What `~` and `$HOME` name in a command; "" reads this process's own.
     home: str = ""
+    # Claude Code's own tools it holds, what `--tools` names.
+    tools: tuple[str, ...] = ()
+    # The features' catalog entries its row names that are on for the workspace
+    # (`coscc/kernel.py`), whether or not their `when` admitted the run: what a prompt block that
+    # teaches one is shown for.
+    held: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in self.mcp:
+            m = MCP_NAME.fullmatch(name)
+            if m is None or (m.group(1) == "cos" and name not in (SUBMIT_TOOL, PEERS_TOOL)):
+                raise ValueError(f"not an MCP tool name a grant may hold: {name!r}")
 
 
-def allowed_mcp(grant: Grant) -> tuple[str, ...]:
-    """The MCP tools a grant holds: `submit` with `submits`, `peers` with `Agent`, and `Grant.mcp`.
-    The session allows them by name, so they skip the classifier; the hook still asks first."""
-    return (
-        *((SUBMIT_TOOL,) if grant.submits else ()),
-        *((PEERS_TOOL,) if AGENT_TOOL in grant.tools else ()),
-        *grant.mcp,
-    )
+def granted(grant: Grant) -> list[str]:
+    """What a run was granted, one phrase each, as the run log's first line shows it:
+    `write: worktree, unit folder, scratch`, `push: feat/x`, `helpers: scout, worker`,
+    `vault: ws:db`, one per other MCP server (`codegraph`, `submit`)."""
+    out = []
+    if grant.write:
+        where = (
+            ["worktree"]
+            + ["unit folder"] * (len(grant.write) > 1)
+            + ["scratch"] * bool(grant.scratch)
+        )
+        out.append("write: " + ", ".join(where))
+    if grant.branch:
+        out.append(f"push: {grant.branch}" + (" (with a lease)" if grant.lease else ""))
+    if grant.helpers:
+        out.append("helpers: " + ", ".join(grant.helpers))
+    used: dict[str, list[str]] = {}
+    for tool, resource in grant.use:
+        used.setdefault(tool, []).append(resource)
+    for full in grant.mcp:
+        server, name = full.split("__")[1:3]
+        label = name if server == "cos" else server
+        if full == PEERS_TOOL or any(p == label or p.startswith(f"{label}:") for p in out):
+            continue
+        out.append(f"{label}: {', '.join(used[label])}" if used.get(label) else label)
+    return out
 
 
-def critical(
-    grant: Grant, places: Places, tool: str, tool_input: dict, agent_id: str | None
-) -> str:
+def record(grant: Grant) -> dict:
+    """The grant as the run's `start` and its first event keep it: `granted`'s phrases, and each
+    field but `secrets` (the deny list, the same for every run of this app)."""
+    return {
+        "granted": granted(grant),
+        "cwd": grant.cwd,
+        "write": list(grant.write),
+        "scratch": list(grant.scratch or ()),
+        "branch": grant.branch,
+        "lease": grant.lease,
+        "helpers": list(grant.helpers),
+        "mcp": list(grant.mcp),
+        "use": [list(u) for u in grant.use],
+        "tools": list(grant.tools),
+        "held": list(grant.held),
+    }
+
+
+def critical(grant: Grant, tool: str, tool_input: dict, agent_id: str | None) -> str:
     """ "" unless the call is one every session is refused, else why, opening with its item.
 
-    `agent_id` is the CLI's, set when one of `SUBAGENTS` made the call. Reads no command list
-    and no read boundary: what is not here is for `auto` to judge.
+    `agent_id` is the CLI's, set when one of `SUBAGENTS` made the call. Reads only the run's
+    grant: no command list and no read boundary; what is not here is for `auto` to judge.
     """
     if tool.startswith("mcp__"):
-        if tool in allowed_mcp(grant):
+        if tool in grant.mcp:
             return ""
         return f"{HELD}: {tool} is not one"
     if tool in (AGENT_TOOL, TASK_TOOL):
-        return _agent_refused(tool_input, agent_id)
+        return _agent_refused(grant, tool_input, agent_id)
     if tool == LIST_AGENTS:
         return f"{HELPERS}: ListAgents lists sessions outside this step; call {PEERS_TOOL}"
-    reason = _secret_refused(tool, tool_input, places)
+    reason = _secret_refused(tool, tool_input, grant)
     if reason:
         return reason
     if tool in WRITE_TOOLS:
-        roots = _resolved(places.roots)
+        roots = _resolved(grant.write)
         if not roots:
             return f"{WRITES}: this session has no place to write"
         if not _paths_in(tool_input) or any(
@@ -1318,21 +1386,22 @@ def critical(
             for k in _PATH_KEYS
         ):
             return f"{WRITES}: a write tool must name the file it writes"
-        own = places.scratch if any(t in grant.tools for t in EXEC_TOOLS) else None
-        reason = _write_refused(tool_input, roots, own, places.ram_cap)
+        reason = _write_refused(tool_input, roots, grant.scratch, grant.ram_cap)
         return f"{WRITES}: {reason}" if reason else ""
     if tool in EXEC_TOOLS:
         if tool_input.get("run_in_background"):
             return f"{HELPERS}: run_in_background is refused: {BACKGROUND_REFUSAL}"
-        return bash_refused(places, str(tool_input.get("command") or ""), agent_id)
+        return bash_refused(grant, str(tool_input.get("command") or ""), agent_id)
     return ""
 
 
-def _agent_refused(tool_input: dict, agent_id: str | None) -> str:
+def _agent_refused(grant: Grant, tool_input: dict, agent_id: str | None) -> str:
     if agent_id is not None:
         return f"{HELPERS}: a helper may not start another helper"
-    if tool_input.get("subagent_type") not in SUBAGENTS:
-        return f"{HELPERS}: only these helpers may be started: {', '.join(SUBAGENTS)}"
+    if not grant.helpers:
+        return f"{HELPERS}: this run holds no helpers"
+    if tool_input.get("subagent_type") not in grant.helpers:
+        return f"{HELPERS}: only these helpers may be started: {', '.join(grant.helpers)}"
     if tool_input.get("run_in_background"):
         return f"{HELPERS}: a helper runs in the foreground: this session ends when its turn ends"
     return ""
@@ -1352,14 +1421,14 @@ def _resolved(paths) -> list:
     return out
 
 
-def _secret_refused(tool: str, tool_input: dict, places: Places) -> str:
+def _secret_refused(tool: str, tool_input: dict, grant: Grant) -> str:
     """For a file tool: a path in a secret, or a folder Grep or Glob searches holding one."""
     from pathlib import Path
 
-    if tool not in READ_TOOLS + WRITE_TOOLS or not places.secrets:
+    if tool not in READ_TOOLS + WRITE_TOOLS or not grant.secrets:
         return ""
-    secrets = _resolved(p for p in places.secrets if p.startswith("/"))
-    cwd = _resolved(places.roots[:1])
+    secrets = _resolved(p for p in grant.secrets if p.startswith("/"))
+    cwd = _resolved((grant.cwd,))
     searches = tool in ("Grep", "Glob")
     targets = [(raw, searches) for raw in _paths_in(tool_input)]
     pattern = tool_input.get("pattern")
@@ -1422,7 +1491,7 @@ _REMOTE_WRITES = frozenset({"add", "set-url", "rename", "remove", "rm"})
 
 
 def bash_refused(
-    places: Places, command: str, agent_id: str | None = None, strict: bool = False
+    grant: Grant, command: str, agent_id: str | None = None, strict: bool = False
 ) -> str:
     """ "" unless a Bash line is critical, else why. Read as bash reads it (`_read`):
     a line it cannot read is refused, and so is a substitution or a variable program on a line
@@ -1435,14 +1504,14 @@ def bash_refused(
     `strict` is for a line that runs with secrets in it (the vault's): any substitution, of any
     kind, is refused too, since what runs must be what the line spells.
     """
-    roots = _resolved(places.roots[:1])
+    roots = _resolved((grant.cwd,))
     cwds = [str(roots[0]) if roots else None]
-    known = _scratch_known(places, command)
-    return _line_refused(places, command, agent_id, cwds, known, strict)
+    known = _scratch_known(grant, command)
+    return _line_refused(grant, command, agent_id, cwds, known, strict)
 
 
 def _line_refused(
-    places: Places,
+    grant: Grant,
     command: str,
     agent_id: str | None,
     cwds: list[str | None],
@@ -1474,7 +1543,7 @@ def _line_refused(
             "merge, release, rm, gh or claude: spell each command out"
         )
     for form in _braces(command):
-        for p in places.secrets:
+        for p in grant.secrets:
             if re.search(re.escape(p) + r"(?![\w.-])", form):
                 return f"{SECRETS}: {p}"
     runs_git = any(w.rsplit("/", 1)[-1] == "git" for s in parsed.commands for w in s.words)
@@ -1490,14 +1559,14 @@ def _line_refused(
         return f"{HELPERS}: {reason}"
     cwds = list(cwds)
     for simple in parsed.commands:
-        reason = _simple_refused(places, simple, agent_id, cwds, command, known)
+        reason = _simple_refused(grant, simple, agent_id, cwds, command, known)
         if reason:
             return reason
     return ""
 
 
 def _simple_refused(
-    places: Places,
+    grant: Grant,
     simple: _Simple,
     agent_id: str | None,
     cwds: list[str | None],
@@ -1507,21 +1576,21 @@ def _simple_refused(
     """Why one simple command is critical, or ""; a `cd` or `pushd` moves `cwds` on."""
     words, unknown = list(simple.words), list(simple.expanded)
     for word in (*words, *(r.target for r in simple.redirects)):
-        hit = _word_secret(places, word, cwds)
+        hit = _word_secret(grant, word, cwds)
         if hit:
             return f"{SECRETS}: {hit}"
     names = [w.rsplit("/", 1)[-1] for w in words]
     for i, name in enumerate(names):
         rest, rest_unknown = words[i + 1 :], unknown[i + 1 :]
         if name == "git":
-            reason = _git_refused(places, rest, rest_unknown)
+            reason = _git_refused(grant, rest, rest_unknown)
         elif name == "gh":
             reason = _gh_refused(rest, rest_unknown)
         elif name == "rm":
             fed = any(n == "xargs" or w in _FIND_EXEC for n, w in zip(names[:i], words[:i]))
-            reason = _rm_refused(places, rest, rest_unknown, cwds, fed, known)
+            reason = _rm_refused(grant, rest, rest_unknown, cwds, fed, known)
         elif name == "find":
-            reason = _find_refused(places, rest, rest_unknown, cwds, known)
+            reason = _find_refused(grant, rest, rest_unknown, cwds, known)
         else:
             continue
         if reason:
@@ -1534,16 +1603,16 @@ def _simple_refused(
         return f"{REMOVAL}: a session may not start Claude Code inside itself"
     inert = _inert(words)
     for k, word in enumerate(words):
-        reason = "" if k in inert else _script_refused(places, word, agent_id, cwds, line, known)
+        reason = "" if k in inert else _script_refused(grant, word, agent_id, cwds, line, known)
         if reason:
             return reason
     if launched and names[launched[0]] in _CD:
-        return _cd_refused(places, words[launched[0] + 1 :], cwds)
+        return _cd_refused(grant, words[launched[0] + 1 :], cwds)
     return ""
 
 
 def _script_refused(
-    places: Places,
+    grant: Grant,
     word: str,
     agent_id: str | None,
     cwds: list[str | None],
@@ -1562,18 +1631,18 @@ def _script_refused(
     if isinstance(_read(script), _Unreadable) and not _AT_COMMAND.search(script):
         # Prose, such as a commit message: a shell could not run it as it stands either.
         return ""
-    return _line_refused(places, script, agent_id, cwds, known)
+    return _line_refused(grant, script, agent_id, cwds, known)
 
 
-def _cd_refused(places: Places, args: list[str], cwds: list[str | None]) -> str:
+def _cd_refused(grant: Grant, args: list[str], cwds: list[str | None]) -> str:
     """Where `cd` or `pushd` moves the line: added to `cwds`, since it may fail and leave the
     line where it was. A folder that is or holds a secret is refused."""
     target = next((a for a in args if a == "-" or not a.startswith("-")), "~")
-    text = _expand(target, places.home)
+    text = _expand(target, grant.home)
     if target == "-" or "$" in text or "`" in text:
         cwds.append(None)
         return ""
-    secrets = _secret_dirs(places.secrets)
+    secrets = _secret_dirs(grant.secrets)
     for form in _braces(text):
         for real in _real(form, cwds):
             for s in secrets:
@@ -1640,27 +1709,27 @@ def _secret_dirs(secrets: tuple[str, ...]) -> tuple[str, ...]:
     )
 
 
-def _word_secret(places: Places, word: str, cwds: list[str | None]) -> str:
+def _word_secret(grant: Grant, word: str, cwds: list[str | None]) -> str:
     """The secret one word reaches, or "": by its text, a glob, a brace expansion, or the path
     it names from where the line stands, links followed. A `--flag=` or `NAME=` value counts."""
     import os
 
-    if not word or not places.secrets:
+    if not word or not grant.secrets:
         return ""
-    secrets = _secret_dirs(places.secrets)
+    secrets = _secret_dirs(grant.secrets)
     for form in {f for w in (word, word.partition("=")[2]) if w for f in _braces(w)}:
         for text in (form, os.path.normpath(form)):
-            for p in places.secrets:
+            for p in grant.secrets:
                 if re.search(re.escape(p) + r"(?![\w.-])", text) or _glob_reaches(text, p):
                     return p
-        for real in _real(_expand(form, places.home), cwds):
+        for real in _real(_expand(form, grant.home), cwds):
             for s in secrets:
                 if real == s or real.startswith(s + "/") or _glob_reaches(real, s):
                     return s
     return ""
 
 
-def _git_refused(places: Places, rest: list[str], unknown: list[bool]) -> str:
+def _git_refused(grant: Grant, rest: list[str], unknown: list[bool]) -> str:
     at = _positions("git", rest)
     if at and unknown[at[0]]:
         return f"{HOST}: git's subcommand may not be a variable ({rest[at[0]]}): it can hide a push"
@@ -1675,7 +1744,7 @@ def _git_refused(places: Places, rest: list[str], unknown: list[bool]) -> str:
         return ""
     if rest[0] != "push":
         return f"{HOST}: a push must be spelled `git push …`, with nothing between"
-    reason = check_push(rest[1:], places.branch, places.lease)
+    reason = check_push(rest[1:], grant.branch, grant.lease)
     return f"{HOST}: {reason}" if reason else ""
 
 
@@ -1734,14 +1803,14 @@ def _api_writes(rest: list[str]) -> bool:
 
 
 def _rm_refused(
-    places: Places,
+    grant: Grant,
     rest: list[str],
     unknown: list[bool],
     cwds: list[str | None],
     fed: bool,
     known: dict,
 ) -> str:
-    """`rm -r` of a target outside the unit's places, of a variable, or of what `xargs` or
+    """`rm -r` of a target outside the unit's grant, of a variable, or of what `xargs` or
     `find -exec` hands it (where that points is not read here)."""
     flags, targets, ended = [], [], False
     for token, var in zip(rest, unknown):
@@ -1761,13 +1830,13 @@ def _rm_refused(
         target = _put_scratch(raw, known) if var else raw
         if target is None or "{}" in target:
             return f"{REMOVAL}: rm -r of a variable ({raw}): where it points is not known here"
-        if _outside(places, target, cwds):
+        if _outside(grant, target, cwds):
             return f"{REMOVAL}: rm -r outside this unit's places: {raw}"
     return ""
 
 
 def _find_refused(
-    places: Places, rest: list[str], unknown: list[bool], cwds: list[str | None], known: dict
+    grant: Grant, rest: list[str], unknown: list[bool], cwds: list[str | None], known: dict
 ) -> str:
     """`find <start> -delete` removes below `start`, as `rm -r` would."""
     if "-delete" not in rest:
@@ -1779,20 +1848,20 @@ def _find_refused(
         starts.append((token, var))
     for start, var in starts or [(".", False)]:
         path = _put_scratch(start, known) if var else start
-        if path is None or _outside(places, path, cwds):
+        if path is None or _outside(grant, path, cwds):
             return f"{REMOVAL}: find -delete outside this unit's places: {start}"
     return ""
 
 
-def _outside(places: Places, target: str, cwds: list[str | None]) -> bool:
-    """Whether a removal target may lie outside the unit's places, from any place the line may
+def _outside(grant: Grant, target: str, cwds: list[str | None]) -> bool:
+    """Whether a removal target may lie outside the unit's grant, from any place the line may
     stand; a relative one from an unknown place may."""
-    roots = _resolved(places.roots)
-    for form in _braces(_expand(target, places.home)):
+    roots = _resolved(grant.write)
+    for form in _braces(_expand(target, grant.home)):
         if not form.startswith("/") and (not cwds or None in cwds):
             return True
         for real in _real(form, cwds):
-            if not (_inside(real, roots, None) or _scratch_of(real, places.scratch) is not None):
+            if not (_inside(real, roots, None) or _scratch_of(real, grant.scratch) is not None):
                 return True
     return False
 
@@ -1801,14 +1870,14 @@ def _outside(places: Places, target: str, cwds: list[str | None]) -> bool:
 _SCRATCH_NAMES = ("COS_SCRATCH_RAM", "COS_SCRATCH_DISK")
 
 
-def _scratch_known(places: Places, command: str) -> dict[str, str]:
-    """The scratch names a removal may be read through: each holds its `places.scratch` path,
+def _scratch_known(grant: Grant, command: str) -> dict[str, str]:
+    """The scratch names a removal may be read through: each holds its `grant.scratch` path,
     unless the line names it anywhere but as `$NAME` or `${NAME}` (it may set, export, declare,
     read, loop over or `printf -v` it), in which case it is not known."""
-    if not places.scratch:
+    if not grant.scratch:
         return {}
     out = {}
-    for name, path in zip(_SCRATCH_NAMES, places.scratch):
+    for name, path in zip(_SCRATCH_NAMES, grant.scratch):
         rest = re.sub(r"\$(?:" + name + r"\b|\{" + name + r"\})", "", command)
         if not re.search(r"\b" + name + r"\b", rest):
             out[name] = path
@@ -1907,7 +1976,7 @@ _READ_ONLY = frozenset(
 )
 
 
-def classified(grant: Grant, places: Places, tool: str, tool_input: dict) -> bool:
+def classified(grant: Grant, tool: str, tool_input: dict) -> bool:
     """Whether `auto` is estimated to send a call the hook let through to its classifier (as
     measured): not a read, an edit inside the working directory outside `.git` and `.claude`, a line of
     read-only commands, or an MCP tool the session allows by name; anything else Bash, a write
@@ -1918,9 +1987,9 @@ def classified(grant: Grant, places: Places, tool: str, tool_input: dict) -> boo
     if tool in READ_TOOLS:
         return False
     if tool.startswith("mcp__"):
-        return tool not in allowed_mcp(grant)
+        return tool not in grant.mcp
     if tool in WRITE_TOOLS:
-        cwd = _resolved(places.roots[:1])
+        cwd = _resolved((grant.cwd,))
         return not cwd or any(
             not _inside(p, cwd, cwd[0]) or bool({".git", ".claude"} & set(Path(p).parts))
             for p in _paths_in(tool_input)

@@ -487,8 +487,6 @@ RUNS_TABLE = (
     "unit TEXT NOT NULL, stage TEXT NOT NULL, arm TEXT NOT NULL, sha TEXT NOT NULL, "
     "map_chars INTEGER NOT NULL, wait_ms INTEGER NOT NULL, error TEXT NOT NULL, at TEXT NOT NULL)"
 )
-MAP_STAGES = ("impl", "review")
-TOOL_STAGES = ("impl",)
 TOOL_NAMES = ("find", "callers", "impact")
 # Seconds one query may take. State, not measured: the spike's queries took well under one.
 QUERY_S = 60.0
@@ -540,17 +538,19 @@ def _map(ctx: Ctx, facts: Facts, binary: Path, ready: Ready) -> str:
         return call(home, binary, op, ready.root, args, QUERY_S)
 
     changed = changed_files(facts.tree, ready.sha)
-    if facts.stage == "review":
+    if not facts.grant.write:
+        # A run that only reads (a review) gets the diff's map; one that writes, the plan's.
         return review_map(ask, ready.sha, changed, old_hunks(facts.tree, ready.sha))
     named = facts.plan["files"] if facts.plan else []
     return impl_map(ask, ready.sha, changed, sorted(set(named)))
 
 
 async def _render(ctx: Ctx, facts: Facts) -> str:
-    """The map for the `on` arm, nothing for the `off` one; either way one record of the run."""
+    """The map for the `on` arm, nothing for the `off` one; either way one record of the run.
+    Asked only for a run whose row holds `codegraph` (the block's `tool`)."""
     arm = ctx.settings.arm(facts.workspace, facts.unit)
     idx = _indexes(ctx)
-    if facts.stage not in MAP_STAGES or arm is None or idx.lock():
+    if arm is None or idx.lock():
         return ""
     text = error = sha = ""
     wait_ms = 0
@@ -570,7 +570,7 @@ async def _render(ctx: Ctx, facts: Facts) -> str:
     else:
         sha = idx.status(facts.workspace_key).sha
     row = Row(
-        facts.run, facts.workspace_key, facts.unit, facts.stage, arm, sha, len(text), wait_ms,
+        facts.run, facts.workspace_key, facts.unit, facts.agent, arm, sha, len(text), wait_ms,
         error, now(),
     )  # fmt: skip
     await asyncio.to_thread(_record, ctx, row)
@@ -578,8 +578,8 @@ async def _render(ctx: Ctx, facts: Facts) -> str:
 
 
 def _ready_for(ctx: Ctx, facts: Facts) -> bool:
-    """The tools go to an `on`-arm impl run while the index is ready and the engine not found
-    broken. The engine is checked at the first call, so a resumed run gets them too."""
+    """The tools go to an `on`-arm run whose row holds them while the index is ready and the
+    engine not found broken. The engine is checked at the first call, so a resumed run gets them too."""
     if ctx.settings.arm(facts.workspace, facts.unit) != "on" or _indexes(ctx).lock():
         return False
     return _where(ctx, facts.workspace_key) is not None
@@ -672,8 +672,10 @@ def agent(ctx: Ctx) -> Parts:
 
     ctx.bus.subscribe("integration.ended", ended)
     return Parts(
-        tools=(Tool(NAME, TOOL_NAMES, TOOL_STAGES, make, when=lambda f: _ready_for(ctx, f)),),
-        blocks=(Block("codegraph-map", lambda facts: _render(ctx, facts)),),
+        tools=(
+            Tool(NAME, "read", "low", NAME, TOOL_NAMES, make, when=lambda f: _ready_for(ctx, f)),
+        ),
+        blocks=(Block("codegraph-map", lambda facts: _render(ctx, facts), tool=NAME),),
     )
 
 

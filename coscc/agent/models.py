@@ -288,20 +288,20 @@ def ceilings(
     """The two ceilings a step of `stage` under `label` runs with, and where each came from.
 
     `{max_turns, max_turns_source, max_budget_usd, max_budget_source}`: the override of
-    `ceiling_key`'s row, else the grant's own (`grant_for_step`), with `turns_floor` applied
-    after either. A grant with no budget is `None`, from `none`. The page shows these and the
+    `ceiling_key`'s row, else the agent row's own (`row_for_step`), with `turns_floor` applied
+    after either. A row with no budget is `None`, from `none`. The page shows these and the
     runner hands them to the session, so the two cannot differ.
     """
-    grant = policy.grant_for_step(stage, label)
+    row = policy.row_for_step(stage, label)
     key = ceiling_key(stage, label)
     if key in turns_overrides:
         turns, turns_source = int(turns_overrides[key]), OVERRIDE
     else:
-        turns, turns_source = grant.max_turns, DEFAULT
+        turns, turns_source = row.max_turns, DEFAULT
     if key in budget_overrides:
         budget, budget_source = float(budget_overrides[key]), OVERRIDE
-    elif grant.max_budget_usd:
-        budget, budget_source = float(grant.max_budget_usd), DEFAULT
+    elif row.max_budget_usd:
+        budget, budget_source = float(row.max_budget_usd), DEFAULT
     else:
         budget, budget_source = None, NONE
     return Ceilings(

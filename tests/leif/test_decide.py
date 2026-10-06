@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from coscc.github import prmachine
 from coscc.leif import decide
 from coscc.units.board import open_questions
-from coscc.agent.policy import GRANTS, NOVEL_CEILINGS
+from coscc.agent.policy import ROWS, NOVEL_CEILINGS
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
 # `next`'s two actions for `ship`, one after the merge and one before it.
@@ -595,7 +595,7 @@ class TheDaysMoney(unittest.TestCase):
 
     def test_a_stage_without_a_ceiling_counts_the_tables_largest(self):
         largest = max(
-            [g.max_budget_usd for g in GRANTS.values()] + [b for _, b in NOVEL_CEILINGS.values()]
+            [g.max_budget_usd for g in ROWS.values()] + [b for _, b in NOVEL_CEILINGS.values()]
         )
         self.assertGreater(largest, 0)
         self.assertEqual(decide.estimate("idea"), largest)

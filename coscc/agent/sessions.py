@@ -18,7 +18,7 @@ import tempfile
 import uuid
 from collections.abc import Callable
 from contextlib import aclosing, suppress
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeIs, get_args
@@ -39,7 +39,7 @@ from claude_agent_sdk.types import SystemPromptPreset
 from coscc import config as cfg
 from coscc.agent import harness, instructions, transcript
 from coscc.agent.helpers import Gate
-from coscc.agent.policy import Grant, Places, protected_paths
+from coscc.agent.policy import WRITE_TOOLS, Grant, protected_paths
 from coscc.bus import Bus
 from coscc.config import Config
 from coscc.store.db import Data
@@ -688,6 +688,13 @@ def _resolve(directory: str) -> Path | None:
         return None
 
 
+def secrets_of(config: Config) -> tuple[str, ...]:
+    """What no tool of any session of this app may reach (`policy.protected_paths`): never
+    empty, since the app's own database and vault are always in it."""
+    root = str(Data(config.data_dir).root)
+    return protected_paths(root, config.config_home, config.home)
+
+
 class Sessions:
     """Holds the live clients. One per session id, created on demand."""
 
@@ -715,8 +722,7 @@ class Sessions:
 
     def secrets(self) -> tuple[str, ...]:
         """What no tool of any session may reach (`policy.protected_paths`)."""
-        root = str(Data(self.config.data_dir).root)
-        return protected_paths(root, self.config.config_home, self.config.home)
+        return secrets_of(self.config)
 
     def created_here(self, session_id: str) -> bool:
         return session_id in self._created_here
@@ -811,9 +817,9 @@ class Sessions:
         `{}` makes `done.cost` the whole session's, since the CLI's total carries over a resume.
         A stream `suspend_all` paused raises `Suspended` and yields no `done`; one begun after
         it is `Refused`. `mcp_servers` goes to `_options` as it is. `gate` stands in front of the
-        session's `auto` mode and hears every system message; with none (chat, `send`), the session
-        gets a locked one: its own tool list, its `cwd` to write. Either way this fills in the
-        secrets (`policy.protected_paths`) from this app's configuration.
+        session's `auto` mode and hears every system message, its grant issued for this run
+        (`runner.run.issue`); with none (`send`), the session gets a locked one: its own tool list,
+        its `cwd` to write when that list holds a write tool, and this app's secrets.
         `unit_scratch` is the unit's `(ram, disk)` directories, in the session's environment
         (`child_env`); the caller made them, and the gate it passes holds the same two.
         `recorder` hears every message of a stream with no `step` (chat); a step's is its handle's.
@@ -829,9 +835,17 @@ class Sessions:
             step.cwd, step.owner, step.model = cwd, owner, resolved_model
             step.session_id = session_id or ""
         if gate is None:
-            listed = self.config.effective_tools() if tools is None else tools
-            gate = Gate(Grant(tools=tuple(listed)), Places(roots=(cwd,)))
-        gate.places = replace(gate.places, secrets=self.secrets(), home=self.config.home)
+            listed = tuple(self.config.effective_tools() if tools is None else tools)
+            writes = any(t in WRITE_TOOLS for t in listed)
+            gate = Gate(
+                Grant(
+                    cwd=cwd,
+                    write=(cwd,) if writes else (),
+                    secrets=self.secrets(),
+                    home=self.config.home,
+                    tools=listed,
+                )
+            )
         inner = self._stream(
             cwd,
             text,

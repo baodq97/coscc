@@ -76,7 +76,7 @@ class MetadataRoutes(Http):
         got = (await self.get("/api/vault/secrets")).json()
         self.assertEqual(got["workspace"], self.key)
         self.assertEqual(
-            (got["stages"], got["modes"]), (list(vault.VAULT_STAGES), list(vault.MODES))
+            (got["stages"], got["modes"]), (list(vault.VAULT_AGENTS), list(vault.MODES))
         )
         self.assertIs(got["age"], True)
         self.assertEqual({s["name"] for s in got["secrets"]}, {"ws:db", "global:tok"})
@@ -288,7 +288,7 @@ class WithTheVaultOff(Http):
 
     async def test_the_tool_guard_and_block_go_with_it(self):
         await self.turn_off()
-        parts = self.core.steps.hooks.for_step("impl", str(self.ws))
+        parts = self.core.steps.hooks.on(str(self.ws))
         self.assertEqual([t.server for t in parts.tools], [])
         self.assertEqual([g.name for g in parts.guards], [])
         self.assertEqual([b.name for b in parts.blocks if b.name == "vault"], [])

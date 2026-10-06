@@ -49,12 +49,10 @@ class AStepIsToldTheTwoFilesOfTheUnitsItsUnitNames(Store):
         self.note = self.found("Như ca 0082 hôm trước.", answers)
 
     def test_nothing_of_the_three_is_written(self):
-        places = policy.Places(roots=(str(self.tree), str(self.me)))
+        grant = policy.Grant(cwd=str(self.tree), write=(str(self.tree), str(self.me)))
         for d in (self.by_idea, self.by_answer, self.unnamed):
             for f in ("idea.md", "intent.md", "spec.md"):
-                said = policy.critical(
-                    policy.grant_for("impl"), places, "Write", {"file_path": str(d / f)}, None
-                )
+                said = policy.critical(grant, "Write", {"file_path": str(d / f)}, None)
                 self.assertIn(policy.WRITES, said)
 
     def test_the_note_names_each_unit_its_source_and_its_files(self):
