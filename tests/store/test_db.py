@@ -102,7 +102,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
     def test_a_v6_database_rises_to_7_and_its_old_transitions_say_no_guard_is_known(self):
         """7 adds four columns to `transitions`, two to `step_runs` and the tables a submitted
         object lands in."""
-        new = {"stage_results", "review_rounds", "review_findings", "impl_claims", "pull_requests"}
+        new = {"outputs", "review_rounds", "review_findings", "impl_claims", "pull_requests"}
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             with data.connect() as conn:
@@ -178,23 +178,6 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertIsNone(gone)
             self.assertEqual(data.pref("density"), "compact")
 
-    def test_a_version_11_database_loses_the_outputs_table_and_keeps_the_rest(self):
-        """12 drops `outputs`, which nothing read."""
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("density", "compact")
-            with data.connect() as conn:
-                conn.execute("CREATE TABLE outputs (id INTEGER PRIMARY KEY, path TEXT)")
-                conn.execute("PRAGMA user_version=11")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                gone = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE name = 'outputs'"
-                ).fetchone()
-            self.assertIsNone(gone)
-            self.assertEqual(data.pref("density"), "compact")
-
     def test_a_newer_database_is_still_refused(self):
         """Was `version_5`, then `version_6`: it follows `SCHEMA_VERSION`, so a newer number is
         never this build's own."""
@@ -205,6 +188,44 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 conn.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
             with self.assertRaises(Incompatible):
                 data.version()
+
+
+class StageResultsBecomeOutputs(unittest.TestCase):
+    def test_a_v12_database_keeps_its_rows_under_the_new_names_at_version_1(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.connect() as conn:
+                conn.execute("DROP TABLE outputs")
+                conn.execute("CREATE TABLE outputs (id INTEGER PRIMARY KEY, path TEXT)")
+                conn.execute(
+                    "CREATE TABLE stage_results (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "at TEXT NOT NULL, root TEXT NOT NULL, workspace TEXT NOT NULL, "
+                    "unit TEXT NOT NULL, stage TEXT NOT NULL, run TEXT NOT NULL, "
+                    "revision TEXT NOT NULL, judgement TEXT NOT NULL, object TEXT NOT NULL)"
+                )
+                conn.execute(
+                    "CREATE INDEX stage_results_scope ON stage_results (root, workspace, unit, id)"
+                )
+                for n in (7, 9):
+                    conn.execute(
+                        "INSERT INTO stage_results (id, at, root, workspace, unit, stage, run, "
+                        "revision, judgement, object) VALUES "
+                        f"({n}, 't', '/w', 'p', '0001_x', 'spec', 'r', 'h', 'ready', '{{\"n\": {n}}}')"
+                    )
+                conn.execute("PRAGMA user_version=12")
+
+            self.assertEqual(data.version(), 13)
+            with data.connect() as conn:
+                names = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master")}
+                rows = [
+                    tuple(r)
+                    for r in conn.execute(
+                        "SELECT id, agent, version, object FROM outputs ORDER BY id"
+                    )
+                ]
+            self.assertEqual(rows, [(7, "spec", 1, '{"n": 7}'), (9, "spec", 1, '{"n": 9}')])
+            self.assertIn("outputs_scope", names)
+            self.assertFalse({"stage_results", "stage_results_scope"} & names)
 
 
 class AStepsEvents(unittest.TestCase):

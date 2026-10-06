@@ -29,6 +29,7 @@ from coscc.store.journal import last_runs, timelines_of, totals_of
 from coscc.units import BadUnit, Invalid, backlog, scratch, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable, attention_reason, unit_state
+from coscc.units.meta import OutputRecord
 from coscc.units.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
@@ -388,6 +389,8 @@ class Detail(TypedDict):
     worktree: Worktree | None
     # The holds the loop allows now: `paused`, `dropped`, `active` (a resume).
     hold_moves: list[str]
+    # What each agent last handed back, with the contract version it was written to.
+    outputs: list[OutputRecord]
 
 
 def _text(v: Any) -> str:
@@ -404,8 +407,11 @@ def count(v: Any) -> int | None:
     return int(v) if isinstance(v, int) and not isinstance(v, bool) else None
 
 
-def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> Detail:
-    """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`) as a page shows it."""
+def detail(
+    unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]], outputs: list[OutputRecord]
+) -> Detail:
+    """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`) and its `outputs`
+    (`UnitMeta.outputs`) as a page shows it."""
 
     def last(r: Mapping[str, Any] | None) -> LastRun | None:
         if not r:
@@ -495,6 +501,7 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
         if tree
         else None,
         "hold_moves": [str(m) for m in unit.get("hold_moves") or []],
+        "outputs": outputs,
     }
 
 

@@ -217,6 +217,7 @@ export type Detail = {
   "runs": UnitRun[];
   "worktree": Worktree | null;
   "hold_moves": string[];
+  "outputs": OutputRecord[];
 };
 
 export type EstimateBrief = {
@@ -304,6 +305,13 @@ export type NextStep = {
   "rerun"?: string;
   "continue"?: string;
   "reasons": string[];
+};
+
+export type OutputRecord = {
+  "agent": string;
+  "version": number;
+  "at": string;
+  "fields": Record<string, unknown>;
 };
 
 export type Proposal = {

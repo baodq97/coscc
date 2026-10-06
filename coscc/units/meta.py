@@ -17,12 +17,12 @@ import json
 import sqlite3
 from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from coscc.store.db import Data, now
 from coscc.loop import run
 from coscc.store.journal import Intervention, Journal
-from coscc.units import UNIT_RE, backlog
+from coscc.units import UNIT_RE, backlog, contracts
 from coscc.units.history import History
 from coscc.units.states import Machine
 
@@ -58,6 +58,27 @@ def read(store: str | Path, *args: str) -> dict[str, Any]:
         return json.loads(done.out)
     except ValueError as e:
         raise MetaError(f"coscc.loop meta printed no JSON: {e}") from e
+
+
+class OutputRecord(TypedDict):
+    """What an agent handed back, as the unit page shows it: the latest record of one agent."""
+
+    agent: str
+    version: int
+    at: str
+    fields: dict[str, object]
+
+
+def _spike_round(objects: Iterable[str]) -> int:
+    """1 + the earlier spikes of a unit with a failing verdict (each a stored object, oldest first)."""
+    failed = sum(
+        any(
+            isinstance(v, dict) and v.get("verdict") == "fails"
+            for v in json.loads(o).get("verdicts") or []
+        )
+        for o in objects
+    )
+    return 1 + failed
 
 
 def _no_status(artifact: str, raw: str | None, machine: Machine) -> str:
@@ -376,16 +397,17 @@ class UnitMeta:
         submitted: Mapping[str, Any],
     ) -> None:
         """What a stage result carries beside its transition, in the caller's transaction: its
-        row in `stage_results`, and the artifact's open questions."""
+        row in `outputs`, and the artifact's open questions."""
         obj = dict(submitted.get("object") or {})
         scope = (self.root, workspace, unit)
         conn.execute(
-            "INSERT INTO stage_results (at, root, workspace, unit, stage, run, revision, judgement, object) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO outputs (at, root, workspace, unit, agent, version, run, revision, judgement, object) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 now(),
                 *scope,
                 stage,
+                contracts.version(stage),
                 str(submitted.get("run") or ""),
                 str(submitted.get("revision") or ""),
                 str(obj.get("judgement") or ""),
@@ -650,6 +672,26 @@ class UnitMeta:
                 for r in conn.execute(sql + " ORDER BY workspace, unit, artifact, field", args)
             ]
 
+    def outputs(self, workspace: str, unit: str) -> list[OutputRecord]:
+        """The latest output of each agent for a unit, oldest first: the unit page's second tab."""
+        with self.data.connect() as conn:
+            found = conn.execute(
+                "SELECT agent, version, at, object FROM outputs WHERE id IN "
+                f"(SELECT MAX(id) FROM outputs WHERE {_ONE} GROUP BY agent) ORDER BY id",
+                (self.root, workspace, unit),
+            ).fetchall()
+        return [
+            {
+                "agent": r["agent"],
+                "version": r["version"],
+                "at": r["at"],
+                "fields": {
+                    k: v for k, v in json.loads(r["object"]).items() if k != contracts.STAGE
+                },
+            }
+            for r in found
+        ]
+
     def _backlog_depends(
         self, keys: list[str], wanted: list[str] | None
     ) -> dict[tuple[str, str], list[str]]:
@@ -780,14 +822,22 @@ class UnitMeta:
                     e["shipped"] = True
             # The last stage result of each stage, which the loop reads a spec's `U<n>` and a spike's verdicts from.
             for r in rows(
-                "SELECT workspace, unit, stage, object FROM stage_results WHERE id IN "
-                "(SELECT MAX(id) FROM stage_results WHERE {where} GROUP BY workspace, unit, stage)"
+                "SELECT id, workspace, unit, agent, version, object FROM outputs WHERE id IN "
+                "(SELECT MAX(id) FROM outputs WHERE {where} GROUP BY workspace, unit, agent)"
             ):
                 a = artifact(
-                    {"workspace": r["workspace"], "unit": r["unit"], "artifact": f"{r['stage']}.md"}
+                    {"workspace": r["workspace"], "unit": r["unit"], "artifact": f"{r['agent']}.md"}
                 )
                 if a is not None:
-                    a["result"] = json.loads(r["object"])
+                    contracts.check_stored(r["agent"], r["version"])
+                    a["result"] = contracts.reads(r["agent"], json.loads(r["object"]))
+                    if r["agent"] == "spike":
+                        earlier = conn.execute(
+                            "SELECT object FROM outputs WHERE root = ? AND workspace = ? AND unit = ? "
+                            "AND agent = 'spike' AND id < ? ORDER BY id",
+                            (self.root, r["workspace"], r["unit"], r["id"]),
+                        ).fetchall()
+                        a["round"] = _spike_round(o[0] for o in earlier)
             # Every round a review handed back, read in place of the round of the same number in `review.md`.
             by_id: dict[int, dict[str, Any]] = {}
             for r in rows(

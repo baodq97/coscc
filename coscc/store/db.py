@@ -34,8 +34,8 @@ from typing import Any, Iterator
 # `500` on a database a newer one has touched**, so rolling the app back means rolling the
 # database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
 # number too: a database already at this one never runs `_create` again (8: the `ci` columns;
-# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped).
-SCHEMA_VERSION = 12
+# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped; 13: `stage_results` becomes `outputs`).
+SCHEMA_VERSION = 13
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -141,8 +141,6 @@ CREATE INDEX IF NOT EXISTS transitions_scope ON transitions (root, workspace, un
 -- column in the table.
 CREATE UNIQUE INDEX IF NOT EXISTS transitions_once
     ON transitions (once_key) WHERE once_key <> ''""",
-    # What a unit produced, never read; the `transitions` rows say who wrote what.
-    "DROP TABLE IF EXISTS outputs",
     """-- The master password, as an argon2id hash and nothing else. One row at
 -- most, which the CHECK makes a property of the table rather than of every writer. Not a
 -- `prefs` row: `prefs()` returns every row, and a Settings route that read widely would
@@ -304,23 +302,24 @@ CREATE TABLE IF NOT EXISTS unit_seen (
     questions INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (root, workspace, unit, artifact)
 )""",
-    """-- A stage's result as the `submit` tool received it. `object` is the whole
+    """-- An agent's output as the `submit` tool received it, under the contract version it was written to. `object` is the whole
 -- object as JSON; `judgement` is beside it so a guard can narrow without parsing. `revision`
 -- is the SHA-256 the app took of the artifact when the object arrived. Where the
 -- artifact stands is still the fold over `transitions`, never a column here.
-CREATE TABLE IF NOT EXISTS stage_results (
+CREATE TABLE IF NOT EXISTS outputs (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     at        TEXT NOT NULL,
     root      TEXT NOT NULL,
     workspace TEXT NOT NULL,
     unit      TEXT NOT NULL,
-    stage     TEXT NOT NULL,
+    agent     TEXT NOT NULL,
+    version   INTEGER NOT NULL DEFAULT 1,
     run       TEXT NOT NULL,
     revision  TEXT NOT NULL,
     judgement TEXT NOT NULL,
     object    TEXT NOT NULL
 )""",
-    """CREATE INDEX IF NOT EXISTS stage_results_scope ON stage_results (root, workspace, unit, id)""",
+    """CREATE INDEX IF NOT EXISTS outputs_scope ON outputs (root, workspace, unit, id)""",
     """-- One review round. `head` is the SHA the app recorded when the run opened, never
 -- one the model wrote; `screens` is the JSON list of images the round looked at.
 CREATE TABLE IF NOT EXISTS review_rounds (
@@ -631,6 +630,7 @@ class Data:
                     f"(database schema {found}, this build understands {SCHEMA_VERSION})"
                 )
             if found < SCHEMA_VERSION:
+                self._outputs_from_stage_results(conn)
                 for statement in _SCHEMA:
                     conn.execute(statement)
                 for table, column, declaration in _COLUMNS:
@@ -644,6 +644,18 @@ class Data:
             raise
         else:
             conn.execute("COMMIT")
+
+    @staticmethod
+    def _outputs_from_stage_results(conn: sqlite3.Connection) -> None:
+        """13: the table was `stage_results` (column `stage`, no `version`); ids and objects stay."""
+        old = "SELECT 1 FROM sqlite_master WHERE type='table' AND name='stage_results'"
+        if conn.execute(old).fetchone() is None:
+            return
+        conn.execute("DROP TABLE IF EXISTS outputs")
+        conn.execute("ALTER TABLE stage_results RENAME TO outputs")
+        conn.execute("ALTER TABLE outputs RENAME COLUMN stage TO agent")
+        conn.execute("ALTER TABLE outputs ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+        conn.execute("DROP INDEX IF EXISTS stage_results_scope")
 
     def version(self) -> int:
         with self.connect() as conn:
