@@ -4,7 +4,8 @@ Writers and one reader:
 
 - `add_unit`, `link`: a unit's row and its links, when the app opens it.
 - `record_result` and `record_round`: what a finished step handed back, in the caller's transaction.
-- `add_answer` and `add_hold`: a person's answer or hold.
+- `add_answer`, `add_hold` and `add_decision`: an answer, a hold, or a person's rerun, more
+  rounds or outcome.
 - `snapshot`: the JSON `--state` reads, from the tables and the fold over `transitions`.
 
 No file is read here: a unit's state is its rows.
@@ -16,7 +17,7 @@ import json
 import sqlite3
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from coscc.store.db import Data, now
 from coscc.store.journal import Intervention, Journal
@@ -35,6 +36,20 @@ MERGED = "merge-read"
 SHIPPED_BEFORE_THE_MACHINE = (SOURCE, "run:ship")
 
 _ONE = "root = ? AND workspace = ? AND unit = ?"
+
+# Whose decision an answer is, as its writer sent it: a person's press, or decided for them.
+By = Literal["person", "delegated"]
+# A person's decision that is neither an answer nor a hold (`unit_decisions.kind`).
+DecisionKind = Literal["rerun", "more-rounds", "outcome"]
+
+
+class Decision(TypedDict):
+    """One `unit_decisions` row: `fields` as its kind holds them."""
+
+    kind: DecisionKind
+    fields: dict[str, Any]
+    by: str
+    date: str
 
 
 class OutputRecord(TypedDict):
@@ -132,8 +147,12 @@ class UnitMeta:
             f"DELETE FROM unit_questions WHERE {_ONE} AND artifact = ?", (*scope, artifact)
         )
         conn.executemany(
-            "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text) VALUES (?, ?, ?, ?, ?, ?)",
-            [(*scope, artifact, int(q["n"]), str(q["text"])) for q in obj.get("questions") or []],
+            "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text, recommendation) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (*scope, artifact, int(q["n"]), str(q["text"]), str(q.get("recommendation") or ""))
+                for q in obj.get("questions") or []
+            ],
         )
         if stage == "intent" and obj.get("type"):
             conn.execute(f"UPDATE unit_meta SET type = ? WHERE {_ONE}", (str(obj["type"]), *scope))
@@ -309,35 +328,12 @@ class UnitMeta:
                 for r in found
             ]
 
-    def _answer(
-        self,
-        conn,
-        workspace,
-        unit,
-        artifact,
-        ref,
-        text,
-        by,
-        date,
-        via,
-        authority="unknown",
-    ) -> None:
+    def _answer(self, conn, workspace, unit, artifact, ref, text, by, name, date, via) -> None:
         conn.execute(
             "INSERT INTO unit_answers "
-            "(root, workspace, unit, artifact, ref, text, answered_by, date, via, authority) "
+            '(root, workspace, unit, artifact, ref, text, "by", name, date, via) '
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                self.root,
-                workspace,
-                unit,
-                artifact,
-                str(ref),
-                text,
-                by,
-                date,
-                via,
-                authority,
-            ),
+            (self.root, workspace, unit, artifact, str(ref), text, by, name, date, via),
         )
 
     def _hold(self, conn, workspace, unit, state, reason, by, date, via) -> None:
@@ -354,22 +350,18 @@ class UnitMeta:
         artifact: str,
         ref: str | int,
         text: str,
-        by: str,
+        by: By,
+        name: str,
         date: str,
         via: str,
         conn: sqlite3.Connection | None = None,
-        authority: str = "unknown",
     ) -> None:
-        """`ref` is a question's number or a finding's `F<k>`; the last row for it wins.
-        `authority` is `person` or `agent`: whose answer it is, which no name in `by` settles."""
+        """`ref` is a question's number or a finding's `F<k>`; the last row for it wins. `by` is
+        whose decision it is, as sent; `name` the name the caller gave."""
         if conn is not None:
-            return self._answer(
-                conn, workspace, unit, artifact, ref, text, by, date, via, authority=authority
-            )
+            return self._answer(conn, workspace, unit, artifact, ref, text, by, name, date, via)
         with self.data.write() as c:
-            self._answer(
-                c, workspace, unit, artifact, ref, text, by, date, via, authority=authority
-            )
+            self._answer(c, workspace, unit, artifact, ref, text, by, name, date, via)
 
     def add_hold(
         self,
@@ -387,6 +379,55 @@ class UnitMeta:
             return self._hold(conn, workspace, unit, state, reason, by, date, via)
         with self.data.write() as c:
             self._hold(c, workspace, unit, state, reason, by, date, via)
+
+    def add_decision(
+        self,
+        workspace: str,
+        unit: str,
+        kind: DecisionKind,
+        fields: Mapping[str, Any],
+        by: str,
+        date: str,
+        via: str,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """A person's rerun, more rounds or outcome: one row, appended."""
+        row = (
+            self.root,
+            workspace,
+            unit,
+            kind,
+            json.dumps(dict(fields), ensure_ascii=False),
+            by,
+            date,
+            via,
+        )
+        sql = (
+            "INSERT INTO unit_decisions (root, workspace, unit, kind, fields, decided_by, date, via) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        if conn is not None:
+            conn.execute(sql, row)
+            return
+        with self.data.write() as c:
+            c.execute(sql, row)
+
+    def decisions(self, workspace: str, unit: str) -> list[Decision]:
+        """A unit's decisions, oldest first: the unit page's history."""
+        with self.data.connect() as conn:
+            found = conn.execute(
+                f"SELECT kind, fields, decided_by, date FROM unit_decisions WHERE {_ONE} ORDER BY id",
+                (self.root, workspace, unit),
+            ).fetchall()
+        return [
+            {
+                "kind": r["kind"],
+                "fields": json.loads(r["fields"]),
+                "by": r["decided_by"],
+                "date": r["date"],
+            }
+            for r in found
+        ]
 
     def outputs(self, workspace: str, unit: str) -> list[OutputRecord]:
         """The latest output of each agent for a unit, oldest first: the unit page's second tab."""
@@ -500,6 +541,8 @@ class UnitMeta:
                     "unknowns": [],
                     "merged": False,
                     "shipped": False,
+                    "reruns": [],
+                    "roundsGranted": 0,
                 }
 
             def entry(r) -> dict[str, Any] | None:
@@ -548,6 +591,32 @@ class UnitMeta:
                     e["merged"] = (
                         r["to_state"] == "accepted" and r["source"] in SHIPPED_BEFORE_THE_MACHINE
                     )
+            # The pull request the machine opened, the last `open` it recorded: its row is `pr.md`'s record.
+            for r in rows(
+                "SELECT id, workspace, unit, artifact, inputs FROM transitions WHERE id IN (SELECT MAX(id) "
+                "FROM transitions WHERE {where} AND artifact = 'pr.md' AND guard = 'branch-named' "
+                "GROUP BY workspace, unit)"
+            ):
+                a = artifact(r)
+                if a is not None:
+                    read = json.loads(r["inputs"] or "{}")
+                    a["pr"] = {"number": read.get("number"), "url": read.get("url")}
+                    a["record"] = r["id"]
+            # The round a merge was asked at, and what GitHub said when it made none.
+            for r in rows(
+                "SELECT workspace, unit, artifact, guard, inputs FROM transitions WHERE id IN (SELECT MAX(id) "
+                "FROM transitions WHERE {where} AND artifact = 'ship.md' "
+                "AND guard IN ('ship-ready', 'merge-refused') GROUP BY workspace, unit)"
+            ):
+                a = artifact(r)
+                if a is not None:
+                    read = json.loads(r["inputs"] or "{}")
+                    a["ship"] = {
+                        "round": read.get("round"),
+                        "refused": (read.get("refused") or None)
+                        if r["guard"] == "merge-refused"
+                        else None,
+                    }
             # Whether the unit ever shipped, on either road: a later move of its pull request does not undo it.
             for r in rows(
                 f"SELECT DISTINCT workspace, unit FROM transitions WHERE {{where}} AND ("
@@ -568,6 +637,7 @@ class UnitMeta:
                 if a is not None:
                     contracts.check_stored(r["agent"], r["version"])
                     a["result"] = contracts.reads(r["agent"], json.loads(r["object"]))
+                    a["record"] = r["id"]
                     # A record has no questions of its own to ask until its rows say so.
                     if a["questions"] is None:
                         a["questions"] = []
@@ -595,6 +665,7 @@ class UnitMeta:
                         "findings": [],
                     }
                     a.setdefault("rounds", []).append(by_id[r["id"]])
+                    a["record"] = max(a.get("record") or 0, r["id"])
                     if a["questions"] is None:
                         a["questions"] = []
             for r in rows(
@@ -615,11 +686,15 @@ class UnitMeta:
                         }
                     )
             for r in rows(
-                "SELECT workspace, unit, artifact, n, text FROM unit_questions WHERE {where} ORDER BY rowid"
+                "SELECT workspace, unit, artifact, n, text, recommendation FROM unit_questions "
+                "WHERE {where} ORDER BY rowid"
             ):
                 a = artifact(r)
                 if a is not None:
-                    a["questions"] = [*(a["questions"] or []), {"n": r["n"], "text": r["text"]}]
+                    a["questions"] = [
+                        *(a["questions"] or []),
+                        {"n": r["n"], "text": r["text"], "recommendation": r["recommendation"]},
+                    ]
             for r in rows(
                 "SELECT workspace, unit, artifact, field, reason FROM unit_unknowns WHERE {where}"
             ):
@@ -644,7 +719,7 @@ class UnitMeta:
                 if e is not None:
                     e["links"]["backlog"] = [{"ref": o, "source": "backlog"} for o in others]
             for r in rows(
-                "SELECT workspace, unit, artifact, ref, text, answered_by, date, via, authority "
+                'SELECT workspace, unit, artifact, ref, text, "by", name, date, via '
                 "FROM unit_answers WHERE {where} ORDER BY id"
             ):
                 e = entry(r)
@@ -655,11 +730,11 @@ class UnitMeta:
                             "artifact": r["artifact"],
                             "n": int(r["ref"]) if number else None,
                             "id": None if number else r["ref"],
-                            "by": r["answered_by"],
+                            "by": r["by"],
+                            "name": r["name"],
                             "date": r["date"],
                             "via": r["via"],
                             "text": r["text"],
-                            "authority": r["authority"],
                         }
                     )
             for r in rows(
@@ -676,6 +751,21 @@ class UnitMeta:
                             "via": r["via"],
                         }
                     )
+            # A rerun names the record each artifact it made stale held; more rounds add up.
+            for r in rows(
+                "SELECT workspace, unit, kind, fields, date FROM unit_decisions "
+                "WHERE {where} AND kind IN ('rerun', 'more-rounds') ORDER BY id"
+            ):
+                e = entry(r)
+                if e is None:
+                    continue
+                fields = json.loads(r["fields"])
+                if r["kind"] == "rerun":
+                    e["reruns"].append(
+                        {"stage": fields["stage"], "stale": fields["stale"], "date": r["date"]}
+                    )
+                else:
+                    e["roundsGranted"] += int(fields["rounds"])
         return {
             "workspace": own_name,
             "workspaces": sorted(n for n in named if n),

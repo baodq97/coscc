@@ -122,11 +122,19 @@ class EveryToolTakesTheDeclaredSchema(unittest.TestCase):
             {
                 "stage": "intent",
                 "judgement": "not-ready",
-                "questions": [{"n": 1, "text": "?"}],
+                "questions": [{"n": 1, "text": "?", "recommendation": "no"}],
                 "type": "fix",
             },
             schema,
         )
+
+    def test_a_question_without_a_recommendation_is_refused(self):
+        for stage in ("intent", "spec", "plan"):
+            item = contracts.schema(stage)["properties"]["questions"]["items"]
+            jsonschema.validate({"n": 1, "text": "?", "recommendation": ""}, item)
+            with self.assertRaises(jsonschema.ValidationError, msg=stage) as raised:
+                jsonschema.validate({"n": 1, "text": "?"}, item)
+            self.assertIn("'recommendation' is a required property", str(raised.exception), stage)
 
     def test_a_stage_without_a_declaration_opens_no_channel(self):
         for stage in ("pr", "ship"):

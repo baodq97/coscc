@@ -443,7 +443,11 @@ class AnswersComeFromTheDatabase(unittest.TestCase):
             type="feat",
             questions={"intent.md": ["Một?"]},
         )
-        meta.add_answer(d, "0001_x", "intent.md", 1, "Có.", "Leif", "2026-09-01", "product")
+        with meta.data.write() as conn:
+            conn.execute("UPDATE unit_questions SET recommendation = 'Có.'")
+        meta.add_answer(
+            d, "0001_x", "intent.md", 1, "Có.", "delegated", "Leif", "2026-09-01", "product"
+        )
         meta.add_hold(d, "0001_x", "paused", "chờ 0034", "Leif", "2026-09-02", "product")
         snap = meta.snapshot(d, {Path(d).name: d})
         entry = snap["units"][f"{snap['workspace']}/0001_x"]
@@ -459,13 +463,13 @@ class AnswersComeFromTheDatabase(unittest.TestCase):
             text = self.prompt(d, "spec")
         self.assertEqual(
             text.count(
-                "### intent.md câu 1: Một?\n"
-                + "Answered by: Leif. Date: 2026-09-01. Via: product."
+                "### intent.md câu 1: Một? (recommended: Có.)\n"
+                + "Answered by: Leif (delegated). Date: 2026-09-01. Via: product."
                 + "\n\nCó."
             ),
             1,
         )
-        self.assertEqual(text.count("# The answers a person gave"), 1)
+        self.assertEqual(text.count("# The answers already given"), 1)
 
     def test_a_hold_is_carried_as_a_decision(self):
         with tempfile.TemporaryDirectory() as d:
@@ -482,7 +486,8 @@ class AnswersComeFromTheDatabase(unittest.TestCase):
                     "artifact": "spec.md",
                     "n": 2,
                     "id": None,
-                    "by": "owner",
+                    "by": "person",
+                    "name": "owner",
                     "date": "d",
                     "via": "v",
                     "text": "HAI",

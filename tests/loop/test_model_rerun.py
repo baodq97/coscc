@@ -1,51 +1,93 @@
 """The stage a unit is at, the rerun of an accepted stage, the screenshots retake and the ship
 that a refused merge leaves, called directly or through the CLI, each held to fixed values.
 
-Helpers and constants come from `test_model`.
+Units are stated by snapshot rows; the glue comes from `test_model_rebase`.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from zoneinfo import ZoneInfo
 
-from coscc.loop.model import (
-    above_answers,
-    parse_reruns,
-    parse_ship,
-)
 from coscc.loop.probe import UI_STANDARD
 from coscc.loop.repo_rules import screens_answer, screens_needs
 from coscc.loop.rules import decide, next_answer, stage_at
-from tests.loop.conftest import TZ, git
-from tests.loop.test_model_links import MERGE, merged_probe
-from tests.loop.test_model import (
-    check_gate,
-    next_action,
-    next_step,
+from tests.loop.conftest import git, python, rerun_row
+from tests.loop.test_model_rebase import (
     CHAIN,
-    FULL_LANE,
+    NOT_ANCESTOR,
+    PR,
+    REB,
     SHA,
-    answer,
+    TRUNK,
     art,
     branched,
-    cli,
-    files_in,
+    check_gate,
     green_probe,
-    hold,
     known,
-    impl_text,
+    next_action,
+    next_step,
     ok,
     passed,
     read,
     review_art,
-    round_,
+    rnd,
+    open_f,
+    ship_art,
     unit,
+    BEHIND,
+    answer,
+    recorded,
 )
+
+FULL_LANE = {"lane": "full", "enteredFast": False, "laneMissing": []}
+MERGE = "9" * 40
+
+
+def hold(state: str, reason: str, by: str = "Leif", date: str = "2026-09-24") -> dict:
+    """A hold row: `paused`, `dropped` or `active` (resumed)."""
+    return {"state": state, "reason": reason, "by": by, "date": date, "via": "product"}
+
+
+def merged_probe(view=None, git=None, checks=None, calls=None):
+    """A pull request GitHub reports merged as `MERGE`, here and on origin/main unless `git`
+    says otherwise."""
+    view = view or {
+        "state": "MERGED",
+        "headRefOid": SHA,
+        "mergeCommit": {"oid": MERGE},
+        "mergedAt": "2026-09-20T13:33:07Z",
+    }
+    return recorded(green_probe(checks, git, view), [] if calls is None else calls)
+
+
+def files_in(tmp_path: Path, files: dict[str, str], name: str = "u") -> Path:
+    d = tmp_path / name
+    d.mkdir(parents=True, exist_ok=True)
+    for f, text in files.items():
+        (d / f).write_text(text)
+    return d
+
+
+def state_of_root(units: dict[str, dict] | None = None) -> dict:
+    return {
+        "workspace": "",
+        "workspaces": [],
+        "units": {f"/{n}": e for n, e in (units or {}).items()},
+    }
+
+
+def cli(*argv: str, units: dict[str, dict] | None = None):
+    """`python -m coscc.loop argv`; a deciding command gets `units` (`known` entries by name) as
+    the snapshot of its `--root`."""
+    words = list(argv)
+    deciding = {"status", "gate", "next", "rerun", "unit-branch", "screens"}
+    if "--root" in words and deciding & set(words) and "--state" not in words:
+        return python([*words, "--state", "-"], stdin=json.dumps(state_of_root(units)))
+    return python(words)
+
 
 # --- helpers ----------------------------------------------------------------------------------
 
@@ -70,15 +112,6 @@ def json_of(root: Path, *words: str, units: dict | None = None):
     return json.loads(out.out)
 
 
-def answer_block(n, by, text):
-    """The text of an answer, as the app appends it under `## Answers` (the hashes read it)."""
-    return f"\n### Câu {n}\nAnswered by: {by}. Date: 2026-09-23. Via: product.\n\n{text}\n"
-
-
-def today() -> str:
-    return datetime.now(ZoneInfo(TZ)).strftime("%Y-%m-%d")
-
-
 # --- the stage a unit is at ---------------------------------------------------------------------
 
 
@@ -94,9 +127,7 @@ def test_stage_at_is_the_stage_next_names_else_the_last_artifact_else_the_first_
     )
     requested = {
         **CHAIN,
-        "review.md": review_art(
-            "changes-requested", round_(1, "changes-requested", ["- F1 [open] x"])
-        ),
+        "review.md": review_art("changes-requested", rnd(1, "changes-requested", open_f())),
     }
     assert next_action(unit(requested))["stage"] == ""
     assert at(requested) == "review"
@@ -107,21 +138,15 @@ def test_stage_at_is_the_stage_next_names_else_the_last_artifact_else_the_first_
 # --- an accepted stage run again from the board -------------------------------------------------
 
 # A unit with every artifact up to a passed review, like the board's one awaiting its ship.
-RERUN_FILES = {
-    "intent.md": "# Intent: x\nType: feat. Status: accepted.\n\n## Open questions\n\n1. Một?\n",
-    "spec.md": "# Spec: x\nIntent: intent.md. Status: accepted.\n\nR1.\n",
-    "plan.md": "# Plan: x\nStatus: accepted.\n\n1. build it\n",
-    "impl.md": "# Impl: x\nStatus: accepted.\n\nbuilt\n",
-    "pr.md": "# PR: feat(0003): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nbody\n",
-    "review.md": f"# Review: x\nStatus: accepted.\n\n{round_(1, 'pass')}",
-}
-
-
+RERUN_FILES = dict.fromkeys(
+    ["intent.md", "spec.md", "plan.md", "impl.md", "pr.md", "review.md"], "# x\nStatus: accepted.\n"
+)
 RERUN_STATUSES = dict.fromkeys(RERUN_FILES, "accepted")
 
 
 class RerunTree:
-    """A `--root` holding one unit, and what the board does with it."""
+    """A `--root` holding one unit, and what the board does with it: a rerun is a row, and each
+    artifact holds the record it was last written as."""
 
     def __init__(
         self,
@@ -131,16 +156,28 @@ class RerunTree:
         shipped=False,
         holds=(),
         statuses=None,
+        rounds=None,
     ):
         self.name = name
         self.statuses = {**RERUN_STATUSES, **(statuses or {})}
         self.shipped = shipped
         self.holds = list(holds)
+        self.rounds = [rnd(1, "pass")] if rounds is None else rounds
+        self.reruns: list[dict] = []
         self.root, self.dir = tree(tmp_path, RERUN_FILES if files is None else files, name)
+        self.records = {p.name: i + 1 for i, p in enumerate(sorted(self.dir.iterdir()))}
 
     def entry(self) -> dict:
+        fields = {f.replace(".md", "_md"): {"record": r} for f, r in self.records.items()}
+        fields["pr_md"]["pr"] = PR["pr"]
+        fields["review_md"]["rounds"] = self.rounds
         entry = known(
-            self.statuses, questions={"intent.md": ["Một?"]}, holds=self.holds, type="feat"
+            self.statuses,
+            questions={"intent.md": ["Một?"]},
+            holds=self.holds,
+            type="feat",
+            reruns=self.reruns,
+            fields=fields,
         )
         entry["shipped"] = self.shipped
         return entry
@@ -151,59 +188,27 @@ class RerunTree:
     def read(self):
         return read(self.dir, self.name, self.entry())
 
-    def write(self, file: str, text: str) -> None:
-        (self.dir / file).write_text(text)
-
-    def append(self, file: str, tail: str) -> None:
-        """What the app does with the block: append it under `## Answers`."""
-        was = (self.dir / file).read_text()
-        opened = "" if "\n## Answers" in was else "\n## Answers\n"
-        self.write(file, was + opened + "\n" + tail)
+    def rewrite(self, file: str) -> None:
+        """The stage ran again and wrote `file` as a new record."""
+        self.records[file] = max(self.records.values()) + 1
 
     def offers(self) -> list:
         return json.loads(self.cli("rerun", self.name).out)["offers"]
 
     def rerun(self, stage: str) -> dict:
+        """What the board does on a press: `rerun <stage>` says which records go stale, and the
+        app writes that as a row."""
         out = self.cli("rerun", self.name, stage)
         assert out.code == 0, out.err
-        answer = json.loads(out.out)
-        self.append("intent.md", answer["block"])
-        return answer
-
-
-def test_the_hash_above_answers_does_not_move_when_an_answer_is_appended():
-    text = "# Spec: x\nStatus: accepted.\n\nR1.\n"
-    digest = above_answers(text)
-    assert re.fullmatch(r"[0-9a-f]{64}", digest)
-    # A section the app's append opened.
-    answered = (
-        f"{text}\n## Answers\n\n### Câu 1\nAnswered by: A. Date: 2026-09-26. Via: product.\n\nx\n"
-    )
-    assert above_answers(answered) == digest
-    assert above_answers(f"{text.rstrip()}\n\n## Answers\n") == digest
-    assert above_answers(text.replace("R1.", "R1, rewritten.")) != digest
-
-
-def test_a_rerun_block_ends_the_answer_before_it_and_is_never_an_answer():
-    block = (
-        "### Rerun\nRequested by: owner. Date: 2026-09-26. Via: product.\nStage: pr.\n"
-        f"Stale: pr.md sha256:{'c' * 64}\n"
-    )
-    text = f"## Answers\n{answer_block(1, 'A', 'Có.')}\n{block}{answer_block(2, 'B', 'Không.')}"
-    assert parse_reruns(text)["reruns"] == [
-        {"stage": "pr", "by": "owner", "date": "2026-09-26", "stale": {"pr.md": "c" * 64}}
-    ]
-
-
-def test_a_malformed_rerun_block_is_ignored_and_reported(tmp_path):
-    t = RerunTree(tmp_path)
-    t.append(
-        "intent.md",
-        f"### Rerun\nStage: pr.\nStale: pr.md sha256:{above_answers(RERUN_FILES['pr.md'])}\n",
-    )
-    u = t.read()
-    assert "stale" not in u["artifacts"]["pr.md"]
-    assert re.search(r"intent\.md: rerun block 1 has no well-formed", "\n".join(u["problems"]))
+        said = json.loads(out.out)
+        self.reruns.append(
+            rerun_row(
+                stage,
+                "2026-10-01",
+                **{f.replace(".md", "_md"): r for f, r in said["stale"].items()},
+            )
+        )
+        return said
 
 
 def test_rerunning_pr_closes_ship_until_pr_and_then_review_are_written_again(tmp_path):
@@ -225,11 +230,8 @@ def test_rerunning_pr_closes_ship_until_pr_and_then_review_are_written_again(tmp
     assert re.search(
         r"^pr\.md is stale — pr was rerun on .*: pr again$", next_step(u, probe)["action"]
     )
-    # An answer appended to pr.md does not make it fresh.
-    t.append("pr.md", answer_block(1, "A", "x"))
-    assert t.read()["artifacts"]["pr.md"].get("stale")
 
-    t.write("pr.md", RERUN_FILES["pr.md"].replace("body", "a new body"))
+    t.rewrite("pr.md")
     u = t.read()
     assert "stale" not in u["artifacts"]["pr.md"]
     assert u["artifacts"]["review.md"].get("stale")
@@ -246,7 +248,7 @@ def test_rerunning_pr_closes_ship_until_pr_and_then_review_are_written_again(tmp
     assert next_step(u)["action"].startswith("review.md is stale")
     assert next_step(u)["stage"] == ""
 
-    t.write("review.md", f"{RERUN_FILES['review.md']}{round_(2, 'pass')}")
+    t.rewrite("review.md")
     assert "stale" not in t.read()["artifacts"]["review.md"]
     assert stale_needs(t.read()) == []
 
@@ -270,27 +272,15 @@ def test_a_stale_artifact_before_the_target_closes_its_gate_and_names_the_stage(
 
 
 def test_a_changes_requested_review_and_a_spike_the_spec_no_longer_needs_are_never_stale(tmp_path):
-    review = "# Review: x\nStatus: changes-requested.\n\n" + round_(
-        1, "changes-requested", ["- F1 [open] x"]
-    )
-    spike = "# Spike: x\nStatus: accepted.\n\n## U1\n\nVerdict: holds.\n"
     t = RerunTree(
         tmp_path,
-        {**RERUN_FILES, "review.md": review, "spike.md": spike},
+        {**RERUN_FILES, "spike.md": "# Spike: x\nStatus: accepted.\n"},
         statuses={"review.md": "changes-requested", "spike.md": "accepted"},
+        rounds=[rnd(1, "changes-requested", open_f())],
     )
-    t.append(
-        "intent.md",
-        "\n".join(
-            [
-                "### Rerun",
-                "Requested by: owner. Date: 2026-09-26. Via: product.",
-                "Stage: spec.",
-                f"Stale: spike.md sha256:{above_answers(spike)}",
-                f"Stale: review.md sha256:{above_answers(review)}",
-                "",
-            ]
-        ),
+    # A person's rerun of spec names both files at the records they hold now.
+    t.reruns.append(
+        rerun_row("spec", spike_md=t.records["spike.md"], review_md=t.records["review.md"])
     )
     u = t.read()
     assert "stale" not in u["artifacts"]["review.md"]
@@ -636,31 +626,6 @@ def test_screens_on_a_real_repository(tmp_path):
 
 # --- a passed unit behind main, and the ship.md a refused merge leaves --------------------------
 
-BEHIND = "the head branch is not up to date with the base branch"
-SHIP_OLD = (
-    "# Ship: x\nReview: review.md. Author: A. Status: draft.\n\n"
-    "## What went out\n\nNothing merged.\n"
-)
-REB = "d" * 40
-TRUNK = "refs/remotes/origin/main"
-NOT_ANCESTOR = {"code": 1, "out": "", "err": ""}
-
-
-def ship_draft(n, refused=BEHIND):
-    line = "" if refused is None else f"Refused: {refused}\n"
-    return (
-        f"# Ship: x\nReview: review.md. Round: {n}. Author: A. Status: draft.\n\n"
-        f"## What went out\n\nNothing merged.\n{line}\n## What is still open\n\n"
-        "Refused: not this one\n"
-    )
-
-
-def ship_art(text):
-    """What `read_unit` attaches, without a directory."""
-    ship = parse_ship(text)
-    present = ship["round"] is not None or ship["refused"] is not None
-    return {**art("draft"), **({"ship": ship} if present else {})}
-
 
 def behind_by(k, git_says=None):
     return green_probe(
@@ -674,27 +639,22 @@ def behind_by(k, git_says=None):
 
 
 def accepted_pass(extra=None):
-    return branched(
-        {**CHAIN, "review.md": review_art("accepted", round_(1, "pass")), **(extra or {})}
+    return branched({**CHAIN, "review.md": review_art("accepted", rnd(1, "pass")), **(extra or {})})
+
+
+def test_read_unit_attaches_ship_only_to_a_ship_row_that_says_something(tmp_path):
+    d = files_in(tmp_path, {"ship.md": "# Ship: x\n"}, "0001_x")
+    said = known(
+        {"ship.md": "draft"}, fields={"ship_md": {"ship": {"round": 1, "refused": BEHIND}}}
     )
-
-
-def test_parse_ship_reads_round_from_the_header_and_the_first_refused_line_of_what_went_out():
-    assert parse_ship(ship_draft(2)) == {"round": 2, "refused": BEHIND}
-    assert parse_ship(ship_draft(3, None)) == {"round": 3, "refused": None}
-    assert parse_ship(SHIP_OLD) == {"round": None, "refused": None}
-    # Indented is not the line.
-    indented = (
-        "# S\nReview: review.md. Round: 1. Status: draft.\n\n## What went out\n\n  Refused: no\n"
+    assert read(d, "0001_x", said)["artifacts"]["ship.md"]["ship"] == {
+        "round": 1,
+        "refused": BEHIND,
+    }
+    mute = known(
+        {"ship.md": "draft"}, fields={"ship_md": {"ship": {"round": None, "refused": None}}}
     )
-    assert parse_ship(indented)["refused"] is None
-
-
-def test_read_unit_attaches_ship_only_to_a_ship_md_that_says_something(tmp_path):
-    d = files_in(tmp_path, {"ship.md": ship_draft(1)}, "0001_x")
-    assert read(d, "0001_x")["artifacts"]["ship.md"]["ship"] == {"round": 1, "refused": BEHIND}
-    (d / "ship.md").write_text(SHIP_OLD)
-    assert "ship" not in read(d, "0001_x")["artifacts"]["ship.md"]
+    assert "ship" not in read(d, "0001_x", mute)["artifacts"]["ship.md"]
 
 
 def test_a_pull_request_behind_origin_main_closes_ship_says_by_how_much_and_names_no_full_sha():
@@ -730,12 +690,11 @@ def test_a_head_already_rebased_goes_to_review_not_to_the_behind_reason():
 
 
 def test_a_draft_ship_md_from_an_older_round_is_a_missing_one():
-    text = f"{round_(1, 'pass')}\n{round_(2, 'pass').replace(SHA, REB)}"
     u = branched(
         {
             **CHAIN,
-            "review.md": review_art("accepted", text),
-            "ship.md": ship_art(ship_draft(1)),
+            "review.md": review_art("accepted", rnd(1, "pass"), rnd(2, "pass", sha=REB)),
+            "ship.md": ship_art(1),
         }
     )
 
@@ -762,7 +721,7 @@ def test_a_draft_ship_md_from_an_older_round_is_a_missing_one():
 
 def test_a_draft_ship_md_from_the_last_round_asks_the_gate_and_an_open_one_stops_on_refused():
     def u(refused=BEHIND):
-        return accepted_pass({"ship.md": ship_art(ship_draft(1, refused))})
+        return accepted_pass({"ship.md": ship_art(1, refused)})
 
     # Behind: the reason the autopilot integrates on.
     behind = next_step(u(), behind_by(4))
@@ -784,7 +743,7 @@ def test_a_draft_ship_md_from_the_last_round_asks_the_gate_and_an_open_one_stops
 
 
 def test_a_draft_ship_md_with_a_round_and_no_refused_line_is_merging_not_refused():
-    u = accepted_pass({"ship.md": ship_art(ship_draft(1, None))})
+    u = accepted_pass({"ship.md": ship_art(1, None)})
     assert decide(u)["why"] == "ship-merging"
     assert decide(u)["action"] == "ship is merging #7 — wait"
     # The gate cannot yet see the merge commit: a wait, and its words are not raised as a refusal.
@@ -804,7 +763,7 @@ def test_a_draft_ship_md_with_a_round_and_no_refused_line_is_merging_not_refused
     assert done["reasons"] == ["ship-merging", "recording-ship"]
     assert "do not merge" in done["action"]
     # A `Refused:` line is still a refusal.
-    assert decide(accepted_pass({"ship.md": ship_art(ship_draft(1))}))["why"] == "ship-refused"
+    assert decide(accepted_pass({"ship.md": ship_art(1)}))["why"] == "ship-refused"
 
 
 def test_a_pass_then_a_rebase_with_no_ship_md_is_review_not_a_draft_stop():
@@ -823,29 +782,29 @@ def test_a_pass_then_a_rebase_with_no_ship_md_is_review_not_a_draft_stop():
 
 
 def test_status_offers_no_acceptance_of_a_ship_md_naming_its_round_only(tmp_path):
-    review = f"# Review: x\nPR: pr.md. Author: t. Status: accepted.\n\n{round_(1, 'pass')}"
-
     def status(ship):
         files = {
-            "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
-            "spec.md": "Status: accepted.\n",
-            "plan.md": "Status: accepted.\n",
-            "impl.md": impl_text(""),
-            "pr.md": "PR: https://github.com/o/r/pull/7. Status: accepted.\n",
-            "review.md": review,
-            "ship.md": ship,
+            f: "# x\n"
+            for f in ["intent.md", "spec.md", "plan.md", "impl.md", "pr.md", "review.md", "ship.md"]
         }
         root, _ = tree(tmp_path, files)
+        fields = {"pr_md": {"pr": PR["pr"]}, "review_md": {"rounds": [rnd(1, "pass")]}}
+        if ship:
+            fields["ship_md"] = {"ship": ship}
         return json_of(
             root,
             "status",
             "--json",
             units={
-                "0001_q": known(dict.fromkeys(files, "accepted") | {"ship.md": "draft"}, type="fix")
+                "0001_q": known(
+                    dict.fromkeys(files, "accepted") | {"ship.md": "draft"},
+                    type="fix",
+                    fields=fields,
+                )
             },
         )["units"][0]
 
-    refused = status(ship_draft(1))
+    refused = status({"round": 1, "refused": BEHIND})
     assert refused["next"] == {
         "blocked": True,
         "action": "ship after review round 1 did not merge — the next step says what runs now",
@@ -856,13 +815,13 @@ def test_status_offers_no_acceptance_of_a_ship_md_naming_its_round_only(tmp_path
     assert refused["at"] == "ship"
     assert refused["betweenPrAndShip"] is True
     # A ship.md from before the round was named is any draft, byte for byte.
-    assert status(SHIP_OLD)["next"] == {
+    assert status(None)["next"] == {
         "blocked": True,
         "action": "finish and accept ship.md",
         "stage": "",
         "why": "draft",
     }
-    u = accepted_pass({"ship.md": ship_art(ship_draft(1))})
+    u = accepted_pass({"ship.md": ship_art(1)})
     assert "accept" not in next_action(u)["action"]
     # With no repository, `next` says it needs one, as the gate does.
     assert next_step(u)["stage"] == ""
@@ -912,7 +871,7 @@ def test_rerun_refuses_a_stage_it_does_not_offer_an_unknown_one_and_repo(tmp_pat
 
 
 def test_a_draft_ship_md_with_no_round_stops_as_it_always_did():
-    u = accepted_pass({"ship.md": ship_art(SHIP_OLD)})
+    u = accepted_pass({"ship.md": ship_art()})
     stop = {"blocked": True, "action": "finish and accept ship.md", "stage": ""}
     assert next_step(u, behind_by(4)) == stop
     assert next_action(u) == stop

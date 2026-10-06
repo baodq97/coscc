@@ -271,6 +271,9 @@ class TheGuards(unittest.TestCase):
         )
         self.assertEqual(guards.merge_read({"merge_commit": "m"}), OPEN)
         self.assertEqual(guards.merge_read({}).reasons, ("not-merged",))
+        self.assertEqual(guards.merge_refused({"refused": "conflicts"}), OPEN)
+        self.assertEqual(guards.merge_refused({"refused": ""}).reasons, ("no-refusal",))
+        self.assertEqual(guards.merge_refused({}).reasons, ("no-refusal",))
         self.assertEqual(guards.close_read({"state": "CLOSED"}), OPEN)
         self.assertEqual(guards.close_read({"state": "OPEN"}).reasons, ("not-closed",))
 

@@ -60,8 +60,9 @@ Author: <name>.
 
 - Exactly one outcome; two outcomes are two intents. A figure with no source is cut.
 - Under `## Open questions` a real question is an item `N. ` at column 0 whose first
-  paragraph holds a `?`; from the board the same go into `questions` of `submit`. Anything
-  else is a plain sentence, never an item. Keep the heading when none is left.
+  paragraph holds a `?`; from the board the same go into `questions` of `submit`: `text` only
+  asks, `recommendation` is the answer you recommend and why. Anything else is a plain
+  sentence, never an item. Keep the heading when none is left.
 - The file carries no status. `judgement` of `submit` records yours, not approval: `ready`, or
   `not-ready` if something is missing.
 

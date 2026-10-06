@@ -30,8 +30,8 @@ export type Answer = {
   "n": number;
   "question": string;
   "text": string;
-  "by": string;
-  "authority": string;
+  "by": "person" | "delegated";
+  "name": string;
   "via": string;
   "date": string;
 };
@@ -192,9 +192,15 @@ export type Decided = {
   "n": number;
   "question": string;
   "text": string;
-  "by": string;
-  "authority": string;
+  "name": string;
   "date": string;
+};
+
+export type Decision = {
+  "kind": "rerun" | "more-rounds" | "outcome";
+  "by": string;
+  "date": string;
+  "text": string;
 };
 
 export type Deleted = {
@@ -218,6 +224,7 @@ export type Detail = {
   "worktree": Worktree | null;
   "hold_moves": string[];
   "outputs": OutputRecord[];
+  "decisions": Decision[];
 };
 
 export type EstimateBrief = {
@@ -349,8 +356,10 @@ export type Question = {
   "artifact": string;
   "n": number;
   "text": string;
+  "recommendation": string;
   "answered": boolean;
   "by": string;
+  "name": string;
 };
 
 export type ReleaseUnit = {

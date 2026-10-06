@@ -14,7 +14,6 @@ from unittest import mock
 
 from coscc.bus import Bus
 from coscc.config import Config
-from coscc.units import states
 from coscc.kernel import Invalid
 from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
@@ -30,8 +29,24 @@ def state_of(core, cwd, unit, **kw):
     seed(core.ws.unit_meta(), core.ws.key(cwd), unit, **kw)
 
 
+def an_open_pr(core, cwd, unit, url="https://github.com/o/r/pull/7"):
+    """The PR machine's `open` row: the pull request the unit names."""
+    core.ws.unit_meta().history.record(
+        core.ws.key(cwd),
+        unit,
+        "pr.md",
+        "accepted",
+        source="prmachine:open",
+        guard="branch-named",
+        authority="code",
+        inputs={"number": 7, "url": url, "head": "a" * 40},
+    )
+
+
+# The file the review session extends: the session's reply carries only the new round's text, the
+# rounds themselves are rows.
 REVIEW_ONE = (
-    "# Review: a problem\nAuthor: t. Status: changes-requested.\n\n"
+    "# Review: a problem\nAuthor: t.\n\n"
     "## Round 1\n\nReviewed: abcdef1. Verdict: changes-requested.\n\n"
     "### Findings\n\n- F1 [open] [high] the first thing\n- F2 [open] the second thing\n"
 )
@@ -107,14 +122,36 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.dir = Path(self.made["path"])
-        (self.dir / "pr.md").write_text(
-            f"# PR: a problem\nAuthor: t. Status: accepted.\nPR: {PR_URL}\n", encoding="utf-8"
-        )
-        (self.dir / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
         # What review declares it needs.
         for name in ("intent.md", "impl.md"):
             (self.dir / name).write_text("# x\n", encoding="utf-8")
         self.unit = self.made["unit"]
+        (self.dir / "pr.md").write_text("# PR: a problem\nAuthor: t.\n", encoding="utf-8")
+        (self.dir / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
+        an_open_pr(self.core, str(self.repo), self.unit)
+        self._round_one(self.unit)
+
+    def _round_one(self, unit):
+        """Round 1, as the row the review step recorded: two findings, both open."""
+        meta, key = self.core.ws.unit_meta(), self.core.ws.key(str(self.repo))
+        with meta.data.write() as conn:
+            meta.record_round(
+                conn,
+                key,
+                unit,
+                {
+                    "n": 1,
+                    "run": "r",
+                    "head": "abcdef1",
+                    "object": {
+                        "verdict": "changes-requested",
+                        "findings": [
+                            finding("F1", "open", "high", path="", text="the first thing"),
+                            finding("F2", "open", "low", path="", text="the second thing"),
+                        ],
+                    },
+                },
+            )
 
     def _post(self, gh, n):
 
@@ -152,7 +189,9 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertEqual(len(gh.posts()), 1)
         body = gh.comments[0]["body"]
         self.assertIn("round 2 of", body.splitlines()[0])
-        self.assertIn("- F1 [fixed abcdef2] (none) — high — the first thing", body)
+        self.assertIn("Verdict: changes-requested.", body)
+        self.assertIn("- F1 [fixed] (none) — high — the first thing", body)
+        self.assertIn("- F2 [open] (none) — low — the second thing", body)
         self.assertEqual([(c["round"], c["state"]) for c in done["comments"]], [(2, "posted")])
 
     def test_changes_requested_reaches_the_history(self):
@@ -170,14 +209,19 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
             ("changes-requested", "review-round", "agent"),
         )
 
-    def test_the_end_record_counts_the_findings_of_the_added_round(self):
+    def test_the_round_a_step_adds_is_a_row_with_its_findings(self):
         # Round 2 has two findings, one of them still open.
-        from coscc.store.journal import Journal
-
         self._run_review(FakeGh())
-        j = Journal(self.core.config.working_dir, self.core.config.data_dir)
-        end = j.records(str(self.repo.resolve()), kind="end")[-1]
-        self.assertEqual((end["outcome"], end["findings"], end["findings_open"]), ("done", 2, 1))
+        meta, key = self.core.ws.unit_meta(), self.core.ws.key(str(self.repo))
+        snap = meta.snapshot(key, {"proj": key})
+        entry = snap["units"][f"{snap['workspace']}/{self.unit}"]
+        rounds = entry["artifacts"]["review.md"]["rounds"]
+        self.assertEqual([r["n"] for r in rounds], [1, 2])
+        added = rounds[1]
+        self.assertEqual(
+            ([f["id"] for f in added["findings"]], [f["label"] for f in added["findings"]]),
+            (["F1", "F2"], ["fixed", "open"]),
+        )
 
     def test_a_failed_post_leaves_review_md_byte_for_byte_the_same(self):
         self._run_review(FakeGh())
@@ -245,10 +289,14 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         with self.assertRaises(Invalid):
             self._post(FakeGh(), "one")
 
-    def test_no_pr_line_is_a_failure_with_a_reason_and_no_gh(self):
-        (self.dir / "pr.md").write_text("# PR: a problem\nAuthor: t. Status: accepted.\n")
+    def test_no_recorded_pull_request_is_a_failure_with_a_reason_and_no_gh(self):
+        made = create_sync(self.core, str(self.repo), "no-pr", "words")
+        other = made["unit"]
+        (Path(made["path"]) / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
+        self._round_one(other)
         gh = FakeGh()
-        r = self._post(gh, 1)
+        with mock.patch("coscc.git.gh.run", gh):
+            r = asyncio.run(self.core.answers.post_review_comment(str(self.repo), other, 1))
         self.assertEqual((r["state"], r["reason"]), ("failed", "pr.md names no pull request"))
         self.assertEqual(gh.calls, [])
 
@@ -256,7 +304,6 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 OUTCOME_INTENT = (
     "# Intent: q\n"
     "Author: t. Type: feat. Status: accepted.\n\n"
-    # A deadline already past on any day these tests run, so the board reads it as due.
     "## Proposed outcome\n\nBy 2026-09-01, three of three.\n\n"
     "## Open questions\n\n1. One?\n\n"
     "## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-24. Via: product.\n\nCó.\n"
@@ -297,7 +344,9 @@ class HowAnAnswerNamesItsQuestion(unittest.TestCase):
 
     def answer(self, artifact, question, text="Có."):
         return asyncio.run(
-            self.core.answers.answer(self.cwd, self.unit, artifact, question, text, "Phong")
+            self.core.answers.answer(
+                self.cwd, self.unit, artifact, question, text, "person", "Phong"
+            )
         )
 
     def answers(self):
@@ -360,6 +409,78 @@ class HowAnAnswerNamesItsQuestion(unittest.TestCase):
         self.assertListsTheOpenQuestions(message)
 
 
+class AnAnswerSaysWhoseDecisionItIs(unittest.TestCase):
+    """An answer is a row with `by` (`person` or `delegated`) and the `name` the caller gave."""
+
+    setUp = HowAnAnswerNamesItsQuestion.setUp
+    LONG = HowAnAnswerNamesItsQuestion.LONG
+
+    def rows(self):
+        with self.core.ws.unit_meta().data.connect() as conn:
+            return [
+                tuple(r)
+                for r in conn.execute(
+                    'SELECT artifact, ref, "by", name, text FROM unit_answers WHERE unit = ?',
+                    (self.unit,),
+                )
+            ]
+
+    def test_a_delegated_answer_is_a_row_and_a_run_log_record_with_by(self):
+        got = asyncio.run(
+            self.core.answers.answer(self.cwd, self.unit, "intent", 1, "Có.", "delegated", "Leif")
+        )
+        self.assertEqual(
+            (got["unit"], got["artifact"], got["question"], got["by"], got["name"]),
+            (self.unit, "intent.md", 1, "delegated", "Leif"),
+        )
+        self.assertEqual(self.rows(), [("intent.md", "1", "delegated", "Leif", "Có.")])
+        records = self.core.ws.journal().records(self.core.ws.key(self.cwd), kind="answer")
+        [record] = records
+        self.assertEqual(record["by"], "delegated")
+        self.assertNotIn("authority", record)
+
+    def test_a_person_without_a_name_is_the_owner(self):
+        got = asyncio.run(
+            self.core.answers.answer(self.cwd, self.unit, "intent.md", 1, "Có.", "person")
+        )
+        self.assertEqual((got["by"], got["name"]), ("person", "owner"))
+        self.assertEqual(self.rows(), [("intent.md", "1", "person", "owner", "Có.")])
+
+    def test_any_other_by_is_refused_naming_both_and_writes_nothing(self):
+        for by in ("agent", "", None, "Person"):
+            with self.subTest(by=by), self.assertRaises(Invalid) as e:
+                asyncio.run(
+                    self.core.answers.answer(self.cwd, self.unit, "intent.md", 1, "Có.", by, "x")
+                )
+            self.assertIn("person", str(e.exception))
+            self.assertIn("delegated", str(e.exception))
+        self.assertEqual(self.rows(), [])
+
+
+class AClosingTurnsIncompleteRoundIsARow(unittest.TestCase):
+    """The incomplete round a review's closing turn wrote reaches the loop as a row."""
+
+    setUp = HowAnAnswerNamesItsQuestion.setUp
+    LONG = HowAnAnswerNamesItsQuestion.LONG
+
+    def test_the_round_is_a_row_with_its_head_and_review_goes_back_to_draft(self):
+        done = {"stage": "review", "outcome": "failed", "incomplete_round": 2, "head": "a" * 40}
+        said = asyncio.run(self.core.answers.ingest(self.cwd, self.unit, done, "review.md"))
+        self.assertEqual(said, {})
+        with self.core.ws.unit_meta().data.connect() as conn:
+            rows = [
+                tuple(r)
+                for r in conn.execute(
+                    "SELECT n, head, verdict FROM review_rounds WHERE unit = ?", (self.unit,)
+                )
+            ]
+        self.assertEqual(rows, [(2, "a" * 40, "incomplete")])
+        snap = self.core.ws.snapshot(self.cwd, [self.unit])
+        entry = snap["units"][f"{snap['workspace']}/{self.unit}"]
+        self.assertEqual(entry["artifacts"]["review.md"]["status"], "draft")
+        self.assertEqual(entry["artifacts"]["review.md"]["rounds"][0]["verdict"], "incomplete")
+
+
 class RecordingAnOutcome(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -403,7 +524,15 @@ class RecordingAnOutcome(unittest.TestCase):
             questions={"intent.md": ["One?"]},
         )
         self.core.ws.unit_meta().add_answer(
-            self.core.ws.key(cwd), unit, "intent.md", 1, "Có.", "Phong", "2026-09-24", "product"
+            self.core.ws.key(cwd),
+            unit,
+            "intent.md",
+            1,
+            "Có.",
+            "person",
+            "Phong",
+            "2026-09-24",
+            "product",
         )
 
     def record(self, **over):
@@ -422,45 +551,54 @@ class RecordingAnOutcome(unittest.TestCase):
         [u] = asyncio.run(self.core.board(self.cwd))["units"]
         return u
 
+    def decisions(self):
+        return self.core.ws.unit_meta().decisions(self.core.ws.key(self.cwd), self.unit)
+
     def refused(self, **over) -> str:
         before = hashlib.sha256(self.intent.read_bytes()).hexdigest()
         with self.assertRaises(Invalid) as e:
             self.record(**over)
         self.assertEqual(hashlib.sha256(self.intent.read_bytes()).hexdigest(), before)
+        self.assertEqual(self.decisions(), [], "no row was written")
         self.assertTrue(str(e.exception))
         return str(e.exception)
 
     def test_no_recorded_by_is_recorded_as_owner(self):
         """What `recorded_by="  "` was refused for until then."""
         self.record(recorded_by="  ")
-        block = self.intent.read_text(encoding="utf-8").split("### Outcome", 1)[1]
-        self.assertIn("Answered by: owner", block)
+        [row] = self.decisions()
+        self.assertEqual(row["by"], "owner")
 
-    def test_a_block_is_appended_and_every_byte_before_it_stays(self):
+    def test_a_row_is_written_and_no_file_moves(self):
         before = self.intent.read_bytes()
+        files = {p.name: p.read_bytes() for p in self.dir.iterdir()}
         got = self.record(note="Ghi chú.")
-        after = self.intent.read_bytes()
-        self.assertEqual(after[: len(before)], before)
-        tail = after[len(before) :].decode("utf-8")
-        self.assertIn("\n### Outcome\nAnswered by: Phong. Date: ", tail)
-        self.assertIn(
-            "Result: đạt\nMeasured by: agent\nSource: npm test, 12 pass\n\nGhi chú.\n", tail
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual({p.name: p.read_bytes() for p in self.dir.iterdir()}, files)
+        [row] = self.decisions()
+        self.assertEqual((row["kind"], row["by"]), ("outcome", "Phong"))
+        self.assertEqual(
+            row["fields"],
+            {
+                "result": "met",
+                "measured_by": "agent",
+                "source": "npm test, 12 pass",
+                "reason": "",
+                "note": "Ghi chú.",
+            },
         )
-        self.assertNotIn("## Answers", tail, "the existing heading is reused")
         self.assertEqual(
             (got["result"], got["measured_by"], got["recorded_by"]), ("đạt", "agent", "Phong")
         )
-        self.assertLessEqual(
-            {p.name for p in self.dir.iterdir()}, {f"{s}.md" for s in states.default().stage_names}
-        )
 
-    def test_the_board_then_reads_it_and_the_last_block_is_in_force(self):
+    def test_a_second_outcome_is_a_second_row_and_the_board_reads_none(self):
         self.record()
-        u = self.board_unit()
-        self.assertEqual(u["outcome"]["result"], "met")
         self.record(result="trượt", measured_by="Linh", source="board, 2026-10-08")
+        rows = self.decisions()
+        self.assertEqual([r["fields"]["result"] for r in rows], ["met", "missed"])
+        self.assertEqual(rows[1]["fields"]["measured_by"], "Linh")
         u = self.board_unit()
-        self.assertEqual((u["outcome"]["result"], u["outcome"]["measured_by"]), ("missed", "Linh"))
+        self.assertNotIn("outcome", u)
         self.assertEqual(u["next"], "finished")
         self.assertEqual((u["questions"][0]["answered"], u["open"]), (True, 0))
 
@@ -474,9 +612,6 @@ class RecordingAnOutcome(unittest.TestCase):
         self.refused(measured_by="agent\nResult: đạt")
         self.refused(source="a\nb")
         self.refused(reason="a\nb", result="không đo được")
-        self.refused(note="ok\n## Status: rejected")
-        self.refused(note="### Outcome")
-        self.refused(source="# x")
         self.assertIn("no such work unit", asyncio.run(self._missing()))
 
     async def _missing(self) -> str:
@@ -499,15 +634,11 @@ class RecordingAnOutcome(unittest.TestCase):
             )
         self.assertIn("only on a finished unit", str(e.exception))
 
-    def test_a_section_after_answers_is_refused(self):
-        self.intent.write_text(OUTCOME_INTENT + "\n## Notes\n\nx\n", encoding="utf-8")
-        self.assertIn("section after its ## Answers", self.refused())
-
-    def test_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
+    def test_reading_the_board_writes_no_row_and_starts_nothing(self):
         journal = self.core.ws.journal()
         key = self.core.ws.key(self.cwd)
         # The first read of a store imports it, and says what it could not read.
-        self.assertIsNone(self.board_unit()["outcome"]["result"])
+        self.board_unit()
         before = len(journal.records(key))
         self.board_unit()
         self.assertEqual(len(journal.records(key)), before)

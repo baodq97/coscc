@@ -223,8 +223,11 @@ def seed_fixture(
     """A fixture's units as the board holds them: rows in `cos.db`, one transition per
     artifact state, written as `by`'s own. A unit is `(workspace, unit, kw)`, `kw` holding any
     of `statuses` (`{artifact: state}`), `type` (an intent record), `shipped` (the merge
-    row the PR machine writes) and `questions` (`{artifact: [text]}`, numbered from 1).
-    The files a proof writes beside them are prose only; the app reads no state from them."""
+    row the PR machine writes), `questions` (`{artifact: [text or (text, recommendation)]}`,
+    numbered from 1), `pr` (the number the PR machine's `open` row names), `rounds` (`[(n,
+    head, verdict, [finding])]`, a finding as `review_findings` takes it), `answers` (`[(artifact,
+    n, text, by, name, date)]`) and `decisions` (`[(kind, fields, date)]`, a person's). The
+    files a proof writes beside them are prose only; the app reads no state from them."""
     from coscc.units.meta import UnitMeta
 
     meta = UnitMeta(work, Data(data_dir))
@@ -241,13 +244,36 @@ def seed_fixture(
                 meta.record_result(conn, key, unit, "intent", "intent.md", submitted)
             for artifact, asked in (kw.get("questions") or {}).items():
                 conn.executemany(
-                    "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    [(meta.root, key, unit, artifact, n, t) for n, t in enumerate(asked, 1)],
+                    "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text, "
+                    "recommendation) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (meta.root, key, unit, artifact, n, *((q, "") if isinstance(q, str) else q))
+                        for n, q in enumerate(asked, 1)
+                    ],
                 )
+            for n, head, verdict, findings in kw.get("rounds") or ():
+                submitted = {"n": n, "run": f"r{n}", "head": head}
+                submitted["object"] = {"verdict": verdict, "findings": findings}
+                meta.record_round(conn, key, unit, submitted)
+            for artifact, n, text, by, name, date in kw.get("answers") or ():
+                meta.add_answer(key, unit, artifact, n, text, by, name, date, "product", conn=conn)
+            for kind, fields, date in kw.get("decisions") or ():
+                meta.add_decision(key, unit, kind, fields, "owner", date, "product", conn=conn)
         for artifact, state in (kw.get("statuses") or {}).items():
             meta.history.record(
                 key, unit, artifact, state, actor="fixture", session="fixture", source="fixture"
+            )
+        if kw.get("pr"):
+            n = int(kw["pr"])
+            meta.history.record(
+                key,
+                unit,
+                "pr.md",
+                "accepted",
+                source="prmachine:open",
+                guard="branch-named",
+                authority="code",
+                inputs={"number": n, "url": f"https://github.com/o/r/pull/{n}", "branch_ok": True},
             )
         if kw.get("shipped"):
             meta.history.record(

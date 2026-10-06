@@ -76,14 +76,17 @@ def _outputs(stage: str, unit_meta: dict[str, Any] | None, included: list[str]) 
 
 
 def _answer_line(a: dict[str, Any]) -> str:
-    """Who answered, when and through what: the one line under each answer."""
-    return f"Answered by: {a.get('by')}. Date: {a.get('date')}. Via: {a.get('via')}."
+    """Who answered, whose decision it is, when and through what: the one line under each answer."""
+    return (
+        f"Answered by: {a.get('name')} ({a.get('by')}). Date: {a.get('date')}. Via: {a.get('via')}."
+    )
 
 
 _HOLD_HEADS = {"paused": "Paused", "dropped": "Dropped", "active": "Resumed"}
 
 _ANSWERS_ADVICE = (
-    "Each is a person's decision, already made: write to it, cite it as `<artifact> câu N`, "
+    "Each is a decision already made, a person's (`person`) or made for them (`delegated`): "
+    "write to it, cite it as `<artifact> câu N`, "
     "and never ask it again. The app keeps them and hands them to every later step; do not "
     "copy them into a file."
 )
@@ -99,15 +102,17 @@ def _answers(stage: str, unit_meta: dict[str, Any] | None, included: list[str]) 
     for a in meta.get("answers") or []:
         artifact = str(a.get("artifact"))
         ref = a.get("id") or f"câu {a.get('n')}"
-        asked = next(
+        q = next(
             (
-                q.get("text")
+                q
                 for q in (arts.get(artifact) or {}).get("questions") or []
                 if a.get("n") is not None and q.get("n") == a.get("n")
             ),
-            None,
+            {},
         )
-        head = f"### {artifact} {ref}" + (f": {asked}" if asked else "")
+        head = f"### {artifact} {ref}" + (f": {q['text']}" if q.get("text") else "")
+        if q.get("recommendation"):
+            head += f" (recommended: {q['recommendation']})"
         blocks.append(f"{head}\n{_answer_line(a)}\n\n{a.get('text') or ''}".rstrip())
     for h in meta.get("holds") or []:
         head = _HOLD_HEADS.get(str(h.get("state")), str(h.get("state")))
@@ -118,7 +123,7 @@ def _answers(stage: str, unit_meta: dict[str, Any] | None, included: list[str]) 
     if not blocks:
         return []
     included.append("answers")
-    return ["# The answers a person gave\n\n" + _ANSWERS_ADVICE + "\n\n" + "\n\n".join(blocks)]
+    return ["# The answers already given\n\n" + _ANSWERS_ADVICE + "\n\n" + "\n\n".join(blocks)]
 
 
 def _review_rounds(unit_meta: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -182,14 +187,14 @@ def harness_advice(directory: Path, state_file: str | Path | None = None) -> str
     )
     if state_file:
         said += (
-            f"\n\n`status`, `gate`, `next`, `rerun`, `unit-branch`, `pr-text` and `screens` also "
+            f"\n\n`status`, `gate`, `next`, `rerun`, `unit-branch` and `screens` also "
             f"take `--state {state_file}`: the app's snapshot of this unit's metadata, written as "
             "this step began. Without it they exit 2; no other command takes it."
         )
     return said
 
 
-def _rerun_block(artifact: str, note: str) -> str:
+def _why_it_runs_again(artifact: str, note: str) -> str:
     """What a stage run again from the board is told about why; the artifact as it stands is
     in the envelope when the stage declares it."""
     note = note.strip()
@@ -655,7 +660,7 @@ def compose_prompt(
     if app_note.strip():
         parts.append(_app_note_block(app_note))
     if rerun:
-        parts.append(_rerun_block(artifact, rerun_note))
+        parts.append(_why_it_runs_again(artifact, rerun_note))
     parts.append(_task(workspace, directory, unit, artifact, writes_own))
     block = submit_block(stage, artifact, writes_own)
     if block:
@@ -668,7 +673,8 @@ def compose_prompt(
 _KIND_SAYS = {
     "judgement": "`ready` when the file is finished; a `not-ready` unit stays at this stage.",
     "questions": "Every item under `## Open questions` still waiting on a person, with the number "
-    "the file gives it; `[]` when there is none.",
+    "the file gives it; `[]` when there is none. `text` only asks; `recommendation` is the answer "
+    "you recommend and why, in a sentence or two, so a person can take it with one press.",
     "verdict": "`pass` when nothing blocks the merge, `changes-requested` when a finding must be "
     "fixed first, `needs-person` when only a person can settle one.",
     "findings": "Every finding of this round, those an earlier round raised carried forward with "

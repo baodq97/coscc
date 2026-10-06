@@ -35,9 +35,16 @@ from coscc.units.meta import UnitMeta
 REPO = Path(__file__).resolve().parents[2]
 
 
+def _record_rounds(meta: UnitMeta, key: str, name: str, rounds) -> None:
+    with meta.data.write() as conn:
+        for one in rounds:
+            meta.record_round(conn, key, name, one)
+
+
 def snap(root, units: dict[str, dict], peers=()) -> dict:
     """The snapshot of the store `root`, from explicit rows: `units` is `{unit: seed kwargs}`
-    (`seed` of test_meta, plus `answers=[(artifact, ref, text, by, date, via)]`); `peers` is
+    (`seed` of test_meta, plus `answers=[(artifact, ref, text, name, date, via)]` and
+    `rounds=[round_(...)]`); `peers` is
     `[(name, store, units)]`. A store is keyed by its path, in a throwaway database."""
     with tempfile.TemporaryDirectory() as d:
         meta = UnitMeta(Path(d) / "work", Data(Path(d) / "data"))
@@ -47,11 +54,11 @@ def snap(root, units: dict[str, dict], peers=()) -> dict:
             for name, row in rows.items():
                 row = dict(row)
                 answers = row.pop("answers", ())
+                rounds = row.pop("rounds", ())
                 seed(meta, key, name, **row)
+                _record_rounds(meta, key, name, rounds)
                 for artifact, ref, text, by, date, via in answers:
-                    meta.add_answer(
-                        key, name, artifact, ref, text, by, date, via, authority="person"
-                    )
+                    meta.add_answer(key, name, artifact, ref, text, "person", by, date, via)
         return meta.snapshot(own, {n: str(Path(s).resolve()) for n, s, _ in peers})
 
 
@@ -71,37 +78,71 @@ def repo_state() -> dict:
 
 board = _board
 
-_ROUND = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
+
+def round_(n: int, verdict: str, *findings: tuple[str, str, str]) -> dict:
+    """A review round as `record_round` takes it: `findings` are `(id, state, text)`."""
+    return {
+        "n": n,
+        "run": "r",
+        "head": "aaaaaaa",
+        "object": {
+            "verdict": verdict,
+            "screens": [],
+            "findings": [
+                {
+                    "id": i,
+                    "state": state,
+                    "fixed_in": "",
+                    "severity": "high",
+                    "rule": "",
+                    "path": "a.py",
+                    "lines": "",
+                    "text": text,
+                }
+                for i, state, text in findings
+            ],
+        },
+    }
+
+
 AWAITING_PERSON = {
     "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
     "spec.md": "Status: accepted.\n",
     "plan.md": "Status: accepted.\n",
     "impl.md": "# Impl\nStatus: accepted.\n",
     "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
-    "review.md": "# R\nStatus: changes-requested.\n"
-    + _ROUND.format(
-        n=1, v="changes-requested", f="- F2 [open] no budget for --paid\n- F3 [open] no gh"
-    )
-    + _ROUND.format(
-        n=2,
-        v="needs-person",
-        f="- F2 [needs-person] no budget for --paid\n- F3 [needs-person] no gh",
-    )
-    + "\n## Answers\n\n### F2\nAnswered by: P. Date: 2026-09-24. Via: product.\n\nran it\n",
+    "review.md": "# R\nStatus: changes-requested.\n",
 }
 
-UNFINISHED_ROUND = {
-    **{k: v for k, v in AWAITING_PERSON.items() if k != "review.md"},
-    "impl.md": "# Impl\nStatus: accepted.\n",
-    "review.md": "# R\nStatus: changes-requested.\n"
-    + _ROUND.format(n=1, v="changes-requested", f="- F1 [open] a\n- F2 [open] b\n- F3 [open] c")
-    + _ROUND.format(n=2, v="changes-requested", f="- F2 [open] b"),
-}
+UNFINISHED_ROUND = AWAITING_PERSON
 
 _AT_REVIEW = dict(statuses={**UP_TO_PR, "review.md": "changes-requested"}, type="fix")
+_UNFINISHED = {
+    **_AT_REVIEW,
+    "rounds": [
+        round_(
+            1, "changes-requested", ("F1", "open", "a"), ("F2", "open", "b"), ("F3", "open", "c")
+        ),
+        round_(2, "changes-requested", ("F2", "open", "b")),
+    ],
+}
 AWAITING_ROWS = {
     **_AT_REVIEW,
     "answers": [("review.md", "F2", "ran it", "P", "2026-09-24", "product")],
+    "rounds": [
+        round_(
+            1,
+            "changes-requested",
+            ("F2", "open", "no budget for --paid"),
+            ("F3", "open", "no gh"),
+        ),
+        round_(
+            2,
+            "needs-person",
+            ("F2", "needs-person", "no budget for --paid"),
+            ("F3", "needs-person", "no gh"),
+        ),
+    ],
 }
 
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
@@ -793,8 +834,8 @@ class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
         self.assertEqual(
             u["person_findings"],
             [
-                {"id": "F2", "reason": "no budget for --paid", "answered": True},
-                {"id": "F3", "reason": "no gh", "answered": False},
+                {"id": "F2", "reason": "a.py — high — no budget for --paid", "answered": True},
+                {"id": "F3", "reason": "a.py — high — no gh", "answered": False},
             ],
         )
         self.assertEqual(u["waiting"], ["F3"])
@@ -820,7 +861,7 @@ class TheIdsARoundLeftOutAreCarriedFromTheScript(unittest.TestCase):
 
     def test_next_step_copies_dropped(self):
         with tempfile.TemporaryDirectory() as tmp:
-            name = self._unit(tmp, UNFINISHED_ROUND, **_AT_REVIEW)
+            name = self._unit(tmp, UNFINISHED_ROUND, **_UNFINISHED)
             script = self._script_says(tmp, name)
             got = run(board.next_step(tmp, name, state=self.state))
         self.assertEqual(script["dropped"], ["F1", "F3"])

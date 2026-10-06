@@ -1344,14 +1344,18 @@ async def _attempt(
     return pending
 
 
-async def _end_extra(end_fields: Any, unit: str, stage: str) -> dict[str, Any]:
-    """What `end_fields` adds to a `done` step's `end`; none if it raises. The same rule as the
-    attempt record: the `end` row never depends on it."""
-    try:
-        return dict(await end_fields())
-    except Exception:
-        log.exception("the end fields of %s %s were not read", unit, stage)
+def _round_counts(channel: submit_mod.Channel | None) -> dict[str, Any]:
+    """The findings of the round a `review` step handed back, for its `end`: the count, the open
+    ones and its verdict. Nothing for a step that handed back no round."""
+    obj = (channel.received or {}).get("object") if channel is not None else None
+    if not isinstance(obj, dict) or "verdict" not in obj:
         return {}
+    findings = [f for f in obj.get("findings") or () if isinstance(f, dict)]
+    return {
+        "findings": len(findings),
+        "findings_open": sum(1 for f in findings if f.get("state") == "open"),
+        "verdicts": [str(obj["verdict"])],
+    }
 
 
 class Runner:
@@ -1492,7 +1496,6 @@ class Runner:
         label: str | None = None,
         label_source: str | None = None,
         impl_run: int | None = None,
-        end_fields: Any = None,
         watch: str | None = None,
         running: steps.Running | None = None,
         started_by: str = "person",
@@ -1533,8 +1536,8 @@ class Runner:
         `settings`) and `meta` (the unit's snapshot entry) are carried into the prompt or the
         `start` record and nowhere else; this module reads no git and decides no meaning.
         `base_note` is `service.describe_base(base)`, already worked out, so `build_prompt` does not
-        import the app's assembly. `end_fields`, an async callable, is awaited only for a `done` step and its
-        fields added to `end`; if it raises they are left out. `model_trial.model` is filled in once
+        import the app's assembly. A `done` review's `end` carries the
+        findings of the round it handed back. `model_trial.model` is filled in once
         the session's `init` names it. `ci_red` may come alone.
 
         `watch` is the unit's worktree when `cwd` is a spike's throwaway directory: writing is held
@@ -1815,7 +1818,6 @@ class Runner:
                 recorder=recorder,
                 channel=channel,
                 denials=denials,
-                end_fields=end_fields,
                 rounds_known=rounds_known,
                 budget_left=budget_left,
                 before=before,
@@ -1852,7 +1854,7 @@ class Runner:
                 **({"stopped_by": stopped_by} if outcome == "stopped" else {}),
                 # The round a closing turn wrote, for `Answers.ingest` to record as the review gone back to draft.
                 **(
-                    {"incomplete_round": _last_round(directory / artifact)}
+                    {"incomplete_round": _last_round(directory / artifact), "head": head}
                     if review_md == "incomplete"
                     else {}
                 ),
@@ -2072,7 +2074,6 @@ class Runner:
         recorder: Any,
         channel: submit_mod.Channel | None,
         denials: Denials,
-        end_fields: Any,
         rounds_known: tuple[int, ...],
         budget_left: float | None,
         before: tuple[str, str] | None,
@@ -2272,11 +2273,7 @@ class Runner:
                 cost,
                 cost_fields.get("turns"),
             )
-        extra = (
-            await _end_extra(end_fields, unit, stage)
-            if record and outcome == "done" and end_fields is not None
-            else {}
-        )
+        extra = _round_counts(channel) if record and outcome == "done" else {}
         if record and trial_at is not None:
             self._trial_model(
                 trial_at,

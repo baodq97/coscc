@@ -23,15 +23,18 @@ directory, and five units in it, always the same, so a spec can name its address
 `/`, `/up-next`, `/work/proj`, `/unit/proj/2`, ...; `ui/src/routes.tsx` lists them):
 
     0001_fresh-intent      an accepted intent, nothing else
-    0002_open-question     an intent with one open question nobody answered
-    0003_awaiting-ship     every artifact up to a passing review.md; pr.md names
-                           github.com/o/r/pull/1
+    0002_open-question     an intent with two open questions nobody answered, the first with a
+                           recommendation (*Take it* on `/inbox/proj/2`), the second without
+    0003_awaiting-ship     every artifact up to a passing review round; the PR machine's row
+                           names github.com/o/r/pull/1
     0004_finished          shipped (a merge-read row), plan.md accepted with a plan record of two
-                           parallel steps (`seed_transitions`); its intent has a `## Proposed outcome` whose
-                           deadline (2026-09-20) has passed and two open questions;
+                           parallel steps (`seed_transitions`); three questions on its intent: one
+                           Leif answered (`delegated`, so `/decisions` lists it), one you answered
+                           (`person`), one open; a rerun, a round allowed and an outcome you
+                           recorded, so its Activity shows them;
                            one `plan` run of it, ended, in the run log, so `/`, `/activity` and its Timeline show a time
-    0005_unfinished-review every artifact up to a review.md whose round 2 asked for
-                           changes and left out F1 of round 1; pr.md names
+    0005_unfinished-review every artifact up to a review whose round 2 asked for
+                           changes and left out F1 of round 1; the PR machine's row names
                            github.com/o/r/pull/2
 
 After them `make_idea_fixture` makes `0006_frontend-calls-api`, and
@@ -165,7 +168,13 @@ FIXTURE = {
         "statuses": {"intent.md": "accepted"},
         "type": "feat",
         "questions": {
-            "intent.md": ["Nhánh lấy tên từ đâu?", "Có nên trả thêm tiền cho việc này không?"]
+            "intent.md": [
+                (
+                    "Nhánh lấy tên từ đâu?",
+                    "Từ `unit-branch`: loại của intent và slug, để tên luôn đúng ngữ pháp.",
+                ),
+                "Có nên trả thêm tiền cho việc này không?",
+            ]
         },
         "files": {
             "intent.md": INTENT.format(title="open question", problem="Một intent còn một câu hỏi.")
@@ -189,18 +198,54 @@ FIXTURE = {
             "review.md": "# Review: awaiting ship\nAuthor: capture_screens.\n"
             + ROUND.format(sha="a" * 40),
         },
+        "pr": 1,
+        "rounds": [(1, "a" * 40, "pass", [])],
     },
-    # A deadline already past, so the card carries an outcome badge, and two
-    # questions nobody answered, so the Questions tab has something to show read-only.
+    # One question Leif answered and one you answered, so `/decisions` and the Activity tab show
+    # both kinds; one nobody answered, so the Questions tab has something to show read-only. A
+    # rerun, a round allowed and an outcome, each a decision row the Activity tab lists.
     "finished": {
         "statuses": dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"),
         "type": "feat",
         "shipped": True,
-        "questions": {"intent.md": ["Có cần đo lại sau một tuần không?", "Ai đọc kết quả?"]},
+        "questions": {
+            "intent.md": [
+                ("Có cần đo lại sau một tuần không?", "Có: đo lại sau 7 ngày, cùng một truy vấn."),
+                "Ai đọc kết quả?",
+                "Ai ký duyệt kết quả?",
+            ]
+        },
+        "answers": [
+            (
+                "intent.md",
+                1,
+                "Có: đo lại sau 7 ngày, cùng một truy vấn.",
+                "delegated",
+                "Leif (CoS)",
+                "2026-09-18",
+            ),
+            ("intent.md", 3, "Tôi ký.", "person", "owner", "2026-09-19"),
+        ],  # fmt: skip
+        "decisions": [
+            ("rerun", {"stage": "spec", "stale": {}}, "2026-09-17"),
+            ("more-rounds", {"rounds": 1}, "2026-09-19"),
+            (
+                "outcome",
+                {
+                    "result": "met",
+                    "measured_by": "agent",
+                    "source": "cos.db",
+                    "reason": "",
+                    "note": "",
+                },
+                "2026-09-21",
+            ),
+        ],  # fmt: skip
         "files": {
             "intent.md": INTENT.format(title="finished", problem="Một unit đã xong.")
             + "\n## Proposed outcome\n\nĐến hết ngày 2026-09-20, việc này đã được đo.\n"
-            + "\n## Open questions\n\n1. Có cần đo lại sau một tuần không?\n2. Ai đọc kết quả?\n",
+            + "\n## Open questions\n\n1. Có cần đo lại sau một tuần không?\n2. Ai đọc kết quả?\n"
+            + "3. Ai ký duyệt kết quả?\n",
             "spec.md": "# Spec: finished\nAuthor: capture_screens.\n",
             "plan.md": "# Plan: finished\nAuthor: capture_screens.\n",
         },
@@ -229,6 +274,53 @@ FIXTURE = {
             )
             + ASKED.format(n=2, sha="c" * 40, findings="- F2 [open] b.py:2 — low — Tên chưa rõ."),
         },
+        "pr": 2,
+        "rounds": [
+            (
+                1,
+                "b" * 40,
+                "changes-requested",
+                [
+                    {
+                        "id": "F1",
+                        "state": "open",
+                        "fixed_in": "",
+                        "severity": "medium",
+                        "rule": "",
+                        "path": "a.py",
+                        "lines": "1",
+                        "text": "Thiếu test.",
+                    },
+                    {
+                        "id": "F2",
+                        "state": "open",
+                        "fixed_in": "",
+                        "severity": "low",
+                        "rule": "",
+                        "path": "b.py",
+                        "lines": "2",
+                        "text": "Tên chưa rõ.",
+                    },
+                ],
+            ),
+            (
+                2,
+                "c" * 40,
+                "changes-requested",
+                [
+                    {
+                        "id": "F2",
+                        "state": "open",
+                        "fixed_in": "",
+                        "severity": "low",
+                        "rule": "",
+                        "path": "b.py",
+                        "lines": "2",
+                        "text": "Tên chưa rõ.",
+                    },
+                ],
+            ),
+        ],  # fmt: skip
     },
 }
 

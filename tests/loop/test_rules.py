@@ -17,9 +17,20 @@ from pathlib import Path
 import pytest
 
 from coscc.loop import STAGE_NAMES
-from coscc.loop.model import above_answers, read_unit
+from coscc.loop.model import read_unit
 from coscc.loop.rules import gate_answer, next_answer
-from tests.loop.conftest import UnitStore, entry, env, expect, git_repo, python
+from tests.loop.conftest import (
+    UnitStore,
+    entry,
+    env,
+    expect,
+    finding_row,
+    git_repo,
+    pr_row,
+    python,
+    rerun_row,
+    round_row,
+)
 
 KIND = {
     "idea.md": "Idea",
@@ -50,44 +61,29 @@ def accepted(upto: str = "ship.md", **over: str | None) -> dict[str, str | None]
     return arts
 
 
-def pr_text(name: str, status: str | None) -> str:
-    """A `pr.md` with a title the pr stage would accept, naming the pull request."""
-    return f"# PR: feat({name[:4]}): add the thing\nAuthor: test. Status: {status}.\n\n{PR}"
-
-
 def put(
     s: UnitStore,
     name: str,
     arts: dict[str, str | None],
     texts: dict[str, str] | None = None,
     extra_files: dict[str, str] | None = None,
+    pr: bool = True,
     **kw,
 ) -> None:
-    """Writes each artifact and records it in the snapshot; `texts` replaces a file's text."""
+    """Writes each artifact and records it in the snapshot; `texts` replaces a file's text. A
+    `pr.md` comes with the pull request the PR machine recorded, unless `pr` is false."""
     texts = texts or {}
-    files = {
-        f: texts.get(f, pr_text(name, st) if f == "pr.md" else text(f, st))
-        for f, st in arts.items()
-    }
+    files = {f: texts.get(f, text(f, st)) for f, st in arts.items()}
+    if pr and "pr.md" in arts:
+        kw.setdefault("pr_md", pr_row(7))
     files.update(extra_files or {})
     s.unit(name, files, entry(arts, **kw))
 
 
-def round_(n: int, verdict: str, *findings: str, sha: str = "aaaaaaa") -> str:
-    lines = "\n".join(findings)
-    return f"## Round {n}\nReviewed: {sha}. Verdict: {verdict}.\n\n### Findings\n{lines}\n\n"
+def review(status: str) -> str:
+    return text("review.md", status)
 
 
-def review(status: str, *rounds: str, tail: str = "") -> str:
-    return text("review.md", status, body="\n".join(rounds) + tail)
-
-
-F1 = "- F1 [open] src/a.py:3 — high — hàm trả sai kết quả khi đầu vào rỗng"
-F2 = "- F2 [open] src/b.py:9 — medium — thiếu kiểm tra"
-PR = "PR: https://github.com/o/r/pull/7\n"
-MORE = (
-    "\n## Answers\n### More rounds\nDecided by: Phong. Date: 2026-10-01. Via: board.\nRounds: 2\n"
-)
 FIX_INTENT = "# Intent: lỗi\nAuthor: test. Status: accepted. Type: fix.\n"
 # What intent's record hands over for a fix to enter the fast lane, and impl's to leave it.
 FIX = {
@@ -111,26 +107,22 @@ def spike_md(verdict: str | None, rnd: int = 1) -> dict:
 SPEC_U = {"result": {"unmeasured": ["U1"]}}
 
 
-def row(n: int, verdict: str, *findings: tuple[str, str]) -> dict:
-    return {
-        "n": n,
-        "verdict": verdict,
-        "reviewed": "aaaaaaa",
-        "screens": {},
-        "findings": [
-            {"id": i, "label": label, "severity": "high", "path": "src/a.py", "lines": "3",
-             "text": "cần quyết định"}
+def row(n: int, verdict: str, *findings: tuple[str, str], sha: str = "aaaaaaa") -> dict:
+    """A review round row: `findings` are `(id, label)`."""
+    return round_row(
+        n,
+        verdict,
+        sha,
+        *(
+            finding_row(i, label, "high", "cần quyết định", "src/a.py", "3")
             for i, label in findings
-        ],
-    }  # fmt: skip
-
-
-def rerun_block(stage: str, **stale: str) -> str:
-    lines = "".join(f"Stale: {f} sha256:{d}\n" for f, d in stale.items())
-    return (
-        "\n## Answers\n### Rerun\nRequested by: Phong. Date: 2026-09-29. Via: board.\n"
-        f"Stage: {stage}.\n{lines}"
+        ),
     )
+
+
+def rounds(*rows: dict) -> dict:
+    """`review.md`'s entry fields: the rounds the app holds."""
+    return {"review_md": {"rounds": list(rows), "record": 4}}
 
 
 def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a rule
@@ -168,13 +160,12 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
         accepted("intent.md", **{"spec.md": "skipped"}),
         spec_md={"authority": "person"},
     )
-    it = text("intent.md", "accepted")
-    sp = text("spec.md", "accepted")
     put(
         s,
         "0014_stale",
         accepted("plan.md"),
-        texts={"intent.md": it + rerun_block("intent", **{"spec.md": above_answers(sp)})},
+        spec_md={"record": 2},
+        reruns=[rerun_row("intent", date="2026-09-29", spec_md=2)],
     )
     put(s, "0015_spike-missing", accepted("spec.md"), spec_md=SPEC_U)
     put(s, "0016_spike-draft", accepted("spec.md", **{"spike.md": "draft"}),
@@ -199,40 +190,39 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
         texts={"intent.md": FIX_INTENT}, type="fix", intent_md=FIX_RECORD, impl_md=LEFT_RECORD)  # fmt: skip
     put(s, "0028_review-missing", accepted("pr.md"))
     put(s, "0029_review-draft", accepted("pr.md", **{"review.md": "draft"}))
-    pr: dict[str, str] = {}
     put(s, "0030_changes-requested", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", round_(1, "changes-requested", F1))})  # fmt: skip
-    three = [round_(n, "changes-requested", F1, sha=f"{n}{n}{n}{n}{n}{n}{n}") for n in (1, 2, 3)]
+        **rounds(row(1, "changes-requested", ("F1", "open"))))  # fmt: skip
+    three = [
+        row(n, "changes-requested", ("F1", "open"), sha=f"{n}{n}{n}{n}{n}{n}{n}") for n in (1, 2, 3)
+    ]
     put(s, "0031_out-of-rounds", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", *three)})  # fmt: skip
+        **rounds(*three))  # fmt: skip
     put(s, "0032_more-rounds", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", *three, tail=MORE)})  # fmt: skip
+        **rounds(*three), rounds_granted=2)  # fmt: skip
     put(s, "0033_unfinished", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", round_(1, "changes-requested", F1, F2),
-                                         round_(2, "changes-requested", F2, sha="bbbbbbb"))})  # fmt: skip
+        **rounds(row(1, "changes-requested", ("F1", "open"), ("F2", "open")),
+                 row(2, "changes-requested", ("F2", "open"), sha="bbbbbbb")))  # fmt: skip
     put(s, "0034_incomplete", accepted("pr.md", **{"review.md": "draft"}),
-        texts={**pr, "review.md": review("draft", round_(1, "incomplete"))})  # fmt: skip
-    needs = round_(1, "needs-person", "- F1 [needs-person] src/a.py:3 — high — cần quyết định")
+        **rounds(row(1, "incomplete")))  # fmt: skip
     claim = {"impl_md": {"result": {"needs_person": ["F1"]}}}
-    asked = {"review_md": {"rounds": [row(1, "needs-person", ("F1", "needs-person"))]}}
-    open_one = {"review_md": {"rounds": [row(1, "changes-requested", ("F1", "open"))]}}
+    asked = rounds(row(1, "needs-person", ("F1", "needs-person")))
+    open_one = rounds(row(1, "changes-requested", ("F1", "open")))
     put(s, "0035_awaits-person", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", needs)}, **claim, **asked)  # fmt: skip
+        **claim, **asked)  # fmt: skip
     put(s, "0036_awaits-unclaimed", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", needs)}, **asked)  # fmt: skip
+        **asked)  # fmt: skip
     put(s, "0037_person-answered", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", needs)}, **claim, **asked,
+        **claim, **asked,
         answers=[{**ANSWER, "artifact": "review.md", "n": None, "id": "F1"}])  # fmt: skip
     put(s, "0038_every-claimed", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", round_(1, "changes-requested", F1))},
         **claim, **open_one)  # fmt: skip
     put(s, "0039_ship-refused", accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
-        texts={**pr, "review.md": review("accepted", round_(1, "pass")),
-               "ship.md": text("ship.md", "draft", head="Round: 1.", body="## What went out\nRefused: not up to date\n")})  # fmt: skip
+        ship_md={"ship": {"round": 1, "refused": "not up to date"}},
+        **rounds(row(1, "pass")))  # fmt: skip
     put(s, "0040_ship-draft-old", accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
-        texts={**pr, "review.md": review("accepted", round_(1, "pass"))})  # fmt: skip
+        **rounds(row(1, "pass")))  # fmt: skip
     put(s, "0041_ship-missing", accepted("review.md"),
-        texts={**pr, "review.md": review("accepted", round_(1, "pass"))})  # fmt: skip
+        **rounds(row(1, "pass")))  # fmt: skip
     put(s, "0042_draft-answered", {"intent.md": "draft"},
         texts={"intent.md": text("intent.md", "draft", body=ASKED)},
         intent_md={"questions": [{"n": 1, "text": "Ai chịu trách nhiệm cho phần này?"}]}, answers=[ANSWER])  # fmt: skip
@@ -265,19 +255,12 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
     put(s, "0060_stray", accepted("spec.md"), extra_files={"notes.txt": "x\n"})
     s.unit("scratch", {"intent.md": text("intent.md", "accepted")}, None)
     put(s, "0061_review-limit-one", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", round_(1, "changes-requested", F1))})  # fmt: skip
-    put(
-        s,
-        "0067_pr-bad-title",
-        accepted("pr.md"),
-        texts={"pr.md": text("pr.md", "accepted", body=PR)},
-    )
-    rv = review("accepted", round_(1, "pass"))
-    sh = text("ship.md", "accepted")
-    put(s, "0068_stale-review", accepted("review.md"),
-        texts={"intent.md": it + rerun_block("pr", **{"review.md": above_answers(rv)}), "review.md": rv})  # fmt: skip
-    put(s, "0069_stale-ship", accepted("ship.md"),
-        texts={"intent.md": it + rerun_block("pr", **{"ship.md": above_answers(sh)}), "review.md": rv, "ship.md": sh})  # fmt: skip
+        **rounds(row(1, "changes-requested", ("F1", "open"))))  # fmt: skip
+    put(s, "0067_pr-unrecorded", accepted("pr.md"), pr=False)
+    put(s, "0068_stale-review", accepted("review.md"), **rounds(row(1, "pass")),
+        reruns=[rerun_row("pr", date="2026-09-29", review_md=4)])  # fmt: skip
+    put(s, "0069_stale-ship", accepted("ship.md"), **rounds(row(1, "pass")),
+        ship_md={"record": 5}, reruns=[rerun_row("pr", date="2026-09-29", ship_md=5)])  # fmt: skip
     put(s, "0062_impl-draft", accepted("plan.md", **{"impl.md": "draft"}))
     put(s, "0063_pr-draft", accepted("impl.md", **{"pr.md": "draft"}))
     put(s, "0064_pr-rejected", accepted("impl.md", **{"pr.md": "rejected"}))
@@ -322,7 +305,7 @@ _NAMES = [
         (51, "odd-status"), (52, "unknowns"), (53, "closed-with-hold"), (54, "bad-hold-move"),
         (55, "resumed"), (56, "hold-no-reason"), (57, "no-type"), (58, "bad-type"),
         (59, "app-only"), (60, "stray"), (61, "review-limit-one"), (62, "impl-draft"),
-        (63, "pr-draft"), (64, "pr-rejected"), (65, "plan-draft"), (66, "idea-and-intent"), (67, "pr-bad-title"), (68, "stale-review"), (69, "stale-ship"),
+        (63, "pr-draft"), (64, "pr-rejected"), (65, "plan-draft"), (66, "idea-and-intent"), (67, "pr-unrecorded"), (68, "stale-review"), (69, "stale-ship"),
     ]
 ]  # fmt: skip
 UNITS = [*_NAMES, "scratch"]
@@ -584,21 +567,20 @@ class AnImplLeftInDraftIsToBeContinued(unittest.TestCase):
 
 
 class AShipThatAskedForAMergeIsMergingNotRefused(unittest.TestCase):
-    """`ship.md` draft with `Round:` and no `Refused:` line: ship asked GitHub to merge and has
-    not written the outcome yet."""
+    """`ship.md` draft with a round and no refusal: ship asked GitHub to merge and has not
+    recorded the outcome yet."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
         self.addCleanup(self._dir.cleanup)
         self.store = UnitStore(Path(self._dir.name) / "store")
 
-    def _put(self, name: str, went_out: str) -> None:
+    def _put(self, name: str, refused: str | None) -> None:
         put(self.store, name, accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
-            texts={"review.md": review("accepted", round_(1, "pass")),
-                   "ship.md": text("ship.md", "draft", head="Round: 1.", body=f"## What went out\n{went_out}")})  # fmt: skip
+            ship_md={"ship": {"round": 1, "refused": refused}}, **rounds(row(1, "pass")))  # fmt: skip
 
     def test_status_and_next_say_merging_and_never_ship_refused(self):
-        self._put("0001_a", "Merge requested.\n")
+        self._put("0001_a", None)
         [row] = json.loads(python(self.store.argv("status", "--json")).out)["units"]
         self.assertEqual(
             row["next"],
@@ -617,8 +599,8 @@ class AShipThatAskedForAMergeIsMergingNotRefused(unittest.TestCase):
             ("", "ship is merging #7 — wait", ["ship-merging"]),
         )
 
-    def test_a_refused_line_is_still_ship_refused(self):
-        self._put("0001_a", "Refused: not up to date\n")
+    def test_a_recorded_refusal_is_still_ship_refused(self):
+        self._put("0001_a", "not up to date")
         state = json.loads(self.store.state().read_text())
         unit = read_unit(str(self.store.cos / "0001_a"), "0001_a", state)
         self.assertEqual(next_answer(unit)["reasons"], ["ship-refused"])

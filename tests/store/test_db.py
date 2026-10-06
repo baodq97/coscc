@@ -221,7 +221,7 @@ class StageResultsBecomeOutputs(unittest.TestCase):
                         "SELECT id, agent, version, object FROM outputs ORDER BY id"
                     )
                 ]
-            self.assertEqual(rows, [(7, "spec", 1, '{"n": 7}'), (9, "spec", 1, '{"n": 9}')])
+            self.assertEqual(rows, [(7, "spec", 2, '{"n": 7}'), (9, "spec", 2, '{"n": 9}')])
             self.assertIn("outputs_scope", names)
             self.assertFalse({"stage_results", "stage_results_scope"} & names)
 
@@ -264,10 +264,10 @@ class IntentRecordsRiseToV2WithTheirType(unittest.TestCase):
             self.assertEqual(
                 got,
                 [
-                    (1, "intent", 2, "fix", "ready"),
-                    (2, "intent", 2, "feat", "ready"),
-                    (3, "impl", 2, None, None),
-                    (4, "spec", 1, None, None),
+                    (1, "intent", 3, "fix", "ready"),
+                    (2, "intent", 3, "feat", "ready"),
+                    (3, "impl", 3, None, None),
+                    (4, "spec", 2, None, None),
                 ],
             )
             self.assertNotIn("lane", cols)
@@ -786,10 +786,171 @@ class V17PlanRecordsBecomeV2(unittest.TestCase):
             self.assertEqual(
                 [tuple(r) for r in plans],
                 [
-                    ("0001_a", 2, "novel", "array", "array", '["U1"]'),
-                    ("0002_b", 2, "novel", "array", "array", "[]"),
+                    ("0001_a", 3, "novel", "array", "array", '["U1"]'),
+                    ("0002_b", 3, "novel", "array", "array", "[]"),
                 ],
             )
+
+
+class DecisionsGetATable(unittest.TestCase):
+    def test_the_table_and_its_index_exist_at_version_18(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            self.assertEqual(SCHEMA_VERSION, 18)
+            self.assertEqual(data.version(), 18)
+            with data.connect() as conn:
+                names = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master")}
+            self.assertLessEqual({"unit_decisions", "unit_decisions_scope"}, names)
+
+    def test_an_unknown_kind_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            insert = (
+                "INSERT INTO unit_decisions (root, workspace, unit, kind, fields, decided_by, "
+                "date, via) VALUES ('/w', 'p', '0001_a', ?, '{}', 'o', 'd', 'v')"
+            )
+            with data.write() as conn:
+                for kind in ("rerun", "more-rounds", "outcome"):
+                    conn.execute(insert, (kind,))
+            with self.assertRaises(sqlite3.IntegrityError), data.write() as conn:
+                conn.execute(insert, ("approve",))
+
+    def test_an_old_shaped_table_is_dropped_and_recreated(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.connect() as conn:
+                conn.execute("DROP TABLE unit_decisions")
+                conn.execute(
+                    "CREATE TABLE unit_decisions (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "root TEXT, workspace TEXT, unit TEXT, text TEXT, authority TEXT, "
+                    "recorded_by TEXT)"
+                )
+                conn.execute(
+                    "INSERT INTO unit_decisions (root, workspace, unit, text, authority, "
+                    "recorded_by) VALUES ('/w', 'p', '0001_a', 't', 'person', 'x')"
+                )
+                conn.execute("PRAGMA user_version=17")
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                cols = {r["name"] for r in conn.execute("PRAGMA table_info(unit_decisions)")}
+                count = conn.execute("SELECT COUNT(*) FROM unit_decisions").fetchone()[0]
+            self.assertLessEqual({"kind", "fields", "decided_by"}, cols)
+            self.assertFalse({"text", "authority", "recorded_by"} & cols)
+            self.assertEqual(count, 0)
+
+
+class AnswersCarryTheirProvenance(unittest.TestCase):
+    ROWS = (
+        ("person", "Leif (CoS), x"),
+        ("person", "Claude (CoS), y"),
+        ("person", "agent, z"),
+        ("person", "owner"),
+        ("person", "the originator (relayed by Leif)"),
+        ("agent", "Jera"),
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.data = Data(self.tmp.name)
+        with self.data.connect() as conn:
+            conn.execute("DROP TABLE unit_answers")
+            conn.execute(
+                "CREATE TABLE unit_answers (id INTEGER PRIMARY KEY AUTOINCREMENT, root TEXT NOT NULL, "
+                "workspace TEXT NOT NULL, unit TEXT NOT NULL, artifact TEXT NOT NULL, "
+                "ref TEXT NOT NULL, text TEXT NOT NULL, answered_by TEXT NOT NULL, "
+                "authority TEXT NOT NULL, date TEXT NOT NULL, via TEXT NOT NULL, "
+                "once_key TEXT NOT NULL DEFAULT '')"
+            )
+            for n, (authority, name) in enumerate(self.ROWS, 1):
+                conn.execute(
+                    "INSERT INTO unit_answers (root, workspace, unit, artifact, ref, text, "
+                    "answered_by, authority, date, via) VALUES ('/w', 'p', '0001_a', 'spec.md', "
+                    "?, 't', ?, ?, 'd', 'v')",
+                    (str(n), name, authority),
+                )
+            conn.execute("PRAGMA user_version=17")
+
+    def test_by_is_derived_once_and_the_old_columns_are_gone(self):
+        self.assertEqual(self.data.version(), SCHEMA_VERSION)
+        with self.data.connect() as conn:
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(unit_answers)")}
+            got = [
+                tuple(r) for r in conn.execute('SELECT name, "by" FROM unit_answers ORDER BY id')
+            ]
+        self.assertFalse({"answered_by", "authority"} & cols)
+        self.assertLessEqual({"name", "by"}, cols)
+        self.assertEqual(
+            got,
+            [
+                ("Leif (CoS), x", "delegated"),
+                ("Claude (CoS), y", "delegated"),
+                ("agent, z", "delegated"),
+                ("owner", "person"),
+                ("the originator (relayed by Leif)", "person"),
+                ("Jera", "delegated"),
+            ],
+        )
+        self.assertEqual([by for _, by in got].count("delegated"), 4)
+        self.assertEqual([by for _, by in got].count("person"), 2)
+
+    def test_a_by_that_is_not_a_person_or_delegated_is_refused(self):
+        self.data.version()
+        with self.assertRaises(sqlite3.IntegrityError), self.data.write() as conn:
+            conn.execute(
+                "INSERT INTO unit_answers (root, workspace, unit, artifact, ref, text, name, "
+                "date, via, \"by\") VALUES ('/w', 'p', '0001_a', 'spec.md', '9', 't', "
+                "'n', 'd', 'v', 'agent')"
+            )
+
+
+class QuestionsGainARecommendation(unittest.TestCase):
+    def test_v2_intent_and_v1_spec_records_rise_with_an_empty_recommendation(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.connect() as conn:
+                conn.execute("DROP TABLE unit_questions")
+                conn.execute(
+                    "CREATE TABLE unit_questions (root TEXT NOT NULL, workspace TEXT NOT NULL, "
+                    "unit TEXT NOT NULL, artifact TEXT NOT NULL, n INTEGER NOT NULL, "
+                    "text TEXT NOT NULL)"
+                )
+                conn.execute(
+                    "INSERT INTO unit_questions VALUES ('/w', 'p', '0001_a', 'spec.md', 1, 'q')"
+                )
+                two = '{"judgement": "ready", "questions": [{"n": 1, "text": "a"}, {"n": 2, "text": "b"}]}'
+                for agent, version, obj in (
+                    ("intent", 2, two),
+                    ("spec", 1, two),
+                    ("intent", 2, '{"judgement": "ready"}'),
+                ):
+                    conn.execute(
+                        "INSERT INTO outputs (at, root, workspace, unit, agent, version, run, "
+                        "revision, judgement, object) "
+                        f"VALUES ('t', '/w', 'p', '0001_a', '{agent}', {version}, 'r', 'h', 'ready', ?)",
+                        (obj,),
+                    )
+                conn.execute("PRAGMA user_version=17")
+
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                got = conn.execute(
+                    "SELECT agent, version, json_type(object, '$.questions') AS kind, "
+                    "json_type(object, '$.questions[0]') AS item, "
+                    "json_extract(object, '$.questions[0].recommendation') AS first, "
+                    "json_extract(object, '$.questions[1].recommendation') AS second "
+                    "FROM outputs ORDER BY id"
+                ).fetchall()
+                asked = conn.execute("SELECT recommendation FROM unit_questions").fetchall()
+            self.assertEqual(
+                [tuple(r) for r in got],
+                [
+                    ("intent", 3, "array", "object", "", ""),
+                    ("spec", 2, "array", "object", "", ""),
+                    ("intent", 3, None, None, None, None),
+                ],
+            )
+            self.assertEqual([r[0] for r in asked], [""])
 
 
 if __name__ == "__main__":

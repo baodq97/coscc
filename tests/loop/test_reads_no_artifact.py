@@ -3,8 +3,8 @@
 (a) Every test held to a golden runs again with `CONTRADICT` set, where each header says a status,
 a type, a skip reason, a spike citation and an open question no row holds: it stays green.
 (b) The functions of `coscc/loop/` that read text (call `read_text`, or take `text` or `*_text`)
-are exactly `STILL_READ`, each labelled with the phase that removes it or `not an artifact`: a new
-read, or a listed one that is gone, fails.
+are exactly `STILL_READ`, each a repository file, `not an artifact`: a new read, or a listed one
+that is gone, fails.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import sys
 
 from tests.loop.conftest import CONTRADICT, GOLDEN, REPO, env
 
-P5 = "P5"
 REPO_FILE = "not an artifact"
 
 STILL_READ = {
@@ -25,23 +24,7 @@ STILL_READ = {
     "branch.py:locked_version": REPO_FILE,
     "branch.py:json_at": REPO_FILE,
     "branch.py:slurp": REPO_FILE,
-    "branch.py:cmd_pr_text": P5,
-    "model.py:section": P5,
-    "model.py:answer_blocks": P5,
-    "model.py:parse_more_rounds": P5,
-    "model.py:above_answers": P5,
-    "model.py:parse_reruns": P5,
-    "model.py:parse_deadline": P5,
-    "model.py:parse_outcome": P5,
-    "model.py:unit_outcome": P5,
-    "model.py:parse_pr": P5,
-    "model.py:pr_text": P5,
-    "model.py:pr_scope": P5,
-    "model.py:parse_review": P5,
-    "model.py:parse_ship": P5,
     "model.py:against_standard": REPO_FILE,
-    "model.py:_artifact": P5,
-    "model.py:read_unit": P5,
     "probe.py:parse_standard": REPO_FILE,
     "probe.py:_number": REPO_FILE,
     "probe.py:parse_json": REPO_FILE,
@@ -51,7 +34,6 @@ STILL_READ = {
     "repo_rules.py:_lines": REPO_FILE,
     "repo_rules.py:_count": REPO_FILE,
     "repo_rules.py:normalize_patch": REPO_FILE,
-    "rerun.py:cmd_rerun": P5,
     "snapshot.py:_json_message": REPO_FILE,
 }
 
@@ -82,7 +64,7 @@ def reading() -> set[str]:
 
 def test_the_functions_that_read_text_are_the_listed_ones():
     assert reading() == set(STILL_READ)
-    assert set(STILL_READ.values()) <= {P5, REPO_FILE}
+    assert set(STILL_READ.values()) == {REPO_FILE}
 
 
 def test_the_golden_suite_decides_the_same_when_every_header_contradicts_the_rows(tmp_path):

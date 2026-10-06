@@ -640,7 +640,7 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
             return _none(f"{next_['action']} — no repository given to tell which: pass --repo")
         pr = nullish(dig(unit, "artifacts", "pr.md", "pr"))
         if not pr:
-            return _none(f"{next_['action']} — pr.md names no pull request to read the branch from")
+            return _none(f"{next_['action']} — no pull request is recorded to read the branch from")
         last = last_round(unit)
         if not (last and last["reviewed"]):
             return _none(

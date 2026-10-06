@@ -109,11 +109,13 @@ function QuestionCard({ unit, question, index, of, onAnswered }: { unit: PlacedU
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  const send = async () => {
+  const recommended = question.recommendation.trim();
+  // Your press: the typed answer, or the recommendation taken as it is.
+  const send = async (answer: string) => {
     setSending(true);
     setError(null);
     try {
-      await api.post("/api/units/answer", { cwd: unit.workspace.path, unit: unit.name, artifact: question.artifact, question: question.n, answer: text.trim() });
+      await api.post("/api/units/answer", { cwd: unit.workspace.path, unit: unit.name, artifact: question.artifact, question: question.n, answer, by: "person" });
       setText("");
       onAnswered();
     } catch (e) {
@@ -130,22 +132,34 @@ function QuestionCard({ unit, question, index, of, onAnswered }: { unit: PlacedU
           Question {index} of {of} · {question.artifact}
         </div>
         <div className="qtext">{question.text.replace(/\*\*/g, "")}</div>
+        {recommended && (
+          <div className="callout accent" style={{ marginTop: 12 }}>
+            <Icon name="wand" size={15} />
+            <div className="grow">
+              <b>Recommended</b>
+              <div style={{ marginTop: 2 }}>{recommended}</div>
+            </div>
+            <Button disabled={sending} onClick={() => send(recommended)}>
+              Take it
+            </Button>
+          </div>
+        )}
         <textarea
           className="ta"
           rows={3}
           style={{ marginTop: 14, fontSize: 13 }}
-          placeholder="Your answer…"
+          placeholder={recommended ? "Or your own answer…" : "Your answer…"}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim()) send();
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim()) send(text.trim());
           }}
         />
         {error && <div style={{ color: "var(--red)", marginTop: 8, fontSize: 12.5 }}>{error.message}</div>}
         <div className="row" style={{ marginTop: 12 }}>
           <span className="faint" style={{ fontSize: 12 }}>The agent reads it as your decision.</span>
           <span className="grow" />
-          <Button kind="primary" disabled={!text.trim() || sending} onClick={send}>
+          <Button kind="primary" disabled={!text.trim() || sending} onClick={() => send(text.trim())}>
             {sending ? "Answering…" : "Answer"}
           </Button>
         </div>

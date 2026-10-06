@@ -13,8 +13,9 @@ not kept.
 The guard in `coscc/http/auth.py` serves `/login`, `/setup` and `/logout`; nothing here may use
 them. Every route sits behind that guard: without a live session only `GET /api/health` gets
 through. One password, one user: whoever holds it or a session cookie can call every route
-below. A name a body carries (`answered_by`, `by`, `stopped_by`, `recorded_by`) is written as
-sent, or as `kernel.OWNER` when absent; neither is an identity. Tests that build this app alone
+below. A name a body carries (`name`, `by`, `stopped_by`, `recorded_by`) is written as
+sent, or as `kernel.OWNER` when absent; neither is an identity. An answer's `by` (`person` or
+`delegated`) is written as sent too: a label, not an identity check. Tests that build this app alone
 drive it without the guard.
 
 A refusal is `Invalid`, answered in one place (`coscc/http/app.py`).
@@ -36,7 +37,6 @@ from coscc.bus import Event
 from coscc.http import plugin
 from coscc.kernel import Invalid
 from coscc.leif.agents import AgentPage
-from coscc.leif.answers import opens_with
 from coscc.leif.chat import ChatHistory, ChatSessions
 from coscc.leif.insights import Insights
 from coscc.runner.steps import NextStep
@@ -108,20 +108,16 @@ class UpdateStatus(TypedDict):
     actions: list[str]
 
 
-# Who answers for the owner, as the start of an answer's `by`.
-AGENT_NAMES = ("Leif", "Claude", "agent")
-
-
 class Decided(TypedDict):
-    """An answer given for the owner: by Leif, or inferred by an agent."""
+    """An answer given for the owner: one sent `by: delegated`."""
 
     unit: str
     artifact: str
     n: int
     question: str
     text: str
-    by: str
-    authority: str
+    # The name it was sent with.
+    name: str
     date: str
 
 
@@ -337,15 +333,17 @@ async def create_idea(request: Request) -> Any:
 
 @router.post("/api/units/answer")
 async def answer_question(request: Request) -> Any:
-    """A person answers one item under an artifact's `## Open questions`.
+    """One answer to an open question: body `{cwd, unit, artifact, question, answer, by, name?}`.
 
-    Appends a `### Câu N` block under `## Answers` and writes nothing else. **The name is
-    not checked**: whoever holds the password or a session can put words into an artifact
-    under a name they chose, and the next stage reads them as a person's decision.
+    Writes one `unit_answers` row and nothing else; no file is touched. `by` is required:
+    `person` for a person's press (the Inbox, *Take it*), `delegated` for an answer given for
+    them; any other value, or none, is refused. **Neither `by` nor `name` is checked**: whoever
+    holds the password or a session can answer under a name and a `by` they chose, and the next
+    stage reads it as a decision already made. No gate reads `by`.
 
     `question` may also be `"F<n>"` with `artifact` `review.md`: a finding the last
-    review round confirmed needs a person. That appends `### F<n>`; `coscc.loop next` reads
-    it to offer `review` again, and the `ship` gate counts an `[answered]` finding as closed.
+    review round confirmed needs a person. `coscc.loop next` reads its row to offer `review`
+    again, and the `ship` gate counts an `[answered]` finding as closed.
     """
     body = await kernel.body(request)
     return await _core(request).answers.answer(
@@ -354,16 +352,15 @@ async def answer_question(request: Request) -> Any:
         str(body.get("artifact") or ""),
         body.get("question"),
         str(body.get("answer") or ""),
-        str(body.get("answered_by") or ""),
+        body.get("by"),
+        str(body.get("name") or ""),
     )
 
 
 @router.get("/api/decided")
 async def get_decided(request: Request) -> list[Decided]:
-    """Every answer in one workspace that a person did not give, newest first: what Leif and
-    the agents decided for the owner. An answer counts when its authority is not `person`, or
-    when its `by` opens with an agent's name: Leif's answers through `/api/units/answer` are
-    recorded as `person` with `by` naming Leif. Read from the board held."""
+    """Every answer in one workspace sent `by: delegated`, newest first: what Leif and the
+    agents decided for the owner. Read from the board held."""
     board = await _core(request).boards.get(_cwd(request), "held")
     out: list[Decided] = [
         {
@@ -372,13 +369,12 @@ async def get_decided(request: Request) -> list[Decided]:
             "n": int(a.get("n") or 0),
             "question": str(a.get("question") or ""),
             "text": str(a.get("text") or ""),
-            "by": str(a.get("by") or ""),
-            "authority": str(a.get("authority") or ""),
+            "name": str(a.get("name") or ""),
             "date": str(a.get("date") or ""),
         }
         for u in board.get("units") or []
         for a in u.get("answers") or []
-        if (a.get("authority") or "person") != "person" or opens_with(a.get("by"), AGENT_NAMES)
+        if a.get("by") == "delegated"
     ]
     return sorted(out, key=lambda d: d["date"], reverse=True)
 
@@ -387,10 +383,9 @@ async def get_decided(request: Request) -> list[Decided]:
 async def record_outcome(request: Request) -> Any:
     """Record whether a finished unit met its intent's outcome.
 
-    Appends a `### Outcome` block under `intent.md`'s `## Answers` and writes nothing
-    else. `result` is `đạt`, `trượt` or `không đo được`. **Whoever holds the password or
-    a session can record `đạt`**, under any name. No gate reads the block; the board
-    shows it as the ground for keeping or dropping a unit.
+    Writes one `outcome` row in `unit_decisions` and nothing else; no file is touched.
+    `result` is `đạt`, `trượt` or `không đo được`. **Whoever holds the password or a session
+    can record `đạt`**, under any name. No gate reads the row; the unit's history shows it.
     """
     body = await kernel.body(request)
     return await _core(request).answers.record_outcome(
@@ -414,8 +409,7 @@ async def record_outcome(request: Request) -> Any:
 async def hold_unit(request: Request) -> Any:
     """Pause, drop or resume a unit: body `{cwd, unit, to, reason, by}`.
 
-    Appends a `### Paused|Dropped|Resumed` block under `intent.md ## Answers` and a
-    `hold` row to the run log; the loop then offers no stage and closes every gate.
+    Writes one `unit_holds` row and a `hold` record in the run log; the loop then offers no stage and closes every gate.
     **Whoever holds the password or a session can pause every unit**, and `to: "dropped"`
     closes the unit's open pull request **with this machine's `gh` login** and removes its
     worktree. It starts nothing, a resume included.
@@ -430,8 +424,8 @@ async def hold_unit(request: Request) -> Any:
 async def more_rounds(request: Request) -> Any:
     """Allow one more review round to a unit out of rounds: body `{cwd, unit, by?}`.
 
-    Appends a `### More rounds` block under `review.md ## Answers`; the loop then adds
-    one round to the limit and opens the `review` gate again. **Whoever holds the password
+    Writes one `more-rounds` row in `unit_decisions`; the loop then adds one round to the
+    limit and opens the `review` gate again. **Whoever holds the password
     or a session can open a paid review round**; the route starts nothing itself, but
     with the autopilot on its next sweep will.
     """
@@ -556,8 +550,10 @@ async def get_unit(name: str, request: Request) -> Detail:
         raise Invalid(f"no unit {name} in {cwd}")
     journal = core.ws.journal()
     timeline = await asyncio.to_thread(journal.timeline, core.ws.key(cwd), name) if journal else []
-    outputs = await asyncio.to_thread(core.ws.unit_meta().outputs, core.ws.key(cwd), name)
-    return detail(unit, timeline, outputs)
+    meta = core.ws.unit_meta()
+    outputs = await asyncio.to_thread(meta.outputs, core.ws.key(cwd), name)
+    decisions = await asyncio.to_thread(meta.decisions, core.ws.key(cwd), name)
+    return detail(unit, timeline, outputs, decisions)
 
 
 def _number(request: Request, name: str) -> int | None:

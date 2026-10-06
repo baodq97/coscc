@@ -93,7 +93,7 @@ BRANCH_TYPES = list(get_args(BranchType))
 SLUG_MAX = 60
 IDEAS = "ideas"
 LOCAL_ONLY = {"check-branch", "check-tag", "check-version"}
-STATE_READERS = ["status", "gate", "next", "rerun", "unit-branch", "pr-text", "screens"]
+STATE_READERS = ["status", "gate", "next", "rerun", "unit-branch", "screens"]
 NEEDS_STATE = "needs the coscc app: pass --state <file|-> (uv run coscc state <workspace>)"
 
 

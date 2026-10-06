@@ -8,7 +8,7 @@ Default is refusal: the guard knows only the closed list `EXEMPT` and refuses ev
 else without a live session, so a later route is behind the door automatically. Exempt
 paths are compared by equality, never by prefix; `lifespan` is the only scope handed through.
 
-One password, one user: names typed into `answered_by`, `by`, `stopped_by` or `recorded_by`
+One password, one user: names typed into `name`, `by`, `stopped_by` or `recorded_by`
 are only words. On plain HTTP the password, cookie and setup token cross the network readable.
 """
 

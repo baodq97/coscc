@@ -74,7 +74,7 @@ function Item({ row, workspace }: { row: Row; workspace: string }) {
         </div>
         {row.question && <div style={{ fontWeight: 500, marginTop: 4 }}>{row.question.replace(/\*\*/g, "")}</div>}
         <div className="muted" style={{ marginTop: 2 }}>{row.text}</div>
-        <div className="prov" style={{ marginTop: 4 }}>{row.by}</div>
+        <div className="prov" style={{ marginTop: 4 }}>{row.name}</div>
       </div>
     </div>
   );

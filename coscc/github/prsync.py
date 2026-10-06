@@ -1,8 +1,8 @@
-"""Puts `pr.md`'s title and body onto its pull request after a `pr` step.
+"""Puts a unit's title and body onto its pull request after a `pr` step and before `ship`.
 
 Only reads title and body (`gh pr view --json title,body`) and replaces them (`gh pr edit
---title=<title> --body-file -`); no other flag. The text is what `pr-text` of the loop cut from
-`pr.md`.
+--title=<title> --body-file -`); no other flag. The title is `units.pr_title`, the body
+`prmachine.body_of`.
 
 It overwrites: a description edited on GitHub is replaced and the old text is kept nowhere.
 When both already match, nothing is written.
