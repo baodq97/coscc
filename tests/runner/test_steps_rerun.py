@@ -114,8 +114,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
                 if write is None:
                     raise RunError("a stand-in runner")
                 (directory / file).write_text(write, encoding="utf-8")
-                extra = await k["end_fields"]() if k.get("end_fields") else {}
-                yield ("done", {"outcome": "done", **extra})
+                yield ("done", {"outcome": "done"})
 
         async def tree(*a, **k):
             return {"path": self.cwd, "branch": "feat/awaiting-ship", "base": None}

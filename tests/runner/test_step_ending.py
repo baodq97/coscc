@@ -1460,7 +1460,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                 },
                 type="fix",
             )
-            # The rounds as rows: the first asked for changes, the closing turn's second is incomplete.
+            # Round 1 asked for changes; the closing turn's round 2 becomes a row on ingest.
             meta.history.record(
                 key,
                 UNIT,
@@ -1472,13 +1472,12 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                 inputs={"number": 9, "url": "https://github.com/o/r/pull/9", "head": head},
             )
             with meta.data.write() as conn:
-                for n, verdict in ((1, "changes-requested"), (2, "incomplete")):
-                    meta.record_round(
-                        conn,
-                        key,
-                        UNIT,
-                        {"n": n, "run": "r", "head": head, "object": {"verdict": verdict}},
-                    )
+                meta.record_round(
+                    conn,
+                    key,
+                    UNIT,
+                    {"n": 1, "run": "r", "head": head, "object": {"verdict": "changes-requested"}},
+                )
             self.assertNotIn("review-incomplete", self.next_of(store, meta, key)["reasons"])
             self.assertEqual(asyncio.run(core.answers.ingest(key, UNIT, done, "review.md")), {})
             [row] = meta.history.transitions(key, UNIT, "review.md")[-1:]
@@ -1486,6 +1485,11 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                 (row["to_state"], row["guard"], row["authority"], row["source"]),
                 ("draft", "incomplete-round", "code", "run:review"),
             )
+            with meta.data.connect() as conn:
+                last = conn.execute(
+                    "SELECT n, head, verdict FROM review_rounds ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            self.assertEqual(tuple(last), (2, done["head"], "incomplete"))
             after = self.next_of(store, meta, key)
             self.assertEqual(after["reasons"], ["review-incomplete"])
             self.assertIn("review round 2 is incomplete — write-review again", after["action"])

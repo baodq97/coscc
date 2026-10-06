@@ -1,4 +1,4 @@
-"""`check-branch`, `check-tag`, `check-version`, `unit-branch` and `pr-text` answer alike."""
+"""`check-branch`, `check-tag`, `check-version`, and `unit-branch` answer alike."""
 
 from __future__ import annotations
 

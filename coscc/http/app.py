@@ -106,7 +106,6 @@ class Core:
             agent_of=self.agents.agent,
             stage_config=self.models.stage_config,
             ci_red=self.models.ci_red,
-            findings_added=self.models.findings_added,
             worktree=self.answers.worktree,
             ingest=self.answers.ingest,
             post_new_rounds=self.answers.post_new_rounds,

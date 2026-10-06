@@ -273,7 +273,6 @@ class Steps:
         agent_of: Callable[[str], dict[str, Any] | None],
         stage_config: Callable[..., dict[str, Any]],
         ci_red: Callable[[str, str, str], Awaitable[bool | None]],
-        findings_added: Callable[[str, str, set[Any]], Awaitable[dict[str, Any]]],
         worktree: Callable[..., Awaitable[dict[str, Any] | None]],
         ingest: Callable[[str, str, dict[str, Any], str], Awaitable[dict[str, Any]]],
         post_new_rounds: Callable[[str, str, set[Any]], Awaitable[Any]],
@@ -291,7 +290,6 @@ class Steps:
         self.agent_of = agent_of
         self.stage_config = stage_config
         self.ci_red = ci_red
-        self.findings_added = findings_added
         self.worktree = worktree
         self.ingest = ingest
         self.post_new_rounds = post_new_rounds
@@ -1062,7 +1060,6 @@ class Steps:
             plan_drift=plan_drift,
             drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
             shortlist=shortlist,
-            end_fields=self._end_fields(cwd, unit, rounds_before),
             **plan_kw,
             plan=plan,
         )
@@ -1097,19 +1094,6 @@ class Steps:
                 cwd, unit, work
             )
         return config, failed
-
-    def _end_fields(
-        self, cwd: str, unit: str, rounds_before: set[Any] | None
-    ) -> Callable[[], Awaitable[dict[str, Any]]] | None:
-        """What a step that ends `done` adds to its record, asked only then: the findings a
-        `review` added to `review.md`."""
-        if rounds_before is None:
-            return None
-
-        async def findings_added() -> dict[str, Any]:
-            return await self.findings_added(cwd, unit, rounds_before)
-
-        return findings_added
 
     async def _link_kwargs(self, cwd: str, unit: str, stage: str) -> dict[str, Any]:
         """The keyword arguments the database and the unit's idea add to the prompt."""
@@ -1624,12 +1608,6 @@ class Steps:
         self.recorders[run] = recorder
         self.holds.attempts.set_run(attempt, run)
         rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
-        end_fields = None
-        if rounds is not None:
-
-            async def end_fields() -> dict[str, Any]:
-                return await self.findings_added(cwd, unit, rounds)
-
         extra = {
             k: owner.get(k)
             for k in (
@@ -1653,7 +1631,6 @@ class Steps:
             effort=owner.get("effort"),
             label=owner.get("label"),
             agent=self.agent_of(stage),
-            end_fields=end_fields,
             resume=record,
             owner_extra=extra,
             **({"watch": owner["watch"]} if owner.get("watch") else {}),

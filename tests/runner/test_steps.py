@@ -1987,8 +1987,8 @@ class APrStepIsMechanical(unittest.TestCase):
 
 
 class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
-    """Through `run_step`: after a `pr` step that was not stopped, the title and body
-    `coscc.loop pr-text` cut from `pr.md` are on the pull request, and one `pr-sync` row says how.
+    """Through `run_step`: after a `pr` step that was not stopped, the unit's title and body
+    are on the pull request the PR machine recorded, and one `pr-sync` row says how.
     `APrStepIsHandedItsPullRequest`'s fixture, with `gh` in memory."""
 
     setUp = AUnitsBaseIsTheRemoteTrunk.setUp
@@ -2691,7 +2691,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
     NEW = {"head": "b" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
 
     def test_the_step_is_handed_a_snapshot_file_the_loop_decides_on(self):
-        """A step that runs `coscc.loop gate` or `pr-text` itself needs `--state`."""
+        """A step that runs `coscc.loop gate` itself needs `--state`."""
         import json
         from coscc.loop import run as loop
 

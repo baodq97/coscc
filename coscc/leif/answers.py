@@ -409,7 +409,11 @@ class Answers:
         done: dict[str, Any],
     ) -> None:
         """The incomplete round a review's closing turn wrote, as `review.md` back to `draft`: one
-        transition through guard `incomplete-round`, so the loop asks for the review again."""
+        transition through guard `incomplete-round` and the round's row (verdict `incomplete`, no
+        finding, at the head the step ran on), so the loop asks for the review again."""
+        n = done.get("incomplete_round")
+        round_ = {"n": n, "run": "", "head": str(done.get("head") or "")}
+        round_["object"] = {"verdict": "incomplete", "findings": []}
         journal = self.ws.journal() or Journal(meta.root, self.config.data_dir)
         applied = transitions.apply(
             meta.history,
@@ -420,11 +424,12 @@ class Answers:
             unit=unit,
             artifact=artifact,
             to_state="draft",
-            inputs={"round": done.get("incomplete_round")},
+            inputs={"round": n},
             authority="code",
             session=str(done.get("session_id") or "") or UNKNOWN,
             actor=f"stage:{stage}",
             source=f"run:{stage}",
+            also=lambda conn: meta.record_round(conn, workspace, unit, round_),
         )
         if not applied.open:
             raise BadTransition(

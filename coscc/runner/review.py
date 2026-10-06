@@ -10,7 +10,7 @@ from typing import Any
 
 from coscc.runner.reply import RunError, unfence
 
-# A closing round's header line, read as leniently as the loop reads it (`loop.model.ROUND_META`).
+# A closing round's header line, read leniently: case and a missing full stop aside.
 _INCOMPLETE_META = re.compile(
     r"^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*incomplete\.?$", re.A | re.I
 )

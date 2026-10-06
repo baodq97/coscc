@@ -489,15 +489,3 @@ class Models:
             # Recorded as null.
             log.exception("whether the CI of %s is red could not be read", unit)
             return None
-
-    async def findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, Any]:
-        """The findings in the rounds a `review` step added, off the board (`parseReview`'s
-        count, read the way `post_new_rounds` reads it), and those rounds' verdicts."""
-        data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
-        found = next((u for u in data["units"] if u["name"] == unit), None) or {}
-        added = [r for r in found.get("rounds") or [] if r.get("n") not in before]
-        return {
-            "findings": sum(int(r.get("findings") or 0) for r in added),
-            "findings_open": sum(int(r.get("findings_open") or 0) for r in added),
-            "verdicts": [str(r.get("verdict") or "") for r in added],
-        }

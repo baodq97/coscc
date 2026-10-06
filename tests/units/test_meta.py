@@ -110,7 +110,7 @@ class WithSnapshot:
     handed `state()` when the test gave no `state` — what `Workspaces.snapshot` hands it in the
     app. Every other attribute, and every patch a test sets on it, is the module's own."""
 
-    ASKS = ("read", "gate", "next_step", "pr_text", "rerun", "screens")
+    ASKS = ("read", "gate", "next_step", "rerun", "screens")
 
     def __init__(self, module, state: Callable[[], dict]):
         object.__setattr__(self, "_module", module)

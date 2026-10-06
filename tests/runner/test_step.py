@@ -1918,3 +1918,20 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
                 self.assertNotEqual(by_unit[first].run, by_unit[second].run)
                 for unit in (first, second):
                     self.assertEqual(probes[unit].kw["mcp_servers"]["fake"]["name"], f"fake-{unit}")
+
+
+class AReviewsEndCountsTheRoundItHandedBack(unittest.TestCase):
+    def test_the_findings_open_ones_and_verdict_come_from_the_submitted_round(self):
+        from types import SimpleNamespace
+
+        from coscc.runner.step import _round_counts
+
+        obj = {"verdict": "changes-requested", "findings": [{"state": "open"}, {"state": "fixed"}]}
+        self.assertEqual(
+            _round_counts(SimpleNamespace(received={"object": obj})),
+            {"findings": 2, "findings_open": 1, "verdicts": ["changes-requested"]},
+        )
+        self.assertEqual(
+            _round_counts(SimpleNamespace(received={"object": {"judgement": "ready"}})), {}
+        )
+        self.assertEqual(_round_counts(None), {})
