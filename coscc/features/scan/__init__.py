@@ -47,12 +47,9 @@ SLUG_MAX = 60
 
 # Said beside *Scan now* on the Backlog, before it is pressed.
 CONSEQUENCE = "Opens one paid session, about $1 at most, that proposes work from the run log."
-_PROPOSAL = {
-    **{k: {"type": "string"} for k in ("type", "slug", "title", "problem")},
-    "sources": {"type": "array", "items": {"type": "string"}},
-}
 # No tools and no commands, like the estimate; it hands its proposals back through `submit`,
-# whose schema leaves their rules (`problems_of`) to this file, so one bad proposal drops alone.
+# whose declaration holds types and leaves their rules (`problems_of`) to this file, so one bad
+# proposal drops alone.
 # Two turns is what a measured scan took (`submit`, then the end). The budget is checked only
 # once a turn is paid for, so $0.68 is $1 less the dearest whole scan measured ($0.32, one
 # sample): a scan stays near $1 at worst, not under it for sure. One more turn could pass it.
@@ -65,20 +62,19 @@ SESSION = Session(
         "the model of the Agents page row `estimate`.",
     ),
     {
-        "type": "object",
-        "properties": {
+        "kind": "session",
+        "version": 1,
+        "fields": {
             "proposals": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": _PROPOSAL,
-                    "required": list(_PROPOSAL),
-                    "additionalProperties": False,
-                },
+                "list": {
+                    "type": "text",
+                    "slug": "text",
+                    "title": "text",
+                    "problem": "text",
+                    "sources": {"list": "text"},
+                }
             }
         },
-        "required": ["proposals"],
-        "additionalProperties": False,
     },
     "Hand the app the work you propose, each item with the interventions it gathers.",
     own_turns=True,

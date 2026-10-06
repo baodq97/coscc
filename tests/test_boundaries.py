@@ -316,8 +316,6 @@ DICT_ANY: set[str] = {
     "coscc.units.submit:Collector.handle",
     "coscc.units.submit:Collector.object",
     "coscc.units.submit:refusal",
-    "coscc.units.submit:schema_for",
-    "coscc.units.submit:stage_result_schema",
     "coscc.units.turnstats:pairs",
     "coscc.units.worktrees:describe_failure",
     "coscc.units.worktrees:ensure",

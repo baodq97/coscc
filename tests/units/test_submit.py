@@ -10,7 +10,8 @@ from typing import Any
 
 import jsonschema
 
-from coscc.units import submit
+from coscc.units import contracts, submit
+from coscc.units.contracts import ContractError
 from coscc.units.submit import AGAIN, Channel
 
 
@@ -53,16 +54,20 @@ async def submits(kw: dict[str, Any], **fields: Any) -> dict[str, Any] | None:
     return await channel.handle(obj)
 
 
-class TheSchemaOfAStageResult(unittest.TestCase):
-    def test_spec_names_its_unmeasured_and_spike_its_verdicts(self):
-        spec = submit.stage_result_schema("spec")
-        self.assertIn("unmeasured", spec["required"])
-        spike = submit.stage_result_schema("spike")
-        self.assertIn("verdicts", spike["required"])
-        self.assertNotIn("unmeasured", submit.stage_result_schema("plan")["properties"])
+class EveryToolTakesTheDeclaredSchema(unittest.TestCase):
+    """The schema of each `submit` is the one generated from the agent's declaration."""
+
+    def test_every_channel_and_collector_submits_against_its_declaration(self):
+        for stage in (*submit.STAGE_RESULT, submit.ROUND):
+            channel = Channel(
+                run="r", stage=stage, directory="/nonexistent", artifact="x.md", own=False
+            )
+            self.assertEqual(channel.schema, contracts.schema(stage), stage)
+        for kind in submit.SESSIONS:
+            self.assertEqual(submit.Collector(kind).schema, contracts.schema(kind), kind)
 
     def test_a_judgement_is_ready_or_not_ready_and_nothing_a_person_decides(self):
-        schema = submit.stage_result_schema("intent")
+        schema = contracts.schema("intent")
         for word in ("accepted", "rejected", "done", "draft"):
             with self.assertRaises(jsonschema.ValidationError, msg=word):
                 jsonschema.validate({"stage": "intent", "judgement": word, "questions": []}, schema)
@@ -71,14 +76,14 @@ class TheSchemaOfAStageResult(unittest.TestCase):
             schema,
         )
 
-    def test_a_stage_without_a_result_opens_no_channel(self):
-        for stage in ("pr", "ship", "integrate"):
-            self.assertIsNone(submit.schema_for(stage), stage)
+    def test_a_stage_without_a_declaration_opens_no_channel(self):
+        for stage in ("pr", "ship"):
+            with self.assertRaises(ContractError, msg=stage):
+                Channel(run="r", stage=stage, directory="/nonexistent", artifact="x.md", own=False)
 
     def test_review_hands_back_a_round_and_impl_its_claims(self):
-        self.assertIs(submit.schema_for("review"), submit.SCHEMAS["review-round"])
-        self.assertIn("needs_person", submit.stage_result_schema("impl")["required"])
-        self.assertNotIn("needs_person", submit.stage_result_schema("plan")["properties"])
+        self.assertIn("needs_person", contracts.schema("impl")["required"])
+        self.assertNotIn("needs_person", contracts.schema("plan")["properties"])
         finding = {
             "id": "F1",
             "state": "withdrawn",
@@ -92,12 +97,12 @@ class TheSchemaOfAStageResult(unittest.TestCase):
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(
                 {"verdict": "pass", "findings": [finding], "screens": []},
-                submit.schema_for("review"),
+                contracts.schema("review"),
             )
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(
                 {"verdict": "incomplete", "findings": [], "screens": []},
-                submit.schema_for("review"),
+                contracts.schema("review"),
             )
 
 
@@ -208,7 +213,7 @@ class ARoundIsOfTheHeadTheAppRecorded(unittest.TestCase):
         self.assertNotIn("is_error", said)
         got = channel.inputs(channel.received["object"], channel.received["revision"])
         self.assertEqual((got["head"], got["object"]["verdict"]), ("a" * 40, "changes-requested"))
-        self.assertNotIn("head", submit.SCHEMAS["review-round"]["properties"])
+        self.assertNotIn("head", channel.schema["properties"])
 
     def test_a_run_that_read_no_head_cannot_hand_back_a_round(self):
         channel = self._channel(head="")
@@ -302,22 +307,31 @@ class ASessionThatIsNoStageHandsBackItsObject(unittest.TestCase):
 
 
 class AFeatureAddsItsSession(unittest.TestCase):
-    """`add_session`: a feature's schema and purpose under its kind, once."""
+    """`add_session`: a feature's declaration and purpose under its kind, once."""
 
-    SCHEMA = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
+    OUTPUT = {"kind": "session", "version": 1, "fields": {"n": "number"}}
 
     def tearDown(self):
-        submit.SCHEMAS.pop("planted", None)
+        contracts.ADDED.pop("planted", None)
         submit.SESSIONS.pop("planted", None)
 
     def test_the_collector_of_an_added_session_keeps_what_fits(self):
-        submit.add_session("planted", self.SCHEMA, "Hand the app a number.")
-        submit.add_session("planted", self.SCHEMA, "Hand the app a number.")
+        submit.add_session("planted", self.OUTPUT, "Hand the app a number.")
+        submit.add_session("planted", self.OUTPUT, "Hand the app a number.")
         collector = submit.Collector("planted")
+        self.assertEqual(collector.schema, contracts.schema("planted"))
         self.assertIn("Hand the app a number.", collector.description())
         said = asyncio.run(submits({"mcp_servers": {"cos": collector.server()}}, n=3))
         self.assertFalse(said.get("is_error"))
         self.assertEqual(collector.object(), {"n": 3})
+        said = asyncio.run(submits({"mcp_servers": {"cos": collector.server()}}, n=3, m=1))
+        self.assertTrue(said["is_error"])
+
+    def test_a_broken_declaration_is_refused_with_its_reason(self):
+        with self.assertRaises(ContractError) as e:
+            submit.add_session("planted", {**self.OUTPUT, "fields": {"n": "integer"}}, "x")
+        self.assertTrue(str(e.exception).startswith("contract-bad-type: planted.n: "))
+        self.assertNotIn("planted", submit.SESSIONS)
 
 
 if __name__ == "__main__":

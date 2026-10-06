@@ -300,11 +300,19 @@ if __name__ == "__main__":
 
 
 class ItsSessionIsDeclaredHere(unittest.TestCase):
-    """What the core once named for scan: its grant, its `submit` schema, its slug rules."""
+    """What the core once named for scan: its grant, its output declaration, its slug rules."""
 
     def setUp(self):
         policy.add_session(scan.NAME, scan.SESSION.grant, scan.SESSION.own_turns)
-        submit.add_session(scan.NAME, scan.SESSION.schema, scan.SESSION.purpose)
+        submit.add_session(scan.NAME, scan.SESSION.output, scan.SESSION.purpose)
+
+    def test_its_output_is_a_declared_session_of_proposals(self):
+        self.assertEqual(scan.SESSION.output["kind"], "session")
+        schema = submit.Collector(scan.NAME).schema
+        self.assertEqual(schema["required"], ["proposals"])
+        item = schema["properties"]["proposals"]["items"]
+        self.assertEqual(item["required"], ["type", "slug", "title", "problem", "sources"])
+        self.assertIs(item["additionalProperties"], False)
 
     def test_the_grant_opens_nothing_and_keeps_its_two_turns(self):
         g = policy.grant_for(scan.NAME)

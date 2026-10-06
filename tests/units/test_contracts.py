@@ -250,17 +250,30 @@ class TheSchemasAreGenerated(unittest.TestCase):
             contracts.ADDED.pop("planted-contract", None)
 
 
+def _schema_literals(source: str) -> list[int]:
+    """The lines of each dict literal with a JSON Schema key, or a `type` naming a JSON Schema
+    type; an MCP content block's `{"type": "text"}` is no schema."""
+    words = {"properties", "items", "required", "additionalProperties", "pattern", "enum"}
+    types = {"object", "array", "string", "integer", "number", "boolean"}
+    return [
+        n.lineno
+        for n in ast.walk(ast.parse(source))
+        if isinstance(n, ast.Dict)
+        for k, v in zip(n.keys, n.values, strict=True)
+        if isinstance(k, ast.Constant)
+        and (
+            k.value in words
+            or (k.value == "type" and isinstance(v, ast.Constant) and v.value in types)
+        )
+    ]
+
+
 class NoHandWrittenSchema(unittest.TestCase):
     def test_submit_holds_no_json_schema_literal(self):
         from coscc.units import submit
 
-        tree = ast.parse(Path(submit.__file__).read_text(encoding="utf-8"))
-        literal = [
-            n.lineno
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Dict)
-            and any(
-                isinstance(k, ast.Constant) and k.value in ("type", "properties") for k in n.keys
-            )
-        ]
-        self.assertEqual(literal, [])
+        self.assertEqual(_schema_literals(Path(submit.__file__).read_text(encoding="utf-8")), [])
+
+    def test_the_check_finds_a_planted_schema_and_passes_a_content_block(self):
+        self.assertEqual(_schema_literals('S = {"type": "object"}\nT = {"enum": []}'), [1, 2])
+        self.assertEqual(_schema_literals('C = {"type": "text", "text": "x"}'), [])

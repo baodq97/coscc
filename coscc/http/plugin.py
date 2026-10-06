@@ -46,7 +46,7 @@ from coscc.runner import queue
 from coscc.runner.interventions import interventions
 from coscc.update.updater import refuse_while_updating
 from coscc.units.workspaces import Workspaces
-from coscc.units import BadUnit, submit, worktrees
+from coscc.units import BadUnit, contracts, submit, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable
 from coscc.units.read import Asked
@@ -99,12 +99,15 @@ def create_tables(data: Data, tables: Sequence[str]) -> None:
 
 
 def add_sessions(core: Core, features: Sequence[Feature]) -> None:
-    """Every feature's `sessions` into the core's tables: its grant (`policy`), its `submit`
-    schema, its attempt machine; and the updater hears each one end, as it hears the core's."""
+    """Every feature's `sessions` into the core's tables: its output declaration (`submit`), its
+    grant (`policy`), its attempt machine; and the updater hears each one end, as it hears the
+    core's. Every declaration, the shipped ones first, is checked here: a broken one stops the
+    build with its `ContractError`."""
+    contracts.declarations()
     for f in features:
         for s in f.sessions:
+            submit.add_session(s.kind, s.output, s.purpose)
             policy.add_session(s.kind, s.grant, s.own_turns)
-            submit.add_session(s.kind, s.schema, s.purpose)
             queue.add_session(s.kind)
             for end in ("ended", "refused"):
                 core.bus.subscribe(

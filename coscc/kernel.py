@@ -59,6 +59,7 @@ from coscc.store.journal import Intervention
 from coscc.store.journal import Journal as Journal
 from coscc.units import Invalid as Invalid
 from coscc.units import cos_dir as cos_dir
+from coscc.units.contracts import Output as Output
 from coscc.store.journal import is_step as is_step
 from coscc.units.planmap import files_of as files_of
 from coscc.units.read import Asked as Asked
@@ -341,8 +342,8 @@ class Session:
 
     kind: str
     grant: Grant
-    # The JSON Schema of the object it hands back.
-    schema: dict[str, Any]
+    # The declaration of the object it hands back, `kind: session` (`coscc/units/contracts.py`).
+    output: Output
     # What the `submit` tool tells the session it is for.
     purpose: str
     # Whether `grant.max_turns` holds below the floor a submitting session gets, because one

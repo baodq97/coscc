@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, get_args
 
-from coscc.units import guards
+from coscc.units import contracts, guards
 
 SERVER = "cos"
 TOOL = "submit"
@@ -27,9 +27,7 @@ NAME = f"mcp__{SERVER}__{TOOL}"
 # With this sentence in the error sessions submit again after one more turn; without it, often not.
 AGAIN = "Correct the object and call submit again."
 
-# What a stage's `judgement` puts on its artifact. `rejected` and `done` are a person's, or
-# a later machine's, and no agent chooses them.
-Judgement = Literal["ready", "not-ready"]
+# What a stage's `judgement` (`contracts.Judgement`) puts on its artifact.
 JUDGEMENTS = {"ready": "accepted", "not-ready": "draft"}
 
 # The stages whose run hands back a stage result. `review` hands back a round and the
@@ -38,222 +36,29 @@ ResultStage = Literal["idea", "impl", "intent", "plan", "spec", "spike"]
 STAGE_RESULT: tuple[ResultStage, ...] = get_args(ResultStage)
 ROUND = "review"
 
-# What a round's `verdict` puts on `review.md`. `needs-person` keeps it `changes-requested`:
-# the unit is not finished, and the loop reads the round's verdict for the wait.
-Verdict = Literal["pass", "changes-requested", "needs-person"]
+# What a round's `verdict` (`contracts.Verdict`) puts on `review.md`. `needs-person` keeps it
+# `changes-requested`: the unit is not finished, and the loop reads the round's verdict for the wait.
 ROUND_STATES = {
     "pass": "accepted",
     "changes-requested": "changes-requested",
     "needs-person": "changes-requested",
 }
 
-FindingState = Literal["open", "fixed", "needs-person", "claim-rejected", "answered"]
-Severity = Literal["high", "medium", "low"]
-SpikeVerdict = Literal["holds", "fails"]
-
-
-_U = {"type": "string", "pattern": "^U[0-9]+$"}
-_F = {"type": "string", "pattern": "^F[0-9]+$"}
-_QUESTIONS = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "n": {"type": "integer", "minimum": 1},
-            "text": {"type": "string", "minLength": 1},
-        },
-        "required": ["n", "text"],
-        "additionalProperties": False,
-    },
+# The sessions that are no stage and hand back an object, each by its grant's name, with what
+# its tool says it is for; the schema is generated from its declaration (`contracts`). A
+# feature adds its own (`add_session`). The estimate's fields are checked by
+# `backlog.parse_proposal`: the declaration holds types, the app its rules.
+SESSIONS: dict[str, str] = {
+    "estimate": "Hand the app your estimate of every backlog unit, with the relations you propose.",
+    "integrate": "Hand the app the commits only a person can settle, each with why; `[]` when there is none.",
 }
 
 
-def stage_result_schema(stage: str) -> dict[str, Any]:
-    """`unmeasured` belongs to `spec` alone and `verdicts` to `spike`."""
-    properties: dict[str, Any] = {
-        "stage": {"type": "string", "enum": [stage]},
-        "judgement": {"type": "string", "enum": list(get_args(Judgement))},
-        "questions": _QUESTIONS,
-    }
-    required = ["stage", "judgement", "questions"]
-    if stage == "impl":
-        # The open findings of the last round impl says only a person can close.
-        properties["needs_person"] = {"type": "array", "items": _F}
-        required.append("needs_person")
-    if stage == "spec":
-        properties["unmeasured"] = {"type": "array", "items": _U}
-        required.append("unmeasured")
-    if stage == "spike":
-        properties["verdicts"] = {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": _U,
-                    "verdict": {"type": "string", "enum": list(get_args(SpikeVerdict))},
-                },
-                "required": ["id", "verdict"],
-                "additionalProperties": False,
-            },
-        }
-        required.append("verdicts")
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": False,
-    }
-
-
-# The labels a finding may carry, the loop's own: `open`, `fixed` in a commit, or what the
-# review made of impl's claim or of a person's answer.
-
-# The other kinds of object. The estimate's fields are checked by `backlog.parse_proposal`:
-# the schema holds types, the app its rules.
-SCHEMAS: dict[str, dict[str, Any]] = {
-    "review-round": {
-        "type": "object",
-        "properties": {
-            "verdict": {"type": "string", "enum": list(get_args(Verdict))},
-            "findings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id": _F,
-                        "state": {"type": "string", "enum": list(get_args(FindingState))},
-                        # The commit a `fixed` finding was fixed in; `""` for every other state.
-                        "fixed_in": {"type": "string", "pattern": "^([0-9a-f]{7,40})?$"},
-                        "severity": {"type": "string", "enum": list(get_args(Severity))},
-                        "rule": {"type": "string", "pattern": "^(S[0-9]+)?$"},
-                        "path": {"type": "string"},
-                        "lines": {"type": "string"},
-                        "text": {"type": "string", "minLength": 1},
-                    },
-                    "required": [
-                        "id",
-                        "state",
-                        "fixed_in",
-                        "severity",
-                        "rule",
-                        "path",
-                        "lines",
-                        "text",
-                    ],
-                    "additionalProperties": False,
-                },
-            },
-            # One per screenshot opened. Where they were taken is the app's read of
-            # `.screens/manifest.json`, never the model's.
-            "screens": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "pattern": "\\.png$"},
-                        "size": {"type": "string", "pattern": "^[0-9]+x[0-9]+$"},
-                        "address": {"type": "string", "minLength": 1},
-                        "result": {"type": "string", "minLength": 1},
-                    },
-                    "required": ["path", "size", "address", "result"],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        "required": ["verdict", "findings", "screens"],
-        "additionalProperties": False,
-    },
-    "impl-claim": {
-        "type": "object",
-        "properties": {"needs_person": {"type": "array", "items": _F}},
-        "required": ["needs_person"],
-        "additionalProperties": False,
-    },
-    "integrate-result": {
-        "type": "object",
-        "properties": {
-            "needs_person": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "commit": {"type": "string"},
-                        "why": {"type": "string", "minLength": 1},
-                    },
-                    "required": ["commit", "why"],
-                    "additionalProperties": False,
-                },
-            }
-        },
-        "required": ["needs_person"],
-        "additionalProperties": False,
-    },
-    "estimate": {
-        "type": "object",
-        "properties": {
-            "units": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "unit": {"type": "string"},
-                        "value": {"type": "integer"},
-                        "effort": {"type": "string"},
-                        "similar": {"type": "array", "items": {"type": "string"}},
-                        "basis": {"type": "string"},
-                        "relations": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "type": {"type": "string"},
-                                    "other": {"type": "string"},
-                                    "reason": {"type": "string"},
-                                },
-                                "required": ["type", "other", "reason"],
-                                "additionalProperties": False,
-                            },
-                        },
-                    },
-                    "required": ["unit", "value", "effort", "similar", "basis", "relations"],
-                    "additionalProperties": False,
-                },
-            }
-        },
-        "required": ["units"],
-        "additionalProperties": False,
-    },
-}
-
-# The sessions that are no stage and hand back an object, each by its grant's name, with the
-# schema it submits against and what its tool says it is for; a feature adds its own
-# (`add_session`).
-SESSIONS: dict[str, tuple[str, str]] = {
-    "estimate": (
-        "estimate",
-        "Hand the app your estimate of every backlog unit, with the relations you propose.",
-    ),
-    "integrate": (
-        "integrate-result",
-        "Hand the app the commits only a person can settle, each with why; `[]` when there is none.",
-    ),
-}
-
-
-def add_session(kind: str, schema: Mapping[str, object], purpose: str) -> None:
-    """A feature's session (`kernel.Session`), added when the app is built; adding the same
-    one again changes nothing, and taking a schema's name another holds is a `ValueError`."""
-    if SCHEMAS.get(kind, schema) != schema:
-        raise ValueError(f"the schema {kind!r} is taken")
-    SCHEMAS[kind] = dict(schema)
-    SESSIONS[kind] = (kind, purpose)
-
-
-def schema_for(stage: str) -> dict[str, Any] | None:
-    """The schema a run of `stage` submits against, or `None` for a stage with no channel yet."""
-    if stage == ROUND:
-        return SCHEMAS["review-round"]
-    return stage_result_schema(stage) if stage in STAGE_RESULT else None
+def add_session(kind: str, output: object, purpose: str) -> None:
+    """A feature's session (`kernel.Session`), added when the app is built: its declaration is
+    checked (`ContractError`), and taking a name another holds is a `ValueError`."""
+    contracts.add(kind, output)
+    SESSIONS[kind] = purpose
 
 
 def round_problem(obj: Mapping[str, Any]) -> str:
@@ -335,7 +140,7 @@ class Channel:
         # What the runner adds once the artifact is written, all of it the app's: a round's
         # number and where its screenshots were taken.
         self.extra: dict[str, Any] = {}
-        self.schema = schema_for(stage) or {"type": "object"}
+        self.schema = contracts.schema(stage)
         self.received: dict[str, Any] | None = None
         self.refused = 0
 
@@ -443,8 +248,8 @@ class Collector:
 
     def __init__(self, kind: str):
         self.kind = self.stage = kind
-        name, self._what = SESSIONS[kind]
-        self.schema = SCHEMAS[name]
+        self._what = SESSIONS[kind]
+        self.schema = contracts.schema(kind)
         self.received: dict[str, Any] | None = None
 
     def object(self) -> dict[str, Any] | None:
