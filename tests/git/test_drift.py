@@ -28,11 +28,11 @@ class ChoosingTheRunOfPlan(unittest.TestCase):
 
     def test_the_last_done_run_wins_over_a_later_failed_one(self):
         records = [start("1" * 40), end(), start("2" * 40), end(), start("3" * 40), end("failed")]
-        self.assertEqual(drift.plan_head(records), ("2" * 40, ""))
+        self.assertEqual(drift.plan_head(records, ("plan",)), ("2" * 40, ""))
 
     def test_two_starts_in_a_row_pair_the_second_with_the_end(self):
         records = [start("1" * 40), start("2" * 40), end()]
-        self.assertEqual(drift.plan_head(records), ("2" * 40, ""))
+        self.assertEqual(drift.plan_head(records, ("plan",)), ("2" * 40, ""))
 
     def test_attempts_denials_and_other_stages_do_not_break_the_pairing(self):
         records = [
@@ -43,7 +43,7 @@ class ChoosingTheRunOfPlan(unittest.TestCase):
             {"kind": "end", "stage": "spec", "outcome": "failed"},
             end(),
         ]
-        self.assertEqual(drift.plan_head(records), ("1" * 40, ""))
+        self.assertEqual(drift.plan_head(records, ("plan",)), ("1" * 40, ""))
 
     def test_each_reason_it_cannot_name_a_commit(self):
         for records in (
@@ -52,7 +52,7 @@ class ChoosingTheRunOfPlan(unittest.TestCase):
             [start(""), end()],
             [start("abc1234"), end()],
         ):
-            sha, reason = drift.plan_head(records)
+            sha, reason = drift.plan_head(records, ("plan",))
             self.assertEqual(sha, "", records)
             self.assertTrue(reason, records)
 
@@ -111,7 +111,7 @@ class ComputingOnARealRepository(unittest.TestCase):
         records = [start(self.a), end()] if records is None else records
         tree = self.repo if tree == "repo" else tree
         files = self.files if files == "plan" else files
-        return asyncio.run(drift.compute(records, files, tree))
+        return asyncio.run(drift.compute(records, files, tree, ("plan",)))
 
     def test_the_changed_files_the_plan_names(self):
         b = self._merge("src/a.py", "lib/src/a.py")

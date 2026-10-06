@@ -46,7 +46,14 @@ from coscc.kernel import (
     cos_dir,
     now,
 )
-from coscc.units.turnstats import changes_requested, impl_ends, read_chars, shipped_units
+from coscc.units.turnstats import (
+    changes_requested,
+    impl_ends,
+    is_coder,
+    read_chars,
+    review_text,
+    shipped_units,
+)
 from coscc.units.turnstats import pairs as turn_pairs
 from dataclasses import dataclass
 from datetime import date
@@ -457,7 +464,7 @@ def report(
     ]
     alone = units_by_arm((r.unit, r.arm) for r in inside)
     mixed = {r.unit for r in inside} - alone["on"] - alone["off"]
-    impl = {r.run: r for r in inside if r.stage == "impl"}
+    impl = {r.run: r for r in inside if is_coder(r.stage)}
 
     kept: dict[str, list[Step]] = {a: [] for a in ARMS}
     dropped = dict.fromkeys(ARMS, 0)
@@ -732,9 +739,9 @@ def _rounds(
     """The changes-requested rounds of each unit shipped in the window whose review is there."""
     out: dict[str, int] = {}
     for unit in shipped_units(conn, key, *window):
-        review = cos_dir(key, ctx.store.root) / unit / "review.md"
-        if review.is_file():
-            out[unit] = changes_requested(review.read_text(encoding="utf-8"))
+        text = review_text(cos_dir(key, ctx.store.root) / unit)
+        if text:
+            out[unit] = changes_requested(text)
     return out
 
 

@@ -21,7 +21,7 @@ def _filled(channel: Channel | submit.Collector, fields: dict[str, Any]) -> dict
         # session gets only what the test gives.
         empty = {"estimate": "units", "integrate": "needs_person"}.get(channel.kind)
         return {empty: [], **fields} if empty else dict(fields)
-    if channel.stage == submit.ROUND:
+    if channel.is_round:
         return {"verdict": "pass", "findings": [], "screens": [], **fields}
     obj: dict[str, Any] = {"stage": channel.stage, "judgement": "ready", "questions": []}
     if channel.stage == "intent":
@@ -104,7 +104,7 @@ class EveryToolTakesTheDeclaredSchema(unittest.TestCase):
     """The schema of each `submit` is the one generated from the agent's declaration."""
 
     def test_every_channel_and_collector_submits_against_its_declaration(self):
-        for stage in (*submit.STAGE_RESULT, submit.ROUND):
+        for stage in ("idea", "intent", "spec", "spike", "plan", "impl", "review"):
             channel = Channel(
                 run="r", stage=stage, directory="/nonexistent", artifact="x.md", own=False
             )

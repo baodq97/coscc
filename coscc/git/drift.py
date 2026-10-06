@@ -20,15 +20,16 @@ TRUNK_REF = "refs/remotes/origin/main"
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
-def plan_head(records: list[dict[str, Any]]) -> tuple[str, str]:
-    """`(sha, "")` for the commit the last `done` run of `plan` ran on, or `("", reason)`.
+def plan_head(records: list[dict[str, Any]], stages: tuple[str, ...]) -> tuple[str, str]:
+    """`(sha, "")` for the commit the last `done` run of the state that hands back `files` (one of
+    `stages`) ran on, or `("", reason)`.
 
     Uses the `head` of the `start` record, not `base.sha`.
     """
     seq = [
         r
         for r in records
-        if str(r.get("stage") or "") == "plan" and r.get("kind") in ("start", "end")
+        if str(r.get("stage") or "") in stages and r.get("kind") in ("start", "end")
     ]
     chosen = None
     for i, r in enumerate(seq[:-1]):
@@ -40,7 +41,7 @@ def plan_head(records: list[dict[str, Any]]) -> tuple[str, str]:
         ):
             chosen = r
     if chosen is None:
-        return "", "the run log has no run of plan that ended done"
+        return "", "the run log has no run of the plan that ended done"
     head = str(chosen.get("head") or "")
     if not head:
         return "", "the run of plan that wrote it recorded no commit"
@@ -80,7 +81,10 @@ def describe(drift: dict[str, Any]) -> str:
 
 
 async def compute(
-    records: list[dict[str, Any]], files: list[str] | None, tree: str | Path | None
+    records: list[dict[str, Any]],
+    files: list[str] | None,
+    tree: str | Path | None,
+    stages: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """`{plan_sha, main_sha, files, checked, reason}`. Never raises.
 
@@ -95,7 +99,7 @@ async def compute(
         "reason": "",
     }
     try:
-        plan_sha, why = plan_head(records)
+        plan_sha, why = plan_head(records, stages)
         if not plan_sha:
             out["reason"] = why
             return out

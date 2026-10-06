@@ -268,7 +268,7 @@ def _leaks(ctx: Ctx, get: Callable[[], vault.Store], facts: Facts) -> str | None
         facts.directory,
         facts.tree,
         # The merge's: the pull request's body becomes the squashed commit's message.
-        pull_request=facts.agent == "ship",
+        pull_request=facts.action == "merge",
         unread=unread,
     )
     hits = vault.scan(values, sources)
@@ -356,6 +356,7 @@ class Secrets(TypedDict):
     # Whether `age` is installed, so a value can be saved.
     age: bool
     name_pattern: str
+    default_stages: list[str]
     # The agents that may use a secret (the agent keys whose row holds `vault`) and the ways to
     # pass one, for the page's checkboxes.
     stages: list[str]
@@ -537,6 +538,7 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
             "age": door.get().can_encrypt(),
             "name_pattern": NAME_PATTERN,
             "stages": list(vault.vault_agents()),
+            "default_stages": list(vault.default_agents()),
             "modes": list(vault.MODES),
             "secrets": [_meta(s, key) for s in mine],
             "globals": [_meta(s, key) for s in others],

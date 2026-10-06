@@ -25,7 +25,7 @@ from coscc.units.history import UNKNOWN, BadTransition
 from coscc.units.meta import By, UnitMeta
 from coscc.store.journal import BadRecord, Journal
 from coscc.store.db import Busy
-from coscc.units import submit
+from coscc.units import states, submit
 from coscc.units import transitions
 from coscc.runner.queue import Attempt, describe
 from coscc import units
@@ -245,7 +245,7 @@ class Answers:
             log.exception("the %s of %s could not be read", stage, unit)
             detail = str(e) or type(e).__name__
         record: dict[str, Any] = {"unit": unit, "stage": stage, "pr": url}
-        if stage == "pr":
+        if states.action_of(None, stage) == "open-pr":
             record["existed"] = None if pr_before is None else bool(pr_before)
         record["outcome"] = outcome
         if outcome in ("failed", "skipped"):
@@ -275,7 +275,9 @@ class Answers:
         workspace = self.ws.key(cwd)
         stage = str(done.get("stage") or "")
         try:
-            apply = self._apply_round if stage == submit.ROUND else self._apply_result
+            apply = (
+                self._apply_round if states.kind_of(None, stage) == "review" else self._apply_result
+            )
             await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
             return {}
         except (BadTransition, Busy, sqlite3.Error) as e:
@@ -342,7 +344,7 @@ class Answers:
             transition="create",
             workspace=workspace,
             unit=unit,
-            artifact="idea.md",
+            artifact=states.brief_file(),
             to_state="accepted",
             inputs={"brief": True},
             authority="code",
@@ -702,7 +704,7 @@ class Answers:
         # `question` is what `_named` returned: an int or `F<n>`.
         finding = question if isinstance(question, str) else ""
         if finding:
-            if artifact != "review.md":
+            if artifact not in states.files_where(kind="review"):
                 raise Invalid(
                     f"a finding is answered in review.md, not {artifact}. {_to_send(found)}"
                 )

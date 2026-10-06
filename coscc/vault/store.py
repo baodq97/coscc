@@ -22,6 +22,7 @@ from pathlib import Path
 from coscc.agent import pack, policy
 from coscc.config import from_env
 from coscc.store.db import Data, now
+from coscc.units import states
 
 MODES = ("env", "file", "placeholder", "ssh")
 
@@ -31,6 +32,11 @@ MODES = ("env", "file", "placeholder", "ssh")
 def vault_agents() -> tuple[str, ...]:
     """The agents whose row holds the vault now: the ones a secret's list may name."""
     return tuple(k for k, r in pack.rows().items() if "vault" in pack.tools(r))
+
+
+def default_agents() -> tuple[str, ...]:
+    """The agents a new secret is kept for: those that write in the unit's branch and hold the vault."""
+    return tuple(k for k in states.coder_agents() if k in vault_agents())
 
 
 NAME = re.compile(r"(global|ws):[a-z0-9][a-z0-9._-]{0,63}")
@@ -180,14 +186,14 @@ class Store:
         name: str,
         workspace: str,
         description: str = "",
-        stages: tuple[str, ...] = ("impl",),
+        stages: tuple[str, ...] | None = None,
         modes: tuple[str, ...] = ("env", "file"),
         broker: bool = False,
         actor: str = "human:owner",
     ) -> Secret:
         """A secret with no value yet. A name in use is refused, never overwritten."""
         name, column = self._row_key(name, workspace)
-        stages = _subset("stage", stages, vault_agents())
+        stages = _subset("stage", stages or default_agents(), vault_agents())
         modes = ("ssh",) if broker else _subset("mode", modes, MODES)
         self._tables()
         try:

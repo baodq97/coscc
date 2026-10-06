@@ -8,7 +8,7 @@ import logging
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
-from coscc.units import backlog
+from coscc.units import backlog, states
 from coscc.units import board as board_reader
 from coscc.units import hold as hold_rules
 from coscc.units import submit as submit_mod
@@ -241,17 +241,18 @@ class Backlog:
                 except OSError:
                     return ""
 
+            brief, intent = (f"{s}.md" for s in states.opening_states())
             texts = [
                 {
                     "unit": n,
-                    "idea": backlog.section(read(n, "idea.md"), "In their own words"),
-                    "problem": backlog.section(read(n, "intent.md"), "Problem"),
-                    "outcome": backlog.section(read(n, "intent.md"), "Proposed outcome"),
+                    "idea": backlog.section(read(n, brief), "In their own words"),
+                    "problem": backlog.section(read(n, intent), "Problem"),
+                    "outcome": backlog.section(read(n, intent), "Proposed outcome"),
                 }
                 for n in waiting
             ]
             finished = [
-                {"unit": n, "title": backlog.title_of(read(n, "intent.md")), **f}
+                {"unit": n, "title": backlog.title_of(read(n, intent)), **f}
                 for n, f in found.items()
             ]
             prompt = backlog.build_prompt(texts, finished, left_out)

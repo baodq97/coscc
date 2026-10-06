@@ -38,11 +38,11 @@ from coscc.agent.policy import (
     record,
     row_for_step,
 )
-from coscc.units import guards
+from coscc.units import guards, states
 from coscc.agent.sessions import Refused, Sessions, Suspended
 
 from coscc.runner import run as run_mod
-from coscc.runner.prompt import _read, compose_prompt, submit_prompt, PROGRESS_FILE
+from coscc.runner.prompt import _read, compose_prompt, submit_prompt
 from coscc.runner.review import (
     _round_number,
     _rounds,
@@ -271,7 +271,7 @@ async def _from_progress(
     # From here a Stop is refused, as on the reply's road.
     if not steps.seal(running):
         return "withheld", ""
-    progress = Path(cwd) / PROGRESS_FILE
+    progress = Path(cwd) / artifact
     try:
         text = progress.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
@@ -309,6 +309,15 @@ def _noted(detail: str, said: str) -> str:
     if not said:
         return detail
     return f"{detail}\n--- {said} ---" if detail else said
+
+
+def _bound(process: str, stage: str, agent_key: str) -> tuple[str, bool]:
+    """The agent key the process binds `stage` to and whether the state is a review, or
+    `RunError` for a state that runs no agent."""
+    key = agent_key or pack.agent_for(process, stage) or ""
+    if not key:
+        raise RunError(f"{stage} runs no agent in {process}")
+    return key, states.kind_of(process, stage) == "review"
 
 
 def _admitted(
@@ -360,6 +369,7 @@ async def _compose(
     agent: dict[str, Any] | None,
     meta: dict[str, Any] | None,
     state_file: str | None,
+    process: str | None = None,
 ) -> tuple[str, str, list]:
     """`(head, prompt, envelope)` of the step: the message of a step taken up again, or the
     prompt composed from the unit's files."""
@@ -368,7 +378,7 @@ async def _compose(
         # owner.
         return str(was.get("head") or ""), str(resume.get("message") or ""), []
     head = await _head_of(watch or cwd)
-    branch = branch if stage == "impl" and not watch else ""
+    branch = branch if states.by_of(process, stage) == "session" and not watch else ""
     prompt, envelope = compose_prompt(
         cwd,
         directory,
@@ -400,6 +410,7 @@ async def _compose(
         state_file=state_file,
         blocks=blocks,
         branch=branch,
+        process=process,
     )
     return head, prompt, envelope
 
@@ -650,16 +661,15 @@ def _reply_done(
 def _rounds_before(
     row: Row,
     channel: submit_mod.Channel | None,
-    stage: str,
     directory: Path,
     artifact: str,
 ) -> set[int] | None:
-    """The rounds `review.md` held before this step's reply is written, for a review that hands
-    its round back through `submit`; else `None`.
+    """The rounds a review's artifact held before this step's reply is written, for a review that
+    hands its round back through `submit`; else `None`.
 
     Taken before the write and kept when it is refused: the round is numbered past these.
     """
-    if not (row.app_writes_artifact and channel is not None and stage == submit_mod.ROUND):
+    if not (row.app_writes_artifact and channel is not None and channel.is_round):
         return None
     return {_round_number(r) for r in _rounds(_read(directory / artifact))}
 
@@ -668,7 +678,7 @@ def _write_reply(
     row: Row,
     directory: Path,
     artifact: str,
-    stage: str,
+    is_review: bool,
     watch: str | None,
     pieces: list[str],
     after_submit: int | None,
@@ -704,7 +714,7 @@ def _write_reply(
     if watch:
         # The reply was written, so the progress file is never read.
         spike_md = "reply"
-    if stage == "review":
+    if is_review:
         review_md = "round"
     return spike_md, review_md
 
@@ -1304,6 +1314,7 @@ class Runner:
         gate_reasons: tuple[str, ...] = (),
         lane: str = "full",
         process: str = pack.DEFAULT_PROCESS,
+        agent_key: str = "",
         cwd: str | None = None,
         model: str | None = None,
         model_source: str = "",
@@ -1389,10 +1400,13 @@ class Runner:
         adds to the owner a `suspend` row carries.
         """
         was = dict((resume or {}).get("owner") or {})
+        # The one row the unit's process binds this state to: its grants, ceilings, model, system
+        # prompt, identity and stamp all come from it.
+        key, is_review = _bound(process, stage, agent_key)
         # A step taken up again goes on under the ceilings its owner kept.
         row, ceilings = self._configured(
-            _admitted(started_by, stage, label, directory, workspace, unit),
-            stage,
+            _admitted(started_by, key, label, directory, workspace, unit),
+            key,
             label,
             was,
         )
@@ -1405,7 +1419,7 @@ class Runner:
             workspace=workspace,
             journal_key=journal_key,
             unit=unit,
-            stage=stage,
+            stage=key,
             cwd=cwd,
             watch=watch,
             directory=directory,
@@ -1431,6 +1445,7 @@ class Runner:
             integration_note=integration_note,
             screens_note=screens_note,
             drift_note=drift_note,
+            process=process,
             lane=lane,
             rerun=rerun,
             rerun_note=rerun_note,
@@ -1445,10 +1460,10 @@ class Runner:
             state_file=state_file,
         )
         channel = _channel_for(
-            row, recorder, stage, directory, artifact, head, open_ids, claims_round
+            row, recorder, key, directory, artifact, head, open_ids, claims_round
         )
         servers = self._with_tools(channel, facts, tools, ledger)
-        runs_as = _runs_as(stage, pack.agent_for(process, stage) or "", row, model, effort, agent)
+        runs_as = _runs_as(key, key, row, model, effort, agent)
         start_at = self._write_start(
             was.get("start_at"),
             resume,
@@ -1484,6 +1499,7 @@ class Runner:
             agent=agent,
             blocks=[name for name, _ in blocks],
             process=process,
+            agent_key=key,
         )
         owner = _owner(
             journal_key,
@@ -1596,15 +1612,15 @@ class Runner:
             if not steps.seal(running):
                 spike_md, review_md = (
                     "withheld" if watch else spike_md,
-                    "withheld" if stage == "review" else review_md,
+                    "withheld" if is_review else review_md,
                 )
                 raise _Stopped()
-            rounds_before = _rounds_before(row, channel, stage, directory, artifact)
+            rounds_before = _rounds_before(row, channel, directory, artifact)
             spike_md, review_md = _write_reply(
                 row,
                 directory,
                 artifact,
-                stage,
+                is_review,
                 watch,
                 pieces,
                 after_submit,
@@ -1626,6 +1642,8 @@ class Runner:
                 journal_key=journal_key,
                 unit=unit,
                 stage=stage,
+                key=key,
+                is_review=is_review,
                 artifact=artifact,
                 cwd=cwd,
                 watch=watch,
@@ -1725,6 +1743,7 @@ class Runner:
         agent: dict[str, Any] | None,
         blocks: list[str],
         process: str,
+        agent_key: str,
     ) -> Any:
         """The step's `start` record, and its `at`; `start_at` as it was for a step taken up again or
         with no journal."""
@@ -1733,7 +1752,9 @@ class Runner:
         # The autopilot tells a recording `ship` that ran out from a merging one by this field. Only
         # a `ship` whose gate named the merge already made carries it, by the code `recording-ship`.
         ship_extra = (
-            {"ship_mode": "record"} if stage == "ship" and "recording-ship" in gate_reasons else {}
+            {"ship_mode": "record"}
+            if states.action_of(process, stage) == "merge" and "recording-ship" in gate_reasons
+            else {}
         )
         return self.journal.started(
             journal_key,
@@ -1761,7 +1782,7 @@ class Runner:
             max_budget_usd=row.max_budget_usd or None,
             max_budget_source=budget_source,
             # Which row ran: its pack, its hash, the keys the owner's layer set; the unit's process.
-            **pack.stamp(pack.agent_for(process, stage) or "", process),
+            **pack.stamp(agent_key, process),
             head=head,
             model=model,
             model_source=model_source,
@@ -1877,6 +1898,8 @@ class Runner:
         journal_key: str,
         unit: str,
         stage: str,
+        key: str,
+        is_review: bool,
         artifact: str,
         cwd: str,
         watch: str | None,
@@ -1967,12 +1990,12 @@ class Runner:
             shutting_down = held is not None
             if opening == "repaired":
                 outcome, error = "done", None
-                review_md = "round" if stage == "review" else review_md
+                review_md = "round" if is_review else review_md
         if channel is not None and outcome == "done" and not shutting_down:
             outcome, error, detail, submit_turn, cost, held = await _repair_submit(
                 self.sessions,
                 cwd,
-                stage,
+                key,
                 artifact,
                 session_id,
                 denials,
@@ -1989,7 +2012,7 @@ class Runner:
             shutting_down = held is not None
         if (
             channel is not None
-            and stage == submit_mod.ROUND
+            and is_review
             and outcome == "done"
             and channel.received is not None
             and not shutting_down
@@ -2022,7 +2045,7 @@ class Runner:
             cost = cost if terminal else {}
         # Nothing wrote a spike's or a review's mark: a Stop withheld it, or there was no file.
         spike_md = _unwritten(spike_md, bool(watch) and not shutting_down, outcome)
-        review_md = _unwritten(review_md, stage == "review" and not shutting_down, outcome)
+        review_md = _unwritten(review_md, is_review and not shutting_down, outcome)
         # Not for an app going down: `drive` writes what it can, and no `end`.
         run_fields, stored, stored_from = (
             await _close_recorder(recorder, outcome, detail, unit, stage)
@@ -2124,7 +2147,7 @@ class Runner:
                 # Only a spike's `end` carries it.
                 **({"spike_md": spike_md} if watch else {}),
                 # Only a review's; `closing` only when that turn ran.
-                **({"review_md": review_md} if stage == "review" else {}),
+                **({"review_md": review_md} if is_review else {}),
                 **({"closing": closing} if closing is not None else {}),
                 # Only once a reply lacked its opening.
                 **({"opening": opening} if opening is not None else {}),

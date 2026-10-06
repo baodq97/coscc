@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from coscc.units import states
+
 
 class RunError(Exception):
     """A step that cannot start, or one whose reply cannot be stored."""
@@ -103,7 +105,7 @@ def opening_prompt(artifact: str, problem: str) -> str:
     an instruction to the model.
     """
     title = _title(artifact)
-    if artifact == "review.md":
+    if artifact in states.files_where(kind="review"):
         # The earlier rounds are the app's to keep.
         whole = (
             "Reply with the title, the header line and your new round only. The earlier "

@@ -16,6 +16,7 @@ from coscc.agent import models, pack, policy
 from coscc.github import prmachine
 from coscc.leif import spend
 from coscc.store.journal import is_step
+from coscc.units import states
 from coscc.units.board import SHIP_UNRECORDED, open_questions
 from coscc.units.guards import REASONS as GATE_REASONS
 
@@ -28,7 +29,22 @@ POLL_SECONDS = 300.0
 OPEN_FOR = timedelta(hours=24)
 
 # The stages that write code, and so may not run beside another whose files overlap.
-CODE_STAGES = ("impl", "integrate")
+
+
+def is_coder(stage: object) -> bool:
+    """Whether `stage` writes in the unit's branch: a state whose output is written `by: session`.
+    `is_code` adds Gebo, which rewrites the same branch."""
+    return stage in states.states_where(by="session", kind="artifact")
+
+
+def is_code(stage: object) -> bool:
+    return is_coder(stage) or stage == "integrate"
+
+
+def is_merge(stage: object) -> bool:
+    """Whether `stage` is a state the engine's `merge` action runs."""
+    return stage in states.states_where(action="merge")
+
 
 # The stop kinds `a`-`f`, plus an empty shortlist, a draft run again as often as it may, and
 # one waiting for a free place.
@@ -100,7 +116,7 @@ def is_ci_red(answer: Any) -> bool:
 
 def continues(answer: Any) -> bool:
     """`next` names no stage but says the unit's `impl` ended with its file still a draft."""
-    return isinstance(answer, dict) and answer.get("continue") == "impl"
+    return isinstance(answer, dict) and is_coder(answer.get("continue"))
 
 
 def is_recording_ship(answer: Any) -> bool:
@@ -229,7 +245,7 @@ def stop_for(
         return None if shipping else _stop("e", SHIP_UNRECORDED)
 
     # c. `ship`, while the workspace has not allowed it.
-    if stage == "ship" and not may_ship:
+    if is_merge(stage) and not may_ship:
         return _stop("c", "ship waits for a person: the autopilot may not ship in this workspace")
 
     # A draft whose questions are all answered, or an impl that left its file a draft, is a stage
@@ -264,7 +280,7 @@ def since_integration(
             continue
         if r.get("kind") == "integration":
             after = []
-        elif after is not None and r.get("kind") == "start" and r.get("stage") == "review":
+        elif after is not None and r.get("kind") == "start" and states.is_review(r.get("stage")):
             after = None
         elif after is not None:
             after.append(r)
@@ -281,21 +297,21 @@ def after_own_integration(
 
     `integration` is the board's integration block of the unit, `last_integration` its latest
     `integration` record, `after` what `since_integration` returns, `nxt` `next`'s answer.
-    `("impl", None)` runs the `impl` `next` names, once; `("", stop)` is a stop `e`; `None`
+    `(stage, None)` runs the stage `next` names, once; `("", stop)` is a stop `e`; `None`
     leaves the unit to the rest of the pass. Gebo is never started again.
     """
     last_integration = last_integration or {}
     if started_by(last_integration) != "autopilot" or last_integration.get("outcome") != "pushed":
         return None
     red_state = (integration or {}).get("state") == "red-after-integration"
-    fixing = nxt.get("stage") == "impl"
+    fixing = is_coder(nxt.get("stage"))
     red_next = fixing and is_ci_red(nxt)
     again = _stop("e", "CI is still red after the autopilot's last integration")
     if after is None:
         return ("", again) if red_state else None
     ran, by = 0, ""
     for r in after:
-        if r.get("stage") != "impl":
+        if not is_coder(r.get("stage")):
             continue
         if r.get("kind") == "start":
             by = started_by(r)
@@ -303,7 +319,7 @@ def after_own_integration(
     if ran >= IMPL_PER_INTEGRATION and (red_state or red_next):
         return ("", _stop("e", STILL_RED))
     if red_state and fixing:
-        return ("impl", None)
+        return (str(nxt.get("stage")), None)
     if red_state:
         return ("", again)
     return None
@@ -446,7 +462,7 @@ def pick(
             continue
         if len(busy) >= max_parallel:
             break
-        shipping = next((t for t in taken if c["stage"] == "ship" and t["stage"] == "ship"), None)
+        shipping = next((t for t in taken if is_merge(c["stage"]) and is_merge(t["stage"])), None)
         if shipping is not None:
             held[c["unit"]] = ("ship-busy", shipping["unit"])
             continue
@@ -454,8 +470,8 @@ def pick(
             (
                 t
                 for t in taken
-                if c["stage"] in CODE_STAGES
-                and t["stage"] in CODE_STAGES
+                if is_code(c["stage"])
+                and is_code(t["stage"])
                 and overlaps(c.get("files"), t.get("files"))
             ),
             None,
@@ -463,7 +479,7 @@ def pick(
         if crossing is not None:
             held[c["unit"]] = ("overlap", crossing["unit"])
             continue
-        if c["stage"] == "impl" and c["unit"] not in with_pr:
+        if is_coder(c["stage"]) and c["unit"] not in with_pr:
             blocking = next(
                 (
                     p
@@ -738,7 +754,7 @@ def full_stop(stage: str, max_parallel: int) -> dict[str, str]:
 # --- what the intent's outcome is measured by ----------------------------
 
 # The stages before `intent` is accepted, and those that are not a unit's stage at all.
-_BEFORE = ("idea", "intent", "estimate")
+_BEFORE = (*states.opening_states(), "estimate")
 
 
 def started_by(record: Mapping[str, Any]) -> str:
@@ -785,7 +801,7 @@ def measure(
         if kind == "end":
             last_end[unit] = str(r.get("outcome") or "")
             if (
-                r.get("stage") == "review"
+                states.is_review(r.get("stage"))
                 and r.get("outcome") == "done"
                 and "pass" in (r.get("verdicts") or [])
             ):

@@ -535,6 +535,7 @@ export type Secrets = {
   "workspace": string;
   "age": boolean;
   "name_pattern": string;
+  "default_stages": string[];
   "stages": string[];
   "modes": string[];
   "secrets": Meta[];

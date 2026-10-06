@@ -135,7 +135,10 @@ def branch_name(
     directory = unit_dir(workspace, unit, data_dir)  # validates before it reaches a command
     if not directory.is_dir():
         raise CannotCreate(f"no such work unit in this workspace: {unit}")
-    if not (directory / "intent.md").is_file():
+    from coscc.units import states
+
+    typed = states.files_with_field("type")
+    if not any((directory / f).is_file() for f in typed):
         # The loop's `unit-branch` says `No such work unit` here, false of the unit; say what is missing.
         raise CannotCreate(
             f"{unit} has no intent.md yet, and the branch name comes from the Type: "
@@ -190,7 +193,9 @@ def create(
     directory.mkdir(parents=True, exist_ok=False)
     text = str(brief or "").strip()
     if text:
-        (directory / "idea.md").write_text(_idea(unit, text), encoding="utf-8")
+        from coscc.units import states
+
+        (directory / states.brief_file()).write_text(_idea(unit, text), encoding="utf-8")
     return {"unit": unit, "path": str(directory), "brief": bool(text)}
 
 

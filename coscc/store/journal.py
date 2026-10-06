@@ -163,6 +163,9 @@ BELL = Bell()
 # session here); none of them is the unit's last step, a start, or a failed step.
 NOT_STEPS = ("precedent",)
 
+# The run-log record of a merge: the unit shipped or its merge was refused. Notices read it.
+SHIP_RECORD = "ship"
+
 
 def is_step(record: dict[str, Any]) -> bool:
     """False for a line of a session that is no stage of the loop (`NOT_STEPS`)."""

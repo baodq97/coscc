@@ -13,6 +13,7 @@ from typing import Any, Iterable
 
 from coscc.store import journal
 from coscc.store.journal import TOKEN_FIELDS
+from coscc.units import states
 
 # Chosen, not measured, except the 15 USD, `review` > 3 and `spec` > 2. Leif (CoS) decides a
 # change to any of them.
@@ -226,7 +227,7 @@ def model(  # noqa: PLR0915 - still to split
     requested = _zero()
     claimed: dict[str, int] = {}
     for r in ends:
-        if r.get("stage") != "review":
+        if not states.is_review(r.get("stage")):
             continue
         verdicts = [str(v) for v in (r.get("verdicts") or [])]
         if CHANGES_REQUESTED not in verdicts:

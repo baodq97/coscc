@@ -139,3 +139,134 @@ def default() -> Machine:
             },
         }
     )
+
+
+def _state(process: str | None, name: str) -> Mapping[str, Any]:
+    found = pack.process(process or pack.DEFAULT_PROCESS) or {}
+    return found.get("states", {}).get(name) or {}
+
+
+def row_of(process: str | None, name: str) -> Mapping[str, Any]:
+    """The agent row a state runs: `{}` for an action state or an unknown one."""
+    agent = _state(process, name).get("agent")
+    return (pack.row(str(agent)) if agent else None) or {}
+
+
+def action_of(process: str | None, name: str) -> str:
+    """The engine's action a state is (`open-pr`, `merge`), `""` for an agent's state."""
+    return str(_state(process, name).get("action") or "")
+
+
+def by_of(process: str | None, name: str) -> str:
+    """Who writes the state's output: `app`, `session` (its unit's branch) or `scratch`."""
+    return str((row_of(process, name).get("output") or {}).get("by") or "")
+
+
+def kind_of(process: str | None, name: str) -> str:
+    """The state's output kind (`artifact`, `review`, ...), `""` for an action."""
+    return str((row_of(process, name).get("output") or {}).get("kind") or "")
+
+
+def states_where(*, action: str = "", by: str = "", kind: str = "") -> tuple[str, ...]:
+    """Every state of every process that is this action, writes this way or has this output kind."""
+    return tuple(
+        n
+        for n in pack.state_names()
+        if any(
+            (not action or action_of(ref, n) == action)
+            and (not by or by_of(ref, n) == by)
+            and (not kind or kind_of(ref, n) == kind)
+            for ref in pack.processes()
+            if n in pack.processes()[ref]["states"]
+        )
+    )
+
+
+def files_where(**what: str) -> tuple[str, ...]:
+    """`states_where` as artifact names (`<state>.md`), for a query's `?` params."""
+    return tuple(f"{n}.md" for n in states_where(**what))
+
+
+def marks(values: tuple[str, ...] | list[str]) -> str:
+    """`?, ?, ?` for a SQL `IN (...)`."""
+    return ", ".join("?" * len(values))
+
+
+def data_of(process: str | None, name: str) -> tuple[str, ...]:
+    """The data the state's agent declares it reads (`input.data`), e.g. `drift`, `screens`."""
+    return tuple((row_of(process, name).get("input") or {}).get("data") or ())
+
+
+def states_with_field(field: str) -> tuple[str, ...]:
+    """Every state whose agent hands back `field` (`files`, `variant`), of every process."""
+    return tuple(
+        n
+        for n in pack.state_names()
+        if any(
+            field in pack.output_fields(row_of(ref, n))
+            for ref, p in pack.processes().items()
+            if n in p["states"]
+        )
+    )
+
+
+def agents_with_field(field: str) -> tuple[str, ...]:
+    """Every agent row whose output declares `field`."""
+    return tuple(k for k, r in pack.rows().items() if field in pack.output_fields(r))
+
+
+def first_file(**what: str) -> str:
+    """The first state's artifact with this action, writer or output kind: `""` when none."""
+    return next(iter(files_where(**what)), "")
+
+
+def by_of_agent(agent: str) -> str:
+    """`output.by` of an agent row, `""` for none."""
+    return str(((pack.row(agent) or {}).get("output") or {}).get("by") or "")
+
+
+def opening_states(process: str | None = None, n: int = 2) -> tuple[str, ...]:
+    """The process's first `n` states along its main line: where the unit's brief and its intent
+    are written."""
+    found = pack.process(process or pack.DEFAULT_PROCESS) or {}
+    names: list[str] = []
+    name = found.get("start", "")
+    while name and name not in names and len(names) < n:
+        names.append(name)
+        ways = (found["states"].get(name) or {}).get("next") or []
+        name = ways[-1]["to"] if ways else ""
+    return tuple(names)
+
+
+def brief_file(process: str | None = None) -> str:
+    """The artifact the unit's brief is written to: the process's start state's."""
+    return f"{opening_states(process, 1)[0]}.md"
+
+
+def files_with_field(field: str) -> tuple[str, ...]:
+    """`<state>.md` of every state whose agent hands back `field`."""
+    return tuple(f"{n}.md" for n in states_with_field(field))
+
+
+def coder_agents() -> tuple[str, ...]:
+    """The agent rows that write in the unit's branch (`by: session`, an artifact)."""
+    return tuple(
+        k
+        for k, r in pack.rows().items()
+        if (r.get("output") or {}).get("by") == "session"
+        and (r.get("output") or {}).get("kind") == "artifact"
+    )
+
+
+def skippable() -> tuple[str, ...]:
+    """Every state a person may skip: those a process gives a `skip` guard."""
+    return tuple(
+        n
+        for n in pack.state_names()
+        if any(n in p["states"] and p["states"][n].get("skip") for p in pack.processes().values())
+    )
+
+
+def is_review(stage: object, process: str | None = None) -> bool:
+    """Whether `stage` is a state whose output is a review's rounds."""
+    return kind_of(process, str(stage)) == "review"

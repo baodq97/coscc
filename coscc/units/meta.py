@@ -22,7 +22,7 @@ from typing import Any, Literal, TypedDict
 from coscc.agent import pack
 from coscc.store.db import Data, now
 from coscc.store.journal import Intervention, Journal
-from coscc.units import UNIT_RE, backlog, contracts
+from coscc.units import UNIT_RE, backlog, contracts, states
 from coscc.units.history import History
 from coscc.units.states import Machine
 
@@ -172,7 +172,7 @@ class UnitMeta:
                 for q in obj.get("questions") or []
             ],
         )
-        if stage == "intent" and obj.get("type"):
+        if obj.get("type"):
             conn.execute(f"UPDATE unit_meta SET type = ? WHERE {_ONE}", (str(obj["type"]), *scope))
         # impl's claims, each against the round whose open findings guard `impl-claim` read.
         conn.executemany(
@@ -260,20 +260,21 @@ class UnitMeta:
                         said,
                     )
                 )
+            coders = states.states_where(by="session", kind="artifact")
             for row in conn.execute(
                 "SELECT id, at, unit, stage, from_state, guard FROM transitions "
-                "WHERE root = ? AND workspace = ? AND at > ? AND stage = 'impl' "
+                f"WHERE root = ? AND workspace = ? AND at > ? AND stage IN ({states.marks(coders)}) "
                 "AND to_state = 'draft' ORDER BY at, id LIMIT ?",
-                (self.root, workspace, after, int(limit)),
+                (self.root, workspace, after, *coders, int(limit)),
             ).fetchall():
-                said = f"impl went from {row['from_state'] or 'nothing'} to draft ({row['guard']})"
+                said = f"{row['stage']} went from {row['from_state'] or 'nothing'} to draft ({row['guard']})"
                 out.append(
                     Intervention(
                         f"impl-draft:transitions:{row['id']}",
                         "impl-draft",
                         row["at"],
                         row["unit"],
-                        "impl",
+                        row["stage"],
                         said,
                     )
                 )
@@ -468,16 +469,18 @@ class UnitMeta:
         ]
 
     def plan(self, workspace: str, unit: str) -> contracts.Plan | None:
-        """The unit's latest plan record, `None` when the plan has handed none back."""
+        """The unit's latest plan record (the output of an agent that hands back `variant`),
+        `None` when none has."""
+        planners = states.agents_with_field("variant")
         with self.data.connect() as conn:
             r = conn.execute(
-                f"SELECT version, object FROM outputs WHERE {_ONE} AND agent = 'plan' "
-                "ORDER BY id DESC LIMIT 1",
-                (self.root, workspace, unit),
+                "SELECT agent, version, object FROM outputs "
+                f"WHERE {_ONE} AND agent IN ({states.marks(planners)}) ORDER BY id DESC LIMIT 1",
+                (self.root, workspace, unit, *planners),
             ).fetchone()
         if r is None:
             return None
-        contracts.check_stored("plan", r["version"])
+        contracts.check_stored(r["agent"], r["version"])
         o = json.loads(r["object"])
         return {
             "variant": o["variant"],
@@ -544,8 +547,8 @@ class UnitMeta:
                 where += f" AND unit IN ({', '.join('?' for _ in names_in)})"
                 args += names_in
 
-            def rows(sql: str):
-                return conn.execute(sql.format(where=where), args).fetchall()
+            def rows(sql: str, *extra: str):
+                return conn.execute(sql.format(where=where), (*args, *extra)).fetchall()
 
             for r in rows("SELECT workspace, unit, type, process FROM unit_meta WHERE {where}"):
                 if pairs is not None and (r["workspace"], r["unit"]) not in pairs:
@@ -601,9 +604,11 @@ class UnitMeta:
                 e = entry(r)
                 if e is not None:
                     e["merged"] = r["guard"] == MERGED
+            merge, pull = states.first_file(action="merge"), states.first_file(action="open-pr")
             for r in rows(
                 "SELECT workspace, unit, to_state, source FROM transitions WHERE id IN "
-                "(SELECT MAX(id) FROM transitions WHERE {where} AND artifact = 'ship.md' GROUP BY workspace, unit)"
+                "(SELECT MAX(id) FROM transitions WHERE {where} AND artifact = ? GROUP BY workspace, unit)",
+                merge,
             ):
                 e = entry(r)
                 if e is not None and (r["workspace"], r["unit"]) not in moved:
@@ -613,8 +618,9 @@ class UnitMeta:
             # The pull request the machine opened, the last `open` it recorded: its row is `pr.md`'s record.
             for r in rows(
                 "SELECT id, workspace, unit, artifact, inputs FROM transitions WHERE id IN (SELECT MAX(id) "
-                "FROM transitions WHERE {where} AND artifact = 'pr.md' AND guard = 'branch-named' "
-                "GROUP BY workspace, unit)"
+                "FROM transitions WHERE {where} AND artifact = ? AND guard = 'branch-named' "
+                "GROUP BY workspace, unit)",
+                pull,
             ):
                 a = artifact(r)
                 if a is not None:
@@ -624,8 +630,9 @@ class UnitMeta:
             # The round a merge was asked at, and what GitHub said when it made none.
             for r in rows(
                 "SELECT workspace, unit, artifact, guard, inputs FROM transitions WHERE id IN (SELECT MAX(id) "
-                "FROM transitions WHERE {where} AND artifact = 'ship.md' "
-                "AND guard IN ('ship-ready', 'merge-refused') GROUP BY workspace, unit)"
+                "FROM transitions WHERE {where} AND artifact = ? "
+                "AND guard IN ('ship-ready', 'merge-refused') GROUP BY workspace, unit)",
+                merge,
             ):
                 a = artifact(r)
                 if a is not None:
@@ -639,8 +646,9 @@ class UnitMeta:
             # Whether the unit ever shipped, on either road: a later move of its pull request does not undo it.
             for r in rows(
                 f"SELECT DISTINCT workspace, unit FROM transitions WHERE {{where}} AND ("
-                f"(source LIKE '{PR_SOURCE}' AND guard = '{MERGED}') OR (artifact = 'ship.md' "
-                f"AND to_state = 'accepted' AND source IN ({', '.join(repr(s) for s in SHIPPED_BEFORE_THE_MACHINE)})))"
+                f"(source LIKE '{PR_SOURCE}' AND guard = '{MERGED}') OR (artifact = ? "
+                f"AND to_state = 'accepted' AND source IN ({', '.join(repr(s) for s in SHIPPED_BEFORE_THE_MACHINE)})))",
+                merge,
             ):
                 e = entry(r)
                 if e is not None:
@@ -660,11 +668,11 @@ class UnitMeta:
                     # A record has no questions of its own to ask until its rows say so.
                     if a["questions"] is None:
                         a["questions"] = []
-                    if r["agent"] == "spike":
+                    if states.by_of_agent(r["agent"]) == "scratch":
                         earlier = conn.execute(
                             "SELECT object FROM outputs WHERE root = ? AND workspace = ? AND unit = ? "
-                            "AND agent = 'spike' AND id < ? ORDER BY id",
-                            (self.root, r["workspace"], r["unit"], r["id"]),
+                            "AND agent = ? AND id < ? ORDER BY id",
+                            (self.root, r["workspace"], r["unit"], r["agent"], r["id"]),
                         ).fetchall()
                         a["round"] = _spike_round(o[0] for o in earlier)
             # Every round a review handed back, read in place of the round of the same number in `review.md`.
@@ -673,7 +681,11 @@ class UnitMeta:
                 "SELECT id, workspace, unit, n, head, verdict, screens FROM review_rounds WHERE {where} ORDER BY n"
             ):
                 a = artifact(
-                    {"workspace": r["workspace"], "unit": r["unit"], "artifact": "review.md"}
+                    {
+                        "workspace": r["workspace"],
+                        "unit": r["unit"],
+                        "artifact": states.first_file(kind="review"),
+                    }
                 )
                 if a is not None:
                     by_id[r["id"]] = {

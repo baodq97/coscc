@@ -30,8 +30,8 @@ from coscc.runner.run import LIVE
 from coscc.runner.step import Runner, check_started_by
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, Data, now as _now
-from coscc.store.journal import NOT_STEPS, BadRecord, Journal, paused_stage
-from coscc.units import backlog, mentions, planmap, retake, worktrees
+from coscc.store.journal import NOT_STEPS, SHIP_RECORD, BadRecord, Journal, paused_stage
+from coscc.units import backlog, mentions, planmap, retake, states, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
 from coscc.units.board import Unavailable
@@ -43,9 +43,6 @@ from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK, describe_base
 
 log = logging.getLogger(__name__)
 
-
-# The stages the app does itself with no session, through the PR machine (`prmachine.STAGES`).
-MECHANICAL = ("pr", "ship")
 
 # The longest note a rerun takes, in characters. Chosen, not measured.
 RERUN_NOTE_MAX = 4000
@@ -122,21 +119,39 @@ async def _unset(*_: Any, **__: Any) -> dict[str, Any]:
     raise RuntimeError("the PR side was not hung on the steps")
 
 
-def step_cwd(stage: str, work: str, directory: Path, spike_dir: str | None = None) -> str:
-    """Where a step's session runs: the unit's worktree, except for `ship` and `spike`.
+def step_cwd(
+    stage: str,
+    work: str,
+    directory: Path,
+    scratch: str | None = None,
+    process: str | None = None,
+) -> str:
+    """Where a step's session runs: the unit's worktree, except for a `merge` and a `scratch` one.
 
-    `spike` runs in `spike_dir`, a throwaway directory under the data root, so its probe code
-    never lands in the worktree whose branch it would ride.
+    A state whose output is written `by: scratch` runs in `scratch`, a throwaway directory under
+    the data root, so its probe code never lands in the worktree whose branch it would ride.
 
-    `ship` runs `gh pr merge --squash --delete-branch`, which inside a worktree merges and then
+    A `merge` runs `gh pr merge --squash --delete-branch`, which inside a worktree merges and then
     fails (gh tries to switch the worktree to `main`, git refuses, exit 1, branches left
     behind). Run from a non-git directory with the PR URL it merges and deletes the remote
     branch; the unit's store directory is such a directory. `worktrees.remove_if_finished`
     removes the worktree and local branch once GitHub says `MERGED`. The gates still read `work`.
     """
-    if stage == "spike" and spike_dir:
-        return spike_dir
-    return str(directory) if stage == "ship" else work
+    if scratch and states.by_of(process, stage) == "scratch":
+        return scratch
+    return str(directory) if states.action_of(process, stage) == "merge" else work
+
+
+def _agent_key(process: str, stage: str) -> str:
+    """The one agent row the process binds `stage` to, `""` for an engine action; a state that is
+    neither is gone: `Refused` `no-stage`."""
+    key = pack.agent_for(process or pack.DEFAULT_PROCESS, stage) or ""
+    if not key and not states.action_of(process, stage):
+        raise Refused(
+            f"{stage} is no state of {process or pack.DEFAULT_PROCESS} that runs an agent",
+            ("no-stage",),
+        )
+    return key
 
 
 def _gate_reasons(answer: board_reader.Gate) -> tuple[str, ...]:
@@ -145,20 +160,27 @@ def _gate_reasons(answer: board_reader.Gate) -> tuple[str, ...]:
     return tuple(getattr(answer, "reasons", ()))
 
 
-def _rounds_before(found: dict[str, Any], row: dict[str, Any]) -> set[Any] | None:
-    """The rounds `review.md` held before this step, so that the ones it adds can be told apart
-    afterwards. Taken from the board already read; None for any other artifact."""
-    if row["file"] != "review.md":
+def _rounds_before(
+    found: dict[str, Any], stage: str, process: str | None = None
+) -> set[Any] | None:
+    """The rounds a review state's artifact held before this step, so that the ones it adds can be
+    told apart afterwards. Taken from the board already read; None for any other state."""
+    if states.kind_of(process, stage) != "review":
         return None
     return {r.get("n") for r in found.get("rounds") or []}
 
 
 def _round_kwargs(
-    found: dict[str, Any], row: dict[str, Any], stage: str, rounds_before: set[Any] | None
+    found: dict[str, Any],
+    stage: str,
+    rounds_before: set[Any] | None,
+    process: str | None = None,
 ) -> dict[str, Any]:
     """From the same board: a last round the loop read as unfinished, and the ids it dropped, for
     the review that runs again. Whether it counts is not asked here."""
-    last_round = (found.get("rounds") or [None])[-1] if row["file"] == "review.md" else None
+    last_round = (
+        (found.get("rounds") or [None])[-1] if states.kind_of(process, stage) == "review" else None
+    )
     kw: dict[str, Any] = {}
     if last_round and last_round.get("unfinished"):
         kw["unfinished_round"] = {"n": last_round["n"], "dropped": list(last_round["dropped"])}
@@ -166,7 +188,7 @@ def _round_kwargs(
     # person can close: guard `impl-claim` reads them when its object arrives.
     if rounds_before:
         kw["rounds_known"] = tuple(sorted(n for n in rounds_before if isinstance(n, int)))
-    if stage == "impl" and found.get("rounds"):
+    if states.by_of(process, stage) == "session" and found.get("rounds"):
         last = found["rounds"][-1]
         kw.update(open_ids=tuple(last.get("open_ids") or ()), claims_round=last.get("n"))
     return kw
@@ -179,17 +201,19 @@ async def _plan_drift(
     stage: str,
     plan: Plan | None,
     tree: dict[str, Any] | None,
+    process: str | None = None,
 ) -> dict[str, Any] | None:
-    """Which files the plan's record names `main` changed since the plan ran, for `impl`
-    only. Unlike `failed_attempts`, nothing here may refuse the step: a busy run log or a bug
+    """Which files the plan's record names `main` changed since the plan ran, for a state whose
+    agent reads `drift` only. Unlike `failed_attempts`, nothing here may refuse the step: a busy run log or a bug
     in `drift.py` is "could not check"."""
-    if stage != "impl":
+    if "drift" not in states.data_of(process, stage):
         return None
     try:
         return await drift.compute(
             journal.records(key, unit),
             plan["files"] if plan else None,
             tree["path"] if tree else None,
+            states.states_with_field("files"),
         )
     except Exception as e:
         # Recorded as the reason.
@@ -425,13 +449,13 @@ class Steps:
             result = {"finished": "shipped", "ship-refused": "refused"}.get(
                 str(found.get("why") or "")
             )
-            if stage == "ship" and result:
+            if states.action_of(str(found.get("process") or ""), stage) == "merge" and result:
                 journal.append(
                     {
-                        "kind": "ship",
+                        "kind": SHIP_RECORD,
                         "workspace": key,
                         "unit": unit,
-                        "stage": "ship",
+                        "stage": stage,
                         "result": result,
                     }
                 )
@@ -809,6 +833,8 @@ class Steps:
                 )
             # Refuse, or find what the step runs on: nothing is spent until the gate is open.
             data, found, row = await self._find_stage(cwd, unit, stage)
+            proc = str(found.get("process") or "")
+            agent_key = _agent_key(proc, stage)
             # A stage held at a ceiling runs from scratch only on a person's rerun; there is no
             # accepted artifact to make stale, so the loop is not asked.
             paused = paused_stage(await asyncio.to_thread(journal.timeline, key, unit), stage)
@@ -824,9 +850,9 @@ class Steps:
                 if rerun
                 else {}
             )
-            tree, work = await self._open_tree(cwd, unit, stage)
+            tree, work = await self._open_tree(cwd, unit, stage, proc)
             base = await self._tree_base(cwd, unit, tree)
-            answer = await self._ask_gate(cwd, unit, stage, work)
+            answer = await self._ask_gate(cwd, unit, stage, work, proc)
             refusal = self.feature_refusal(
                 facts_of(
                     workspace=cwd,
@@ -841,8 +867,9 @@ class Steps:
                     # A step the PR machine does itself pushes the unit's branch: the guards see
                     # that push. A session's own grant is issued once it opens (`Runner`).
                     grant=Grant(branch=str((tree or {}).get("branch") or "HEAD"))
-                    if stage in MECHANICAL
+                    if states.action_of(proc, stage)
                     else None,
+                    action=states.action_of(proc, stage),
                 )
             )
             if refusal:
@@ -851,11 +878,11 @@ class Steps:
             # `pr` and `ship` run no session: the PR machine pushes, opens or merges, and
             # records each move through its guard. `ending` from the start: a Stop after
             # this point never cuts a push halfway.
-            if stage in MECHANICAL:
+            if states.action_of(proc, stage):
                 self.holds.attempts.move(running.attempt, "running")
                 self.holds.attempts.move(running.attempt, "ending")
                 done = await self._run_mechanical(
-                    cwd, key, unit, stage, tree, started_by, rerun, stale, answer
+                    cwd, key, unit, stage, tree, started_by, rerun, stale, answer, proc
                 )
                 self.tell(running, ("done", done))
                 handed = True
@@ -865,10 +892,10 @@ class Steps:
 
             # What the step is handed.
             screens_note = await self._ready_tree(
-                cwd, key, journal, unit, stage, tree, work, started_by
+                cwd, key, journal, unit, stage, tree, work, started_by, proc
             )
             directory = self.ws.unit_dir(cwd, unit)
-            rounds_before = _rounds_before(found, row)
+            rounds_before = _rounds_before(found, stage, proc)
             inputs = await self._gather_inputs(
                 cwd=cwd,
                 key=key,
@@ -876,19 +903,24 @@ class Steps:
                 unit=unit,
                 stage=stage,
                 found=found,
-                row=row,
                 tree=tree,
                 work=work,
                 rounds_before=rounds_before,
+                process=proc,
+                agent_key=agent_key,
             )
-            inputs.update(await self._link_kwargs(cwd, unit, stage))
-            self.refuse_unready(stage, directory, inputs.get("meta"))
+            inputs.update(await self._link_kwargs(cwd, unit, stage, proc))
+            self.refuse_unready(agent_key, directory, inputs.get("meta"))
             if asked_rerun:
                 self._record_rerun(cwd, unit, stage, stale)
             # Emptied before the step, whatever an earlier one left, and removed
             # after it however it ends -- in `drive`, so a client that drops the stream does
             # not decide when.
-            scratch = units.spike_dir(cwd, unit, self.config.data_dir) if stage == "spike" else None
+            scratch = (
+                units.spike_dir(cwd, unit, self.config.data_dir)
+                if states.by_of(proc, stage) == "scratch"
+                else None
+            )
             kwargs = self._step_kwargs(
                 cwd=cwd,
                 key=key,
@@ -908,8 +940,11 @@ class Steps:
                 screens_note=screens_note,
                 rounds_before=rounds_before,
                 inputs=inputs,
-                process=str(found.get("process") or pack.DEFAULT_PROCESS),
-                branch=await self._unit_branch(cwd, unit) if stage == "impl" and tree else "",
+                process=proc or pack.DEFAULT_PROCESS,
+                agent_key=agent_key,
+                branch=await self._unit_branch(cwd, unit)
+                if states.by_of(proc, stage) == "session" and tree
+                else "",
             )
 
             # Launch.
@@ -1025,7 +1060,7 @@ class Steps:
         )
 
     async def _open_tree(
-        self, cwd: str, unit: str, stage: str
+        self, cwd: str, unit: str, stage: str, process: str | None = None
     ) -> tuple[dict[str, Any] | None, str]:
         """The unit's worktree, and the directory the step runs in.
 
@@ -1045,11 +1080,11 @@ class Steps:
                     f"{unit} has no worktree and one could not be opened: {e}", ("no-worktree",)
                 ) from e
         work = tree["path"] if tree else cwd
-        # A spike is watched through the worktree's `HEAD` and `git status`;
+        # A scratch step is watched through the worktree's `HEAD` and `git status`;
         # with no git there is nothing to watch, so it does not run at all.
-        if stage == "spike" and tree is None:
+        if states.by_of(process, stage) == "scratch" and tree is None:
             raise Refused(
-                "spike needs a git worktree to watch, and this workspace is not a git repository",
+                f"{stage} needs a git worktree to watch, and this workspace is not a git repository",
                 ("no-git",),
             )
         return tree, work
@@ -1091,15 +1126,17 @@ class Steps:
         """`Hooks.refusal`: the first feature guard that denies the run, or `""`."""
         return self.hooks.refusal(facts)
 
-    async def _ask_gate(self, cwd: str, unit: str, stage: str, work: str) -> board_reader.Gate:
+    async def _ask_gate(
+        self, cwd: str, unit: str, stage: str, work: str, process: str | None = None
+    ) -> board_reader.Gate:
         """`coscc.loop gate` is asked here, not left to the skill: a session often cannot run
         a command. Here rather than in `Runner` because a refusal must arrive before any
         money is spent, and `run_step` is the last place that is still true."""
         # `pr.md`'s title and body go up before the `ship` gate compares the
         # title, so one a person changed on GitHub, or a `pr` step left behind, does not
         # close it. Never raises; when it fails, the gate decides.
-        if stage == "ship":
-            await self.sync_pr(cwd, unit, None, stage="ship")
+        if states.action_of(process, stage) == "merge":
+            await self.sync_pr(cwd, unit, None, stage=stage)
         try:
             # `work` is the checkout the `review` and `ship` gates read git and the pull
             # request from. The store has no git to read.
@@ -1128,6 +1165,7 @@ class Steps:
         rerun: bool,
         stale: dict[str, int],
         answer: board_reader.Gate,
+        process: str | None = None,
     ) -> dict[str, Any]:
         """One `pr` or `ship` through the PR machine, and the `done` item it ends with.
         A `pr` run again records its rerun as any other, and the note reaches no prompt: the
@@ -1143,6 +1181,7 @@ class Steps:
             started_by,
             again=rerun,
             rebased=getattr(answer, "rebased", None),
+            process=process,
         )
 
     async def _ready_tree(
@@ -1155,12 +1194,13 @@ class Steps:
         tree: dict[str, Any] | None,
         work: str,
         started_by: str,
+        process: str | None = None,
     ) -> str:
         """Refuse a tree the step cannot start on, before any money is spent. Returns the
         section the `review` prompt carries about its screenshots, `""` for any other step."""
         if tree is None:
             return ""
-        if stage == "impl":
+        if states.by_of(process, stage) == "session":
             # A tree still detached gets its branch here, before the session opens, by the
             # path of the "Cut this unit's branch" button; a tree already on one is left alone.
             if not tree.get("branch"):
@@ -1179,7 +1219,7 @@ class Steps:
         # A UI unit whose branch was rewritten since `impl` took its
         # screenshots has them taken again, here, before any money is spent; a retake that
         # fails refuses the step, and no round is spent on a stale manifest.
-        if stage == "review":
+        if "screens" in states.data_of(process, stage):
             return await self.retake_screens(cwd, key, journal, unit, work, started_by)
         return ""
 
@@ -1192,28 +1232,37 @@ class Steps:
         unit: str,
         stage: str,
         found: dict[str, Any],
-        row: dict[str, Any],
         tree: dict[str, Any] | None,
         work: str,
         rounds_before: set[Any] | None,
+        process: str | None = None,
+        agent_key: str = "",
     ) -> dict[str, Any]:
         """What the stage is handed beyond who runs it and where: keyword arguments for
         `Runner.run`. Only a busy run log refuses the step here; every other read that fails is
         recorded as the reason."""
         mode = journal.modes(key).get((unit, stage), "manual")
-        round_kw = _round_kwargs(found, row, stage, rounds_before)
+        round_kw = _round_kwargs(found, stage, rounds_before, process)
         try:
             plan = self.ws.unit_meta().plan(key, unit)
         except (Busy, ContractError) as e:
             raise Refused(str(e), ("unavailable",)) from e
         config, failed = await self._stage_config(
-            cwd, key, journal, unit, stage, str(found.get("process") or ""), plan, work
+            cwd, key, journal, unit, stage, str(found.get("process") or ""), plan, work, agent_key
         )
-        integration_note = self.integration_note(journal, key, unit) if stage == "review" else ""
-        plan_drift = await _plan_drift(journal, key, unit, stage, plan, tree)
+        integration_note = (
+            self.integration_note(journal, key, unit)
+            if "integration" in states.data_of(process, stage)
+            else ""
+        )
+        plan_drift = await _plan_drift(journal, key, unit, stage, plan, tree, process)
         # The files the plan's record names, as they stand in the tree the step runs
         # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
-        plan_kw = planmap.for_step(plan["files"] if plan else [], work) if stage == "impl" else {}
+        plan_kw = (
+            planmap.for_step(plan["files"] if plan else [], work)
+            if "plan-map" in states.data_of(process, stage)
+            else {}
+        )
         shortlist = _shortlist(journal, key, unit)
         # `dict(...)`, not a literal: two sources naming one key is a `TypeError`, not an override.
         return dict(
@@ -1239,13 +1288,14 @@ class Steps:
         process: str,
         plan: Plan | None,
         work: str,
+        agent_key: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """The stage's configuration and the failed attempts before this run. Resolved after
         the gate, so a refused step reads nothing more: the plan's label, the effort and, for
         `impl`, which run this is, read before any money is spent. `Runner` does not read the
         run log itself; `build_prompt` only places what it is handed, the same as `base_note`."""
         try:
-            config = self.stage_config(stage, process, plan, journal, key, unit)
+            config = self.stage_config(stage, process, plan, journal, key, unit, agent_key or None)
             failed = journal.failed_attempts(key, unit, stage)
         except Busy as e:
             raise Refused(str(e), ("unavailable",)) from e
@@ -1260,7 +1310,9 @@ class Steps:
             )
         return config, failed
 
-    async def _link_kwargs(self, cwd: str, unit: str, stage: str) -> dict[str, Any]:
+    async def _link_kwargs(
+        self, cwd: str, unit: str, stage: str, process: str | None = None
+    ) -> dict[str, Any]:
         """The keyword arguments the database and the unit's idea add to the prompt."""
         # The answers and holds the prompt renders, from the database.
         link_kw: dict[str, Any] = {"meta": self.ws.meta_of(cwd, unit)}
@@ -1277,13 +1329,14 @@ class Steps:
             link_kw["state_file"] = str(path)
         except OSError, Invalid:
             pass
-        # Only for a unit opened from an idea, and only for `intent` and `impl`;
-        # every other step is handed no key.
-        if stage == "intent":
+        # Only for a unit opened from an idea, and only for a state whose agent reads `idea` or
+        # `siblings`; every other step is handed no key.
+        data = states.data_of(process, stage)
+        if "idea" in data:
             idea_note = self.ideas.idea_note(cwd, unit)
             if idea_note:
                 link_kw["idea_note"] = idea_note
-        if stage == "impl":
+        if "siblings" in data:
             siblings_note = await self.ideas.siblings(cwd, unit)
             if siblings_note:
                 link_kw["siblings_note"] = siblings_note
@@ -1292,7 +1345,7 @@ class Steps:
         mentions_note = mentions.for_step(
             cwd,
             unit,
-            _read_text(directory / "idea.md"),
+            _read_text(directory / states.brief_file()),
             _answers_of(link_kw["meta"]),
             link_kw["meta"],
             self.ws.name(cwd),
@@ -1335,6 +1388,7 @@ class Steps:
         rounds_before: set[Any] | None,
         inputs: dict[str, Any],
         process: str,
+        agent_key: str,
         app_note: str = "",
         branch: str = "",
     ) -> dict[str, Any]:
@@ -1350,13 +1404,14 @@ class Steps:
             gate_said=answer[1],
             gate_reasons=_gate_reasons(answer),
             lane=getattr(answer, "lane", "full"),
-            cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
+            cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None, process),
             base=base,
             base_note=describe_base(base),
             screens_note=screens_note,
             # The row the unit's process binds the state to, as it stands, read once as the step
             # starts: a rename later reaches the next step, not this one.
-            agent=self.agent_of(pack.agent_for(process, stage) or ""),
+            agent=self.agent_of(agent_key),
+            agent_key=agent_key,
             process=process,
             **inputs,
             # Only named for a spike, so a stand-in `run` without it keeps working.
@@ -1816,6 +1871,7 @@ class Steps:
         rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
         # The process the first start recorded; one from before units recorded theirs is the default.
         process = str(record.get("process") or pack.DEFAULT_PROCESS)
+        agent_key = pack.agent_for(process, stage) or ""
         extra = {
             k: owner.get(k)
             for k in (
@@ -1839,7 +1895,8 @@ class Steps:
             model=record.get("model"),
             effort=owner.get("effort"),
             label=owner.get("label"),
-            agent=self.agent_of(pack.agent_for(process, stage) or ""),
+            agent=self.agent_of(agent_key),
+            agent_key=agent_key,
             process=process,
             resume=record,
             owner_extra=extra,

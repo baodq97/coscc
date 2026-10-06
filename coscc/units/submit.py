@@ -15,7 +15,7 @@ import hashlib
 import weakref
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any
 
 from coscc.units import contracts, guards
 
@@ -29,12 +29,6 @@ AGAIN = "Correct the object and call submit again."
 
 # What a stage's `judgement` (`contracts.Judgement`) puts on its artifact.
 JUDGEMENTS = {"ready": "accepted", "not-ready": "draft"}
-
-# The stages whose run hands back a stage result. `review` hands back a round and the
-# integrate and estimate sessions their own objects.
-ResultStage = Literal["idea", "impl", "intent", "plan", "spec", "spike"]
-STAGE_RESULT: tuple[ResultStage, ...] = get_args(ResultStage)
-ROUND = "review"
 
 # What a round's `verdict` (`contracts.Verdict`) puts on `review.md`. `needs-person` keeps it
 # `changes-requested`: the unit is not finished, and the loop reads the round's verdict for the wait.
@@ -151,12 +145,17 @@ class Channel:
         # number and where its screenshots were taken.
         self.extra: dict[str, Any] = {}
         self.schema = contracts.schema(stage)
+        out = contracts.output(stage)
+        # What the declaration is: a review's round, or an artifact's result, and the fields the
+        # engine reads of it beyond the judgement.
+        self.is_round = out["kind"] == "review"
+        self.fields = {n.rstrip("?") for n in out["fields"]}
         self.received: dict[str, Any] | None = None
         self.refused = 0
 
     @property
     def guard_id(self) -> str:
-        return "review-round" if self.stage == ROUND else "stage-result"
+        return "review-round" if self.is_round else "stage-result"
 
     def inputs(self, obj: Mapping[str, Any], revision_then: str) -> dict[str, Any]:
         """What this channel's guard reads, the app's own hash taken again now beside it."""
@@ -168,9 +167,9 @@ class Channel:
             "stage": self.stage,
             "object": dict(obj),
         }
-        if self.stage == ROUND:
+        if self.is_round:
             out["head"] = self.head
-        if self.stage == "impl":
+        if "needs_person" in self.fields:
             out.update(
                 claims=list(obj.get("needs_person") or ()),
                 open_ids=list(self.open_ids),
@@ -182,14 +181,14 @@ class Channel:
         """This channel's guard, and for impl guard `impl-claim` once it opens."""
         inputs = self.inputs(obj, revision_then)
         verdict = guards.guard(self.guard_id).check(inputs)
-        if verdict.open and self.stage == "impl":
+        if verdict.open and "needs_person" in self.fields:
             return guards.guard("impl-claim").check(inputs)
         return verdict
 
     async def handle(self, args: dict[str, Any]) -> dict[str, Any]:
         """The handler. The schema has passed by the time this runs."""
         obj = dict(args or {})
-        if self.stage == ROUND:
+        if self.is_round:
             problem = round_problem(obj)
             if problem:
                 self.refused += 1
@@ -197,7 +196,7 @@ class Channel:
         elif obj.get("stage") != self.stage:
             self.refused += 1
             return refusal(f"this run is {self.stage}; the object names {obj.get('stage')!r}.")
-        elif self.stage == "plan" and (problem := plan_problem(obj)):
+        elif "steps" in self.fields and (problem := plan_problem(obj)):
             self.refused += 1
             return refusal(problem)
         taken = revision(self.directory, self.artifact, own=self.own)
@@ -219,11 +218,11 @@ class Channel:
                 "(this run is not the one open for the unit, or its artifacts changed while it ran)."
             )
         self.received = {"object": obj, "revision": taken}
-        said = obj["verdict"] if self.stage == ROUND else obj["judgement"]
+        said = obj["verdict"] if self.is_round else obj["judgement"]
         return {"content": [{"type": "text", "text": f"received: {self.artifact} {said}"}]}
 
     def description(self) -> str:
-        if self.stage == ROUND:
+        if self.is_round:
             return (
                 "Hand the app your review round: its verdict, every finding with its state, and "
                 "every screenshot you opened. The app writes the round's verdict line, its "
@@ -233,9 +232,13 @@ class Channel:
         return (
             f"Hand the app your judgement of {self.artifact}: whether it is ready, its open "
             "questions"
-            + (", the U<n> ids under ## Concerns" if self.stage == "spec" else "")
-            + (", and a verdict per U<n>" if self.stage == "spike" else "")
-            + (", and the open findings only a person can close" if self.stage == "impl" else "")
+            + (", the U<n> ids under ## Concerns" if "unmeasured" in self.fields else "")
+            + (", and a verdict per U<n>" if "verdicts" in self.fields else "")
+            + (
+                ", and the open findings only a person can close"
+                if "needs_person" in self.fields
+                else ""
+            )
             + ". Call it once the artifact is final. If it returns an error, the app has checked "
             f"your object against the unit: {AGAIN}"
         )

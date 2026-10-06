@@ -79,7 +79,7 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
         from coscc.units import submit
 
         self.assertEqual(policy.SUBMIT_TOOL, submit.NAME)
-        for stage in (*submit.STAGE_RESULT, submit.ROUND):
+        for stage in ("idea", "intent", "spec", "spike", "plan", "impl", "review"):
             g = row_for(stage)
             self.assertTrue(g.submits, stage)
             self.assertGreaterEqual(g.max_turns, policy.SUBMIT_TURNS, stage)
