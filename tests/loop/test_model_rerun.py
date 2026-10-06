@@ -175,7 +175,7 @@ def test_the_hash_above_answers_does_not_move_when_an_answer_is_appended():
     text = "# Spec: x\nStatus: accepted.\n\nR1.\n"
     digest = above_answers(text)
     assert re.fullmatch(r"[0-9a-f]{64}", digest)
-    # The two ways a section is opened: the runner's `with_answers`, and the app's append.
+    # A section the app's append opened.
     answered = (
         f"{text}\n## Answers\n\n### Câu 1\nAnswered by: A. Date: 2026-09-26. Via: product.\n\nx\n"
     )

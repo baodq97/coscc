@@ -1216,6 +1216,8 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.dir = Path(self.made["path"])
+        # What impl declares it needs.
+        (self.dir / "intent.md").write_text("# Intent: x\n", encoding="utf-8")
         self.seen: list[dict] = []
         self.terminal = None
 
@@ -1257,6 +1259,14 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
     def _starts(self):
         journal = self.core.ws.journal()
         return journal.records(self.core.ws.key(str(self.repo)), kind="start")
+
+    def test_a_missing_declared_input_is_refused_before_any_session(self):
+        (self.dir / "intent.md").unlink()
+        with self.assertRaises(Refused) as refused:
+            self._run()
+        self.assertEqual(refused.exception.reasons, ("input-missing",))
+        self.assertIn("impl cannot start: it needs intent.md", str(refused.exception))
+        self.assertEqual((self.seen, self._starts()), ([], []))
 
     def test_a_plan_naming_the_security_surface_runs_as_novel(self):
         self._plan("coscc/agent/policy.py")
@@ -1348,12 +1358,12 @@ class TheGatesLaneReachesThePrompt(unittest.TestCase):
     def test_a_fast_lane_gate_puts_the_block_in_the_prompt_and_the_record(self):
         start = self._run("fast")
         self.assertIn("# The fast lane", self.prompts[-1])
-        self.assertIn("fast-lane", start["included"])
+        self.assertIn("fast-lane", start["envelope"])
 
     def test_a_full_lane_gate_puts_no_block_anywhere(self):
         start = self._run("full")
         self.assertNotIn("# The fast lane", self.prompts[-1])
-        self.assertNotIn("fast-lane", start["included"])
+        self.assertNotIn("fast-lane", start["envelope"])
 
 
 class AnImplStepUnderTheModelTrial(unittest.TestCase):
@@ -1405,6 +1415,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.dir = Path(self.made["path"])
+        (self.dir / "intent.md").write_text("# Intent: x\n", encoding="utf-8")
         if plan is not None:
             state_of(
                 self.core,
@@ -2279,7 +2290,11 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
             data_dir=str(self.root / "data"),
         )
         self.core = Core(config, Sessions(config))
-        self.unit = create_sync(self.core, str(self.repo), "a-problem", "words")["unit"]
+        made = create_sync(self.core, str(self.repo), "a-problem", "words")
+        self.unit = made["unit"]
+        # What spike declares it needs.
+        for name in ("intent.md", "spec.md"):
+            (Path(made["path"]) / name).write_text("# x\n", encoding="utf-8")
 
     def test_a_suspended_drive_abandons_its_recorder_and_nudges_nothing(self):
         from coscc.agent.sessions import Suspended
@@ -2646,6 +2661,9 @@ class _AReviewStep:
         self.core = Core(config, Sessions(config))
         made = create_sync(self.core, str(self.repo), "a-problem", "words")
         self.unit, self.dir = made["unit"], Path(made["path"])
+        # What review declares it needs.
+        for name in ("intent.md", "impl.md"):
+            (self.dir / name).write_text("# x\n", encoding="utf-8")
         self.seen: list[dict] = []
         self.taken: list[list[str]] = []
 

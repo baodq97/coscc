@@ -21,10 +21,6 @@ from tests.test_layers import ROOT, _files
 DATA = "coscc.store.db"
 
 PRIVATE_IMPORTS: set[tuple[str, str, str]] = {
-    ("coscc/runner/prompt.py", "coscc.runner.review", "_ROUND_RE"),
-    ("coscc/runner/prompt.py", "coscc.runner.review", "_round_meta"),
-    ("coscc/runner/prompt.py", "coscc.runner.review", "_round_number"),
-    ("coscc/runner/prompt.py", "coscc.runner.review", "_rounds"),
     ("coscc/runner/step.py", "coscc.runner.attempt", "_head_of"),
     ("coscc/runner/step.py", "coscc.runner.attempt", "_tree_state"),
     ("coscc/runner/step.py", "coscc.runner.attempt", "_write_artifact"),
@@ -162,10 +158,7 @@ DICT_ANY: set[str] = {
     "coscc.leif.spend:model",
     "coscc.runner.attempt:describe_attempt",
     "coscc.runner.attempt:snapshot",
-    "coscc.runner.prompt:_row_blocks.block",
-    "coscc.runner.prompt:answers_for",
     "coscc.runner.prompt:compose_prompt",
-    "coscc.runner.prompt:with_rows",
     "coscc.runner.review:finding_line",
     "coscc.runner.review:render_round",
     "coscc.runner.step:Runner.run",
@@ -221,7 +214,6 @@ DICT_ANY: set[str] = {
     "coscc.leif.chat:Chat.history",
     "coscc.leif.chat:Chat.sessions_for",
     "coscc.leif.chat:Chat.stream",
-    "coscc.runner.steps:Steps._end_fields.answers_kept",
     "coscc.runner.steps:Steps._end_fields.findings_added",
     "coscc.github.integration:Integration.attach_integration",
     "coscc.github.integration:Integration.cleanup",

@@ -447,7 +447,6 @@ class TakingUpAfterAnUpdate(_Base):
                 unit=self.unit,
                 stage="plan",
                 artifact="plan.md",
-                stages=[],
                 mode="manual",
                 cwd=str(self.tree),
                 resume=record,

@@ -291,7 +291,7 @@ class ImplClaimsOnlyAnOpenFinding(unittest.TestCase):
             directory=self.dir,
             artifact="impl.md",
             own=True,
-            open_findings=("F2",),
+            open_ids=("F2",),
             claims_round=3,
         )
 

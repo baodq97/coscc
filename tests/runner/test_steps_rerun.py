@@ -243,39 +243,5 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.assertNotEqual(text, PR_MD + ANSWERS)
 
 
-IMPL_DRAFT = "# Impl: x\nStatus: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
-
-
-class ADraftImplThatLosesItsAnswersSaysSo(unittest.TestCase):
-    """An `impl` step writes `impl.md` itself; a `done` that no longer ends with the `## Answers` it
-    started with says `answers_lost`. The app writes nothing back."""
-
-    setUp = APrRunAgainClosesShipUntilAReview.setUp
-    run_step = APrRunAgainClosesShipUntilAReview.run_step
-
-    def impl(self, before: str, after: str) -> dict:
-        for name in ("pr.md", "review.md"):
-            (self.dir / name).unlink()
-        (self.dir / "intent.md").write_text(
-            "# Intent: x\nType: feat. Status: accepted.\n", encoding="utf-8"
-        )
-        (self.dir / "impl.md").write_text(before, encoding="utf-8")
-        self.run_step("impl", write=after, file="impl.md")
-        self.assertEqual(self.items[-1][0], "done")
-        return self.items[-1][1]
-
-    def test_an_impl_that_drops_its_answers_says_answers_lost(self):
-        done = self.impl(IMPL_DRAFT + ANSWERS, IMPL_DRAFT + "\nrewritten\n")
-        self.assertEqual(done.get("answers_kept"), False)
-        self.assertTrue(done.get("answers_lost"))
-        # Nothing wrote the section back.
-        self.assertNotIn("## Answers", (self.dir / "impl.md").read_text(encoding="utf-8"))
-
-    def test_an_impl_that_appends_its_own_answer_block_says_answers_lost(self):
-        own = "\n### Câu 2\nAnswered by: Claude. Date: 2026-09-27. Via: product.\n\ntự trả lời\n"
-        done = self.impl(IMPL_DRAFT + ANSWERS, IMPL_DRAFT + "2. Hai?\n" + ANSWERS + own)
-        self.assertTrue(done.get("answers_lost"))
-
-
 if __name__ == "__main__":
     unittest.main()

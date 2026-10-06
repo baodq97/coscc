@@ -8,7 +8,7 @@ from __future__ import annotations
 import unittest
 
 from coscc.runner.review import merge_review, render_round, replace_new_rounds
-from tests.runner.test_step import REVIEW_R1, _REVIEW_TWO_ROUNDS, incomplete_reply
+from tests.runner.test_step import REVIEW_R1, incomplete_reply
 
 
 class ARoundIsWrittenFromItsObject(unittest.TestCase):
@@ -101,51 +101,6 @@ class MergeReview(unittest.TestCase):
         self.assertEqual(
             body, "# Review: x\nStatus: accepted.\n\n## Round 1\n\nF1\n\n## Round 2\n\nok\n"
         )
-
-
-class OpenFindings(unittest.TestCase):
-    """The header, the last round's number and what it left open."""
-
-    def test_the_last_round_only_and_its_open_findings(self):
-        from coscc.runner.review import open_findings
-
-        number, findings = open_findings(_REVIEW_TWO_ROUNDS)
-        self.assertEqual(number, 2)
-        self.assertEqual(
-            findings,
-            (
-                "- F2 [answered] b.py:2 — low — ROUND-TWO-F2-ANSWERED\n"
-                "- F3 [open] c.py:3 — high — ROUND-TWO-F3-OPEN\n"
-                "  CONTINUATION-OF-F3\n"
-                "- F4 [needs-person] d.py:4 — medium — ROUND-TWO-F4-PERSON"
-            ),
-        )
-
-    def test_only_fixed_with_a_sha_is_left_out(self):
-        # the loop counts `[answered]` closed only with a block under `## Answers`, and `[fixed]`
-        # only with a sha, so both stay in the prompt.
-        from coscc.runner.review import open_findings
-
-        text = (
-            "# Review: x\nStatus: changes-requested.\n\n## Round 1\n\n"
-            "- F1 [fixed abc1234] a — high — GONE-1\n  GONE-1-MORE\n"
-            "- F2 [answered] b — low — KEPT-2\n"
-            "- F3 [claim-rejected] c — high — KEPT-3\n"
-            "- F4 [who knows] d — high — KEPT-4\n"
-            "- F5 [fixed] e — high — KEPT-5\n"
-            "- F6 [Fixed 0123456789abcdef0123456789abcdef01234567] f — low — GONE-6\n"
-        )
-        _, findings = open_findings(text)
-        self.assertNotIn("GONE", findings)
-        for kept in ("KEPT-2", "KEPT-3", "KEPT-4", "KEPT-5"):
-            self.assertIn(kept, findings)
-
-    def test_a_file_with_no_round_is_one_round_with_no_number(self):
-        from coscc.runner.review import open_findings
-
-        number, findings = open_findings("# Review: x\n\n- F1 [open] a — low — L\n")
-        self.assertIsNone(number)
-        self.assertIn("F1", findings)
 
 
 class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):

@@ -1,25 +1,18 @@
-"""What a step is told: the stage's rules, the artifacts it reads, and the sections the app
-adds to them.
+"""What a step is told: the stage's rules, the envelope its row declares (`agents.json`
+`input`: artifacts whole, earlier records, answers and findings from `cos.db`, the app's data),
+and the sections the app adds to them.
 """
 
 from __future__ import annotations
 
-import re
+import json
 import sys
 from pathlib import Path
 from typing import Any
 
 from coscc.agent import agents, harness
 from coscc.units import contracts, submit
-from coscc.agent.policy import is_prose_stage
-from coscc.runner.review import (
-    INCOMPLETE_SECTIONS,
-    _ROUND_RE,
-    _round_meta,
-    _round_number,
-    _rounds,
-    open_findings,
-)
+from coscc.runner.review import INCOMPLETE_SECTIONS, finding_line
 from coscc.runner.reply import RunError
 
 
@@ -44,198 +37,109 @@ def _read(path: Path) -> str:
         return ""
 
 
-# The `## Answers` section as bytes, from its first heading line to the end of the file; `None`
-# when absent. Bytes, so decoding and newline translation cannot move a byte.
-def answers_section(raw: bytes) -> bytes | None:
-    idx = 0
-    while True:
-        nl = raw.find(b"\n", idx)
-        line = raw[idx : nl if nl != -1 else len(raw)]
-        if line.rstrip(b" \t\r") == b"## Answers":
-            return raw[idx:]
-        if nl == -1:
-            return None
-        idx = nl + 1
+# What a stage is told beside one artifact it is handed.
+_BESIDE = {
+    ("spec", "spike"): "A spike ran on the spec before this one. Rewrite the spec on these "
+    "results: a question whose verdict is `fails` does not hold, so drop its `U<n>` and every "
+    "requirement that rested on it. A new question takes a new `U<n>`.\n\n",
+}
 
 
-def strip_answers(body: str) -> str:
-    """A reply, with everything from its own first `## Answers` line onward dropped.
-
-    Whatever a reply says under that heading carries no authority. The only section that
-    reaches disk is the one already there, found by `answers_section`. A reply with no such
-    line is returned unchanged.
-    """
-    lines = body.splitlines()
-    for i, line in enumerate(lines):
-        if line.rstrip() == "## Answers":
-            return "\n".join(lines[:i]).rstrip() + "\n"
-    return body
-
-
-def with_answers(body: str, section: bytes | None) -> bytes:
-    """The bytes to write: the stage's own text, and the Answers section, unmoved.
-
-    `section` is `None` when the artifact never had one; then this is `body` UTF-8 encoded and
-    nothing else. Otherwise `body`, one blank line, and the section on disk, byte for byte.
-    """
-    if section is None:
-        return body.encode("utf-8")
-    return body.rstrip("\n").encode("utf-8") + b"\n\n" + section
-
-
-# Heads of the blocks `cos.db` carries; every other block under `## Answers` is the file's alone.
-_ROW_HEAD = re.compile(r"^###\s+(?:Câu\s+\d+|F\d+|Paused|Dropped|Resumed)\s*$")
-_HOLD_HEADS = {"paused": "Paused", "dropped": "Dropped", "active": "Resumed"}
-
-
-def _file_blocks(section: str) -> list[str]:
-    """The blocks of a file's `## Answers` that `cos.db` does not carry, verbatim and in file
-    order. An answer or hold block is cut: the row is rendered in its place, so a prompt
-    carries each answer once.
-    """
-    blocks: list[list[str]] = []
-    keep = False
-    for line in section.splitlines()[1:]:
-        if line.startswith("###"):
-            keep = not _ROW_HEAD.match(line)
-            if keep:
-                blocks.append([])
-        if keep:
-            blocks[-1].append(line)
-    return ["\n".join(b).strip() for b in blocks]
-
-
-def _row_blocks(meta: dict[str, Any], artifact: str) -> list[str]:
-    """`artifact`'s answers from `cos.db`, and `intent.md`'s holds, each as an appended block."""
-
-    def block(head: str, who: str, row: dict[str, Any], text: Any) -> str:
-        return (
-            f"### {head}\n{who}: {row.get('by')}. Date: {row.get('date')}. Via: {row.get('via')}.\n\n"
-            f"{text or ''}"
-        ).rstrip()
-
-    blocks = [
-        block(a.get("id") or f"Câu {a.get('n')}", "Answered by", a, a.get("text"))
-        for a in meta.get("answers") or []
-        if a.get("artifact") == artifact
-    ]
-    if artifact == "intent.md":
-        blocks += [
-            block(
-                _HOLD_HEADS.get(str(h.get("state")), str(h.get("state"))),
-                "Decided by",
-                h,
-                h.get("reason"),
-            )
-            for h in meta.get("holds") or []
-        ]
+def _artifacts(stage: str, directory: Path, included: list[str]) -> list[str]:
+    """Each artifact `stage` declares, whole, under a heading naming it; an absent one adds
+    nothing (`contracts.missing` refused the step before a required one could be)."""
+    blocks: list[str] = []
+    for name in contracts.input_of(stage)["artifacts"]:
+        bare = name.rstrip("?")
+        text = contracts.artifact_text(directory, bare)
+        if text:
+            included.append(f"{bare}.md")
+            beside = _BESIDE.get((stage, bare), "")
+            blocks.append(f"# The unit's {bare}.md\n\n{beside}{text.rstrip()}")
     return blocks
 
 
-def answers_for(raw: bytes, artifact: str, meta: dict[str, Any] | None) -> str | None:
-    """The `## Answers` a prompt shows for `artifact`, whose bytes are `raw`: its rows from
-    `cos.db` first, then the file's own blocks the database does not carry. `None` when there
-    is neither. `meta` is the unit's entry in the snapshot; `None` means the file's section as
-    it stands.
-    """
-    section = answers_section(raw)
-    if meta is None:
-        return None if section is None else section.decode("utf-8", errors="replace")
-    blocks = _row_blocks(meta, artifact)
-    if section is not None:
-        blocks += _file_blocks(section.decode("utf-8", errors="replace"))
-    return "## Answers\n\n" + "\n\n".join(blocks) if blocks else None
+def _outputs(stage: str, unit_meta: dict[str, Any] | None, included: list[str]) -> list[str]:
+    """Each earlier stage's record `stage` declares, as the app holds it."""
+    blocks: list[str] = []
+    for name in contracts.input_of(stage)["outputs"]:
+        record = contracts.record(unit_meta, name)
+        if record is not None:
+            bare = name.rstrip("?")
+            included.append(f"{bare}-record")
+            blocks.append(
+                f"# The {bare}'s record\n\nWhat {bare} handed back through `submit`; the app "
+                f"decides from it, not from `{bare}.md`.\n\n```json\n"
+                f"{json.dumps(record, indent=1, ensure_ascii=False)}\n```"
+            )
+    return blocks
 
 
-def with_rows(raw: bytes, artifact: str, meta: dict[str, Any] | None) -> str:
-    """An artifact as a prompt carries it whole: its text above `## Answers`, and `answers_for` in
-    place of the section the file holds.
-    """
-    section = answers_section(raw)
-    above = (raw if section is None else raw[: len(raw) - len(section)]).decode(
-        "utf-8", errors="replace"
-    )
-    answers = answers_for(raw, artifact, meta)
-    return above if answers is None else f"{above.rstrip()}\n\n{answers}\n"
+def _answer_line(a: dict[str, Any]) -> str:
+    """Who answered, when and through what: the one line under each answer."""
+    return f"Answered by: {a.get('by')}. Date: {a.get('date')}. Via: {a.get('via')}."
 
 
-def _open_questions(text: str) -> str:
-    """The `## Open questions` section of an artifact, verbatim: from that heading to the next
-    `## ` heading or the end of the file. Mirrors the loop's `section()`; the numbers are what
-    `### Câu N` in the Answers section refers back to.
-    """
-    lines = text.splitlines()
-    start = next((i for i, line in enumerate(lines) if line.rstrip() == "## Open questions"), None)
-    if start is None:
-        return "It carries no `## Open questions` section."
-    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
-    return "\n".join(lines[start:end]).rstrip()
+_HOLD_HEADS = {"paused": "Paused", "dropped": "Dropped", "active": "Resumed"}
 
-
-# One fixed string wherever the block appears.
 _ANSWERS_ADVICE = (
-    "This is a person's decision, already made. Cite it as `<artifact> ## Answers, câu N` "
-    "rather than reporting it back as if you had found it yourself. Do not copy this "
-    "section into your reply — the app keeps these answers itself and gives them to every "
-    "later step. If you still mention a question already answered here, keep its number."
+    "Each is a person's decision, already made: write to it, cite it as `<artifact> câu N`, "
+    "and never ask it again. The app keeps them and hands them to every later step; do not "
+    "copy them into a file."
 )
 
 
-def _answers_block(
-    directory: Path, artifact: str, repeat_content: bool, meta: dict[str, Any] | None = None
-) -> str | None:
-    """What a re-run is told about the answers its own artifact already carries. `None` when the
-    artifact has never been written or has no answer.
-
-    `repeat_content` is false only for `intent`, whose file is already in the prompt in full.
-    """
-    try:
-        raw = (directory / artifact).read_bytes()
-    except OSError:
-        return None
-    section = answers_for(raw, artifact, meta)
-    if section is None:
-        return None
-    if not repeat_content:
-        return f"# The answers already given to this artifact\n\n{_ANSWERS_ADVICE}"
-    text = raw.decode("utf-8", errors="replace")
-    return (
-        "# The answers already given to this artifact\n\n"
-        f"{_open_questions(text)}\n\n"
-        f"{section}\n\n"
-        f"{_ANSWERS_ADVICE}"
-    )
-
-
-# `impl` writes `impl.md` itself, so nothing writes the section back after it.
-_IMPL_ANSWERS_ADVICE = (
-    "This is a person's decision, already made. Cite it as `impl.md ## Answers, câu N` "
-    "rather than reporting it back as if you had found it yourself. You write `impl.md` "
-    "yourself: do not edit, move or add a block to its `## Answers` section, and put "
-    "everything you write into `impl.md` above that section, leaving it the end of the file "
-    "byte for byte. A question already answered keeps its number; a new question takes a "
-    "number not yet used anywhere in the file."
-)
+def _answers(stage: str, unit_meta: dict[str, Any] | None, included: list[str]) -> list[str]:
+    """The unit's answers and holds, from `cos.db`, each under the question it answers."""
+    if not contracts.input_of(stage)["answers"]:
+        return []
+    meta = unit_meta or {}
+    arts = meta.get("artifacts") or {}
+    blocks: list[str] = []
+    for a in meta.get("answers") or []:
+        artifact = str(a.get("artifact"))
+        ref = a.get("id") or f"câu {a.get('n')}"
+        asked = next(
+            (
+                q.get("text")
+                for q in (arts.get(artifact) or {}).get("questions") or []
+                if a.get("n") is not None and q.get("n") == a.get("n")
+            ),
+            None,
+        )
+        head = f"### {artifact} {ref}" + (f": {asked}" if asked else "")
+        blocks.append(f"{head}\n{_answer_line(a)}\n\n{a.get('text') or ''}".rstrip())
+    for h in meta.get("holds") or []:
+        head = _HOLD_HEADS.get(str(h.get("state")), str(h.get("state")))
+        blocks.append(
+            f"### {head}\nDecided by: {h.get('by')}. Date: {h.get('date')}. Via: {h.get('via')}."
+            f"\n\n{h.get('reason') or ''}".rstrip()
+        )
+    if not blocks:
+        return []
+    included.append("answers")
+    return ["# The answers a person gave\n\n" + _ANSWERS_ADVICE + "\n\n" + "\n\n".join(blocks)]
 
 
-def _impl_answers_block(directory: Path, meta: dict[str, Any] | None = None) -> str | None:
-    """What an `impl` step is told about a person's answers to its own `impl.md`: its
-    `## Open questions` verbatim, the answers as `answers_for` renders them, and
-    `_IMPL_ANSWERS_ADVICE`. `None` when `impl.md` cannot be read or has no answer. The rest of
-    `impl.md` stays named by path only.
-    """
-    try:
-        raw = (directory / "impl.md").read_bytes()
-    except OSError:
-        return None
-    section = answers_for(raw, "impl.md", meta)
-    if section is None:
-        return None
-    return (
-        "# The answers already given to this artifact\n\n"
-        f"{_open_questions(raw.decode('utf-8', errors='replace'))}\n\n"
-        f"{section}\n\n"
-        f"{_IMPL_ANSWERS_ADVICE}"
+def _review_rounds(unit_meta: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The review rounds handed back through `submit`, oldest first, as `cos.db` holds them."""
+    arts = (unit_meta or {}).get("artifacts") or {}
+    return list((arts.get("review.md") or {}).get("rounds") or [])
+
+
+def _left_open(round_: dict[str, Any]) -> str:
+    """A round's findings not fixed, one line each."""
+    return "\n".join(
+        finding_line(
+            {
+                **f,
+                "state": f.get("label"),
+                "fixed_in": f.get("fixedIn") or "",
+                "text": f.get("text") or "",
+            }
+        )
+        for f in round_.get("findings") or []
+        if f.get("label") != "fixed"
     )
 
 
@@ -285,31 +189,16 @@ def harness_advice(directory: Path, state_file: str | Path | None = None) -> str
     return said
 
 
-# Stages that get their artifacts by path, and the one artifact each carries whole.
-_EMBED: dict[str, tuple[str, ...]] = {
-    "impl": ("plan.md",),
-    "review": ("impl.md",),
-}
-_POINTING = frozenset(_EMBED)
-
-UNIT_FILES_ADVICE = (
-    "The files not embedded above are not in this prompt; Read one when your rules or your "
-    "task need it."
-)
-
-
-def _rerun_block(directory: Path, stage: str, artifact: str, note: str) -> str:
-    """What a stage run again from the board is told about why. For `spec` and `plan` it carries
-    the artifact as it stands, above its `## Answers`: no other part of the prompt does.
-    `intent`'s own file is already above, and `spike` and `pr` are handed or named theirs.
-    """
+def _rerun_block(artifact: str, note: str) -> str:
+    """What a stage run again from the board is told about why; the artifact as it stands is
+    in the envelope when the stage declares it."""
     note = note.strip()
     told = (
         f"Their note, verbatim, between the two `~~~` lines:\n\n~~~\n{note}\n~~~"
         if note
         else "No note was given: rewrite it on what changed since — new answers, or main."
     )
-    text = (
+    return (
         "# Why this stage runs again\n\n"
         f"`{artifact}` was already accepted. The person holding this app's login, recorded "
         "as `owner` rather than by name, asked for this stage to run again. That is a "
@@ -317,18 +206,6 @@ def _rerun_block(directory: Path, stage: str, artifact: str, note: str) -> str:
         "stage after this one runs again after you.\n\n"
         f"{told}"
     )
-    if stage in ("spec", "plan"):
-        try:
-            raw = (directory / artifact).read_bytes()
-        except OSError:
-            return text
-        section = answers_section(raw)
-        above = raw[: len(raw) - len(section)] if section is not None else raw
-        text += (
-            f"\n\n`{artifact}` as it stands, above its `## Answers`:\n\n"
-            f"{above.decode('utf-8', errors='replace').rstrip()}"
-        )
-    return text
 
 
 def _app_note_block(note: str) -> str:
@@ -342,22 +219,6 @@ def _app_note_block(note: str) -> str:
     )
 
 
-def build_prompt(*args: Any, **kwargs: Any) -> tuple[str, list[str]]:
-    """`compose_prompt` without `pointed`."""
-    prompt, included, _ = compose_prompt(*args, **kwargs)
-    return prompt, included
-
-
-def _embedded(directory: Path, name: str, unit_meta: dict[str, Any] | None) -> str:
-    """An artifact as a prompt embeds it, with its answers from `cos.db` (`with_rows`);
-    `unit_meta=None` is the file.
-    """
-    text = _read(directory / name)
-    if text and unit_meta is not None:
-        text = with_rows((directory / name).read_bytes(), name, unit_meta)
-    return text
-
-
 def _opening(stage: str, agent: dict[str, Any] | None) -> list[str]:
     """The rules of the stage, and above them who the session is."""
     # Outside any `try`: a missing rule set stops the step before any request.
@@ -368,7 +229,16 @@ def _opening(stage: str, agent: dict[str, Any] | None) -> list[str]:
     return blocks
 
 
-def _already_asked(gate_said: str, base_note: str, drift_note: str) -> list[str]:
+def _data(stage: str, name: str, heading: str, text: str, included: list[str]) -> list[str]:
+    """One source of the app's data under its heading, when `stage` declares it and it says
+    something."""
+    if not text or name not in contracts.input_of(stage)["data"]:
+        return []
+    included.append(name)
+    return [f"{heading}\n\n{text.rstrip()}"]
+
+
+def _already_asked(gate_said: str, base_note: str) -> list[str]:
     """What the app checked before it started the step, and the answer it got."""
     blocks: list[str] = []
     # The rules tell a stage to run `coscc.loop gate`, which a toolless stage cannot; the app asked, so
@@ -387,93 +257,31 @@ def _already_asked(gate_said: str, base_note: str, drift_note: str) -> list[str]
     if base_note:
         blocks.append(f"# The base this step runs on\n\n{base_note}")
 
-    # Files the plan names that `main` changed since; `""` adds nothing.
-    if drift_note:
-        blocks.append(f"# The files main changed since the plan\n\n{drift_note}")
     return blocks
 
 
-def _what_it_follows(
-    directory: Path,
+def _shared(
     stage: str,
-    stages: list[str],
-    unit_meta: dict[str, Any] | None,
+    drift_note: str,
+    idea_note: str,
+    siblings_note: str,
+    mentions_note: str,
     included: list[str],
 ) -> list[str]:
-    """The intent, the stage before this one, and for a fix in the fast lane the intent again."""
-    blocks: list[str] = []
-    pointing = stage in _POINTING
-    intent = "" if pointing else _embedded(directory, "intent.md", unit_meta)
-    if intent:
-        included.append("intent.md")
-        blocks.append(f"# The intent this work is authorised by\n\n{intent}")
-
-    # The stage before this one, from the board's stage list; a pointing stage carries only its `_EMBED` files.
-    position = stages.index(stage) if stage in stages else -1
-    for earlier in reversed(stages[:position]):
-        name = f"{earlier}.md"
-        if pointing and name not in _EMBED[stage]:
-            continue
-        text = _embedded(directory, name, unit_meta)
-        if text and name not in included:
-            included.append(name)
-            blocks.append(f"# The {earlier} it follows\n\n{text}")
-            break
-
-    # With no plan, the intent is what impl builds from.
-    if stage == "impl" and "plan.md" not in included:
-        text = _embedded(directory, "intent.md", unit_meta)
-        if text:
-            included.append("intent.md")
-            blocks.append(f"# The intent it follows\n\n{text}")
-    return blocks
-
-
-def _shared(stage: str, idea_note: str, siblings_note: str, mentions_note: str) -> list[str]:
-    """Right after the stage before: a child unit has no `idea.md`, and the idea it shares
-    stands where that would have. The units this unit names follow, for every stage.
-    """
-    blocks: list[str] = []
-    if idea_note and stage == "intent":
-        blocks.append(f"# The idea this unit was opened from\n\n{idea_note.rstrip()}")
-    if siblings_note and stage == "impl":
-        blocks.append(f"# The sibling repositories this step may read\n\n{siblings_note.rstrip()}")
-    if mentions_note:
-        blocks.append(f"# The units this unit names\n\n{mentions_note.rstrip()}")
-    return blocks
-
-
-def _second_artifact(
-    directory: Path,
-    stage: str,
-    unit_meta: dict[str, Any] | None,
-    included: list[str],
-) -> list[str]:
-    """The stage before is one artifact, and three stages need a second. `plan` follows `spike`
-    when one ran, but the requirements it orders are still in `spec.md`. A `spec` re-run after
-    a spike must be rewritten on that measurement. A `spike` re-run is given the one before it, to
-    go on from it.
-    """
-    blocks: list[str] = []
-    spike = _read(directory / "spike.md") if stage in ("spec", "spike") else ""
-    if stage == "plan" and "spike.md" in included and "spec.md" not in included:
-        spec = _embedded(directory, "spec.md", unit_meta)
-        if spec:
-            included.append("spec.md")
-            blocks.append(f"# The spec the spike measured\n\n{spec}")
-    if stage == "spec" and spike and "spike.md" not in included:
-        included.append("spike.md")
-        blocks.append(
-            "# What the spike measured\n\n"
-            "A spike ran on the spec before this one. Rewrite the spec on these results: a "
-            "question whose verdict is `fails` does not hold, so drop its `U<n>` and every "
-            "requirement that rested on it. A new question takes a new `U<n>`.\n\n"
-            f"{spike}"
-        )
-    if stage == "spike" and spike and "spike.md" not in included:
-        included.append("spike.md")
-        blocks.append(f"# The previous spike\n\n{spike}")
-    return blocks
+    """The app's data beside the artifacts: what `main` changed under the plan, the idea a child
+    unit shares, the sibling checkouts, the units this one names."""
+    return [
+        *_data(stage, "drift", "# The files main changed since the plan", drift_note, included),
+        *_data(stage, "idea", "# The idea this unit was opened from", idea_note, included),
+        *_data(
+            stage,
+            "siblings",
+            "# The sibling repositories this step may read",
+            siblings_note,
+            included,
+        ),
+        *_data(stage, "mentions", "# The units this unit names", mentions_note, included),
+    ]
 
 
 def _where_you_work(
@@ -523,9 +331,10 @@ def _tools(
     """What `impl` may read and run, and what a step holding `Bash` is told about its session."""
     blocks: list[str] = []
     # Placed only: the plan map is built elsewhere.
-    if plan_map and stage == "impl":
-        included.append("plan-map")
-        blocks.append(f"{PLAN_MAP_HEADING}\n\n{plan_map}\n\n{PLAN_MAP_ADVICE}")
+    if plan_map:
+        blocks += _data(
+            stage, "plan-map", PLAN_MAP_HEADING, f"{plan_map}\n\n{PLAN_MAP_ADVICE}", included
+        )
     if runs_commands:
         blocks.append(f"{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
         blocks.append(f"{HARNESS_HEADING}\n\n{harness_advice(directory, state_file)}")
@@ -578,65 +387,35 @@ def _lane(
     ]
 
 
-def _answers(
-    stage: str,
-    directory: Path,
-    artifact: str,
-    writes_own: bool,
-    unit_meta: dict[str, Any] | None,
-) -> list[str]:
-    """The answers a person gave to the artifact this stage writes again."""
-    blocks: list[str] = []
-    # A prose stage re-run must see a person's decision; `review` gets its own block later.
-    if is_prose_stage(stage) and not writes_own and stage != "review":
-        block = _answers_block(
-            directory, artifact, repeat_content=stage != "intent", meta=unit_meta
-        )
-        if block:
-            blocks.append(block)
-    # A draft `impl.md` that asked a person gets the answers back, untouchable.
-    if stage == "impl":
-        block = _impl_answers_block(directory, unit_meta)
-        if block:
-            blocks.append(block)
-    return blocks
-
-
-def _sent_back(
-    stage: str,
-    directory: Path,
-    review: str,
-    included: list[str],
-    unit_meta: dict[str, Any] | None,
-) -> list[str]:
-    """`impl` only: the findings the last review left open.
-
-    A review that asked for changes sends the unit back to `impl`, and the point of going back
-    is the findings; without this block the step is built from `intent.md` and `plan.md` only
-    and cannot see one.
-
-    Only while the snapshot has `review.md` `changes-requested`: a pass has nothing to act on,
-    and a reject closed the unit. The file's own header is not read. It carries the findings
-    still open in the last round; the whole file is named by path in *The unit's files*.
-    """
-    if stage != "impl" or not review or "review-findings" in included:
+def _findings(stage: str, unit_meta: dict[str, Any] | None, included: list[str]) -> list[str]:
+    """The findings the last review round left open, from `cos.db`: what `impl` fixes when a
+    review sent the unit back, what `review` carries forward into its next round."""
+    rounds = _review_rounds(unit_meta)
+    if not rounds or not contracts.input_of(stage)["findings"]:
         return []
+    last = rounds[-1]
+    left = _left_open(last) or "(no finding is left open)"
     status = (((unit_meta or {}).get("artifacts") or {}).get("review.md") or {}).get("status")
-    if status != "changes-requested":
+    if stage == "impl" and status != "changes-requested":
         return []
-    number, findings = open_findings(review)
-    included.append("review-findings")
+    included.append("findings")
+    if stage == "impl":
+        return [
+            "# The findings the last review round left open\n\n"
+            "The last review asked for changes. Fix every finding below on the branch, one "
+            "commit per finding where that is possible, then push the branch, then record in "
+            "impl.md which commit fixed which finding. The next review is offered only once a "
+            "fix is on the pull request, so a fix left unpushed keeps this unit on impl.\n\n"
+            f"Round {last.get('n')}:\n\n{left}"
+        ]
     return [
-        "# The review that sent this back\n\n"
-        "The last review asked for changes. Fix every finding marked `[open]` below "
-        "on the branch, one commit per finding where that is possible, then push "
-        "the branch, then record in impl.md which commit fixed which finding. The "
-        "next review is offered only once a fix is on the pull request, so a fix "
-        "left unpushed keeps this unit on impl.\n\n"
-        "Below are the findings the review's last round"
-        + (f" (Round {number})" if number is not None else "")
-        + f" left open. The whole review, every round, is `{directory.resolve() / 'review.md'}`.\n\n"
-        f"{findings or '(no finding is left open)'}"
+        "# The findings the last review round left open\n\n"
+        f"`review.md` already holds rounds up to Round {last.get('n')}, and the app keeps them. "
+        "Do not copy them into your reply. Reply with the title, the header line and the next "
+        "`## Round N` section only; the app writes the earlier rounds back under your header, "
+        "unchanged, and appends yours after them. Carry each finding below forward with its "
+        "id.\n\n"
+        f"Round {last.get('n')}:\n\n{left}"
     ]
 
 
@@ -645,30 +424,6 @@ def _push(stage: str, branch: str) -> list[str]:
     if stage != "impl" or not branch:
         return []
     return [f"# Pushing\n\nPush with `git push origin {branch}`."]
-
-
-def _rounds_so_far(stage: str, directory: Path, review: str, included: list[str]) -> list[str]:
-    """`review` only: the last round's number and what it left open.
-
-    `review.md` accumulates rounds and the app writes it from the reply, so writing must not
-    erase the rounds already there (`merge_review`), or a loop whose counter resets every run
-    never reaches its limit. The prompt carries the last round's number and what it left open;
-    `impl.md`, `pr.md` and the earlier rounds are named by path in *The unit's files*.
-    """
-    if stage != "review" or not _rounds(review):
-        return []
-    number, findings = open_findings(review)
-    included.append("review-findings")
-    return [
-        "# The rounds so far\n\n"
-        f"`review.md` already holds rounds up to Round {number}, and the app keeps "
-        "them. Do not copy them into your reply. Reply with the title, the header "
-        "line and the next `## Round N` section only; the app writes the earlier "
-        "rounds back under your header, unchanged, and appends yours after them.\n\n"
-        f"The findings Round {number} left open are below. Every earlier round is "
-        f"in `{directory.resolve() / 'review.md'}`.\n\n"
-        f"{findings or '(no finding is left open)'}"
-    ]
 
 
 def _unfinished_round(
@@ -696,29 +451,19 @@ def _unfinished_round(
     ]
 
 
-def _incomplete_round(stage: str, review: str, included: list[str]) -> list[str]:
+def _incomplete_round(
+    stage: str, incomplete_round: dict[str, Any] | None, included: list[str]
+) -> list[str]:
     """`review` only: where to go on from when the last round is one the app's closing turn
-    wrote for a review that ran out of turns. The next review goes on from it: its three
-    sections verbatim, and what the last full round before it left open.
+    wrote for a review that ran out of turns: its sections verbatim, `{n, text}` as the loop
+    read it. What the last full round left open is in the findings block.
     """
-    if stage != "review":
+    if stage != "review" or not incomplete_round:
         return []
-    found = list(_ROUND_RE.finditer(review))
-    last = found[-1].group(0).rstrip() if found else ""
-    meta = _round_meta(last) if last else None
-    if meta is None or meta[1] != "incomplete":
-        return []
-    number = _round_number(last)
-    start = last.find(INCOMPLETE_SECTIONS[0])
-    sections = last[start:] if start != -1 else last
-    before = review[: found[-1].start()]
-    carried = ""
-    if any((_round_meta(r) or ("", ""))[1] != "incomplete" for r in _rounds(before)):
-        full, left = open_findings(before)
-        carried = (
-            f"\n\nThe findings Round {full}, the last full round, left open:\n\n"
-            f"{left or '(no finding is left open)'}"
-        )
+    number = int(incomplete_round["n"])
+    text = str(incomplete_round.get("text") or "")
+    start = text.find(INCOMPLETE_SECTIONS[0])
+    sections = (text[start:] if start != -1 else text).rstrip()
     included.append("review-incomplete")
     return [
         "# The incomplete round\n\n"
@@ -730,25 +475,7 @@ def _incomplete_round(stage: str, review: str, included: list[str]) -> list[str]
         "its id: the `ship` gate stays closed on a round that drops one. Never write "
         "`Verdict: incomplete` yourself; only the app's closing turn writes it.\n\n"
         f"Round {number}, from its first section on, verbatim:\n\n{sections}"
-        f"{carried}"
     ]
-
-
-def _review_answers(
-    stage: str,
-    directory: Path,
-    artifact: str,
-    writes_own: bool,
-    unit_meta: dict[str, Any] | None,
-) -> list[str]:
-    """`review`'s own copy of the answers block, placed after *The rounds so far*: a person can
-    answer under `## Answers` while a review is at `changes-requested`, and the next review
-    must not treat that decision as an unread finding.
-    """
-    if stage != "review" or not is_prose_stage(stage) or writes_own:
-        return []
-    block = _answers_block(directory, artifact, repeat_content=True, meta=unit_meta)
-    return [block] if block else []
 
 
 def _commit_reviewed(stage: str, head: str) -> list[str]:
@@ -789,47 +516,31 @@ def _handed(
 ) -> list[str]:
     """What `runner.steps.Steps.run_step` built for this step; this only places it."""
     blocks: list[str] = []
-    # Built by `runner.steps.Steps.run_step`; placed only.
     if last_attempt:
         included.append("last-attempt")
         blocks.append(f"# The attempt before this one\n\n{last_attempt}")
-
-    # Only `review`, after an integration; built by `integrate.describe_for_review`.
-    if integration_note and stage == "review":
-        included.append("integration")
-        blocks.append(integration_note.rstrip())
-
-    # Only `review`, after a retake; built by `retake.describe_for_review`.
-    if screens_note and stage == "review":
-        included.append("screens")
-        blocks.append(screens_note.rstrip())
+    # Built by `integrate.describe_for_review` and `retake.describe_for_review`; each carries
+    # its own heading.
+    for name, note in (("integration", integration_note), ("screens", screens_note)):
+        if note and name in contracts.input_of(stage)["data"]:
+            included.append(name)
+            blocks.append(note.rstrip())
     return blocks
 
 
-def _unit_files(
-    directory: Path, stage: str, stages: list[str], included: list[str]
-) -> tuple[list[str], list[str]]:
-    """Every artifact of the unit that exists, by absolute path, so what the prompt no longer
-    carries can still be found; `pointed` is what is here and not above.
-    """
-    pointed: list[str] = []
-    if stage not in _POINTING:
-        return [], pointed
-    lines = []
-    for s in stages:
-        name = f"{s}.md"
-        if not (directory / name).is_file():
-            continue
-        # The plan is enough to implement from; what it cites, it cites by section.
-        if stage == "impl" and s in ("intent", "spec", "spike"):
-            continue
-        above = name in included
-        if not above:
-            pointed.append(name)
-        lines.append(f"- {directory.resolve() / name}" + (" (above)" if above else ""))
-    if not pointed:
-        return [], pointed
-    return ["# The unit's files\n\n" + "\n".join(lines) + "\n\n" + UNIT_FILES_ADVICE], pointed
+def _given(directory: Path, included: list[str]) -> list[str]:
+    """The envelope's table of contents: which of the unit's files the prompt holds whole, so
+    the step does not Read them again."""
+    files = [p for p in included if p.endswith(".md")]
+    if not files:
+        return []
+    named = ", ".join(f"`{f}`" for f in files)
+    return [
+        "# What you are given\n\n"
+        f"Each part below has its own heading. {named} are here whole, as `{directory.resolve()}` "
+        "holds them now; the answers and findings are the app's rows. Do not Read them again: "
+        "Read only what is not here."
+    ]
 
 
 # The project instructions are already in the prompt; the app does not read them for a language.
@@ -869,7 +580,6 @@ def compose_prompt(
     directory: str | Path,
     unit: str,
     stage: str,
-    stages: list[str],
     artifact: str,
     writes_own: bool = False,
     gate_said: str = "",
@@ -886,6 +596,7 @@ def compose_prompt(
     app_note: str = "",
     plan_map: str = "",
     unfinished_round: dict[str, Any] | None = None,
+    incomplete_round: dict[str, Any] | None = None,
     idea_note: str = "",
     siblings_note: str = "",
     mentions_note: str = "",
@@ -896,71 +607,60 @@ def compose_prompt(
     blocks: tuple[tuple[str, str], ...] = (),
     branch: str = "",
     lane: str = "full",
-) -> tuple[str, list[str], list[str]]:
-    """The prompt for one step, the artifacts that went into it whole, and the ones it names by
-    path only.
+) -> tuple[str, list[str]]:
+    """The prompt for one step, and its envelope: the name of every part it was handed.
 
-    Every optional section below adds not one byte when empty or `None`, or for a stage it is
-    not placed for.
+    The unit's part is what the stage's row declares (`contracts.input_of`) and nothing else:
+    its artifacts whole, earlier stages' records, the answers and holds and the open findings
+    from `unit_meta` (the unit's snapshot entry), and the app's data — `drift_note`,
+    `idea_note`, `siblings_note`, `mentions_note`, `plan_map`, `integration_note`,
+    `screens_note` — each placed only when declared. `contracts.missing` refuses a step before
+    this runs; an absent optional part adds not one byte, as does every empty section.
 
     `agent` is the stage's resolved row of the agent table; its section opens the prompt.
-    `idea_note` is the shared idea a unit was opened from (`intent` only); `siblings_note` the
-    sibling checkouts `impl` may read (`impl` only); `mentions_note` the units this unit names
-    and the files of each the step may read. `rerun` is true only for a stage a person
-    ran again from the board, with `rerun_note` their note; `app_note` is the autopilot's own,
-    under its own heading. `plan_map` is what `planmap.for_step` built. `unfinished_round` is
-    `{"n", "dropped"}` of a last round the loop read as unfinished (`review` only).
-    `lane` is what the gate said of the unit (`fast` or `full`). `runs_commands` is true when
-    the step's grant holds `Bash`. `branch` is the unit's branch the worktree stands on, the
-    one push `impl` may make. `unit_meta` is the unit's entry
-    in the snapshot: its answers and holds, rendered where the file's `## Answers` blocks were.
-
-    The list of included artifacts is returned rather than inferred later: if a step ran
-    without the previous stage's artifact in the prompt, the record says so.
-
-    `blocks` are the named texts features add, in order, before the rerun block and the task; an
-    empty text adds nothing.
+    `rerun` is true only for a stage a person ran again from the board, with `rerun_note`
+    their note; `app_note` is the autopilot's own, under its own heading. `unfinished_round` is
+    `{"n", "dropped"}` and `incomplete_round` `{"n", "text"}` of a last round the loop read so
+    (`review` only). `lane` is what the gate said of the unit (`fast` or `full`).
+    `runs_commands` is true when the step's grant holds `Bash`. `branch` is the unit's branch
+    the worktree stands on, the one push `impl` may make. `blocks` are the named texts features
+    add, in order, before the rerun block and the task.
 
     `directory` is handed in: the artifacts live in the product's own store while `workspace`
     stays the repository the work is done in.
     """
     directory = Path(directory)
     included: list[str] = []
-    parts = _opening(stage, agent)
-    # Nothing writes `review.md` while the prompt is composed.
-    review = _read(directory / "review.md") if stage in ("impl", "review") else ""
+    opening = _opening(stage, agent)
     # The order of these calls is the order of the prompt.
-    parts += [
-        *_already_asked(gate_said, base_note, drift_note),
-        *_what_it_follows(directory, stage, stages, unit_meta, included),
-        *_shared(stage, idea_note, siblings_note, mentions_note),
-        *_second_artifact(directory, stage, unit_meta, included),
+    parts = [
+        *_already_asked(gate_said, base_note),
+        *_artifacts(stage, directory, included),
+        *_outputs(stage, unit_meta, included),
+        *_shared(stage, drift_note, idea_note, siblings_note, mentions_note, included),
         *_where_you_work(stage, workspace, worktree, ceilings),
         *_tools(stage, directory, plan_map, runs_commands, state_file, included),
         *_lane(stage, lane, unit_meta, included),
-        *_answers(stage, directory, artifact, writes_own, unit_meta),
-        *_sent_back(stage, directory, review, included, unit_meta),
+        *_answers(stage, unit_meta, included),
+        *_findings(stage, unit_meta, included),
         *_push(stage, branch),
-        *_rounds_so_far(stage, directory, review, included),
         *_unfinished_round(stage, unfinished_round, included),
-        *_incomplete_round(stage, review, included),
-        *_review_answers(stage, directory, artifact, writes_own, unit_meta),
+        *_incomplete_round(stage, incomplete_round, included),
         *_commit_reviewed(stage, head),
         *_handed(stage, last_attempt, integration_note, screens_note, included),
     ]
-    files, pointed = _unit_files(directory, stage, stages, included)
-    parts += files
+    parts = [*opening, *_given(directory, included), *parts]
     parts += [text for _name, text in blocks if text]
     # Just before the task, so the note is the last thing read before it.
     if app_note.strip():
         parts.append(_app_note_block(app_note))
     if rerun:
-        parts.append(_rerun_block(directory, stage, artifact, rerun_note))
+        parts.append(_rerun_block(artifact, rerun_note))
     parts.append(_task(workspace, directory, unit, artifact, writes_own))
     block = submit_block(stage, artifact, writes_own)
     if block:
         parts.append(block)
-    return "\n\n---\n\n".join(parts), included, pointed
+    return "\n\n---\n\n".join(parts), included
 
 
 # What the engine says of a field its kind requires; every other field is the agent's, and its

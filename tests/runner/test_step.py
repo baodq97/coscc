@@ -25,8 +25,6 @@ from coscc.agent.policy import grant_for
 from coscc.runner.prompt import compose_prompt
 from coscc.runner.reply import RunError
 from coscc.runner.step import Runner
-from coscc.runner.prompt import answers_section
-from coscc.runner.prompt import build_prompt
 from coscc.runner.prompt import skill_for
 from tests.units.test_submit import a_head, submits as _submits
 
@@ -116,7 +114,6 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                     unit=UNIT,
                     stage="plan",
                     artifact="plan.md",
-                    stages=STAGES,
                     mode="autonomous",
                 ):
                     out.append(ev)
@@ -155,7 +152,6 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                     unit=UNIT,
                     stage="intent",
                     artifact="intent.md",
-                    stages=STAGES,
                     mode="autonomous",
                 ):
                     out.append(ev)
@@ -193,7 +189,6 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                 ):
                     out.append(ev)
@@ -236,7 +231,6 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                         unit=UNIT,
                         stage="spec",
                         artifact="spec.md",
-                        stages=STAGES,
                         mode="autonomous",
                     ):
                         pass
@@ -274,7 +268,6 @@ class AStepRecordsTheCommitItRanOn(unittest.TestCase):
                 unit=UNIT,
                 stage="spec",
                 artifact="spec.md",
-                stages=STAGES,
                 mode="manual",
                 **extra,
             ):
@@ -332,7 +325,6 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
                 unit=UNIT,
                 stage=stage,
                 artifact=f"{stage}.md",
-                stages=STAGES,
                 mode="manual",
             ):
                 pass
@@ -391,7 +383,7 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
 
         def spy(*args, **kwargs):
             # Called again with the same arguments, before the step writes its artifact.
-            again, _, _ = compose_prompt(*args, **kwargs)
+            again, _ = compose_prompt(*args, **kwargs)
             built.append(again)
             return compose_prompt(*args, **kwargs)
 
@@ -453,7 +445,6 @@ class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
                     unit=UNIT,
                     stage="review",
                     artifact="review.md",
-                    stages=STAGES,
                     mode="manual",
                     cwd=str(tree),
                 ):
@@ -468,9 +459,7 @@ class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
     def test_no_head_is_said_rather_than_left_to_a_guess(self):
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="Status: accepted.\nI")
-            prompt, _ = build_prompt(
-                d, Path(d) / ".cos" / UNIT, UNIT, "review", STAGES, "review.md"
-            )
+            prompt, _ = compose_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "review", "review.md")
             self.assertIn("# The commit you are reviewing", prompt)
             self.assertIn("could not read the head", prompt)
             self.assertIn("Do not guess one", prompt)
@@ -478,8 +467,8 @@ class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
     def test_only_review_is_handed_the_head(self):
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="Status: accepted.\nI")
-            prompt, _ = build_prompt(
-                d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md", head="a" * 40
+            prompt, _ = compose_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "spec", "spec.md", head="a" * 40
             )
             self.assertNotIn("# The commit you are reviewing", prompt)
             self.assertNotIn("a" * 40, prompt)
@@ -532,7 +521,6 @@ class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
                 unit=UNIT,
                 stage="plan",
                 artifact="plan.md",
-                stages=STAGES,
                 mode="autonomous",
             ):
                 out.append(item)
@@ -599,7 +587,7 @@ class ReviewRoundsAccumulate(unittest.TestCase):
     def setUp(self):
         a_head(self)
 
-    def run_review(self, d, reply):
+    def run_review(self, d, reply, meta=None):
         unit = make_unit(
             Path(d),
             intent_md="Status: accepted.\nI",
@@ -617,8 +605,8 @@ class ReviewRoundsAccumulate(unittest.TestCase):
                 unit=UNIT,
                 stage="review",
                 artifact="review.md",
-                stages=STAGES,
                 mode="manual",
+                meta=meta,
             ):
                 last = item
             return last[1]
@@ -649,8 +637,11 @@ class ReviewRoundsAccumulate(unittest.TestCase):
 
     def test_the_prompt_no_longer_asks_for_a_copy(self):
         with tempfile.TemporaryDirectory() as d:
+            rounds = [{"n": 1, "verdict": "changes-requested", "findings": []}]
             session, _, go = self.run_review(
-                d, "# Review: x\nStatus: accepted.\n\n## Round 2\n\nok\n"
+                d,
+                "# Review: x\nStatus: accepted.\n\n## Round 2\n\nok\n",
+                meta={"artifacts": {"review.md": {"rounds": rounds}}},
             )
             asyncio.run(go())
             self.assertIn("Do not copy them", session.prompt)
@@ -679,206 +670,6 @@ class ReviewRoundsAccumulate(unittest.TestCase):
             self.assertNotEqual(done["outcome"], "done")
             self.assertIn("adds no review round", done["error"])
             self.assertIn("ROUND-ONE-MARKER", written.read_text(encoding="utf-8"))
-
-
-class RerunningKeepsTheAnswers(unittest.TestCase):
-    """Re-running a prose stage used to overwrite its artifact whole, so a `## Answers` block the
-    answer route had appended was gone with no trace
-    (`.claude/rules/coscc-app.md`, the hazard this unit rewrites)."""
-
-    ANSWERED = (
-        "Author: t. Status: accepted.\n\n## Open questions\n\n1. Placeholder?\n\n"
-        "## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-24. Via: product.\n\n"
-        "{mark}\n"
-    )
-
-    ROUND1 = (
-        "## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n\n"
-        "### Findings\n\n- F1 [open] a.py:3 — high — ROUND-ONE-MARKER-0025\n"
-    )
-
-    class Replies:
-        """`ReviewRoundsAccumulate.Replies`, plus `mid_write`: called after the reply has been
-        handed over and before `done` is yielded, so a test can simulate a person's answer landing
-        on disk while the step is still running."""
-
-        def __init__(self, text, mid_write=None):
-            self.text = text
-            self.mid_write = mid_write
-
-        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            self.prompt = text
-            yield ("chunk", self.text)
-            if self.mid_write:
-                self.mid_write()
-            await _submits(kw)
-            yield ("done", {"session_id": "s", "cost": {}})
-
-    def unit_dir(self, d, **files):
-        return make_unit(Path(d), **files)
-
-    def run_once(self, d, stage, artifact, reply, mid_write=None):
-        directory = Path(d) / ".cos" / UNIT
-        session = self.Replies(reply, mid_write)
-
-        async def go():
-            last = None
-            async for item in Runner(session, None).run(
-                workspace=d,
-                directory=directory,
-                journal_key=d,
-                unit=UNIT,
-                stage=stage,
-                artifact=artifact,
-                stages=STAGES,
-                mode="manual",
-            ):
-                last = item
-            return last[1]
-
-        return asyncio.run(go())
-
-    def test_a_reply_without_answers_keeps_the_section_on_every_non_review_stage(self):
-        for stage in ("idea", "intent", "spec", "plan"):
-            with self.subTest(stage=stage):
-                with tempfile.TemporaryDirectory() as d:
-                    artifact = f"{stage}.md"
-                    existing = self.ANSWERED.format(mark=f"KEEP-{stage.upper()}-0025")
-                    self.unit_dir(d, **{artifact.replace(".", "_"): existing})
-                    path = Path(d) / ".cos" / UNIT / artifact
-                    before_section = answers_section(path.read_bytes())
-                    reply = f"# {stage.title()}: x\nStatus: accepted.\n\nno answers here.\n"
-                    done = self.run_once(d, stage, artifact, reply)
-                    after = path.read_bytes()
-                    self.assertEqual(done["outcome"], "done", done)
-                    self.assertTrue(after.endswith(before_section))
-
-    def test_b_a_reply_whose_answers_match_disk_still_yields_exactly_one_section(self):
-        with tempfile.TemporaryDirectory() as d:
-            existing = self.ANSWERED.format(mark="MATCHING-MARK-0025")
-            self.unit_dir(d, spec_md=existing)
-            reply = (
-                "# Spec: x\nStatus: accepted.\n\n## Requirements\n\nbody\n\n"
-                + existing[existing.index("## Answers") :]
-            )
-            done = self.run_once(d, "spec", "spec.md", reply)
-            after = (Path(d) / ".cos" / UNIT / "spec.md").read_text(encoding="utf-8")
-            self.assertEqual(done["outcome"], "done", done)
-            self.assertEqual(after.count("## Answers"), 1)
-
-    def test_c_a_reply_whose_answers_differ_from_disk_is_overruled_by_disk(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.unit_dir(d, spec_md=self.ANSWERED.format(mark="DISK-MARK-0025"))
-            reply = (
-                "# Spec: x\nStatus: accepted.\n\n## Requirements\n\nbody\n\n"
-                "## Answers\n\n### Câu 1\nAnswered by: a model. Date: 2099-01-01. "
-                "Via: product.\n\nREPLY-MARK-SHOULD-NOT-LAND-0025\n"
-            )
-            done = self.run_once(d, "spec", "spec.md", reply)
-            after = (Path(d) / ".cos" / UNIT / "spec.md").read_text(encoding="utf-8")
-            self.assertEqual(done["outcome"], "done", done)
-            self.assertIn("DISK-MARK-0025", after)
-            self.assertNotIn("REPLY-MARK-SHOULD-NOT-LAND-0025", after)
-
-    def test_d_a_reply_with_answers_but_none_on_disk_writes_none(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.unit_dir(
-                d,
-                spec_md="Author: t. Status: accepted.\n\n## Requirements\n\n"
-                "nothing answered yet.\n",
-            )
-            reply = (
-                "# Spec: x\nStatus: accepted.\n\n## Requirements\n\nbody\n\n"
-                "## Answers\n\n### Câu 1\nAnswered by: a model. Date: 2099-01-01. "
-                "Via: product.\n\nSHOULD-NOT-LAND-0025\n"
-            )
-            done = self.run_once(d, "spec", "spec.md", reply)
-            after = (Path(d) / ".cos" / UNIT / "spec.md").read_text(encoding="utf-8")
-            self.assertEqual(done["outcome"], "done", done)
-            self.assertNotIn("## Answers", after)
-
-    def test_e_a_reply_with_no_title_leaves_the_file_untouched(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.unit_dir(d, spec_md=self.ANSWERED.format(mark="UNTOUCHED-MARK-0025"))
-            path = Path(d) / ".cos" / UNIT / "spec.md"
-            before = path.read_bytes()
-            done = self.run_once(d, "spec", "spec.md", "## Requirements\n\nNo title at all.\n")
-            self.assertNotEqual(done["outcome"], "done")
-            self.assertEqual(path.read_bytes(), before)
-
-    def test_f_a_block_appended_while_the_step_runs_is_still_on_disk_after(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.unit_dir(
-                d,
-                spec_md="Author: t. Status: accepted.\n\n## Requirements\n\nnothing yet.\n",
-            )
-            path = Path(d) / ".cos" / UNIT / "spec.md"
-
-            def mid_write():
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(
-                        "\n## Answers\n\n### Câu 1\nAnswered by: Phong. "
-                        "Date: 2026-09-24. Via: product.\n\nMID-RUN-MARKER-0025\n"
-                    )
-
-            done = self.run_once(
-                d,
-                "spec",
-                "spec.md",
-                "# Spec: x\nStatus: accepted.\n\nno answers here.\n",
-                mid_write=mid_write,
-            )
-            after = path.read_text(encoding="utf-8")
-            self.assertEqual(done["outcome"], "done", done)
-            self.assertIn("MID-RUN-MARKER-0025", after)
-
-    def test_g_review_with_answers_and_a_new_round_keeps_both(self):
-        a_head(self)
-        with tempfile.TemporaryDirectory() as d:
-            existing = (
-                "# Review: x\nPR: pr.md. Status: changes-requested.\n\n"
-                + self.ROUND1
-                + "\n## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-24. "
-                "Via: product.\n\nREVIEW-ANSWER-MARK-0025\n"
-            )
-            self.unit_dir(d, review_md=existing)
-            path = Path(d) / ".cos" / UNIT / "review.md"
-            before_section = answers_section(path.read_bytes())
-            reply = (
-                "# Review: x\nStatus: accepted.\n\n## Round 2\n\n"
-                "Reviewed: def5678. Verdict: pass.\n\n### Findings\n\nnone\n"
-            )
-            done = self.run_once(d, "review", "review.md", reply)
-            after = path.read_bytes()
-            self.assertEqual(done["outcome"], "done", done)
-            self.assertTrue(after.endswith(before_section))
-            i1 = after.find(b"ROUND-ONE-MARKER-0025")
-            i2 = after.find(b"## Round 2")
-            i3 = after.find(b"## Answers")
-            self.assertNotIn(-1, (i1, i2, i3))
-            self.assertLess(i1, i2)
-            self.assertLess(i2, i3)
-            self.assertEqual(after.decode("utf-8").count("\n## Round "), 2)
-
-    def test_h_a_reply_that_rewrites_round_one_on_a_review_with_answers_is_refused(self):
-        with tempfile.TemporaryDirectory() as d:
-            existing = (
-                "# Review: x\nPR: pr.md. Status: changes-requested.\n\n"
-                + self.ROUND1
-                + "\n## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-24. "
-                "Via: product.\n\nREVIEW-ANSWER-MARK-0025\n"
-            )
-            self.unit_dir(d, review_md=existing)
-            path = Path(d) / ".cos" / UNIT / "review.md"
-            before = path.read_bytes()
-            reply = (
-                "# Review: x\nStatus: accepted.\n\n## Round 1\n\nnothing was wrong\n\n"
-                "## Round 2\n\nall fine\n"
-            )
-            done = self.run_once(d, "review", "review.md", reply)
-            self.assertNotEqual(done["outcome"], "done")
-            self.assertIn("changes an earlier review round", done["error"])
-            self.assertEqual(path.read_bytes(), before)
 
 
 class AStepWorksInItsUnitsWorktree(unittest.TestCase):
@@ -929,7 +720,6 @@ class AStepWorksInItsUnitsWorktree(unittest.TestCase):
                         unit=UNIT,
                         stage="impl",
                         artifact="impl.md",
-                        stages=STAGES,
                         mode="autonomous",
                         cwd=wt,
                     )
@@ -972,7 +762,6 @@ class TheStepHandsItsPlacesToTheGate(unittest.TestCase):
                 unit=UNIT,
                 stage=stage,
                 artifact=f"{stage}.md",
-                stages=STAGES,
                 mode="autonomous",
                 **kw,
             ):
@@ -1056,7 +845,6 @@ class AnImplReadsItsSiblings(unittest.TestCase):
                         unit=UNIT,
                         stage="impl",
                         artifact="impl.md",
-                        stages=STAGES,
                         mode="autonomous",
                         **{k: v.format(sib=sib) for k, v in kw.items()},
                     )
@@ -1106,7 +894,6 @@ class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                     **kw,
                 )
@@ -1160,7 +947,6 @@ class AnImplRunsUnderTheCeilingsOfItsLabel(unittest.TestCase):
                     unit=UNIT,
                     stage="impl",
                     artifact="impl.md",
-                    stages=STAGES,
                     mode="autonomous",
                     **kw,
                 )
@@ -1235,7 +1021,6 @@ class AStepRunsUnderTheCeilingsResolvedForIt(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                     running=running,
                     **kw,
@@ -1382,7 +1167,6 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
                     unit=UNIT,
                     stage=stage,
                     artifact=f"{stage}.md",
-                    stages=STAGES,
                     mode="manual",
                 )
             ]
@@ -1486,12 +1270,11 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
         g = grant_for("spike")
         with tempfile.TemporaryDirectory() as d:
             directory = self.unit(d)
-            prompt, _ = build_prompt(
+            prompt, _ = compose_prompt(
                 d,
                 directory,
                 UNIT,
                 "spike",
-                STAGES,
                 "spike.md",
                 worktree="/the/tree",
                 ceilings=(g.max_turns, g.max_budget_usd),
@@ -1509,8 +1292,8 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
                     continue
                 artifact = f"{stage}.md"
                 self.assertEqual(
-                    build_prompt(d, directory, UNIT, stage, STAGES, artifact, ceilings=(80, 8.0)),
-                    build_prompt(d, directory, UNIT, stage, STAGES, artifact),
+                    compose_prompt(d, directory, UNIT, stage, artifact, ceilings=(80, 8.0)),
+                    compose_prompt(d, directory, UNIT, stage, artifact),
                     stage,
                 )
 
@@ -1539,7 +1322,6 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
                         unit=UNIT,
                         stage="spike",
                         artifact="spike.md",
-                        stages=STAGES,
                         mode="autonomous",
                         cwd=scratch,
                     )
@@ -1638,7 +1420,6 @@ class AReviewAfterAnUnfinishedRoundIsHandedIt(unittest.TestCase):
                 unit=UNIT,
                 stage="review",
                 artifact="review.md",
-                stages=STAGES,
                 mode="manual",
                 **run_kw,
             ):
@@ -1655,8 +1436,8 @@ class AReviewAfterAnUnfinishedRoundIsHandedIt(unittest.TestCase):
             told, start = self._run(d, unfinished_round={"n": 1, "dropped": ["F9"]})
         self.assertNotIn("# The round that did not count", plain)
         self.assertIn("Round 1 asked for changes but does not list `F9`", told)
-        self.assertIn("review-unfinished", start["included"])
-        self.assertNotIn("review-unfinished", plain_start["included"])
+        self.assertIn("review-unfinished", start["envelope"])
+        self.assertNotIn("review-unfinished", plain_start["envelope"])
         self.assertEqual(set(start), set(plain_start))
 
 
@@ -1669,12 +1450,11 @@ class TheScreenshotsTakenAgain(unittest.TestCase):
     def test_review_carries_it_after_the_integration_and_says_so(self):
         with tempfile.TemporaryDirectory() as d:
             directory = _golden_unit(Path(d))
-            prompt, included, _ = compose_prompt(
+            prompt, included = compose_prompt(
                 d,
                 directory,
                 UNIT,
                 "review",
-                STAGES,
                 "review.md",
                 integration_note="# INTEGRATION\n\nINTEGRATION-NOTE",
                 screens_note=self.NOTE,
@@ -1689,7 +1469,7 @@ class TheScreenshotsTakenAgain(unittest.TestCase):
             directory = _golden_unit(Path(d))
             for stage in SESSION_STAGES:
                 with self.subTest(stage=stage):
-                    args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
+                    args = (d, directory, UNIT, stage, f"{stage}.md")
                     handed = compose_prompt(*args, screens_note=self.NOTE)
                     if stage == "review":
                         self.assertEqual(
@@ -1723,7 +1503,6 @@ class TheScreenshotsTakenAgain(unittest.TestCase):
                     unit=UNIT,
                     stage="review",
                     artifact="review.md",
-                    stages=STAGES,
                     mode="manual",
                     screens_note=self.NOTE,
                 ):
@@ -1765,7 +1544,6 @@ class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
                     root / ".cos" / UNIT,
                     UNIT,
                     stage,
-                    STAGES,
                     f"{stage}.md",
                     runs_commands=True,
                 )[0]
@@ -1777,7 +1555,7 @@ class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
     def test_a_prose_stage_is_not_told(self):
         from coscc.runner.prompt import HARNESS_HEADING
 
-        prompt = compose_prompt("/w", "/store/.cos/" + UNIT, UNIT, "spec", STAGES, "spec.md")[0]
+        prompt = compose_prompt("/w", "/store/.cos/" + UNIT, UNIT, "spec", "spec.md")[0]
         self.assertNotIn(HARNESS_HEADING, prompt)
 
 
@@ -1846,7 +1624,6 @@ class AStepAnUpdatePaused(unittest.TestCase):
                 unit=UNIT,
                 stage="plan",
                 artifact="plan.md",
-                stages=STAGES,
                 mode="manual",
                 running=running,
                 **({"resume": resume} if resume is not None else {}),
@@ -2048,7 +1825,6 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
                     unit=unit,
                     stage=stage,
                     artifact=f"{stage}.md",
-                    stages=STAGES,
                     mode="autonomous",
                     plan=plan,
                     **({"cwd": cwd} if cwd else {}),
@@ -2125,7 +1901,6 @@ class AFeatureHandsAStepItsOwnTools(unittest.TestCase):
                     unit=unit,
                     stage="impl",
                     artifact="impl.md",
-                    stages=STAGES,
                     mode="autonomous",
                     cwd=trees[unit],
                 ):

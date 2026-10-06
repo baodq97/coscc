@@ -20,8 +20,9 @@ def render(facts: Facts) -> str:
         "# The plan's parallel steps",
         "",
         f"The plan names {len(found)} steps to run at the same time: start one `worker` for "
-        "each, with the step's line below as `description` and its paths and report in the "
-        "prompt.",
+        "each, with the step's line below as `description`. Its prompt is that step's slice: "
+        "its paths and report, the part of `plan.md` and the answers and findings that touch "
+        "those paths, copied from this prompt. A worker reads no unit file.",
     ]
     for i, step in enumerate(found):
         parts += [
