@@ -1,7 +1,7 @@
 // The first screen: Leif's briefing. In the frame, the numbers are real and the prose is a
 // fixed sentence built from them; Leif writes it once Leif lives in the app.
 
-import { allUnits, needsYou, proposalLink, useBoards, useLive } from "../lib/boards";
+import { allUnits, failedLink, needsYou, proposalLink, useBoards, useLive } from "../lib/boards";
 import { LeifAvatar } from "../lib/icons";
 import { unitState } from "../lib/model";
 import { Link } from "../lib/router";
@@ -18,7 +18,8 @@ export function Briefing() {
   const live = useLive();
   const loading = loadingBoards || live.loading;
   const proposals = live.proposals;
-  const { units: needs, total: waiting } = needsYou(allUnits(boards), proposals);
+  const failed = live.failed;
+  const { units: needs, total: waiting } = needsYou(allUnits(boards), proposals, failed);
   const moving = boards.flatMap((b) => (b.board?.running ?? []).map((run) => ({ ...run, workspace: b.workspace.name, number: Number(run.unit.slice(0, 4)) })));
   const working = moving.length + live.running.length;
   const off = boards.filter((b) => b.board && !b.board.autopilot?.on).map((b) => b.workspace.name);
@@ -65,6 +66,20 @@ export function Briefing() {
                 <span className="meta">{unitState(u).label}</span>
               </Link>
             ))}
+            {failed.length > 0 && (
+              <>
+                <div className="lgroup">
+                  Agent runs that failed <span className="n">{failed.length}</span>
+                </div>
+                {failed.map((f) => (
+                  <Link key={f.workspace + f.agent} to={failedLink(f)} className="lrow stack">
+                    <span className="id">{f.name}</span>
+                    <span className="t">{f.detail || "The last run failed."}</span>
+                    <span className="meta">{f.workspace} · {ago(f.at)}</span>
+                  </Link>
+                ))}
+              </>
+            )}
             {proposals.length > 0 && (
               <>
                 <div className="lgroup">
@@ -72,7 +87,7 @@ export function Briefing() {
                   <span className="r">newest first</span>
                 </div>
                 {proposals.slice(0, 5).map((p) => (
-                  <Link key={p.workspace + p.id} to={proposalLink(p)} className="lrow">
+                  <Link key={p.workspace + p.id} to={proposalLink(p)} className="lrow stack">
                     <span className="id">{p.agent_name}</span>
                     <span className="t">{p.title}</span>
                     <span className="meta">{p.workspace}</span>

@@ -374,6 +374,16 @@ export type LeifRun = {
 export type Live = {
   "running": LiveRun[];
   "proposals": LiveProposal[];
+  "failed": LiveFailed[];
+};
+
+export type LiveFailed = {
+  "workspace": string;
+  "agent": string;
+  "name": string;
+  "run": string;
+  "at": string;
+  "detail": string;
 };
 
 export type LiveProposal = {

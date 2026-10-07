@@ -684,8 +684,13 @@ describe("until and statusWords", () => {
   it("says why an agent is off and that it never ran", () => {
     expect(statusWords({ ...row, on: false, on_in: [], off_reason: "a run stopped at its ceiling" }, "a")).toBe("Off here: a run stopped at its ceiling · never ran");
   });
-  it("says nothing of on or off for an agent no schedule runs", () => {
-    expect(statusWords({ ...row, on: null }, "a")).toBe("");
+  it("tells a stage agent's last run and says it is always on", () => {
+    expect(statusWords({ ...row, on: null }, "a")).toBe("Always on · never ran");
+    expect(statusWords({ ...row, on: null, last: { at: "", made: null } as AgentRow["last"] }, "a")).toMatch(/^Always on · ran /);
+  });
+  it("says running now, not never ran or next, while the first run is in flight", () => {
+    const said = statusWords({ ...row, running: { run: "r", started: "" }, next_at: "2999-01-01T00:00:00Z" }, "a");
+    expect(said).toBe("On here (also on in b) · running now");
   });
 });
 
@@ -697,6 +702,9 @@ describe("proposalLink", () => {
 
 describe("needsYou", () => {
   const unit = (over: object) => ({ why: "", phase: "full", open: 0, ...over }) as unknown as PlacedUnit;
+  it("counts a failed agent run beside the proposals", () => {
+    expect(needsYou([], [1, 2], [{}]).total).toBe(3);
+  });
   it("counts the units that need a person and the proposals once, for every screen", () => {
     const got = needsYou([unit({ open: 2 }), unit({ paused: { at: "impl" } }), unit({}), unit({ why: "dropped", open: 1 })], ["p1", "p2", "p3"]);
     expect(got.units.length).toBe(2);

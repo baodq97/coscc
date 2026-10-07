@@ -39,11 +39,13 @@ SETTING_KIND = "agent-setting"
 PACK_KIND = "pack-setting"
 # How far back the page adds up cost and lists runs.
 WINDOW_DAYS = 30
+# How long an agent's failed latest run is held up to the owner.
+FAILED_DAYS = 3
 # A last run that spent this share of its budget or more is `costly`. Chosen, not measured.
 COSTLY_SHARE = 0.8
 # The chips, worst first: a row with one of `ATTENTION` is listed before the rest.
-CHIPS = ("failed", "costly", "idle", "ok")
-ATTENTION = ("failed", "costly")
+CHIPS = ("failed", "paused", "costly", "stopped", "idle", "ok")
+ATTENTION = ("failed", "paused", "costly")
 
 
 class RunView(TypedDict):
@@ -189,12 +191,23 @@ class LiveProposal(TypedDict):
     at: str
 
 
+class LiveFailed(TypedDict):
+    workspace: str
+    agent: str
+    name: str
+    run: str
+    at: str
+    detail: str
+
+
 class Live(TypedDict):
-    """What agents are doing across every listed workspace: the runs in flight and the proposals
-    waiting for a person (workspaces by their names)."""
+    """What agents are doing across every listed workspace: the runs in flight, the proposals
+    waiting for a person and the agents whose latest run of the last `FAILED_DAYS` days failed
+    (workspaces by their names)."""
 
     running: list[LiveRun]
     proposals: list[LiveProposal]
+    failed: list[LiveFailed]
 
 
 @dataclass(frozen=True)
@@ -288,10 +301,14 @@ class AgentPage(TypedDict):
 
 
 def chip_of(last: RunView | None, budget: float | None, runs_in_window: int) -> str:
-    """`failed` when the last run did not end `done`, `costly` when it spent `COSTLY_SHARE` of
-    `budget` or more, `idle` with no run in the window, else `ok`."""
+    """What the last run came to: `failed`, `paused` (it stopped at a ceiling and kept its
+    session) or `stopped` (a person's Stop, or the app going down) when it did not end `done`;
+    `costly` when it spent `COSTLY_SHARE` of `budget` or more, `idle` with no run in the window,
+    else `ok`."""
     if last is not None and last["outcome"] != "done":
-        return "failed"
+        return {"paused-budget": "paused", "cancelled": "stopped", "stopped": "stopped"}.get(
+            last["outcome"], "failed"
+        )
     cost = last["cost_usd"] if last is not None else None
     if budget and cost is not None and cost >= COSTLY_SHARE * budget:
         return "costly"
@@ -325,6 +342,16 @@ def _run_view(record: dict[str, Any], counts: dict[str, tuple[int, int]] | None 
         helpers=helpers,
         shallow=bool(refused) or verdict == "unclear",
     )
+
+
+def _plain(reason: str) -> str:
+    """A reason the app logged for turning an agent off, said once and plainly: its run stopped
+    at its turn limit, or at its spend limit."""
+    if "max_turns" in reason:
+        return "its last run stopped at its turn limit"
+    if "budget" in reason:
+        return "its last run stopped at its spend limit"
+    return reason
 
 
 def groups_of(runs: list[RunView], settings: list[Setting]) -> list[RunGroup]:
@@ -703,7 +730,7 @@ class Agents:
             row["off_reason"] = (
                 "off until you turn it on"
                 if said is None
-                else str(said.get("reason") or "")
+                else _plain(str(said.get("reason") or ""))
                 or ("turned off by you" if said.get("by") == OWNER else "turned off")
             )
             return
@@ -756,7 +783,45 @@ class Agents:
             for p in proposals.listed(data, key)
             if p["state"] == "pending"
         ]
-        return Live(running=running, proposals=sorted(waiting, key=lambda p: p["at"], reverse=True))
+        return Live(
+            running=running,
+            proposals=sorted(waiting, key=lambda p: p["at"], reverse=True),
+            failed=self._failed(by_key, name),
+        )
+
+    def _failed(self, by_key: dict[str, str], name: Callable[[str], str]) -> list[LiveFailed]:
+        """The agents whose latest run in a workspace failed within `FAILED_DAYS`, newest first:
+        a later run that did not fail clears it. A follow-up, a skip and a chat turn are no run
+        of the agent's own."""
+        journal = self.ws.journal()
+        if journal is None:
+            return []
+        since = (datetime.now(timezone.utc) - timedelta(days=FAILED_DAYS)).isoformat(
+            timespec="seconds"
+        )
+        latest: dict[tuple[str, str], dict[str, Any]] = {}
+        try:
+            for r in journal.records(None, kinds=("end",)):
+                if r.get("workspace") in by_key and r.get("agent") and not r.get("unit"):
+                    if not (
+                        r.get("skipped") or r.get("parent_run") or r.get("stage") in ("ask", "chat")
+                    ):
+                        latest[str(r["workspace"]), str(r["agent"])] = r
+        except Unusable, Busy, sqlite3.Error, OSError:
+            return []
+        out = [
+            LiveFailed(
+                workspace=by_key[ws],
+                agent=key,
+                name=name(key),
+                run=str(r.get("run") or ""),
+                at=str(r.get("at") or ""),
+                detail=str(r.get("detail") or ""),
+            )
+            for (ws, key), r in latest.items()
+            if r.get("outcome") == "failed" and str(r.get("at") or "") >= since
+        ]
+        return sorted(out, key=lambda f: f["at"], reverse=True)
 
     def _row(
         self,

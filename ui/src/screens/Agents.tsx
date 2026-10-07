@@ -70,6 +70,7 @@ export function triggerWords(a: AgentRow, rows: AgentRow[] = []): string {
 export function attention(a: AgentRow): { tone: "red" | "amber"; label: string } | null {
   if (a.problems.length) return { tone: "red", label: "Cannot run" };
   if (a.chip === "failed") return { tone: "red", label: "Last run failed" };
+  if (a.chip === "paused") return { tone: "amber", label: "Paused at its ceiling" };
   if (a.chip === "costly") return { tone: "amber", label: "Near its $ ceiling" };
   return null;
 }
@@ -77,16 +78,17 @@ export function attention(a: AgentRow): { tone: "red" | "amber"; label: string }
 /** Where an agent stands, in a line: on or off here, its last run and what it made, its next run. */
 export function statusWords(a: AgentRow, here: string): string {
   const said: string[] = [];
-  if (a.on !== null) {
+  if (a.on === null) said.push("Always on");
+  else {
     const held = a.on && a.off_reason ? ` · ${a.off_reason}` : "";
     const elsewhere = a.on_in.filter((n) => n !== here);
     const also = elsewhere.length ? ` (${a.on ? "also on" : "on"} in ${elsewhere.join(", ")})` : "";
     said.push(a.on ? `On here${also}${held}` : `Off here${a.off_reason ? `: ${a.off_reason}` : ""}${also}`);
   }
-  if (a.last)
-    said.push(`ran ${ago(a.last.at)}${a.last.made != null ? `, made ${a.last.made}` : ""}`);
-  else if (a.on !== null) said.push("never ran");
-  if (a.next_at) said.push(`next ${until(a.next_at)}`);
+  if (a.running) said.push("running now");
+  else if (a.last) said.push(`${a.last.skipped ? "skipped" : "ran"} ${ago(a.last.at)}${a.last.made != null ? `, made ${a.last.made}` : ""}`);
+  else said.push("never ran");
+  if (a.next_at && !a.running) said.push(`next ${until(a.next_at)}`);
   return said.join(" · ");
 }
 
@@ -135,14 +137,19 @@ export function useRunWorkspace(run: string, list: { path: string }[]): string |
 export const inWorkspace = (to: string, w?: Workspace) => (w ? `${to}?ws=${encodeURIComponent(w.name)}` : to);
 
 /** The agents of the workspace the address names: one read gives every row and the catalog. */
-export function useAgents() {
+export function useAgents(only = "") {
   const ws = useResource("/api/workspaces");
   const list = ws.data?.workspaces ?? [];
-  const named = useQuery("ws");
+  // The chosen project stays chosen while the person moves between pages.
+  const urlNamed = useQuery("ws");
   const draft = useQuery("draft");
+  const named = urlNamed || (draft ? "" : sessionStorage.getItem("agents.ws") || "");
   const ofRun = useRunWorkspace(named ? "" : draft, list);
   const workspace = pickWorkspace(list, named, ofRun);
-  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path } : {}, { on: ["agent-run."], every: 60_000, wait: 0 });
+  useEffect(() => {
+    if (workspace) sessionStorage.setItem("agents.ws", workspace.name);
+  }, [workspace?.name]);
+  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path, ...(only ? { agent: only } : {}) } : {}, { on: ["agent-run."], every: 60_000, wait: 0 });
   return { ws, list, workspace, cwd: workspace?.path ?? "", agents };
 }
 
@@ -184,16 +191,16 @@ export function Agents() {
   const packs = [...new Set(idle.map(packTitle))].sort((a, b) => (a === "Yours" ? -1 : b === "Yours" ? 1 : a.localeCompare(b)));
   return (
     <div className="page" style={{ maxWidth: 1040 }}>
-      <PageHead
-        title="Agents"
-        lede="Every agent the app runs: when it runs, on what model, what it may do and what it cost. Open one to change any part; its next run uses the change."
-        actions={
-          <>
-            <WorkspaceSwitch list={list} workspace={workspace} to="/agents" />
-            <Button kind="primary" icon="plus" disabled={!agents.data} onClick={() => setAdding(true)}>New agent</Button>
-          </>
-        }
-      />
+      <div className="agents-head">
+        <PageHead
+          title="Agents"
+          lede="Every agent the app runs: when it runs, on what model, what it may do and what it cost. Open one to change any part; its next run uses the change."
+        />
+        <div className="agents-tools">
+          <WorkspaceSwitch list={list} workspace={workspace} to="/agents" />
+          <Button kind="primary" icon="plus" disabled={!agents.data} onClick={() => setAdding(true)}>New agent</Button>
+        </div>
+      </div>
       {adding && agents.data && <NewAgent rows={rows} catalog={agents.data.catalog} cwd={cwd} run={run || undefined} onClose={() => setAdding(false)} />}
       {agents.state === "error" ? (
         <ErrorState error={agents.error} onRetry={agents.reload} />

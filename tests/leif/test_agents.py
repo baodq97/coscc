@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest import mock
 
 from coscc import kernel
 from coscc.config import Config
@@ -398,6 +398,41 @@ class ThePage(_WithAService):
         after = self._row(self.core.agents.agent_page(), "spec")
         self.assertEqual(list(after["builtin"]), ["body"])
         self.assertNotEqual(after["builtin"]["body"], "New.")
+
+    def test_a_failed_latest_run_is_live_until_a_later_run_does_not_fail(self):
+        now = datetime.now(timezone.utc)
+        failed = _end("scan", "failed", 1, unit="") | {
+            "run": "r1",
+            "agent": "scan",
+            "detail": "boom",
+            "at": (now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        }
+        self._seed([failed])
+        listed = {"workspaces": [{"name": "proj", "path": "w", "missing": False}], "paths": ["w"]}
+        self.enterContext(mock.patch.object(self.core.ws, "all", return_value=listed))
+        self.enterContext(mock.patch.object(self.core.ws, "key", side_effect=lambda p: p))
+        [got] = self.core.agents.live()["failed"]
+        self.assertEqual(
+            (got["workspace"], got["agent"], got["run"], got["detail"]),
+            ("proj", "scan", "r1", "boom"),
+        )
+        later = {"run": "r2", "agent": "scan", "at": now.isoformat(timespec="seconds")}
+        self._seed([_end("scan", "done", 0, unit="") | later])
+        self.assertEqual(self.core.agents.live()["failed"], [])
+
+    def test_a_pause_or_a_stop_is_not_called_a_failure(self):
+        from coscc.leif.agents import chip_of
+
+        def last(outcome):
+            return {"outcome": outcome, "cost_usd": None}
+
+        self.assertEqual(
+            [
+                chip_of(last(o), None, 1)
+                for o in ("failed", "paused-budget", "cancelled", "stopped")
+            ],
+            ["failed", "paused", "stopped", "stopped"],
+        )
 
     def test_a_setting_since_the_last_run_heads_a_group_of_no_run(self):
         self.core.agents.set_agent_field("spec", "body", "New.")
