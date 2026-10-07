@@ -47,6 +47,8 @@ TEXT_MAX = 4_000
 # Characters of the run's transcript a fresh follow-up reads, and of its last words.
 EXCERPT = 6_000
 LAST_WORDS = 2_000
+# Characters of an answer the thread shows; its log holds all of it.
+ANSWER = 20_000
 
 ASK_SYSTEM = (
     "You answer a person's question about an earlier run of an agent of this app. You read; you "
@@ -298,7 +300,7 @@ async def state(core: Core, cwd: str, run: str) -> Thread:
                 why=str(s.get("fresh_why") or ""),
                 cache_read_tokens=int((e or {}).get("cache_read_tokens") or 0),
                 cache_creation_tokens=int((e or {}).get("cache_creation_tokens") or 0),
-                answer=last_words(data, str(s.get("run") or "")) if e else "",
+                answer=last_words(data, str(s.get("run") or ""), ANSWER) if e else "",
             )
         )
     try:
@@ -316,14 +318,14 @@ async def state(core: Core, cwd: str, run: str) -> Thread:
     )
 
 
-def last_words(data: Data, run: str) -> str:
-    """The last thing `run`'s agent said, as its events kept it."""
+def last_words(data: Data, run: str, limit: int = LAST_WORDS) -> str:
+    """The last thing `run`'s agent said, as its events kept it, cut at `limit` characters."""
     try:
         events, _ = data.step_events_page(run, None, 40)
     except Busy:
         return ""
     said = [e for e in events if e.get("kind") == "text" and e.get("role") != "user"]
-    return str(said[-1].get("text") or "")[:LAST_WORDS] if said else ""
+    return str(said[-1].get("text") or "")[:limit] if said else ""
 
 
 def _summary(core: Core, start: Mapping[str, Any], end: Mapping[str, Any], tree: str) -> str:

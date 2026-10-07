@@ -86,7 +86,8 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
     setStopping(true);
     try {
       await api.post("/api/runs/" + encodeURIComponent(run) + "/stop", { cwd });
-      head.reload();
+      // The run ends a moment after the press: its `end` is written once its session is closed.
+      setTimeout(head.reload, 1500);
     } catch (e) {
       setStopError((e as Error).message);
     } finally {
@@ -128,7 +129,7 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
 
 /** What a question cost and how it was answered: in the run's warm session, or afresh and why. */
 function howAnswered(f: Pick<Followup, "resumed" | "why" | "cost_usd">): string {
-  const how = f.resumed ? "Answered in the run's own session" : `Answered afresh: ${f.why}`;
+  const how = f.resumed ? "Answered in the same session, still warm" : `Answered afresh: ${f.why}`;
   return f.cost_usd != null ? `${how} · ${money(f.cost_usd)}` : how;
 }
 
@@ -175,7 +176,7 @@ function AskRun({ cwd, run, workspace }: { cwd: string; run: string; workspace: 
     <div>
       <div className="faint ask-meta">
         Answering
-        {asked && asked.run === r ? (asked.resumed ? " in the run's own session" : `, afresh: ${asked.why}`) : ""}…
+        {asked && asked.run === r ? (asked.resumed ? " in the same session" : `, afresh: ${asked.why}`) : ""}…
       </div>
       <RunLog cwd={cwd} run={r} live />
     </div>
@@ -217,7 +218,7 @@ function AskRun({ cwd, run, workspace }: { cwd: string; run: string; workspace: 
           />
           <div className="cf">
             <span className="faint grow" style={{ fontSize: 12 }}>
-              {!ask.may ? ask.why : ask.resume ? "Goes on in the run's own session while it is warm. A paid, read-only answer, up to $0.50." : `Starts afresh (${ask.why}). A paid, read-only answer, up to $0.50.`}
+              {!ask.may ? ask.why : ask.resume ? "Goes on in the same session while it is warm. A paid, read-only answer, up to $0.50." : `Starts afresh (${ask.why}). A paid, read-only answer, up to $0.50.`}
             </span>
             <Button size="sm" kind="primary" icon="send" disabled={busy || !ask.may || !text.trim()} onClick={send}>
               {busy ? "Asking…" : "Ask"}

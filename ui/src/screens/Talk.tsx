@@ -40,7 +40,7 @@ export function Talk() {
   useEffect(() => {
     // Braces: `scrollIntoView` returns a Promise in newer browsers, and React would call it as the cleanup.
     end.current?.scrollIntoView({ block: "end" });
-  }, [messages]);
+  }, [messages, runs.map((r) => r.run + r.outcome).join()]);
 
   const open = async (s: ChatSession | null) => {
     setQuery("session", s?.session_id ?? "");

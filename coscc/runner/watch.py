@@ -271,6 +271,10 @@ class Watch:
                 try:
                     first = await asyncio.wait_for(q.get(), events.IDLE_WAKE)
                 except asyncio.TimeoutError:
+                    if recorder.closed:
+                        # Abandoned with no `end` event (a stopped run, the app going down).
+                        yield ("status", self.events_page(cwd, run, limit=1))
+                        return
                     yield ("events", [])
                     continue
                 wait = last + gather - loop.time()
