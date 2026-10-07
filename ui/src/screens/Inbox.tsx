@@ -4,8 +4,8 @@
 import { useState } from "react";
 import type { Question } from "../api.gen";
 import { api, useResource } from "../lib/api";
-import { allUnits, proposalLink, useBoards, useLive, type PlacedUnit } from "../lib/boards";
-import { liveQuestions } from "../lib/model";
+import { allUnits, needsYou, proposalLink, useBoards, useLive, type PlacedUnit } from "../lib/boards";
+import { liveQuestions, unitState } from "../lib/model";
 import { ago, unitCode, unitTitle } from "../lib/format";
 import { Icon } from "../lib/icons";
 import { stageLabel } from "../lib/pack";
@@ -22,15 +22,17 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
   const { boards, loading: loadingBoards } = useBoards();
   const { proposals, loading: loadingLive } = useLive();
   const loading = loadingBoards || loadingLive;
-  const waiting = allUnits(boards)
-    .filter((u) => liveQuestions(u) > 0)
-    .sort((a, b) => b.updated.localeCompare(a.updated));
+  const needs = needsYou(allUnits(boards), proposals);
+  const newest = (a: PlacedUnit, b: PlacedUnit) => b.updated.localeCompare(a.updated);
+  const waiting = needs.units.filter((u) => liveQuestions(u) > 0).sort(newest);
+  // Units that need a person without a question: a pause at a ceiling, a missing file.
+  const other = needs.units.filter((u) => liveQuestions(u) === 0).sort(newest);
   const asked = workspace !== undefined && number !== undefined;
   const found = waiting.find((u) => u.workspace.name === workspace && u.number === Number(number));
   const chosen = found ?? (asked ? undefined : waiting[0]);
 
   if (loading) return <div className="page"><SkeletonRows rows={4} /></div>;
-  const view = inboxView(waiting.length + proposals.length, asked, Boolean(found));
+  const view = inboxView(needs.total, asked, Boolean(found));
   if (view === "missing")
     return (
       <div className="page mid">
@@ -52,7 +54,7 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
     <div className="two">
       <div className="lp">
         <div className="lgroup" style={{ background: "var(--panel)" }}>
-          Needs you <span className="n">{waiting.length + proposals.length}</span>
+          Needs you <span className="n">{needs.total}</span>
           <span className="r">newest first</span>
         </div>
         {waiting.map((u) => (
@@ -76,13 +78,27 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
             </div>
           </div>
         ))}
-        {proposals.length > 0 && waiting.length > 0 && (
+        {other.map((u) => (
+          <Link key={`${u.workspace.name}/${u.name}`} to={`/unit/${u.workspace.name}/${u.number}`} className="ny">
+            <div className="ny-ic">
+              <Icon name="arrow" size={15} />
+            </div>
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="row">
+                <span className="ny-t ellipsis" style={{ fontSize: 13 }}>{unitState(u).label} on {unitCode(u.workspace.name, u.number)}</span>
+                <span className="faint nowrap" style={{ fontSize: 12, marginLeft: "auto" }}>{u.updated ? ago(u.updated) : ""}</span>
+              </div>
+              <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{unitTitle(u.name)}</div>
+            </div>
+          </Link>
+        ))}
+        {proposals.length > 0 && (waiting.length > 0 || other.length > 0) && (
           <div className="lgroup" style={{ background: "var(--panel)" }}>
             Proposals to decide <span className="n">{proposals.length}</span>
           </div>
         )}
         {proposals.map((p) => (
-          <div key={p.workspace + p.id} className="ny" style={{ cursor: "pointer" }} onClick={() => navigate(proposalLink(p))}>
+          <Link key={p.workspace + p.id} to={proposalLink(p)} className="ny">
             <div className="ny-ic">
               <Icon name="arrow" size={15} />
             </div>
@@ -93,15 +109,18 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
               </div>
               <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{p.title}</div>
             </div>
-          </div>
+          </Link>
         ))}
       </div>
       <div className="rp">
         {chosen ? (
           <Questions unit={chosen} />
         ) : (
-          <Empty icon="inbox" title="No question waits for you">
-            {proposals.length} proposal{proposals.length === 1 ? "" : "s"} wait for a decision: open one to accept or dismiss it on Up next.
+          <Empty
+            icon="inbox"
+            title={proposals.length ? `${proposals.length} proposal${proposals.length === 1 ? "" : "s"} to decide` : "No question waits for you"}
+          >
+            {proposals.length ? "No question waits for you. Open a proposal to accept or dismiss it on Up next." : "Units that need you are listed on the left."}
           </Empty>
         )}
       </div>

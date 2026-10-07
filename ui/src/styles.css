@@ -701,3 +701,4 @@ a.btn { text-decoration: none; }
 .rl-full { margin: 4px 0 2px; padding: 6px 8px; background: var(--surface-2, rgba(127,127,127,.1)); border-radius: 4px; font: inherit; white-space: pre-wrap; word-break: break-word; }
 .live-link { color: var(--accent); font-size: 12.5px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
 .agent-controls .field-err { font-size: 12.5px; }
+.lrow .id.nowrap { width: auto; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }

@@ -752,7 +752,6 @@ function OnHere({ a, cwd, setPage }: Ctx) {
         <button className={a.on ? "on" : ""} aria-pressed={!!a.on} disabled={busy} onClick={() => set(true)}>On</button>
         <button className={a.on ? "" : "on"} aria-pressed={!a.on} disabled={busy} onClick={() => set(false)}>Off</button>
       </span>
-      {!a.on && a.off_reason && <span className="muted" style={{ fontSize: 12.5 }}>{a.off_reason}</span>}
       {error && <span className="field-err">{error}</span>}
     </span>
   );

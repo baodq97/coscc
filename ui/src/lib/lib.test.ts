@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { until, startedBy, ago, modelName, money, unitCode, unitTitle } from "./format";
 import { match } from "./router";
-import { findUnit, proposalLink, type PlacedUnit } from "./boards";
+import { findUnit, needsYou, proposalLink, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { fill, readLines } from "./api";
@@ -692,5 +692,14 @@ describe("until and statusWords", () => {
 describe("proposalLink", () => {
   it("opens the proposal on its project's Up next", () => {
     expect(proposalLink({ workspace: "my proj", id: 31 })).toBe("/up-next?ws=my%20proj#proposal-31");
+  });
+});
+
+describe("needsYou", () => {
+  const unit = (over: object) => ({ why: "", phase: "full", open: 0, ...over }) as unknown as PlacedUnit;
+  it("counts the units that need a person and the proposals once, for every screen", () => {
+    const got = needsYou([unit({ open: 2 }), unit({ paused: { at: "impl" } }), unit({}), unit({ why: "dropped", open: 1 })], ["p1", "p2", "p3"]);
+    expect(got.units.length).toBe(2);
+    expect(got.total).toBe(5);
   });
 });

@@ -66,9 +66,10 @@ export function attention(a: AgentRow): { tone: "red" | "amber"; label: string }
 export function statusWords(a: AgentRow, here: string): string {
   const said: string[] = [];
   if (a.on !== null) {
+    const held = a.on && a.off_reason ? ` · ${a.off_reason}` : "";
     const elsewhere = a.on_in.filter((n) => n !== here);
     const also = elsewhere.length ? ` (${a.on ? "also on" : "on"} in ${elsewhere.join(", ")})` : "";
-    said.push(a.on ? `On here${also}` : `Off here${a.off_reason ? `: ${a.off_reason}` : ""}${also}`);
+    said.push(a.on ? `On here${also}${held}` : `Off here${a.off_reason ? `: ${a.off_reason}` : ""}${also}`);
   }
   if (a.last)
     said.push(`ran ${ago(a.last.at)}${a.last.made != null ? `, made ${a.last.made}` : ""}`);
@@ -129,7 +130,7 @@ export function useAgents() {
   const draft = useQuery("draft");
   const ofRun = useRunWorkspace(named ? "" : draft, list);
   const workspace = pickWorkspace(list, named, ofRun);
-  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path } : {}, { on: ["agent-run."], wait: 0 });
+  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path } : {}, { on: ["agent-run."], every: 60_000, wait: 0 });
   return { ws, list, workspace, cwd: workspace?.path ?? "", agents };
 }
 

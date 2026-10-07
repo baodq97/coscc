@@ -2,7 +2,7 @@
 // the order their estimates give (Leif's suggestion, with the why), and what has no estimate yet.
 // Every change saves the whole shortlist again with a reason, so the run log keeps who and why.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { EstimateBrief, Paused } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
@@ -26,7 +26,10 @@ export function moved(list: string[], unit: string, by: number): string[] {
 
 export function UpNext() {
   const { boards, loading } = useBoards();
-  const [project, setProject] = useState(useQuery("ws"));
+  const named = useQuery("ws");
+  const [project, setProject] = useState(named);
+  // A link to another project's proposal moves the page there.
+  useEffect(() => setProject(named), [named]);
   const workspace = boards.find((b) => b.workspace.name === project)?.workspace ?? boards[0]?.workspace;
   return (
     <div className="page mid">

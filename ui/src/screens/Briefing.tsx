@@ -1,12 +1,12 @@
 // The first screen: Leif's briefing. In the frame, the numbers are real and the prose is a
 // fixed sentence built from them; Leif writes it once Leif lives in the app.
 
-import { allUnits, proposalLink, useBoards, useLive } from "../lib/boards";
+import { allUnits, needsYou, proposalLink, useBoards, useLive } from "../lib/boards";
 import { LeifAvatar } from "../lib/icons";
 import { unitState } from "../lib/model";
 import { Link } from "../lib/router";
 import { ago, unitCode, unitTitle } from "../lib/format";
-import { Button, Empty, SkeletonRows } from "../components/ui";
+import { Button, Empty, ErrorState, SkeletonRows } from "../components/ui";
 
 function greeting(now = new Date()): string {
   const h = now.getHours();
@@ -18,10 +18,8 @@ export function Briefing() {
   const live = useLive();
   const loading = loadingBoards || live.loading;
   const proposals = live.proposals;
-  const units = allUnits(boards);
-  const needs = units.filter((u) => unitState(u).group === "Needs you");
+  const { units: needs, total: waiting } = needsYou(allUnits(boards), proposals);
   const moving = boards.flatMap((b) => (b.board?.running ?? []).map((run) => ({ ...run, workspace: b.workspace.name, number: Number(run.unit.slice(0, 4)) })));
-  const waiting = needs.length + proposals.length;
   const working = moving.length + live.running.length;
   const off = boards.filter((b) => b.board && !b.board.autopilot?.on).map((b) => b.workspace.name);
 
@@ -39,6 +37,8 @@ export function Briefing() {
           </div>
           {loading ? (
             <span className="sk" style={{ width: 360, height: 12, display: "inline-block" }} />
+          ) : live.error ? (
+            <div>Leif cannot read what the agents are doing now.</div>
           ) : (
             <div>
               <b>{waiting} {waiting === 1 ? "thing needs" : "things need"} you</b>, {working} {working === 1 ? "run is" : "runs are"} going
@@ -52,7 +52,9 @@ export function Briefing() {
         Needs you <span className="faint">{waiting || ""}</span>
       </div>
       <div className="card" style={{ overflow: "hidden" }}>
-        {loading ? (
+        {live.error ? (
+          <ErrorState error={live.error} onRetry={live.reload} />
+        ) : loading ? (
           <SkeletonRows rows={3} />
         ) : waiting ? (
           <>
@@ -77,8 +79,8 @@ export function Briefing() {
                   </Link>
                 ))}
                 {proposals.length > 5 && (
-                  <Link to={proposalLink(proposals[5])} className="lrow">
-                    <span className="t faint">{proposals.length - 5} more on Up next</span>
+                  <Link to="/inbox" className="lrow">
+                    <span className="t faint">{proposals.length - 5} more in Needs you</span>
                   </Link>
                 )}
               </>
@@ -108,7 +110,7 @@ export function Briefing() {
           <>
             {live.running.map((r) => (
               <Link key={r.run} to={`/run/${r.workspace}/${r.run}`} className="lrow">
-                <span className="id"><span className="dot live" /> {r.workspace}</span>
+                <span className="id nowrap"><span className="dot live" /> {r.workspace}</span>
                 <span className="t">{r.name}</span>
                 <span className="meta">running · {ago(r.started)} ▸ live</span>
               </Link>
