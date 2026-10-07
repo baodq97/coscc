@@ -18,6 +18,7 @@ from coscc.runner import triggers
 from coscc.store.db import Data
 from coscc.store.journal import Intervention, Journal
 from coscc.units import Invalid, proposals
+from coscc.units.meta import UnitMeta
 
 PROBLEM = "Steps stop and a person runs them again by hand. " * 6
 
@@ -283,6 +284,91 @@ class ARunAtItsCeilingTurnsTheRowOff(_Core):
         self.assertEqual((said["on"], said["by"]), (False, "app"))
         self.assertIn("ceiling", said["reason"])
         self.assertEqual(self.ends()[-1].get("data_until"), None)
+
+
+class TheGraderGradesWhatShipped(_Core):
+    """The outcome row: a fresh session in the trunk tree, the unit's intent and idea in its
+    prompt, its verdict the unit's `outputs` row, and a proposal for each criterion not met."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        root = Path(self.ws).parent
+        self.unit = "0141_fast-lane"
+        (root / "units" / self.unit).mkdir(parents=True)
+        (root / "units" / self.unit / "intent.md").write_text("## Proposed outcome\nA fix ships.")
+        self.trunk = root / "trunk"
+        self.trunk.mkdir()
+        self.meta = UnitMeta(root / "work", self.data)
+        self.core.ws.unit_meta = lambda: self.meta
+        self.core.ideas = SimpleNamespace(idea_note=lambda cwd, unit: "## Wanted\nFewer steps.")
+
+        async def main_tree(workspace, data_dir=None):
+            return self.trunk, "abc"
+
+        p = mock.patch("coscc.runner.triggers.worktrees.main_tree", main_tree)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def criteria(self, *met: str) -> dict:
+        return {
+            "criteria": [
+                {"criterion": f"O{n}", "source": f"sentence {n}", "met": m, "evidence": "a.py:1-2"}
+                for n, m in enumerate(met, start=1)
+            ]
+        }
+
+    async def test_a_press_grades_in_the_trunk_tree_and_proposes_each_no(self):
+        self.reply = Run("done", self.criteria("yes", "no", "unclear", "no"))
+        await triggers.run(self.core, "outcome", self.ws, self.unit, by="manual")
+        (given,) = self.given
+        self.assertEqual((given.cwd, given.workspace_dir), (str(self.trunk), self.ws))
+        self.assertIn("A fix ships.", given.prompt)
+        self.assertIn("Fewer steps.", given.prompt)
+        verdict = self.meta.verdict(self.ws, self.unit)
+        self.assertEqual((verdict["agent"], verdict["judgement"]), ("outcome", "not-met"))
+        made = proposals.listed(self.data, self.ws, "outcome")
+        self.assertEqual(sorted(p["title"] for p in made), ["sentence 2", "sentence 4"])
+        self.assertTrue(all(p["type"] == "fix" and p["unit"] == self.unit for p in made))
+        self.assertTrue(all(proposals.SLUG.match(p["slug"]) for p in made))
+        (end,) = [
+            r for r in self.journal.records(self.ws, kinds=("end",)) if r["stage"] == "outcome"
+        ]
+        self.assertEqual((end["verdict"], end["proposals"]), ("not-met", 2))
+
+    async def test_unclear_alone_proposes_nothing(self):
+        self.reply = Run("done", self.criteria("yes", "unclear"))
+        await triggers.run(self.core, "outcome", self.ws, self.unit, by="manual")
+        self.assertEqual(self.meta.verdict(self.ws, self.unit)["judgement"], "unclear")
+        self.assertEqual(proposals.listed(self.data, self.ws, "outcome"), [])
+
+    async def test_a_ship_is_graded_a_week_later_where_it_is_on(self):
+        triggers.listen(self.core)
+        shipped = {"workspace": self.ws, "unit": self.unit, "sha": "abc", "at": "t"}
+        self.core.bus.publish("unit.shipped", shipped)
+        with self.data.connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trigger_due").fetchone()[0], 0)
+        pack.set_agent_on(self.data, "outcome", self.ws, True)
+        self.core.bus.publish("unit.shipped", shipped)
+        await self.settle()
+        self.assertEqual(self.given, [])
+        with self.data.write() as conn:
+            (due,) = conn.execute("SELECT due_at FROM trigger_due").fetchone()
+            self.assertGreater(due, "2026")
+            conn.execute("UPDATE trigger_due SET due_at = '2000-01-01T00:00:00+00:00'")
+        self.reply = Run("done", self.criteria("yes"))
+        await triggers.tick(self.core)
+        await self.settle()
+        self.assertEqual([(g.started_by, g.unit) for g in self.given], [("event", self.unit)])
+
+    async def test_no_trunk_tree_ends_failed_before_any_session(self):
+        async def broken(workspace, data_dir=None):
+            raise triggers.GitError("no origin")
+
+        with mock.patch("coscc.runner.triggers.worktrees.main_tree", broken):
+            await triggers.run(self.core, "outcome", self.ws, self.unit, by="manual")
+        self.assertEqual(self.given, [])
+        (end,) = self.journal.records(self.ws, self.unit, kinds=("end",))
+        self.assertEqual(end["outcome"], "failed")
 
 
 if __name__ == "__main__":

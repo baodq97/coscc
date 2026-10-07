@@ -3,8 +3,9 @@
 The engine reads what a state is (its action, who writes its output, its output kind, its row's
 skills and declared inputs), never which state it is. This scans every `coscc/**/*.py` for a
 string constant equal to a state key, to an agent key a state binds, or to `<key>.md`. The bare
-`idea`, `pr` and `review` are also the engine's words (the idea link, `gh pr`, the output kind),
-so they count only where a stage, agent or artifact is compared with them.
+`idea`, `pr`, `review` and `outcome` are also the engine's words (the idea link, `gh pr`, the
+output kind, how a run ended), so they count only where a stage, agent or artifact is compared
+with them.
 
 `ALLOWED` is the whole list of exceptions, each with its reason. `coscc/loop/` is the loop's own
 module, rebuilt as the process walk; its names are counted apart (`test_the_loop_is_counted`).
@@ -20,7 +21,7 @@ from pathlib import Path
 from coscc.agent import pack
 
 ROOT = Path(__file__).resolve().parents[1] / "coscc"
-BARE = {"idea", "pr", "review"}
+BARE = {"idea", "pr", "review", "outcome"}
 STAGE_WORDS = {"stage", "agent", "artifact", "state", "at"}
 LOOKUPS = {"agent", "row_of", "action_of", "by_of", "kind_of", "data_of", "get_agent"}
 LOOP = "loop"

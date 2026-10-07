@@ -50,6 +50,7 @@ KEYS = (
     "output",
     "trigger",
     "default",
+    "cwd",
     "ceilings",
     "warning",
     "consequence",
@@ -86,6 +87,11 @@ ENGINES = ("integrate", "estimate", "chat")
 TRIGGERS = ("engine", "event", "schedule", "manual", "leif")
 # Whether a triggered row runs on its event or schedule in a workspace nobody chose for.
 DEFAULTS = ("on", "off")
+# Where a triggered row runs, beside its workspace: `trunk`, the tree detached at the fetched
+# trunk, so it reads what shipped and never a unit's branch.
+CWDS = ("trunk",)
+# What the engine does after a `verdict`: one proposal for the Backlog per criterion not met.
+THENS = ("proposal-if-no",)
 # A schedule's hours and an event's delay. Chosen: a year.
 HOURS_MAX = 8760
 # Claude Code's own tools that do more than read, for a row checked with no catalog.
@@ -223,6 +229,10 @@ def check(
     out += _check_tools(row, kind, output.get("by"), catalog)
     out += _check_links(row, rows)
     out += _check_trigger(row, kind, catalog)
+    if output.get("then") is not None and (output["then"] not in THENS or kind != "verdict"):
+        out.append(f"output.then: a verdict may have {', '.join(THENS)}")
+    if "cwd" in row and (row["cwd"] not in CWDS or not triggered(row)):
+        out.append(f"cwd: a row a trigger starts may run in {', '.join(CWDS)}")
     if "input" in row and not isinstance(row["input"], dict):
         out.append("input is {artifacts, outputs, answers, findings, data}")
     if BODY in row and not isinstance(row[BODY], str):

@@ -86,15 +86,15 @@ def _today(key: str) -> dict:
 
 
 class TheBuiltInPackIsTheTablesItReplaced(unittest.TestCase):
-    def test_the_rows_are_the_twelve_agents_and_the_scan(self):
-        # The scan (M6) replaced a feature, not a table: it has no fixture.
+    def test_the_rows_are_the_twelve_agents_the_scan_and_the_grader(self):
+        # The scan and the outcome grader (M6) replaced no table: they have no fixture.
         self.assertEqual(
             sorted(p.stem for p in (pack.BUILTIN / "agents").glob("*.md")),
-            sorted([*FIXTURE, "scan"]),
+            sorted([*FIXTURE, "scan", "outcome"]),
         )
         self.assertEqual(
             list(pack.rows()),
-            "idea intent spec spike plan impl review integrate estimate leif scan scout worker".split(),
+            "idea intent spec spike plan impl review integrate estimate leif scan outcome scout worker".split(),
         )
 
     def test_every_row_resolves_to_the_fixture(self):
@@ -587,6 +587,17 @@ class TriggersAreChecked(unittest.TestCase):
         self.assertIn("trigger.schedule.hours must be a whole number from 1", said)
         self.assertIn("says whether it is on or off", said)
         self.assertIn("default must be one of on, off", self.reasons(_scan(default="maybe")))
+
+    def test_the_grader_row_passes_and_then_and_cwd_are_its_kinds(self):
+        grader = {"key": "outcome", **pack.rows()["outcome"]["builtin"]}
+        self.assertEqual(self.reasons(grader), "")
+        said = self.reasons(_scan(output={**_scan()["output"], "then": "proposal-if-no"}))
+        self.assertIn("output.then: a verdict may have proposal-if-no", said)
+        said = self.reasons({**grader, "output": {**grader["output"], "then": "page-me"}})
+        self.assertIn("output.then", said)
+        self.assertIn("cwd: a row a trigger starts", self.reasons({**grader, "cwd": "branch"}))
+        said = self.reasons({**grader, "trigger": {"engine": "estimate"}, "default": None})
+        self.assertIn("cwd: a row a trigger starts", said)
 
     def test_an_owner_edit_is_held_to_the_same_rules(self):
         with self.assertRaises(ValueError):

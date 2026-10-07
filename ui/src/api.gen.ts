@@ -260,6 +260,7 @@ export type Detail = {
   "hold_moves": string[];
   "outputs": OutputRecord[];
   "decisions": Decision[];
+  "outcome": Outcome | null;
 };
 
 export type EstimateBrief = {
@@ -302,6 +303,7 @@ export type Insights = {
   "by_day": DaySpend[];
   "by_agent": AgentSpend[];
   "waste": Waste[];
+  "outcomes": Outcomes;
 };
 
 export type LastRun = {
@@ -340,6 +342,30 @@ export type NextStep = {
   "continue"?: string;
   "reasons": string[];
   "gate"?: string;
+};
+
+export type Outcome = {
+  "grader": string;
+  "name": string;
+  "usd": number | null;
+  "verdict": Verdict | null;
+  "proposals": OutcomeProposal[];
+};
+
+export type OutcomeProposal = {
+  "id": number;
+  "title": string;
+  "state": string;
+};
+
+export type Outcomes = {
+  "due": number;
+  "on_time": number;
+  "graded": number;
+  "met": number;
+  "target_graded": number;
+  "target_met": number;
+  "missed": string[];
 };
 
 export type OutputRecord = {
@@ -588,6 +614,7 @@ export type Shipped = {
   "usd": number | null;
   "rounds": number;
   "at": string;
+  "outcome": string;
 };
 
 export type ShortlistSaved = {
@@ -772,6 +799,14 @@ export type UpdateStatus = {
   "line": string;
   "local_line": string;
   "actions": string[];
+};
+
+export type Verdict = {
+  "agent": string;
+  "run": string;
+  "at": string;
+  "judgement": string;
+  "criteria": RoundCriterion[];
 };
 
 export type Waste = {

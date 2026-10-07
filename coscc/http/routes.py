@@ -45,7 +45,7 @@ from coscc.leif.insights import Insights
 from coscc.runner import triggers
 from coscc.runner.steps import NextStep
 from coscc.runner.watch import EventsPage
-from coscc.units import proposals
+from coscc.units import proposals, read
 from coscc.units.backlog import SHORTLIST_MAX
 from coscc.units.read import Cards, Detail, UpNext, cards, detail
 from coscc.units.workspaces import WorkspaceList
@@ -619,7 +619,7 @@ async def get_next(request: Request) -> NextStep:
 @router.get("/api/units/{name}")
 async def get_unit(name: str, request: Request) -> Detail:
     """One unit as its page shows it: its card, stages, questions and answers with who gave them,
-    review rounds, and every run from the run log. Read from the board held, like `/api/units`."""
+    review rounds, its graded outcome, and every run from the run log. Read from the board held, like `/api/units`."""
     core, cwd = _core(request), _cwd(request)
     board = await core.boards.get(cwd, "held")
     unit = next((u for u in board.get("units") or [] if u.get("name") == name), None)
@@ -631,7 +631,15 @@ async def get_unit(name: str, request: Request) -> Detail:
     outputs = await asyncio.to_thread(meta.outputs, core.ws.key(cwd), name)
     decisions = await asyncio.to_thread(meta.decisions, core.ws.key(cwd), name)
     graded = await asyncio.to_thread(meta.graded, core.ws.key(cwd), name)
-    return detail(unit, timeline, outputs, decisions, graded)
+    found = read.grader()
+    shown = None
+    if found is not None:
+        verdict = await asyncio.to_thread(meta.verdict, core.ws.key(cwd), name)
+        made = await asyncio.to_thread(
+            proposals.listed, Data(core.config.data_dir), core.ws.key(cwd), found[0]
+        )
+        shown = read.outcome(*found, verdict, [p for p in made if p["unit"] == name])
+    return detail(unit, timeline, outputs, decisions, graded, shown)
 
 
 def _number(request: Request, name: str) -> int | None:

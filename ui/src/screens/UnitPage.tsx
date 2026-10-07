@@ -2,7 +2,7 @@
 // panel holds the facts; the timeline holds every run and answer, newest first.
 
 import { Fragment, useState, type ReactNode } from "react";
-import type { Answer, Decision, Detail, OutputRecord, Paused, Round, StageView, UnitRun } from "../api.gen";
+import type { Answer, Decision, Detail, Outcome, OutputRecord, Paused, Round, RoundCriterion, StageView, UnitRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import type { PlacedUnit } from "../lib/boards";
 import { allUnits, findUnit, useBoards } from "../lib/boards";
@@ -92,6 +92,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
             </div>
           </div>
         )}
+        {shipped && d?.outcome && <OutcomeBlock unit={placed} outcome={d.outcome} runs={d.runs} onDone={() => detail.reload()} />}
         <FeatureSlots at="unit" workspace={placed.workspace} unit={placed.name} />
         <div className="tabs" style={{ marginTop: 22 }}>
           <a className={tab === "activity" ? "on" : ""} onClick={() => setTab("activity")}>Activity</a>
@@ -302,6 +303,116 @@ function Process({ unit, stages, now }: { unit: PlacedUnit; stages: StageView[];
 }
 
 const MET = { yes: ["green", "Met"], no: ["red", "Not met"], unclear: ["amber", "Unclear"] } as const;
+const GRADED: Record<string, readonly ["green" | "red" | "amber", string]> = { met: MET.yes, "not-met": MET.no, unclear: MET.unclear };
+
+/** `path:lines` at the head of a criterion's evidence, as a link into the repository's trunk when
+ * the unit's pull request names the repository; the rest of the evidence follows as text. */
+function Evidence({ text, pr }: { text: string; pr?: string }) {
+  const m = text.match(/^`?([^\s:`]+):(\d+)(?:-(\d+))?`?\s*[-—:,]?\s*/);
+  if (!m) return <div className="faint" style={{ fontSize: 12.5 }}>{text}</div>;
+  const repo = pr?.match(/^(https:\/\/github\.com\/[^/]+\/[^/]+)\//)?.[1];
+  const place = `${m[1]}:${m[2]}${m[3] ? `-${m[3]}` : ""}`;
+  return (
+    <div className="faint" style={{ fontSize: 12.5 }}>
+      {repo ? (
+        <a href={`${repo}/blob/main/${m[1]}#L${m[2]}${m[3] ? `-L${m[3]}` : ""}`} target="_blank" rel="noreferrer">
+          <code>{place}</code>
+        </a>
+      ) : (
+        <code>{place}</code>
+      )}{" "}
+      {text.slice(m[0].length)}
+    </div>
+  );
+}
+
+/** A shipped unit's outcome: whether what shipped does what its intent and idea wanted, graded
+ * one sentence at a time by a read-only agent, with what it proposed for each one not met. */
+function OutcomeBlock({ unit, outcome, runs, onDone }: { unit: PlacedUnit; outcome: Outcome; runs: UnitRun[]; onDone: () => void }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const v = outcome.verdict;
+  const grading = runs.some((r) => r.stage === outcome.grader && !r.ended);
+  const press = async () => {
+    if (!asking) return setAsking(true);
+    setBusy(true);
+    setError("");
+    try {
+      await api.post("/api/agents/run", { cwd: unit.workspace.path, key: outcome.grader, unit: unit.name });
+      setAsking(false);
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setBusy(false);
+  };
+  const [tone, word]: readonly ["green" | "red" | "amber" | "plain", string] = v ? GRADED[v.judgement] ?? MET.unclear : ["plain", "Not graded"];
+  const counts = v ? (["yes", "no", "unclear"] as const).map((m) => [m, v.criteria.filter((c) => c.met === m).length] as const).filter(([, n]) => n) : [];
+  return (
+    <div id="outcome" className="card card-b" style={{ marginTop: 18 }}>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <b>Outcome</b>
+        {grading ? (
+          <Chip square tone="accent">
+            <Dot tone="live" />
+            Grading
+          </Chip>
+        ) : (
+          <Chip square tone={tone}>{word}</Chip>
+        )}
+        <span className="faint" style={{ fontSize: 12.5 }}>
+          {v ? `${counts.map(([m, n]) => `${n} ${MET[m][1].toLowerCase()}`).join(", ")} · graded ${ago(v.at)} by ${outcome.name}` : grading ? `${outcome.name} is reading what shipped.` : "Whether what shipped does what the intent wanted."}
+        </span>
+        <span className="grow" />
+        {!grading && (
+          <>
+            <Button size="sm" kind={asking ? "primary" : ""} icon="check" disabled={busy} onClick={press}>
+              {busy ? "Starting…" : asking ? `Spend up to ${money(outcome.usd ?? 0)}?` : v ? "Grade again" : "Grade outcome"}
+            </Button>
+            {asking && !busy && (
+              <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>
+                Cancel
+              </Button>
+            )}
+          </>
+        )}
+      </div>
+      {error && <div style={{ color: "var(--red)", fontSize: 12.5, marginTop: 8 }}>{error}</div>}
+      {v && (
+        <div className="col gap6" style={{ marginTop: 12 }}>
+          {[...v.criteria].sort((a, b) => order(a) - order(b)).map((c) => (
+            <div key={c.criterion} className="row" style={{ alignItems: "flex-start", gap: 8 }}>
+              <span style={{ width: 70, flex: "none" }}>
+                <Chip square tone={MET[c.met][0]}>{MET[c.met][1]}</Chip>
+              </span>
+              <div className="grow" style={{ minWidth: 0 }}>
+                <div>“{c.source}”</div>
+                <Evidence text={c.evidence} pr={unit.pr?.url} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {outcome.proposals.length > 0 && (
+        <>
+          <div className="faint" style={{ fontSize: 12.5, marginTop: 14 }}>Proposed fixes</div>
+          <div className="col gap4" style={{ marginTop: 4 }}>
+            {outcome.proposals.map((p) => (
+              <div key={p.id} className="row" style={{ gap: 8, fontSize: 13 }}>
+                <Chip square tone={p.state === "pending" ? "amber" : "plain"}>{p.state === "pending" ? "waiting on you" : p.state}</Chip>
+                <Link to="/up-next" className="ellipsis">{p.title}</Link>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Not met first, then unclear, then met.
+const order = (c: RoundCriterion) => ({ no: 0, unclear: 1, yes: 2 })[c.met];
 
 /** The review rounds, newest first. A round lists every criterion it graded with its verdict on
  * it, and each finding sits under the criterion it was raised for. Older rounds fold away. */
@@ -451,6 +562,8 @@ function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: b
   const paused = run.outcome === "paused-budget";
   const stopped = run.ended && run.outcome !== "done";
   const verb = live ? "is working on" : paused ? "paused" : stopped ? run.outcome : "finished";
+  // A row no state names (a grader, a scan) has no stage word: its run is "a run".
+  const what = stageLabel(run.stage) === name ? "a run" : stageLabel(run.stage).toLowerCase();
   return (
     <div className="tl-i">
       <span className="tl-ic">
@@ -460,7 +573,7 @@ function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: b
         <div className="tl-h">
           <b>{name}</b>
           <span>
-            {stopped ? <Chip square tone={paused ? "amber" : "red"}>{verb}</Chip> : verb} {stageLabel(run.stage).toLowerCase()}
+            {stopped ? <Chip square tone={paused ? "amber" : "red"}>{verb}</Chip> : verb} {what}
           </span>
           {live && <Dot tone="live" />}
           {run.cost_usd != null && <span className="faint">· {money(run.cost_usd)}</span>}

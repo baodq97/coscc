@@ -43,8 +43,9 @@ SOURCE = "[^\\s:]+(:[0-9]+-[0-9]+)?"
 
 # `artifact`: a stage's judgement of its file, one `outputs` row; `review`: a round, kept in
 # its own rows; `session`: the object handed to the code that opened the session; `proposal`:
-# work proposed for the Backlog (`coscc/units/proposals.py`).
-Kind = Literal["artifact", "review", "session", "proposal"]
+# work proposed for the Backlog (`coscc/units/proposals.py`); `verdict`: criteria graded on a
+# unit, one `outputs` row.
+Kind = Literal["artifact", "review", "session", "proposal", "verdict"]
 KINDS: tuple[Kind, ...] = get_args(Kind)
 
 # The field the engine adds to an artifact's object: who sent it.
@@ -93,6 +94,18 @@ _U = "U[0-9]+"
 _F = "F[0-9]+"
 # A review's criterion: spec `R<n>`, plan proof `P<n>`, intent outcome `O<n>`, UI rule `S<n>`.
 REVIEW_CRITERION = "[RPOS][0-9]+"
+# A verdict's criterion: a letter for where it was read, then its number (`O1`, `W2`).
+VERDICT_CRITERION = "[A-Z][0-9]+"
+# What a verdict comes to, its worst criterion: any `no` is `not-met`, else any `unclear`.
+Graded = Literal["met", "not-met", "unclear"]
+# Evidence a `yes` or a `no` must cite: a repository path and its lines.
+CITED = re.compile(r"[^\s:`]+:[0-9]+(-[0-9]+)?")
+
+
+def graded(criteria: Iterable[Mapping[str, Any]]) -> Graded:
+    """The worst criterion of a verdict."""
+    met = {c.get("met") for c in criteria}
+    return "not-met" if "no" in met else "unclear" if "unclear" in met else "met"
 
 
 def criterion_list(pattern: str) -> FieldType:
@@ -168,6 +181,7 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
             },
         )
     },
+    "verdict": {"criteria": ("verdict_problem", criterion_list(VERDICT_CRITERION))},
     "integrate": {
         "needs_person": ("outcome_of_session", {"list": {"commit": "text", "why": "text"}})
     },

@@ -75,6 +75,27 @@ class RoundGrades(TypedDict):
     items: list[RoundFinding]
 
 
+class Verdict(TypedDict):
+    """A unit's latest graded verdict (an output of kind `verdict`): who graded it, in which run,
+    when, what it comes to (`contracts.Graded`) and each criterion."""
+
+    agent: str
+    run: str
+    at: str
+    judgement: str
+    criteria: list[RoundCriterion]
+
+
+def _criterion(c: Mapping[str, Any]) -> RoundCriterion:
+    met = c.get("met")
+    return {
+        "criterion": str(c.get("criterion") or ""),
+        "source": str(c.get("source") or ""),
+        "met": "yes" if met == "yes" else "no" if met == "no" else "unclear",
+        "evidence": str(c.get("evidence") or ""),
+    }
+
+
 class OutputRecord(TypedDict):
     """What an agent handed back, as the unit page shows it: the latest record of one agent."""
 
@@ -507,19 +528,7 @@ class UnitMeta:
                     (r["id"],),
                 ).fetchall()
                 out[r["n"]] = {
-                    "criteria": [
-                        {
-                            "criterion": str(c["criterion"]),
-                            "source": str(c["source"]),
-                            "met": "yes"
-                            if c["met"] == "yes"
-                            else "no"
-                            if c["met"] == "no"
-                            else "unclear",
-                            "evidence": str(c["evidence"]),
-                        }
-                        for c in json.loads(r["criteria"])
-                    ],
+                    "criteria": [_criterion(c) for c in json.loads(r["criteria"])],
                     "items": [
                         {
                             "id": f["finding"],
@@ -535,6 +544,50 @@ class UnitMeta:
                     ],
                 }
         return out
+
+    def record_verdict(
+        self, workspace: str, unit: str, agent: str, run: str, obj: Mapping[str, Any]
+    ) -> contracts.Graded:
+        """A grader's verdict as the unit's `outputs` row, its judgement the worst criterion."""
+        judgement = contracts.graded(obj.get("criteria") or ())
+        with self.data.write() as conn:
+            conn.execute(
+                "INSERT INTO outputs (at, root, workspace, unit, agent, version, run, revision, "
+                "judgement, object) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)",
+                (
+                    now(),
+                    self.root,
+                    workspace,
+                    unit,
+                    agent,
+                    contracts.version(agent),
+                    run,
+                    judgement,
+                    json.dumps(dict(obj), ensure_ascii=False),
+                ),
+            )
+        return judgement
+
+    def verdict(self, workspace: str, unit: str) -> Verdict | None:
+        """The unit's latest verdict of any grader, `None` when none graded it."""
+        graders = [a for a, o in contracts.declarations().items() if o["kind"] == "verdict"]
+        if not graders:
+            return None
+        with self.data.connect() as conn:
+            r = conn.execute(
+                "SELECT agent, run, at, judgement, object FROM outputs "
+                f"WHERE {_ONE} AND agent IN ({states.marks(graders)}) ORDER BY id DESC LIMIT 1",
+                (self.root, workspace, unit, *graders),
+            ).fetchone()
+        if r is None:
+            return None
+        return {
+            "agent": r["agent"],
+            "run": r["run"],
+            "at": r["at"],
+            "judgement": r["judgement"],
+            "criteria": [_criterion(c) for c in json.loads(r["object"]).get("criteria") or ()],
+        }
 
     def plan(self, workspace: str, unit: str) -> contracts.Plan | None:
         """The unit's latest plan record (the output of an agent that hands back `variant`),
@@ -726,6 +779,9 @@ class UnitMeta:
                 "SELECT id, workspace, unit, agent, version, object FROM outputs WHERE id IN "
                 "(SELECT MAX(id) FROM outputs WHERE {where} GROUP BY workspace, unit, agent)"
             ):
+                # A grader's verdict is of the shipped unit, no artifact of it.
+                if (contracts.declarations().get(r["agent"]) or {}).get("kind") == "verdict":
+                    continue
                 a = artifact(
                     {"workspace": r["workspace"], "unit": r["unit"], "artifact": f"{r['agent']}.md"}
                 )
