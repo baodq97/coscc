@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.requests import ClientDisconnect
 
 from coscc import features
 from coscc.agent import pack
@@ -362,6 +363,12 @@ async def _refused(_: Request, e: Exception) -> JSONResponse:
     return JSONResponse({"error": str(e), **coded}, status_code=status)
 
 
+async def _gone(_: Request, _e: Exception) -> Response:
+    """A caller that left while its body was read: nothing to answer and nothing wrong here, so
+    no 500 and no traceback; 499 is what a proxy logs for it."""
+    return Response(status_code=499)
+
+
 def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
     """The app. `starting` is the served one (`run.served`): its start makes the features'
     tables, takes up what an update paused, reads every board once and runs the schedules."""
@@ -425,6 +432,7 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
     api.state.ctxs = ctxs
     api.state.plugins = features.FEATURES
     api.add_exception_handler(Invalid, _refused)
+    api.add_exception_handler(ClientDisconnect, _gone)
     return api
 
 

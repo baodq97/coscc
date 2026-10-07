@@ -74,6 +74,33 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         for leak in ("TOKEN", "bypass", "permission_mode", "tools"):
             self.assertNotIn(leak, body)
 
+    async def test_a_caller_gone_while_its_body_is_read_ends_quietly_not_as_a_500(self):
+        sent: list[dict] = []
+
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/api/units/answer",
+            "raw_path": b"/api/units/answer",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [(b"content-type", b"application/json")],
+            "client": ("127.0.0.1", 1),
+            "server": ("t", 80),
+        }
+        with self.assertNoLogs(level="ERROR"):
+            await self.app(scope, receive, send)
+        self.assertEqual(sent[0]["status"], 499)
+
     async def test_a_foreign_session_is_marked_read_only_not_hidden(self):
         # Terminal sessions are visible because the read layer sees them, but the page has to be
         # able to tell which ones it may write to.

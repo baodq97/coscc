@@ -233,7 +233,8 @@ async def get_agents(request: Request) -> AgentPage:
     its problems, skills, hash and runs grouped by definition; the tool catalog, each feature on
     or off for `cwd`; what was wrong."""
     core, cwd = _core(request), _cwd(request)
-    return core.agents.agent_page(core.ws.key(cwd) if cwd else None, cwd=cwd)
+    with pack.held():
+        return core.agents.agent_page(core.ws.key(cwd) if cwd else None, cwd=cwd)
 
 
 @router.post("/api/agents/field")
@@ -352,7 +353,8 @@ async def get_insights(request: Request) -> Insights:
     again. Read only; the run log and the board held."""
     core, cwd = _core(request), _cwd(request)
     board = await core.boards.get(cwd, "held")
-    return core.activity.insights(cwd, board.get("units") or [])
+    with pack.held():
+        return await asyncio.to_thread(core.activity.insights, cwd, board.get("units") or [])
 
 
 @router.get("/api/chat/sessions", response_model=ChatSessions)
@@ -639,15 +641,21 @@ async def get_next(request: Request) -> NextStep:
     `{stage, action, blocked, gate}`, `gate` being what the gate says of that stage when it is
     closed. Asks `gh`, so it can wait up to 60s. It starts nothing;
     `/api/board/run` still asks the gate."""
-    return await _core(request).steps.next_step(
-        _cwd(request), request.query_params.get("unit", ""), with_gate=True
-    )
+    with pack.held():
+        return await _core(request).steps.next_step(
+            _cwd(request), request.query_params.get("unit", ""), with_gate=True
+        )
 
 
 @router.get("/api/units/{name}")
 async def get_unit(name: str, request: Request) -> Detail:
     """One unit as its page shows it: its card, stages, questions and answers with who gave them,
     review rounds, its graded outcome, and every run from the run log. Read from the board held, like `/api/units`."""
+    with pack.held():
+        return await _unit(name, request)
+
+
+async def _unit(name: str, request: Request) -> Detail:
     core, cwd = _core(request), _cwd(request)
     board = await core.boards.get(cwd, "held")
     unit = next((u for u in board.get("units") or [] if u.get("name") == name), None)

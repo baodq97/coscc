@@ -877,8 +877,13 @@ class Board:
         Waits on no network once the workspace's open pull requests were asked once: `gh` is
         answered from what is held and asked again in the background. A `fresh` read waits on
         those asks instead, for whoever needs the state as it is now. What reads `cos.db` runs
-        off the event loop. One `log.info` line says how long each part took.
+        off the event loop. One `log.info` line says how long each part took. The packs are
+        looked at once for the whole read.
         """
+        with pack.held():
+            return await self._read(cwd, fresh)
+
+    async def _read(self, cwd: str, fresh: bool) -> dict[str, Any]:
         self.ws.check(cwd)
         read_at = now()
         took: dict[str, float] = {}

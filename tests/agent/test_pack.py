@@ -21,7 +21,7 @@ from coscc.runner.reply import RunError
 from coscc.runner.queue import Refused
 from coscc.runner.steps import Steps
 from coscc.store.db import Data
-from coscc.units import contracts
+from coscc.units import contracts, states
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "m4-rows.json").read_text())
 # The one line `_BESIDE`'s words became in the spec skill.
@@ -398,6 +398,20 @@ class TheOwnersLayer(unittest.TestCase):
             ("claude-haiku-4-5", models.OVERRIDE, "low", models.OVERRIDE),
         )
         self.assertEqual(pack.stamp("intent")["edited"], ["model"])
+
+    def test_a_held_scope_walks_the_packs_once_and_an_edit_shows_once_it_ends(self):
+        haiku = '---\nmodel: {"id": "claude-haiku-4-5", "effort": "low"}\n---\n'
+        self.own("intent", haiku)
+        with mock.patch.object(pack, "_stamp", wraps=pack._stamp) as walked:
+            with pack.held():
+                for _ in range(50):
+                    pack.row("intent"), pack.processes()
+                self.own("intent", haiku.replace("haiku-4-5", "sonnet-5-5"))
+                self.assertEqual(pack.row("intent")["model"]["id"], "claude-haiku-4-5")
+            self.assertEqual(walked.call_count, 1)
+            self.assertEqual(pack.row("intent")["model"]["id"], "claude-sonnet-5-5")
+            pack.row("intent")
+            self.assertEqual(walked.call_count, 3)
 
     def test_a_bad_row_of_the_owners_refuses_its_runs_and_never_stops_the_app(self):
         from coscc.http.plugin import hooks_of
@@ -801,6 +815,12 @@ class ManyPacks(unittest.TestCase):
         pack.write_process("tiny", None)
         pack.delete_row("tidy")
         self.assertIsNone(pack.row("tidy"))
+
+    def test_which_states_do_what_is_worked_out_again_when_a_process_is_written(self):
+        self.assertEqual(states.states_where(action="open-pr", process="local/tiny"), ())
+        pack.new_row("tidy", "Tidy", "impl", CATALOG)
+        pack.write_process("tiny", tiny())
+        self.assertEqual(states.states_where(action="open-pr", process="local/tiny"), ("pr",))
 
     def test_a_local_process_runs_on_any_packs_rows_and_a_bad_one_is_a_problem(self):
         pack.new_row("tidy", "Tidy", "impl", CATALOG)
