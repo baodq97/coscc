@@ -444,7 +444,7 @@ function Line({ event: e, unit, whole }: { event: StepEvent; unit: string; whole
       return (
         <div className={`rl-l ${e.outcome === "done" ? "faint" : e.outcome === "paused-budget" ? "rl-warn" : "rl-bad"}`}>
           ended: {e.outcome === "paused-budget" ? "paused at its ceiling" : e.outcome}
-          {e.detail && !whole ? ` · ${e.detail}` : ""}
+          {e.detail && !whole ? ` · ${failureWords(e.detail).plain}` : ""}
         </div>
       );
     default:

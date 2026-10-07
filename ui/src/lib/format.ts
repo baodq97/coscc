@@ -63,10 +63,10 @@ export function startedBy(by: string | null | undefined): string {
  * exits that it broke off; any other detail is shown as it is. The raw text stays in `raw`. */
 export function failureWords(detail: string | null | undefined): { plain: string; raw: string } {
   const raw = (detail ?? "").trim();
-  const code = /exit code[: ]+(\d+)/i.exec(raw)?.[1];
+  const code = /exit code[: ]+(-?\d+)/i.exec(raw)?.[1];
   if (!code) return { plain: raw, raw: "" };
   const n = Number(code);
-  const plain = n > 128 ? `The agent's process was stopped (exit ${n}) before it finished` : `The agent's process broke off (exit ${n}) before it finished`;
+  const plain = n > 128 || n < 0 ? `The agent's process was stopped (exit ${n}) before it finished` : `The agent's process broke off (exit ${n}) before it finished`;
   return { plain, raw };
 }
 

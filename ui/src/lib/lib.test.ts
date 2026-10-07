@@ -856,6 +856,13 @@ describe("failureWords", () => {
     expect(got.plain).toBe("The agent's process was stopped (exit 143) before it finished");
     expect(got.raw).toBe(raw);
   });
+  it("says a signal exit plainly, negative or shifted", () => {
+    for (const n of [-9, -15, 137, 143]) {
+      const raw = `the session failed: Command failed with exit code ${n} (exit code: ${n})`;
+      expect(failureWords(raw).plain).toBe(`The agent's process was stopped (exit ${n}) before it finished`);
+    }
+    expect(failureWords("exit code: 1").plain).toContain("broke off");
+  });
   it("leaves a detail with no exit code as it is", () => {
     expect(failureWords("the ceiling was reached")).toEqual({ plain: "the ceiling was reached", raw: "" });
   });

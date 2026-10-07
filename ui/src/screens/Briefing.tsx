@@ -5,7 +5,7 @@ import { allUnits, failedLink, needsYou, proposalLink, useBoards, useLive } from
 import { LeifAvatar } from "../lib/icons";
 import { unitState } from "../lib/model";
 import { Link } from "../lib/router";
-import { ago, unitCode, unitTitle } from "../lib/format";
+import { ago, failureWords, unitCode, unitTitle } from "../lib/format";
 import { Button, Empty, ErrorState, SkeletonRows } from "../components/ui";
 
 function greeting(now = new Date()): string {
@@ -74,7 +74,7 @@ export function Briefing() {
                 {failed.map((f) => (
                   <Link key={f.workspace + f.agent} to={failedLink(f)} className="lrow stack">
                     <span className="id">{f.name}</span>
-                    <span className="t">{(f.detail || "The last run failed.").split("\n")[0]}</span>
+                    <span className="t">{failureWords(f.detail || "The last run failed.").plain.split("\n")[0]}</span>
                     <span className="meta">{f.workspace} · {ago(f.at)}</span>
                   </Link>
                 ))}

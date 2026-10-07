@@ -9,6 +9,7 @@ import type { AgentPage, Asked, CatalogTool, ProposalRow, Started, StepEvent } f
 import { api, ApiError, useResource } from "../lib/api";
 import { afterAgentSaved, agentNameProblem, answersText, draftOf, draftParts, draftTools, GAP_PART, keepDraft, keptDraft, nameTaken, runsByItself, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type DraftGap, type Drafted, type NewAgentField } from "../lib/build";
 import { Rune } from "../lib/icons";
+import { failureWords } from "../lib/format";
 import { refreshPacks } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
 import { EFFECT, TIER } from "../screens/AgentPage";
@@ -74,7 +75,7 @@ export function DescribeTask({ cwd, want, run, onDraft, onRunning, onDiscard }: 
         setPhase({ at: "drafted", run: id });
         onDraftRef.current(d, id);
       } else if (page.status === "running") follow(id);
-      else if (page.outcome) setPhase({ at: "failed", why: page.detail || `The run ended ${page.outcome} with no draft.` });
+      else if (page.outcome) setPhase({ at: "failed", why: failureWords(page.detail).plain || `The run ended ${page.outcome} with no draft.` });
       // The end is written a moment after its last event: ask again, a few times.
       else if (tries < 4) setTimeout(() => void ended(id, tries + 1), 800);
       else setPhase({ at: "failed", why: "The run left no draft." });
@@ -399,7 +400,7 @@ function TrialOutput({ cwd, trial }: { cwd: string; trial: Extract<Trial, { at: 
     <div className="try-out" ref={at}>
       <div className="row" style={{ gap: 8, alignItems: "center" }}>
         <Chip square tone={trial.outcome === "done" ? "green" : "amber"}>{trial.outcome === "done" ? "Ran" : trial.outcome}</Chip>
-        <span className="grow faint" style={{ fontSize: 12 }}>{trial.detail}</span>
+        <span className="grow faint" style={{ fontSize: 12 }}>{failureWords(trial.detail).plain}</span>
         {ws && <Link to={`/run/${ws}/${trial.run}`}>Its log</Link>}
       </div>
       {items ? (
