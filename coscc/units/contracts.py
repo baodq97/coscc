@@ -26,6 +26,8 @@ from coscc.agent.policy import Label
 Judgement = Literal["ready", "not-ready"]
 # What a review round's `verdict` says.
 Verdict = Literal["pass", "changes-requested", "needs-person"]
+# What a graded criterion comes to: met, not met, or not enough evidence to say.
+Met = Literal["yes", "no", "unclear"]
 # The labels a finding may carry, the loop's own: `open`, `fixed` in a commit, or what the
 # review made of impl's claim or of a person's answer.
 FindingState = Literal["open", "fixed", "needs-person", "claim-rejected", "answered"]
@@ -89,6 +91,21 @@ class ContractError(Exception):
 
 _U = "U[0-9]+"
 _F = "F[0-9]+"
+# A review's criterion: spec `R<n>`, plan proof `P<n>`, intent outcome `O<n>`, UI rule `S<n>`.
+REVIEW_CRITERION = "[RPOS][0-9]+"
+
+
+def criterion_list(pattern: str) -> FieldType:
+    """The shape of a graded list, shared by every output that grades: each entry names its
+    criterion, what it was read from, whether it is met and the evidence."""
+    return {
+        "list": {
+            "criterion": pattern,
+            "source": "text",
+            "met": _enum(Met),
+            "evidence": "text",
+        }
+    }
 
 
 def _enum(literal: object) -> FieldType:
@@ -109,6 +126,7 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
     },
     "review": {
         "verdict": ("review-round", _enum(Verdict)),
+        "criteria": ("review-round", criterion_list(REVIEW_CRITERION)),
         "findings": (
             "review-round",
             {
@@ -117,7 +135,7 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
                     "state": _enum(FindingState),
                     "fixed_in": "([0-9a-f]{7,40})?",
                     "severity": _enum(Severity),
-                    "rule": "(S[0-9]+)?",
+                    "criterion": REVIEW_CRITERION,
                     "path": "text",
                     "lines": "text",
                     "text": "text",

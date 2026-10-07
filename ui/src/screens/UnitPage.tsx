@@ -2,7 +2,7 @@
 // panel holds the facts; the timeline holds every run and answer, newest first.
 
 import { Fragment, useState, type ReactNode } from "react";
-import type { Answer, Decision, Detail, OutputRecord, Paused, StageView, UnitRun } from "../api.gen";
+import type { Answer, Decision, Detail, OutputRecord, Paused, Round, StageView, UnitRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import type { PlacedUnit } from "../lib/boards";
 import { allUnits, findUnit, useBoards } from "../lib/boards";
@@ -22,7 +22,7 @@ const TARGET_USD = 15;
 export function UnitPage({ workspace, number }: { workspace: string; number: string }) {
   const { boards, loading } = useBoards();
   // `#outputs` in the address opens the second tab, so a link can point at what an agent handed back.
-  const [tab, setTab] = useState<"activity" | "outputs" | "process">(location.hash === "#outputs" ? "outputs" : location.hash === "#process" ? "process" : "activity");
+  const [tab, setTab] = useState<"activity" | "review" | "outputs" | "process">(location.hash === "#review" ? "review" : location.hash === "#outputs" ? "outputs" : location.hash === "#process" ? "process" : "activity");
   const placed = findUnit(allUnits(boards), workspace, number);
   const query: Record<string, string> = placed ? { cwd: placed.workspace.path, name: placed.name } : {};
   const detail = useResource(placed ? "/api/units/{name}" : null, query, { on: [""] });
@@ -90,6 +90,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         <FeatureSlots at="unit" workspace={placed.workspace} unit={placed.name} />
         <div className="tabs" style={{ marginTop: 22 }}>
           <a className={tab === "activity" ? "on" : ""} onClick={() => setTab("activity")}>Activity</a>
+          {d?.rounds.length ? <a className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>Review</a> : null}
           <a className={tab === "outputs" ? "on" : ""} onClick={() => setTab("outputs")}>Outputs</a>
           <a className={tab === "process" ? "on" : ""} onClick={() => setTab("process")}>Process</a>
         </div>
@@ -97,6 +98,8 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
           <ErrorState error={detail.error} onRetry={detail.reload} />
         ) : !d ? (
           <SkeletonRows rows={4} />
+        ) : tab === "review" && d.rounds.length ? (
+          <ReviewRounds rounds={d.rounds} />
         ) : tab === "outputs" ? (
           <Outputs outputs={d.outputs} names={names} />
         ) : tab === "process" ? (
@@ -290,6 +293,68 @@ function Process({ unit, stages, now }: { unit: PlacedUnit; stages: StageView[];
       </div>
       <ProcessDiagram process={process} current={now} done={done} />
     </div>
+  );
+}
+
+const MET = { yes: ["green", "Met"], no: ["red", "Not met"], unclear: ["amber", "Unclear"] } as const;
+
+/** The review rounds, newest first. A round lists every criterion it graded with its verdict on
+ * it, and each finding sits under the criterion it was raised for. Older rounds fold away. */
+function ReviewRounds({ rounds }: { rounds: Round[] }) {
+  const shown = [...rounds].reverse();
+  return (
+    <div id="review" className="col gap6">
+      {shown.map((r, i) => (
+        <details key={r.n} open={i === 0} style={{ padding: "10px 12px", background: "var(--bg-sunk)", borderRadius: "var(--r2)" }}>
+          <summary className="row" style={{ gap: 6, cursor: "pointer" }}>
+            <b>Round {r.n}</b>
+            <Chip square tone={r.verdict === "pass" ? "green" : "amber"}>{r.verdict === "pass" ? "pass" : r.verdict === "needs-person" ? "needs a person" : "changes requested"}</Chip>
+            <span className="faint">{r.findings_open} open of {r.findings} finding{r.findings === 1 ? "" : "s"}</span>
+          </summary>
+          <RoundBody round={r} />
+        </details>
+      ))}
+    </div>
+  );
+}
+
+function RoundBody({ round }: { round: Round }) {
+  // A finding whose criterion the round does not list (a round before grading) goes last.
+  const listed = new Set(round.criteria.map((c) => c.criterion));
+  const loose = round.items.filter((f) => !listed.has(f.criterion));
+  return (
+    <div className="col gap4" style={{ marginTop: 8 }}>
+      {round.criteria.map((c) => {
+        const mine = round.items.filter((f) => f.criterion === c.criterion);
+        const [tone, word] = MET[c.met];
+        return (
+          <div key={c.criterion}>
+            <div className="row" style={{ gap: 6 }}>
+              <b>{c.criterion}</b>
+              <Chip square tone={tone}>{word}</Chip>
+              <span className="grow">{c.source}</span>
+            </div>
+            <div className="faint" style={{ fontSize: 12.5 }}>{c.evidence}</div>
+            <Findings items={mine} />
+          </div>
+        );
+      })}
+      {loose.length ? <Findings items={loose} /> : null}
+      {!round.criteria.length && !round.items.length ? <div className="faint">Nothing was found.</div> : null}
+    </div>
+  );
+}
+
+function Findings({ items }: { items: Round["items"] }) {
+  return (
+    <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+      {items.map((f) => (
+        <li key={f.id}>
+          <b>{f.id}</b> <Chip square tone={f.severity === "low" ? "plain" : "amber"}>{f.severity}</Chip> <span className="faint">{f.label} · {f.place}</span>
+          <div>{f.text}</div>
+        </li>
+      ))}
+    </ul>
   );
 }
 

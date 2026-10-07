@@ -483,6 +483,24 @@ export type Round = {
   "findings": number;
   "findings_open": number;
   "unfinished": boolean;
+  "criteria": RoundCriterion[];
+  "items": RoundFinding[];
+};
+
+export type RoundCriterion = {
+  "criterion": string;
+  "source": string;
+  "met": "yes" | "no" | "unclear";
+  "evidence": string;
+};
+
+export type RoundFinding = {
+  "id": string;
+  "label": string;
+  "severity": string;
+  "criterion": string;
+  "place": string;
+  "text": string;
 };
 
 export type RowFields = {

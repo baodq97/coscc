@@ -662,7 +662,7 @@ class AV12DatabaseTakesOneStepTo13(unittest.TestCase):
             self._rows(conn)
             conn.execute("PRAGMA user_version=12")
         self.assertEqual(self.data.version(), SCHEMA_VERSION)
-        self.assertEqual(SCHEMA_VERSION, 17)
+        self.assertEqual(SCHEMA_VERSION, 18)
 
     def _rows(self, conn):
         for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):
@@ -962,3 +962,19 @@ class AV16DatabaseTakesOneStepTo17(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AV16DatabaseTakesOneStepTo17(unittest.TestCase):
+    def test_a_review_round_and_its_findings_gain_their_criteria_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with Data(tmp).connect() as conn:
+                conn.execute("ALTER TABLE review_rounds DROP COLUMN criteria")
+                conn.execute("ALTER TABLE review_findings DROP COLUMN criterion")
+                conn.execute("PRAGMA user_version=16")
+            data = Data(tmp)
+            with data.connect() as conn:
+                rounds = {r[1] for r in conn.execute("PRAGMA table_info(review_rounds)")}
+                findings = {r[1] for r in conn.execute("PRAGMA table_info(review_findings)")}
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            self.assertIn("criteria", rounds)
+            self.assertIn("criterion", findings)

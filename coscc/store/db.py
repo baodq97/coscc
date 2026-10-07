@@ -39,8 +39,9 @@ from typing import Any, Iterator
 # 13: idea 0006 M2 in one step, `_before_13` and `_after_13`; 14: `exhausted` ends are `failed`;
 # 15: the agent prefs move into the owner's layer of the agents' pack, `_to_15`; 16: a unit
 # records its process, `unit_meta.process`, and plan's `impl` is `variant`, `_to_16`; 17: the scan
-# feature's tables and prefs become `proposals` and `agents.state`, `_to_17`).
-SCHEMA_VERSION = 17
+# feature's tables and prefs become `proposals` and `agents.state`, `_to_17`; 18: a review round
+# keeps its graded `criteria`, a finding its `criterion` for `rule`).
+SCHEMA_VERSION = 18
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -362,13 +363,14 @@ CREATE TABLE IF NOT EXISTS review_rounds (
     run       TEXT NOT NULL,
     head      TEXT NOT NULL,
     verdict   TEXT NOT NULL,
-    screens   TEXT NOT NULL DEFAULT '[]'
+    screens   TEXT NOT NULL DEFAULT '[]',
+    criteria  TEXT NOT NULL DEFAULT '[]'
 )""",
     """CREATE UNIQUE INDEX IF NOT EXISTS review_rounds_n ON review_rounds (root, workspace, unit, n)""",
     """-- The findings of one round. `finding` is `F<k>`; `open` is 1 while the finding
 -- is `[open]`, and `label` the word the round gave it (`open`, `fixed`, `needs-person`,
 -- `claim-rejected`, `answered`), what a reader of that one round sees, not a status that
--- moves (`tests/units/test_history.py`). `rule` is `S<n>` or ''.
+-- moves (`tests/units/test_history.py`). `criterion` is the one the round graded it under.
 CREATE TABLE IF NOT EXISTS review_findings (
     round    INTEGER NOT NULL,
     finding  TEXT NOT NULL,
@@ -376,7 +378,7 @@ CREATE TABLE IF NOT EXISTS review_findings (
     label    TEXT NOT NULL,
     fixed_in TEXT NOT NULL DEFAULT '',
     severity TEXT NOT NULL,
-    rule     TEXT NOT NULL DEFAULT '',
+    criterion TEXT NOT NULL DEFAULT '',
     path     TEXT NOT NULL DEFAULT '',
     lines    TEXT NOT NULL DEFAULT '',
     text     TEXT NOT NULL,
@@ -472,6 +474,9 @@ _COLUMNS = (
     # The process a unit walks, `<pack>/<process>`, fixed when it is created: the pack's default
     # process for every unit opened before units recorded one.
     ("unit_meta", "process", "TEXT NOT NULL DEFAULT 'coscc-sdlc/full'"),
+    # A review round's graded criteria (JSON) and the criterion a finding is raised under.
+    ("review_rounds", "criteria", "TEXT NOT NULL DEFAULT '[]'"),
+    ("review_findings", "criterion", "TEXT NOT NULL DEFAULT ''"),
 )
 
 

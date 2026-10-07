@@ -25,7 +25,7 @@ class ARoundIsWrittenFromItsObject(unittest.TestCase):
                 "state": "open",
                 "fixed_in": "",
                 "severity": "high",
-                "rule": "S3",
+                "criterion": "S3",
                 "path": "a.py",
                 "lines": "1-4",
                 "text": "still broken\nsecond line",
@@ -62,6 +62,21 @@ class ARoundIsWrittenFromItsObject(unittest.TestCase):
             out,
         )
         self.assertIn("- .screens/b.png — 390×844 — /board — no violation", out)
+
+    def test_the_criteria_are_a_table_before_the_findings(self):
+        obj = {
+            **self.OBJ,
+            "criteria": [
+                {"criterion": "S3", "source": "no internals", "met": "no", "evidence": "a.py:1"}
+            ],
+        }
+        out = render_round(self.SECTION, 2, "f" * 40, obj, self.SCREENS)
+        self.assertIn(
+            "### Criteria\n\n| Criterion | Met | Source | Evidence |\n|---|---|---|---|\n"
+            "| S3 | no | no internals | a.py:1 |",
+            out,
+        )
+        self.assertLess(out.index("### Criteria"), out.index("### Findings"))
 
     def test_only_the_new_rounds_are_replaced(self):
         text = "# Review: x\nStatus: draft.\n\n## Round 1\n\nold\n\n## Round 5\n\nnew\n\n## Answers\n\n### Câu 1\nkept\n"
