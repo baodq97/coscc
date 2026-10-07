@@ -13,6 +13,7 @@ from coscc.config import Config
 from coscc.kernel import Invalid
 from coscc.http.app import Core
 from coscc.runner.run import LIVE
+from coscc.agent.sessions import Sessions
 from tests.http.test_app import create_sync
 from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
@@ -154,3 +155,28 @@ class AStepCanBeWatched(unittest.TestCase):
         with self.assertRaises(Invalid):
             asyncio.run(refused())
         self.assertEqual(self._live(), {})
+
+
+class ARunsEndIsOnItsFirstPage(unittest.TestCase):
+    """A run of no unit that has ended: how it ended, and Dagaz's draft, which only its `end` keeps."""
+
+    def test_the_outcome_and_the_draft_come_from_its_end(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        repo = root / "work" / "proj"
+        repo.mkdir(parents=True)
+        config = Config(
+            workspaces=(str(repo),), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
+        core = Core(config, Sessions(config))
+        ws = core.ws.key(str(repo))
+        journal = core.ws.journal()
+        draft = {"why": "a reader", "process": {"name": "docs", "process": {}}}
+        journal.started(ws, "", "dagaz", "manual", run="r9")
+        page = core.watch.events_page(str(repo), "r9")
+        self.assertNotIn("draft", page)
+        journal.finished(ws, "", "dagaz", "done", run="r9", detail="", draft=draft)
+        page = core.watch.events_page(str(repo), "r9")
+        self.assertEqual((page["outcome"], page["draft"]), ("done", draft))
+        self.assertNotIn("draft", core.watch.events_page(str(repo), "r9", before=5))
