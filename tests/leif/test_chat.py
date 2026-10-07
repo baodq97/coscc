@@ -403,7 +403,9 @@ class LeifsYesComesFromALaterTurn(_App):
             )
             yield ("done", run_mod.Run("done", None, session="S", run=inp.run))
 
-        self.addCleanup(triggers._ASKED.clear)
+        # Module-wide: what one test leaves there would count in the next one's day.
+        for left in (triggers._ASKED, triggers._LEIF_HELD, triggers._RUNNING):
+            self.addCleanup(left.clear)
         with (
             mock.patch.object(triggers, "leif_server", server),
             mock.patch.object(run_mod, "run", run_),
