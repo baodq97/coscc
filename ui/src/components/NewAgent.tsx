@@ -9,10 +9,11 @@ import type { AgentPage, Asked, CatalogTool, ProposalRow, Started, StepEvent } f
 import { api, ApiError, useResource } from "../lib/api";
 import { afterAgentSaved, agentNameProblem, answersText, draftOf, draftParts, draftTools, GAP_PART, keepDraft, keptDraft, nameTaken, runsByItself, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type DraftGap, type Drafted, type NewAgentField } from "../lib/build";
 import { Rune } from "../lib/icons";
+import { failureWords } from "../lib/format";
 import { refreshPacks } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
 import { EFFECT, TIER } from "../screens/AgentPage";
-import { Button, Chip, Dialog, Dot } from "./ui";
+import { Button, Chip, Dialog, Dot, Inline } from "./ui";
 
 function Part({ label, hint, errors, children }: { label: string; hint?: string; errors?: string[]; children: ReactNode }) {
   return (
@@ -74,7 +75,7 @@ export function DescribeTask({ cwd, want, run, onDraft, onRunning, onDiscard }: 
         setPhase({ at: "drafted", run: id });
         onDraftRef.current(d, id);
       } else if (page.status === "running") follow(id);
-      else if (page.outcome) setPhase({ at: "failed", why: page.detail || `The run ended ${page.outcome} with no draft.` });
+      else if (page.outcome) setPhase({ at: "failed", why: failureWords(page.detail).plain || `The run ended ${page.outcome} with no draft.` });
       // The end is written a moment after its last event: ask again, a few times.
       else if (tries < 4) setTimeout(() => void ended(id, tries + 1), 800);
       else setPhase({ at: "failed", why: "The run left no draft." });
@@ -173,10 +174,10 @@ export function DescribeTask({ cwd, want, run, onDraft, onRunning, onDiscard }: 
       </span>
       <textarea
         className="ta"
-        rows={3}
+        rows={4}
         value={words}
         disabled={phase.at === "running"}
-        placeholder={want === "agent" ? "For example: on request, read the interventions since the last run and propose at most two changes to the review skill." : "For example: docs changes go intent, then build, then review, then merge; no spec or plan."}
+        placeholder={want === "agent" ? "For example: on request, read the last run's interventions and propose changes to the review skill." : "For example: a docs change goes intent, build, review, merge; no spec or plan."}
         onChange={(e) => setWords(e.target.value)}
       />
       {phase.at === "running" ? (
@@ -399,7 +400,7 @@ function TrialOutput({ cwd, trial }: { cwd: string; trial: Extract<Trial, { at: 
     <div className="try-out" ref={at}>
       <div className="row" style={{ gap: 8, alignItems: "center" }}>
         <Chip square tone={trial.outcome === "done" ? "green" : "amber"}>{trial.outcome === "done" ? "Ran" : trial.outcome}</Chip>
-        <span className="grow faint" style={{ fontSize: 12 }}>{trial.detail}</span>
+        <span className="grow faint" style={{ fontSize: 12 }}>{failureWords(trial.detail).plain}</span>
         {ws && <Link to={`/run/${ws}/${trial.run}`}>Its log</Link>}
       </div>
       {items ? (
@@ -451,8 +452,8 @@ export function Gaps({ cwd, run, gaps }: { cwd: string; run: string; gaps: Draft
           <div key={i} className="gap-row">
             <Chip square tone="amber">{GAP_PART[g.part] ?? g.part}</Chip>
             <div className="grow" style={{ minWidth: 0 }}>
-              <div>{g.need}</div>
-              {g.instead && <div className="faint" style={{ fontSize: 12 }}>Instead: {g.instead}</div>}
+              <div><Inline text={g.need} /></div>
+              {g.instead && <div className="faint" style={{ fontSize: 12 }}>Instead: <Inline text={g.instead} /></div>}
               {typeof m === "string" && <div className="field-err">{m}</div>}
             </div>
             {m && typeof m !== "string" ? (

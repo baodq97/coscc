@@ -3,7 +3,7 @@
 // is one line above; its page runs it now or turns it on. Accepting one opens the unit it made.
 
 import { useEffect, useState } from "react";
-import type { ProposalRow } from "../api.gen";
+import type { ProposalRow, ProposingAgent } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { ago, unitCode } from "../lib/format";
 import type { Workspace } from "../lib/model";
@@ -21,6 +21,12 @@ const KIND: Record<string, string> = {
 };
 const FILTERS = ["pending", "accepted", "dismissed", "all"] as const;
 type Filter = (typeof FILTERS)[number];
+
+/** How one proposing agent starts here: a follower says whom it starts after, not "off here". */
+export function proposingWords(a: ProposingAgent): string {
+  if (a.after) return `starts after ${a.after}${a.after_on === false ? " (off here)" : ""}`;
+  return a.on === null ? "on request" : a.on ? "runs on its own here" : "off here, runs when you press Run now";
+}
 
 export function Proposals({ workspace }: { workspace: Workspace }) {
   const cwd = workspace.path;
@@ -63,7 +69,7 @@ export function Proposals({ workspace }: { workspace: Workspace }) {
       <div className="row muted" style={{ gap: 12, fontSize: 12.5, marginBottom: 10, flexWrap: "wrap" }}>
         {v.agents.map((a) => (
           <Link key={a.key} to={`/agents/${a.key}/trigger?ws=${encodeURIComponent(workspace.name)}`}>
-            {a.name}: {a.on === null ? "on request" : a.on ? "runs on its own here" : "off here, runs when you press Run now"}
+            {a.name}: {proposingWords(a)}
           </Link>
         ))}
         {others.map((p) => (

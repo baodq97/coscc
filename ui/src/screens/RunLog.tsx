@@ -35,6 +35,13 @@ export function toolLines(input: unknown): { first: string; more: number; full: 
   return { first: lines[0], more: lines.length - 1, full };
 }
 
+/** A `submit` call in plain words: "handed back 0 proposals", from the arrays its input holds. */
+export function submitWords(input: unknown): string {
+  const lists = input && typeof input === "object" ? Object.entries(input).filter(([, v]) => Array.isArray(v)) : [];
+  if (!lists.length) return "handed back its result";
+  return `handed back ${lists.map(([k, v]) => `${(v as unknown[]).length} ${(v as unknown[]).length === 1 ? k.replace(/s$/, "") : k}`).join(", ")}`;
+}
+
 /** `text` with every path into the unit's own worktree read from that worktree: `…/0001_x/a.py` is `a.py`. */
 export function inUnit(text: string, unit: string): string {
   return unit ? text.split(new RegExp(`[^\\s'"]*/${unit}/`)).join("") : text;
@@ -87,11 +94,10 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
     setStopping(true);
     try {
       await api.post("/api/runs/" + encodeURIComponent(run) + "/stop", { cwd });
-      // The run ends a moment after the press: its `end` is written once its session is closed.
+      // "Stopping…" stays until the run's `end` arrives (the log's `onEnd` reloads the page).
       setTimeout(head.reload, 1500);
     } catch (e) {
       setStopError((e as Error).message);
-    } finally {
       setStopping(false);
     }
   };
@@ -116,7 +122,7 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
               ) : (
                 `A run of the workspace, not of a unit${page.started_by ? `; started by ${startedBy(page.started_by)}` : ""}.`
               )}{" "}
-              {page.status === "running" ? <Chip tone="accent">running</Chip> : null}
+              {page.status === "running" ? <Chip tone="accent">{stopping ? "stopping…" : "running"}</Chip> : null}
             </>
           ) : undefined
         }
@@ -391,7 +397,7 @@ function ToolUse({ event: e, unit, who }: { event: StepEvent; unit: string; who:
     <div className="rl-l mono">
       {who}
       <span className="rl-tool">{toolName(e.name ?? "")}</span>{" "}
-      {open ? null : inUnit(first, unit)}
+      {open ? null : toolName(e.name ?? "") === "submit" ? submitWords(e.input) : inUnit(first, unit)}
       {more > 0 && (
         <>
           {" "}
@@ -444,7 +450,7 @@ function Line({ event: e, unit, whole }: { event: StepEvent; unit: string; whole
       return (
         <div className={`rl-l ${e.outcome === "done" ? "faint" : e.outcome === "paused-budget" ? "rl-warn" : "rl-bad"}`}>
           ended: {e.outcome === "paused-budget" ? "paused at its ceiling" : e.outcome}
-          {e.detail && !whole ? ` · ${e.detail}` : ""}
+          {e.detail && !whole ? ` · ${failureWords(e.detail).plain}` : ""}
         </div>
       );
     default:

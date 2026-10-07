@@ -934,6 +934,29 @@ class ACliThatOutlastsTheSdksCloseIsStillEnded(unittest.IsolatedAsyncioTestCase)
         self.assertTrue(client.finished)
         self.assertFalse(client.cancelled)
 
+    async def test_a_close_under_a_stop_does_not_wait_the_full_disconnect_timeout(self):
+        process = _Process(obeys=True)
+        h = sessions.StepHandle(client=_StubbornClient(process))
+        with (
+            mock.patch.object(sessions, "DISCONNECT_TIMEOUT", 30.0),
+            mock.patch.object(sessions, "STOP_DISCONNECT_TIMEOUT", 0.05),
+        ):
+
+            async def stream():
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    await h.close()
+
+            task = asyncio.create_task(stream())
+            await asyncio.sleep(0)
+            task.cancel()
+            started = asyncio.get_running_loop().time()
+            await task
+            await asyncio.wait_for(h._closing, 5)
+        self.assertLess(asyncio.get_running_loop().time() - started, 5)
+        self.assertEqual(process.signals, ["TERM"])
+
     async def test_one_that_ignores_sigterm_is_killed(self):
         process = _Process(obeys=False)
         h = sessions.StepHandle(client=_StubbornClient(process))

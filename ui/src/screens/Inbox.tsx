@@ -6,7 +6,7 @@ import type { Question } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { allUnits, failedLink, needsYou, proposalLink, useBoards, useLive, type PlacedUnit } from "../lib/boards";
 import { liveQuestions, unitState } from "../lib/model";
-import { ago, unitCode, unitTitle } from "../lib/format";
+import { ago, failureWords, unitCode, unitTitle } from "../lib/format";
 import { Icon } from "../lib/icons";
 import { stageLabel } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
@@ -107,7 +107,7 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
                 <span className="ny-t ellipsis" style={{ fontSize: 13 }}>{f.name} failed on {f.workspace}</span>
                 <span className="faint nowrap" style={{ fontSize: 12, marginLeft: "auto" }}>{ago(f.at)}</span>
               </div>
-              <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{(f.detail || "Open the run to see why.").split("\n")[0]}</div>
+              <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{failureWords(f.detail || "Open the run to see why.").plain.split("\n")[0]}</div>
             </div>
           </Link>
         ))}

@@ -463,7 +463,10 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         got = r.json()
         self.assertEqual(got["proposals"][0]["agent_name"], "Sowilo")
-        self.assertEqual(got["agents"], [{"key": "scan", "name": "Sowilo", "on": False}])
+        self.assertEqual(
+            got["agents"],
+            [{"key": "scan", "name": "Sowilo", "on": False, "after": "", "after_on": None}],
+        )
         r = await self.client.post(
             f"/api/proposals/{pid}", json={"cwd": str(self.ws), "action": "accept", "slug": "No"}
         )

@@ -97,7 +97,7 @@ const RAN: Record<string, string> = { failed: "failed", cancelled: "stopped", st
 export function statusWords(a: AgentRow, here: string): string {
   const said = [onHere(a, here)];
   if (a.running) said.push("running now");
-  else if (a.last) said.push(`${a.last.skipped ? "skipped" : RAN[a.last.outcome ?? ""] ?? "ran"} ${ago(a.last.at)}${a.last.made != null ? `, last run made ${a.last.made}` : ""}`);
+  else if (a.last) said.push(`${a.last.skipped ? "skipped" : RAN[a.last.outcome ?? ""] ?? "ran"} ${ago(a.last.at)}${a.last.made != null ? `, last run proposed ${a.last.made}` : ""}`);
   else said.push("never ran");
   if (a.next_at && !a.running) said.push(`next ${until(a.next_at)}`);
   return said.join(" · ");

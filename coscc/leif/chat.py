@@ -653,7 +653,11 @@ def _runs(core: Core, ws: str, asked: str) -> list[str]:
             f"started by {start.get('started_by') or '?'}: {end.get('outcome')}, "
             f"{_usd(end.get('cost_usd'))}"
             + (f", {end.get('detail')}" if end.get("detail") else "")
-            + (f"; asked {asks[run]} question(s) since" if asks[run] else "")
+            + (
+                f"; the owner asked this run {asks[run]} follow-up question(s) afterwards, already answered (none waits for them)"
+                if asks[run]
+                else ""
+            )
         )
         lines += [
             f"  proposed #{p['id']} ({p['state']}): {p['title']}" for p in made if p["run"] == run
@@ -738,7 +742,7 @@ READS: dict[str, tuple[Callable[..., Any], str, dict[str, Any]]] = {
         read_runs,
         "Use instead of agents or proposals when asked what an agent did or found: its last runs, "
         "newest first, each with who started it, how it ended, its cost, what it proposed and its "
-        "last words. `agent` keeps one agent's (its key or name).",
+        "last words. A follow-up the owner asked a finished run is already answered, never a question waiting. `agent` keeps one agent's (its key or name).",
         {
             "type": "object",
             "properties": {**_WORKSPACE, "agent": {"type": "string"}},

@@ -17,7 +17,13 @@ import { kinds } from "../../../coscc/features/release/ui/index";
 import { onWords } from "../screens/AgentActivity";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
-import { builtinOf, chainTo, changedParts, changes, errorIsHere, get, modelOptions, plainReasons, put, savedApart } from "../screens/AgentPage";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Inline } from "../components/ui";
+import { submitWords } from "../screens/RunLog";
+import { runCount } from "../screens/AgentActivity";
+import { proposingWords } from "../components/Proposals";
+import { builtinOf, chainTo, changedParts, unsavedWords, changes, errorIsHere, get, modelOptions, plainReasons, put, savedApart } from "../screens/AgentPage";
 import { runRow, resultWords, shallowWords } from "../screens/AgentActivity";
 import { fieldLabel, isEmpty, itemLine } from "../screens/UnitPage";
 import { inboxView } from "../screens/Inbox";
@@ -240,6 +246,7 @@ describe("agents", () => {
     expect(plainReasons(`${circle}: agents cannot start each other in a circle; default: off until you turn it on`)).toBe(
       "Laguz runs after Echo runs after Laguz: agents cannot start each other in a circle; off until you turn it on",
     );
+    expect(plainReasons("skills: Kenaz runs a stage of your process, so it needs at least one skill")).toBe("Kenaz runs a stage of your process, so it needs at least one skill");
     expect(plainReasons("tools.Write: no such tool in the catalog")).toBe("tools.Write: no such tool in the catalog");
   });
 
@@ -560,6 +567,10 @@ describe("screens", () => {
     const saved = { model: { id: "a", effort: "low" }, ceilings: { turns: 5, usd: 1 } };
     expect(changedParts({ model: { id: "a", effort: "high" } }, saved)).toEqual(["effort"]);
     expect(changedParts({ ceilings: { turns: 9, usd: 2 }, model: { id: "b", effort: "low" } }, saved)).toEqual(["turns", "spend", "model"]);
+    const tr = { trigger: { event: { name: "e", from: "a" } }, default: "on" };
+    const was = { trigger: { event: { name: "f", from: "b" } }, default: "off" };
+    expect(changedParts(tr, was)).toEqual(["starts after", "on or off by default"]);
+    expect(unsavedWords(tr, was)).toBe("2 unsaved changes: starts after, on or off by default");
     expect(changedParts({ "skill:impl": "x" }, { "skill:impl": "y" })).toEqual(["impl skill"]);
   });
 });
@@ -772,7 +783,7 @@ describe("until and statusWords", () => {
   const row = { on: true, on_in: ["a", "b"], off_reason: "", last: null, next_at: null } as unknown as AgentRow;
   it("tells on, last and next in one line", () => {
     const said = statusWords({ ...row, last: { at: "", made: 3 } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" }, "a");
-    expect(said).toMatch(/^On here \(also on in b\) · ran .*, last run made 3 · next in \d+ d$/);
+    expect(said).toMatch(/^On here \(also on in b\) · ran .*, last run proposed 3 · next in \d+ d$/);
   });
   it("says why an agent is off and that it never ran", () => {
     expect(statusWords({ ...row, on: false, on_in: [], off_reason: "a run stopped at its ceiling" }, "a")).toBe("Off here: a run stopped at its ceiling · never ran");
@@ -855,12 +866,49 @@ describe("an agent's markdown and tool names", () => {
   });
 });
 
+describe("submitWords and inline marks", () => {
+  it("says a submit in plain words", () => {
+    expect(submitWords({ proposals: [] })).toBe("handed back 0 proposals");
+    expect(submitWords({ proposals: [{ a: 1 }] })).toBe("handed back 1 proposal");
+    expect(submitWords({ why: "x" })).toBe("handed back its result");
+  });
+  it("shows code inside bold as code, with no backticks left", () => {
+    const html = renderToStaticMarkup(createElement(Inline, { text: "**`GET /api/units`:** and `x`" }));
+    expect(html).toBe("<b><code>GET /api/units</code><span>:</span></b><span> and </span><code>x</code>");
+  });
+});
+
+describe("runCount", () => {
+  it("counts skipped runs apart, in the group as in the tile", () => {
+    const runs = [...Array(12).fill({ skipped: false }), ...Array(3).fill({ skipped: true })];
+    expect(runCount(runs)).toBe("12 runs, 3 skipped");
+    expect(runCount(12, 3)).toBe("12 runs, 3 skipped");
+    expect(runCount([{ skipped: false }])).toBe("1 run");
+  });
+});
+
+describe("proposingWords", () => {
+  it("says a follower starts after its leader, naming the leader's state", () => {
+    const base = { key: "echo", name: "Echo", on: false, after: "Laguz", after_on: false };
+    expect(proposingWords(base)).toBe("starts after Laguz (off here)");
+    expect(proposingWords({ ...base, after_on: true })).toBe("starts after Laguz");
+    expect(proposingWords({ ...base, after: "", after_on: null })).toBe("off here, runs when you press Run now");
+  });
+});
+
 describe("failureWords", () => {
   it("says a killed process plainly and keeps the raw text apart", () => {
     const raw = "the session failed: Command failed with exit code 143 (exit code: 143) Error output: Check stderr output for details";
     const got = failureWords(raw);
     expect(got.plain).toBe("The agent's process was stopped (exit 143) before it finished");
     expect(got.raw).toBe(raw);
+  });
+  it("says a signal exit plainly, negative or shifted", () => {
+    for (const n of [-9, -15, 137, 143]) {
+      const raw = `the session failed: Command failed with exit code ${n} (exit code: ${n})`;
+      expect(failureWords(raw).plain).toBe(`The agent's process was stopped (exit ${n}) before it finished`);
+    }
+    expect(failureWords("exit code: 1").plain).toContain("broke off");
   });
   it("leaves a detail with no exit code as it is", () => {
     expect(failureWords("the ceiling was reached")).toEqual({ plain: "the ceiling was reached", raw: "" });

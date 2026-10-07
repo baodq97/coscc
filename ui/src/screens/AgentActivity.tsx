@@ -12,6 +12,13 @@ const VERDICT: Record<string, string> = { met: "met", "not-met": "not met", uncl
 export const OUTCOME: Record<string, string> = { failed: "failed", "paused-budget": "paused at its ceiling", cancelled: "stopped", stopped: "stopped" };
 
 /** What a run made, in words: "proposed 2", "verdict: met"; `""` for a run that makes nothing. */
+/** "12 runs, 3 skipped": a skipped run is counted apart, as the tile counts it. */
+export function runCount(runs: number | { skipped: boolean }[], skips = 0): string {
+  const ran = typeof runs === "number" ? runs : runs.filter((r) => !r.skipped).length;
+  const skipped = typeof runs === "number" ? skips : runs.length - ran;
+  return `${ran} run${ran === 1 ? "" : "s"}${skipped ? `, ${skipped} skipped` : ""}`;
+}
+
 export function resultWords(r: Pick<RunView, "verdict" | "made">): string {
   if (r.verdict) return `verdict: ${VERDICT[r.verdict] ?? r.verdict}`;
   if (r.made == null) return "";
@@ -96,8 +103,7 @@ export function Activity({ a, page, names, workspace }: { a: AgentRow; page: Pag
         <Stat label="Cost in 30 days">
           <b>{money(a.cost_30d)}</b>
           <div className="faint">
-            {a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}
-            {a.skips_30d ? `, ${a.skips_30d} skipped` : ""} · {where}
+            {runCount(a.runs_30d, a.skips_30d)} · {where}
           </div>
         </Stat>
       </div>
@@ -114,7 +120,7 @@ export function Activity({ a, page, names, workspace }: { a: AgentRow; page: Pag
                 {g.row_hash && <span className="faint mono" title={g.row_hash}>#{g.row_hash.slice(0, 6)}</span>}
               </span>
               <span className="faint" style={{ fontWeight: 500 }}>
-                {g.runs.length} run{g.runs.length === 1 ? "" : "s"} · {money(g.cost_usd)} · {g.turns} turn{g.turns === 1 ? "" : "s"}
+                {runCount(g.runs)} · {money(g.cost_usd)} · {g.turns} turn{g.turns === 1 ? "" : "s"}
               </span>
             </div>
             {g.settings.length > 0 && (
