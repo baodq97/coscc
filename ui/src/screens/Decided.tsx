@@ -27,7 +27,9 @@ export function Decided() {
 
 function Project({ workspace, q }: { workspace: Workspace; q: string }) {
   const [pages, setPages] = useState(1);
-  useEffect(() => setPages(1), [q]);
+  useEffect(() => {
+    setPages(1);
+  }, [q]);
   const decided = useResource("/api/decided", { cwd: workspace.path, q, offset: "0" }, { on: ["answer."] });
   const total = decided.data?.total ?? 0;
   return (
