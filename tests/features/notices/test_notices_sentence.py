@@ -99,7 +99,7 @@ class EachKindComesFromItsRecord(unittest.TestCase):
             "shipped": notices.notice_of(4, _ship("shipped")),
             "ship-refused": notices.notice_of(5, _ship("refused")),
         }
-        self.assertEqual(set(got) | {"agent-off"}, set(notices.KINDS))
+        self.assertEqual(set(got) | {"agent-off", "proposed", "agent-failed"}, set(notices.KINDS))
         for kind, n in got.items():
             self.assertIsNotNone(n, kind)
             self.assertEqual(n["kind"], kind)
@@ -125,7 +125,21 @@ class EachKindComesFromItsRecord(unittest.TestCase):
         ):
             self.assertIsNone(notices.notice_of(1, record), record)
 
-    def test_an_end_with_no_unit_and_a_ship_with_another_result_are_no_notice(self):
+    def test_an_agent_run_that_proposed_or_failed_is_a_notice_and_the_rest_are_not(self):
+        run = {"unit": "", "stage": "telemetry", "agent": "telemetry", "name": "Telemetry"}
+        n = notices.notice_of(1, _end("done", **{**run, "proposals": 2}))
+        self.assertEqual((n["kind"], n["text"]), ("proposed", "Telemetry proposed 2 in proj."))
+        n = notices.notice_of(1, _end("failed", **{**run, "name": ""}))
+        self.assertEqual((n["kind"], n["text"]), ("agent-failed", "telemetry in proj failed."))
+        for record in (
+            _end("done", **run),
+            _end("done", **{**run, "proposals": 0}),
+            _end("done", **{**run, "proposals": 3, "skipped": True}),
+            _end("failed", **{**run, "skipped": True}),
+        ):
+            self.assertIsNone(notices.notice_of(1, record), record)
+
+    def test_an_end_with_no_unit_and_no_agent_and_a_ship_with_another_result_are_no_notice(self):
         for record in (
             _end("failed", unit=""),
             _ship(""),

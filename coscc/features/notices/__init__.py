@@ -24,8 +24,17 @@ from coscc.kernel import BELL, STREAM_SECONDS, Busy, Ctx, Feature, Invalid, is_s
 
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
 SOURCE_KINDS = ("autopilot-stop", "questions", "end", "merge", "agent-state")
-# The six kinds, in order.
-Kind = Literal["autopilot-stop", "questions", "step-ended", "ship-refused", "shipped", "agent-off"]
+# The eight kinds, in order.
+Kind = Literal[
+    "autopilot-stop",
+    "questions",
+    "step-ended",
+    "ship-refused",
+    "shipped",
+    "agent-off",
+    "proposed",
+    "agent-failed",
+]
 KINDS: tuple[Kind, ...] = get_args(Kind)
 # Seconds between two `beat` lines of a quiet stream. Chosen, not measured.
 BEAT_SECONDS = 15.0
@@ -82,6 +91,19 @@ def _stop_text(record: dict[str, Any]) -> str:
     return f"The autopilot stopped on {unit} in {where}: {said}."
 
 
+def _agent_end(record: dict[str, Any], outcome: str, where: str) -> tuple[str, str] | None:
+    """A run of an agent no unit holds: what it proposed, or that it did not finish."""
+    if record.get("skipped") or not record.get("agent"):
+        return None
+    who = str(record.get("name") or record.get("agent"))
+    made = record.get("proposals")
+    if outcome == "done":
+        if not isinstance(made, int) or made < 1:
+            return None
+        return "proposed", f"{who} proposed {made} in {where}."
+    return "agent-failed", f"{who} in {where} {ENDED.get(outcome, 'ended without finishing')}."
+
+
 def _kind_and_text(record: dict[str, Any]) -> tuple[str, str] | None:
     kind = record.get("kind")
     unit = str(record.get("unit") or "")
@@ -99,7 +121,9 @@ def _kind_and_text(record: dict[str, Any]) -> tuple[str, str] | None:
         return "questions", f"{unit or 'A unit'} in {where} has {asked}{after}."
     if kind == "end":
         outcome = str(record.get("outcome") or "")
-        if not unit or not is_step(record) or outcome == "done":
+        if not unit:
+            return _agent_end(record, outcome, where)
+        if not is_step(record) or outcome == "done":
             return None
         said = ENDED.get(outcome, "ended without finishing")
         return "step-ended", f"The {stage or 'last'} step of {unit} in {where} {said}."
