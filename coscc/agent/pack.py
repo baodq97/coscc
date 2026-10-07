@@ -105,9 +105,8 @@ THENS = ("proposal-if-no",)
 # A schedule's hours and an event's delay. Chosen: a year.
 HOURS_MAX = 8760
 # A row another agent's run starts (`trigger.event.from`) is at most this many agents after the
-# first of its chain, and reads that agent's result through this data source.
+# first of its chain.
 CHAIN_MAX = 2
-FROM_DATA = "from-result"
 # Claude Code's tools known to only read, all of its own a row checked with no catalog may hold.
 KNOWN_READ = ("Read", "Glob", "Grep", "SendMessage", "peers")
 # What a process state may do in place of running an agent: the engine opens the pull request, or
@@ -511,18 +510,13 @@ def after_of(found: Mapping[str, Any] | None) -> str:
 
 
 def _check_chain(row: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]] | None) -> list[str]:
-    """A row another agent's done run starts reads that agent's result (`FROM_DATA`), is off until
-    the owner turns it on in a workspace, and runs after a row its own trigger starts; among
-    `rows`, no circle and at most `CHAIN_MAX` agents after the first. A row that reads
-    `FROM_DATA` with no `from` is handed nothing of it: the page saves `trigger` last, so a chain
-    is made in any order and undone by its trigger alone."""
+    """A row another agent's done run starts (and hands that run's result) is off until the owner
+    turns it on in a workspace, and runs after a row its own trigger starts; among `rows`, no
+    circle and at most `CHAIN_MAX` agents after the first."""
     key, first = str(row.get("key") or ""), after_of(row)
     if not first:
         return []
-    raw = row.get("input")
-    data = raw.get("data") if isinstance(raw, dict) else None
-    reads = isinstance(data, list) and FROM_DATA in data
-    out = [] if reads else [f"input.data: a row that runs after {first} reads {FROM_DATA}"]
+    out: list[str] = []
     if row.get("default") != "off":
         out.append("default: a row another agent starts is off until you turn it on in a workspace")
     if first == key:

@@ -622,12 +622,10 @@ class TriggersAreChecked(unittest.TestCase):
         self.assertEqual(self.reasons(_scan(trigger={"event": {"name": "unit.shipped"}})), "")
 
     def follower(self, key: str, after: str, **over) -> dict:
-        data = ["from-result"]
         return _scan(
             key=key,
             name=key.capitalize(),
             trigger={"event": {"name": "agent-run.ended", "from": after}, "manual": True},
-            input={**_scan()["input"], "data": data, "skip_when_empty": False},
             **over,
         )
 
@@ -644,12 +642,6 @@ class TriggersAreChecked(unittest.TestCase):
     def test_what_a_follower_must_say_and_the_neighbours_refused(self):
         said = self.chain(self.follower("b", "scan", default="on"))
         self.assertIn("off until you turn it on in a workspace", said)
-        plain = self.follower("b", "scan")
-        plain["input"] = _scan()["input"]
-        self.assertIn("a row that runs after scan reads from-result", self.chain(plain))
-        # Read with no agent to run after, it is handed nothing: undoing a chain is its trigger.
-        alone = _scan(input={**_scan()["input"], "data": ["from-result"]})
-        self.assertEqual(self.chain(alone), "")
         self.assertIn("cannot run after itself", self.chain(self.follower("b", "b")))
         self.assertIn("no agent nobody", self.chain(self.follower("b", "nobody")))
         # A stage's agent ends no run of its own through a trigger.

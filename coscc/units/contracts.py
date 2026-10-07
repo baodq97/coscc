@@ -422,8 +422,7 @@ class Input(TypedDict):
 # names, the plan's files as they stand, the files `main` changed since the plan, the last
 # integration and the screenshots taken again; and, for a triggered row
 # (`coscc/runner/triggers.py`), what people stepped in for since its last run, the proposals
-# already made, the catalog a row or a process is composed from (`Agents.catalog_block`), and
-# the last result of the agent it runs after (`trigger.event.from`).
+# already made, and the catalog a row or a process is composed from (`Agents.catalog_block`).
 DATA = (
     "idea",
     "siblings",
@@ -435,11 +434,10 @@ DATA = (
     "interventions",
     "proposals",
     "catalog",
-    "from-result",
 )
 # What `triggers.prompt_of` reads of `DATA` for a row a trigger starts: the rest are a stage's
 # (`runner/prompt.py`), so a triggered row that declares one is handed nothing of it.
-TRIGGERED_DATA = ("idea", "interventions", "proposals", "catalog", "from-result")
+TRIGGERED_DATA = ("idea", "interventions", "proposals", "catalog")
 _OPTIONAL_INPUT = ("skip_when_empty",)
 
 

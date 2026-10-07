@@ -501,10 +501,10 @@ class Agents:
             ),
             "events": events,
             "chain": (
-                f'A row runs after another agent with {{"event": {{"name": "agent-run.ended", '
-                f'"from": "<that agent\'s key>"}}}}, "default": "off" and the data source '
-                f"{pack.FROM_DATA}, that agent's last result; at most {pack.CHAIN_MAX} agents "
-                "after the first, never in a circle. agent-run.started starts nothing."
+                'A row runs after another agent with {"event": {"name": "agent-run.ended", '
+                '"from": "<that agent\'s key>"}} and "default": "off": that agent\'s done run '
+                f"starts it, its result in the prompt; at most {pack.CHAIN_MAX} agents after the "
+                "first, never in a circle. agent-run.started starts nothing."
             ),
             "guards": list(pack.PROCESS_GUARDS),
             "actions": list(pack.ACTIONS),

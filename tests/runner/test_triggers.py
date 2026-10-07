@@ -712,9 +712,8 @@ class ATriggeredRowIsHandedOnlyTheDataItsPromptReads(unittest.TestCase):
             return triggers.prompt_of(declared, [], [], None, catalog="CAT")[0]
 
         empty = prompt([])
-        # The idea and the result of the agent it runs after come in through `compose`, when the
-        # row declares them.
-        for key in (k for k in contracts.DATA if k not in ("idea", "from-result")):
+        # The idea comes in through `compose`, from the unit, when the row declares it.
+        for key in (k for k in contracts.DATA if k != "idea"):
             read = prompt([key]) != empty
             self.assertEqual(read, key in contracts.TRIGGERED_DATA, key)
 
@@ -861,7 +860,7 @@ FOLLOWER = {
         "outputs": [],
         "answers": False,
         "findings": False,
-        "data": ["from-result"],
+        "data": [],
     },
     "output": pack.rows()["scan"]["builtin"]["output"],
     "trigger": {"event": {"name": "agent-run.ended", "from": "scan"}, "manual": True},

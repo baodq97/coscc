@@ -4,7 +4,7 @@ A row no state runs may say what starts it (`pack.TRIGGERS`): `event` (a bus fac
 `after_hours` later through a `trigger_due` row that survives a restart), `schedule` (every
 `hours`, counted from its last `end` in the run log), `manual` (*Run now*) and `leif`. An event of
 `agent-run.ended` starts a row only after a done run of the agent its `from` names, and hands it
-that run's result (`from-result`, `start.from_run`). An event or
+that run's result in its prompt and the run on its `start` (`from_run`). An event or
 a schedule runs it only where it is on (`pack.agent_on`); a press and Leif run it either way.
 `run` is the one road: refused before spend (`check`), then one session through `run.run` under
 the row's ceilings and the grant `issue` derives, its prompt built from what the row's `input`
@@ -318,7 +318,7 @@ async def compose(
     it runs after, read here when not given."""
     declared = contracts.input_of(key)
     data = Data(core.config.data_dir)
-    if leader is None and pack.FROM_DATA in declared["data"] and pack.after_of(pack.row(key)):
+    if leader is None and pack.after_of(pack.row(key)):
         leader = await asyncio.to_thread(_leader, core, ws, key)
     made = (
         await asyncio.to_thread(proposals.listed, data, ws, key)
@@ -455,11 +455,7 @@ async def _run(
         await asyncio.to_thread(_skipped, journal, ws, unit, key, by, since, run_id)
         return "", "skipped"
     found_row = pack.row(key) or {}
-    leader = (
-        await asyncio.to_thread(_leader, core, ws, key)
-        if pack.FROM_DATA in declared["data"] and pack.after_of(found_row)
-        else None
-    )
+    leader = await asyncio.to_thread(_leader, core, ws, key) if pack.after_of(found_row) else None
     prompt, taken = await compose(core, key, cwd, ws, unit, text, found, leader)
     directory = core.ws.unit_dir(cwd, unit) if unit else None
     output = found_row.get("output") or {}

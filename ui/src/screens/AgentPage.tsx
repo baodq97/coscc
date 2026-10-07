@@ -39,7 +39,6 @@ const DATA: Record<string, string> = {
   screens: "the screenshots",
   interventions: "what people stepped in for since its last run",
   proposals: "the proposals already made",
-  "from-result": "what the agent it starts after found",
 };
 export const EFFECT: Record<string, string> = {
   read: "Reads",
@@ -71,7 +70,7 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stri
 
 /** The draft's parts that differ from what is saved: what the save bar sends. */
 /** The parts that changed, `trigger` last: it is checked against the rest of the row (a chain
- * needs its data source and `default: off` saved first). */
+ * needs `default: off` saved first). */
 export function changes(draft: Draft, saved: Record<string, unknown>): string[] {
   const out = Object.keys(draft).filter((k) => !same(draft[k], saved[k]));
   return [...out.filter((k) => k !== "trigger"), ...out.filter((k) => k === "trigger")];
@@ -300,6 +299,12 @@ type Ctx = {
   setPage: (p: Page) => void;
 };
 
+/** Whether a refusal of `top` belongs under the part at `path`: one naming a part of `top`
+ * (`trigger.event.from: …`) is shown only under that part, any other under every part of `top`. */
+export function errorIsHere(message: string, top: string, path: string): boolean {
+  return !message.startsWith(`${top}.`) || message.startsWith(path);
+}
+
 /** One part of a row: its label, where it comes from (built in, edited, unsaved) and a reset. */
 function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; label: string; hint?: string; children: ReactNode }) {
   const [top, ...rest] = path.split(".");
@@ -323,7 +328,7 @@ function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; la
       </div>
       <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
         {children}
-        {ctx.error?.field === top && <div className="field-err">{ctx.error.message}</div>}
+        {ctx.error?.field === top && errorIsHere(ctx.error.message, top, path) && <div className="field-err">{ctx.error.message}</div>}
       </div>
     </div>
   );
@@ -812,21 +817,12 @@ function Trigger(ctx: Ctx) {
   );
 }
 
-/** A chain to the agent `from` (`""`: none): its trigger waits on that agent's finished run, it
- * reads what that run found and stays off until turned on. Undone by the trigger alone. */
-export function chainTo(
-  trigger: TriggerFields,
-  input: Input | undefined,
-  from: string,
-): { trigger: TriggerFields; input?: Input; default?: "off" } {
+/** A chain to the agent `from` (`""`: none): its trigger waits on that agent's finished run, whose
+ * result its prompt then holds, and it stays off until turned on. Undone by the trigger alone. */
+export function chainTo(trigger: TriggerFields, from: string): { trigger: TriggerFields; default?: "off" } {
   const { event: _, ...rest } = trigger;
   if (!from) return { trigger: rest };
-  const data = input?.data ?? [];
-  return {
-    trigger: { ...rest, event: { name: "agent-run.ended", from } },
-    default: "off",
-    ...(input && !data.includes("from-result") ? { input: { ...input, data: [...data, "from-result"] } } : {}),
-  };
+  return { trigger: { ...rest, event: { name: "agent-run.ended", from } }, default: "off" };
 }
 
 /** Which agent's finished run starts this one: none, or another agent that runs by itself. */
@@ -838,8 +834,7 @@ function StartsAfter(ctx: Ctx) {
   if (trigger.event && !from) return null;
   const choices = page.rows.filter((r) => r.group === "triggered" && r.key !== a.key);
   const pick = (to: string) => {
-    const next = chainTo(trigger, ctx.value("input") as Input | undefined, to);
-    if (next.input) ctx.edit("input", next.input);
+    const next = chainTo(trigger, to);
     if (next.default) ctx.edit("default", next.default);
     ctx.edit("trigger", next.trigger);
   };
