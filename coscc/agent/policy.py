@@ -1255,7 +1255,7 @@ def _inline(simple: _Simple, docs: Mapping[int, str], fed: _Simple | None = None
 def _given(name: str, rest: list[str]) -> tuple[str | None, str | None]:
     """What the words after an interpreter of `_INLINE` give it: its program as text, or else
     its script (`-` for stdin); `(None, None)` for neither, which reads stdin too."""
-    flags, takes, sticks = _INLINE[name]
+    flags, takes, sticks, digits = _INLINE[name]
     i = 0
     while i < len(rest):
         w = rest[i]
@@ -1273,7 +1273,8 @@ def _given(name: str, rest: list[str]) -> tuple[str | None, str | None]:
         elif w[1:2] != "-" and sticks is not None:
             # A cluster (`-le 'print'`, `-Bc 'code'`, `-cprint(1)`, `-Wignore`): read up to the
             # first flag that takes a value; what follows it in the word is that value.
-            for j in range(1, len(w)):
+            j = 1
+            while j < len(w):
                 flag = "-" + w[j]
                 if flag in flags:
                     return w[j + 1 :] or after, None
@@ -1281,6 +1282,9 @@ def _given(name: str, rest: list[str]) -> tuple[str | None, str | None]:
                     i += 1
                 if flag in takes or flag in sticks:
                     break
+                j += 1
+                while flag in digits and j < len(w) and w[j].isdigit():
+                    j += 1
         i += 1
     return None, None
 
@@ -2205,23 +2209,27 @@ _CODE_FLAGS = frozenset({"-e", "-p", "--eval", "--print"})
 # Interpreters (`python` for `python3` and `python3.N` too), what `_inline` reads: the flags whose
 # value is the program; the flags that take some other value, in the word or the next one; the
 # short flags whose value is only the rest of their word (`-MData::Dumper`), `None` where short
-# flags never cluster (`node -pe` is a flag of its own).
+# flags never cluster (`node -pe` is a flag of its own); the short flags whose value is only the
+# digits after them, the cluster going on past them (`-le`, `-0777ne`).
 _INLINE = {
-    "python": (frozenset({"-c"}), frozenset({"-W", "-X"}), frozenset()),
+    "python": (frozenset({"-c"}), frozenset({"-W", "-X"}), frozenset(), frozenset()),
     "perl": (
         frozenset({"-e", "-E"}),
         frozenset(),
-        frozenset({"-I", "-M", "-m", "-C", "-d", "-D", "-F", "-i", "-x", "-0", "-l", "-V"}),
+        frozenset({"-I", "-M", "-m", "-C", "-d", "-D", "-F", "-i", "-x", "-V"}),
+        frozenset({"-0", "-l"}),
     ),
     "ruby": (
         frozenset({"-e"}),
         frozenset({"-I", "-r", "-C", "-E", "--encoding"}),
-        frozenset({"-W", "-x", "-0", "-F", "-i", "-K"}),
+        frozenset({"-W", "-x", "-F", "-i", "-K"}),
+        frozenset({"-0"}),
     ),
     "node": (
         _CODE_FLAGS | {"-pe"},
         frozenset({"-r", "--require", "--import", "--loader", "-C", "--conditions"}),
         None,
+        frozenset(),
     ),
 }
 

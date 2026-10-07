@@ -1060,6 +1060,7 @@ class ASecretIsOutOfEveryToolsReach(_Unit):
             f"""python3 -c "import glob; print(glob.glob('{self.home}/.ss*/id_*'))\"""",
             f"""python3 -I -c "import glob; print(glob.glob('{self.home}/.ss*/id_*'))\"""",
             f"""echo "import glob; print(glob.glob('{self.home}/.ss*/id_*'))" | python3""",
+            f"""perl -le 'print glob("{self.home}/.ss*/id_*")'""",
         ):
             with self.subTest(line=line):
                 self.assertIn(policy.SECRETS, self.bash(line))
@@ -1779,6 +1780,11 @@ class TheHelperRulesHold(_Unit):
         """python3 -I -c "import os; os.system('git commit -m x')\"""",
         """perl -W -e 'system("git push")'""",
         """perl -MData::Dumper -e 'system("git push")'""",
+        """perl -le 'system("git commit -m x")'""",
+        """perl -lne 'system("git add .")' x""",
+        """perl -l012 -e 'system("git push")'""",
+        """perl -00e 'system("git push")'""",
+        """ruby -0e 'system("git", "push")'""",
         """ruby -E UTF-8 -e 'system("git", "push")'""",
         """node -pe "require('child_process').execSync('git push')\"""",
         """python3 -Wignore::DeprecationWarning <<< "import os; os.system('git commit')\"""",
@@ -1807,6 +1813,8 @@ class TheHelperRulesHold(_Unit):
             "uv run python -m pytest tests/x.py",
             "python3 script.py",
             'node -e "console.log(1)"',
+            "perl -le 'print 1'",
+            "perl -l script.pl",
             'python3 -I -c "print(1)"',
             "python3 -W ignore script.py",
             "timeout 60 .venv/bin/python -m pytest tests/x.py",
