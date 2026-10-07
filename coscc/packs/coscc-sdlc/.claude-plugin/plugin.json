@@ -14,6 +14,7 @@
     "./agents/estimate.md",
     "./agents/leif.md",
     "./agents/scan.md",
+    "./agents/outcome.md",
     "./agents/scout.md",
     "./agents/worker.md"
   ]

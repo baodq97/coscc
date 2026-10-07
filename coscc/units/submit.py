@@ -68,6 +68,29 @@ def round_problem(obj: Mapping[str, Any]) -> str:
     return ""
 
 
+def verdict_problem(obj: Mapping[str, Any]) -> str:
+    """What a verdict says that its schema cannot rule out, `""` when nothing: no criterion, one
+    named twice, or a `yes` or `no` whose evidence cites no `path:lines`."""
+    criteria = list(obj.get("criteria") or ())
+    if not criteria:
+        return "grade at least one criterion."
+    named = [c["criterion"] for c in criteria]
+    again = sorted({c for c in named if named.count(c) > 1})
+    if again:
+        return f"criterion {', '.join(again)} is graded more than once."
+    uncited = [
+        c["criterion"]
+        for c in criteria
+        if c["met"] != "unclear" and not contracts.CITED.search(c["evidence"])
+    ]
+    if uncited:
+        return (
+            f"{', '.join(uncited)}: a `yes` or a `no` cites its evidence as `path:lines` "
+            "(as `coscc/bus.py:12-30`); with none, say `unclear`."
+        )
+    return ""
+
+
 def plan_problem(obj: Mapping[str, Any]) -> str:
     """What a plan's steps say that its schema cannot rule out, `""` when nothing: a step naming
     a path its `files` do not, one path in two steps, or a path not as the repository names it."""
@@ -264,13 +287,16 @@ class Channel:
 class Collector:
     """The `submit` of a session that is no stage: Gebo, an estimate, a triggered row.
 
-    No artifact to hash and no unit run to match: it checks the schema alone (the SDK does
-    that) and keeps the last object handed in. What of it is written is the caller's to decide.
+    No artifact to hash and no unit run to match: it checks the schema (the SDK does that) and a
+    verdict's citations (`verdict_problem`), and keeps the last object handed in. What of it is
+    written is the caller's to decide.
     """
 
     def __init__(self, kind: str):
         self.kind = self.stage = kind
-        self._what = contracts.output(kind).get("purpose", "")
+        out = contracts.output(kind)
+        self._what = out.get("purpose", "")
+        self.is_verdict = out["kind"] == "verdict"
         self.schema = contracts.schema(kind)
         self.received: dict[str, Any] | None = None
 
@@ -278,7 +304,10 @@ class Collector:
         return self.received["object"] if self.received is not None else None
 
     async def handle(self, args: dict[str, Any]) -> dict[str, Any]:
-        self.received = {"object": dict(args or {})}
+        obj = dict(args or {})
+        if self.is_verdict and (problem := verdict_problem(obj)):
+            return refusal(problem)
+        self.received = {"object": obj}
         return {"content": [{"type": "text", "text": f"received: {self.kind}"}]}
 
     def description(self) -> str:

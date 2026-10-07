@@ -402,5 +402,42 @@ class ATriggeredRowsCollectorKeepsWhatFits(unittest.TestCase):
         self.assertTrue(said["is_error"])
 
 
+class AVerdictCitesItsEvidence(unittest.TestCase):
+    """The outcome grader's `submit` refuses a `yes` or a `no` that cites no `path:lines`."""
+
+    def _said(self, *criteria: dict[str, str]) -> tuple[dict[str, Any], submit.Collector]:
+        collector = submit.Collector("outcome")
+        said = asyncio.run(
+            submits({"mcp_servers": {"cos": collector.server()}}, criteria=list(criteria))
+        )
+        return said, collector
+
+    def test_yes_or_no_without_path_lines_is_refused_and_unclear_needs_none(self):
+        for met in ("yes", "no"):
+            said, collector = self._said(
+                {"criterion": "O1", "source": "s", "met": met, "evidence": "it is there"}
+            )
+            self.assertTrue(said["is_error"], met)
+            self.assertIn("path:lines", said["content"][0]["text"])
+            self.assertIsNone(collector.object())
+        said, collector = self._said(
+            {"criterion": "O1", "source": "s", "met": "no", "evidence": "coscc/bus.py:12-30 gone"},
+            {"criterion": "W1", "source": "t", "met": "unclear", "evidence": "measured on runs"},
+        )
+        self.assertFalse(said.get("is_error"))
+        self.assertEqual(len(collector.object()["criteria"]), 2)
+
+    def test_no_criterion_or_one_twice_is_refused(self):
+        self.assertIn("at least one", submit.verdict_problem({"criteria": []}))
+        one = {"criterion": "O1", "source": "s", "met": "unclear", "evidence": "x"}
+        self.assertIn("more than once", submit.verdict_problem({"criteria": [one, one]}))
+
+    def test_the_verdict_is_its_worst_criterion(self):
+        c = lambda met: {"met": met}
+        self.assertEqual(contracts.graded([c("yes"), c("unclear")]), "unclear")
+        self.assertEqual(contracts.graded([c("unclear"), c("no")]), "not-met")
+        self.assertEqual(contracts.graded([c("yes")]), "met")
+
+
 if __name__ == "__main__":
     unittest.main()

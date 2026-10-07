@@ -32,7 +32,9 @@ directory, and five units in it, always the same, so a spec can name its address
                            Leif answered (`delegated`, so `/decisions` lists it), one you answered
                            (`person`), one open; a rerun, a round allowed and an outcome you
                            recorded, so its Activity shows them;
-                           one `plan` run of it, ended, in the run log, so `/`, `/activity` and its Timeline show a time
+                           one `plan` run of it, ended, in the run log, so `/`, `/activity` and its Timeline show a time;
+                           shipped nine days ago and its outcome graded (one criterion met, one not,
+                           one unclear, a proposal), so its Outcome block and `/insights` show it
     0005_unfinished-review every artifact up to a review whose round 2 asked for
                            changes and left out F1 of round 1; the PR machine's row names
                            github.com/o/r/pull/2
@@ -963,6 +965,79 @@ def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
     table.claim(data, key, ids[3], "dismissed", "Already answered by the questions on each unit.")
 
 
+# What the outcome grader made of `0004_finished`: one sentence met, one not, one it could not
+# check, so its Outcome block shows each kind and the proposal the `no` made.
+OUTCOME_CRITERIA = [
+    {
+        "criterion": "O1",
+        "source": "Màn hình Insights hiển thị chi phí trung vị của mỗi unit đã ship.",
+        "met": "yes",
+        "evidence": "ui/src/screens/Insights.tsx:118-130 the cost card shows the median",
+    },
+    {
+        "criterion": "O2",
+        "source": "Mỗi unit vượt ngân sách được nêu tên kèm liên kết tới trang của nó.",
+        "met": "no",
+        "evidence": "ui/src/screens/Insights.tsx:131-140 names at most five, the rest are cut",
+    },
+    {
+        "criterion": "W1",
+        "source": "Chi phí trung vị giảm xuống dưới $15 trong tháng tới.",
+        "met": "unclear",
+        "evidence": "A figure measured on runs; the repository does not record it.",
+    },
+]
+
+
+def make_outcome_fixture(work: Path, data_dir: Path, proj: Path) -> None:
+    """`0004_finished` shipped nine days ago by the app, graded by the outcome row two days later:
+    its verdict, the `end` Insights counts, and the proposal its `no` made."""
+    from datetime import datetime, timedelta, timezone
+
+    from coscc.store.db import Data
+    from coscc.store.journal import SHIP_RECORD, Journal
+    from coscc.units import proposals as table
+    from coscc.units.meta import UnitMeta
+    from coscc.units.read import grader
+
+    found = grader()
+    if found is None:
+        raise RuntimeError("no row grades outcomes")
+    key, unit, now = str(proj.resolve()), "0004_finished", datetime.now(timezone.utc)
+    journal = Journal(work, Data(data_dir))
+    at = lambda days: (now - timedelta(days=days)).isoformat(timespec="seconds")
+    journal.append(
+        {
+            "kind": SHIP_RECORD,
+            "workspace": key,
+            "unit": unit,
+            "stage": "ship",
+            "result": "shipped",
+            "at": at(9),
+        }
+    )
+    obj = {"criteria": OUTCOME_CRITERIA}
+    judgement = UnitMeta(work, Data(data_dir)).record_verdict(
+        key, unit, found[0], "capture-grade", obj
+    )
+    items = table.of_verdict(unit, OUTCOME_CRITERIA)
+    table.add(Data(data_dir), key, found[0], unit, items, run="capture-grade")
+    journal.started(key, unit, found[0], "manual", agent=found[0], run="capture-grade", at=at(2))
+    journal.finished(
+        key,
+        unit,
+        found[0],
+        "done",
+        agent=found[0],
+        run="capture-grade",
+        turns=14,
+        cost_usd=0.18,
+        verdict=judgement,
+        proposals=len(items),
+        at=at(2),
+    )
+
+
 def seed_pilot(data_dir: Path, proj: Path) -> None:
     """`codegraph` at `pilot` for `proj`, the pref written straight: `POST /api/features` would
     install its engine (about 290 MB, over the network). The row shows `pilot` only when `npm`
@@ -987,6 +1062,7 @@ def make_autopilot_fixture(
 
     make_fixture(api, proj, rows, AUTOPILOT_FIXTURE)
     make_scan_fixture(api, data_dir, proj)
+    make_outcome_fixture(work, data_dir, proj)
     journal, key = Journal(work, data_dir), str(proj.resolve())
     for _ in range(2):
         journal.append(

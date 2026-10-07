@@ -86,7 +86,8 @@ class Input:
     back through (`None`: its output is its reply). `session_id` continues a session (chat);
     `keep` keeps its client for the next turn (chat). `resume` is a `suspend` row to go on from.
     `servers` are the engine's own MCP servers beside `submit`'s, and `mcp` the full names of
-    their tools the grant holds (Leif's `run_agent`)."""
+    their tools the grant holds (Leif's `run_agent`, a feature's catalog tool); `features` the
+    row's tool names that are a feature's, not Claude Code's."""
 
     cwd: str
     prompt: str
@@ -105,6 +106,7 @@ class Input:
     resume: Mapping[str, Any] | None = None
     servers: Mapping[str, Any] = field(default_factory=dict)
     mcp: tuple[str, ...] = ()
+    features: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -423,6 +425,7 @@ async def run(
         branch=given.branch,
         lease=given.lease,
         mcp=given.mcp,
+        features=given.features,
     )
     text, turns, budget, used_up, start_at = _begin(ctx, agent, given, stage, out, grant)
     owner = _owner(agent, given, stage, start_at, out.run)

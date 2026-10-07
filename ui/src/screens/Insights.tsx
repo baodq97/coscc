@@ -3,7 +3,7 @@
 // Every figure names the units behind it, so a number can be checked, not only read.
 
 import { useState } from "react";
-import type { AgentSpend, Insights as View, Target } from "../api.gen";
+import type { AgentSpend, Outcomes, Insights as View, Target } from "../api.gen";
 import { useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { stageLabel } from "../lib/pack";
@@ -79,6 +79,7 @@ function Project({ workspace }: { workspace: Workspace }) {
           <TargetCard key={t.name} target={t} shipped={v.shipped.length} workspace={workspace.name} />
         ))}
       </div>
+      <OutcomeCards o={v.outcomes} workspace={workspace.name} />
       <Days view={v} />
       <div className="sec-h">
         By agent <span className="faint">open one to see its runs</span>
@@ -106,6 +107,7 @@ function Project({ workspace }: { workspace: Workspace }) {
             <span className="id">{unitCode(workspace.name, number(s.unit))}</span>
             <span className="t">{unitTitle(s.unit)}</span>
             <span className="meta">
+              {s.outcome && <Chip square tone={s.outcome === "met" ? "green" : s.outcome === "not-met" ? "red" : "amber"}>{OUTCOME[s.outcome] ?? s.outcome}</Chip>}
               <span style={{ color: (s.usd ?? 0) > 15 ? "var(--amber)" : undefined }}>{money(s.usd)}</span> · {s.rounds} round{s.rounds === 1 ? "" : "s"}
             </span>
           </Link>
@@ -113,6 +115,59 @@ function Project({ workspace }: { workspace: Workspace }) {
         {!v.shipped.length && <div className="card-b faint">Nothing shipped in {v.days} days.</div>}
       </div>
     </>
+  );
+}
+
+const OUTCOME: Record<string, string> = { met: "met", "not-met": "not met", unclear: "unclear" };
+const pct = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : "—");
+
+/** The two outcome targets: every shipped unit graded within 7 days of its week of waiting, and
+ * most of those graded met. The units that missed are named. */
+function OutcomeCards({ o, workspace }: { o: Outcomes; workspace: string }) {
+  const late = o.due > o.on_time;
+  const short = o.graded > 0 && o.met / o.graded < o.target_met;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+      <div className="card card-b">
+        <div className="faint" style={{ fontSize: 12.5 }}>Outcome graded within 7 days</div>
+        <div className="row" style={{ alignItems: "baseline", gap: 8, marginTop: 4 }}>
+          <b style={{ fontSize: 22, color: late ? "var(--amber)" : undefined }}>{pct(o.on_time, o.due)}</b>
+          <span className="faint">
+            {o.on_time} of {o.due} due · target {pct(o.target_graded, 1)}
+          </span>
+        </div>
+        <div className="faint" style={{ fontSize: 12, marginTop: 8 }}>
+          {o.due ? (late ? "Grade the rest from each unit's page." : "Every unit due was graded in time.") : "No unit has waited its week yet."}
+        </div>
+      </div>
+      <div className="card card-b">
+        <div className="faint" style={{ fontSize: 12.5 }}>Outcome met</div>
+        <div className="row" style={{ alignItems: "baseline", gap: 8, marginTop: 4 }}>
+          <b style={{ fontSize: 22, color: short ? "var(--amber)" : undefined }}>{pct(o.met, o.graded)}</b>
+          <span className="faint">
+            {o.met} of {o.graded} graded · target {pct(o.target_met, 1)}
+          </span>
+        </div>
+        <div className="faint" style={{ fontSize: 12, marginTop: 8 }}>
+          {o.missed.length ? (
+            <>
+              {o.missed.length} short:{" "}
+              {o.missed.slice(0, WORST).map((u, i) => (
+                <span key={u}>
+                  {i > 0 && ", "}
+                  <Link to={`/unit/${workspace}/${number(u)}`}>{unitCode(workspace, number(u))}</Link>
+                </span>
+              ))}
+              {o.missed.length > WORST && "…"}
+            </>
+          ) : o.graded ? (
+            "Every graded unit met its outcome."
+          ) : (
+            "Nothing graded yet."
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

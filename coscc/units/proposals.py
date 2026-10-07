@@ -101,6 +101,39 @@ def kept(
     return keep, rejected
 
 
+class Item(TypedDict):
+    """One proposal as an agent hands it back, or as the engine makes it of a verdict."""
+
+    type: str
+    slug: str
+    title: str
+    problem: str
+    sources: list[str]
+
+
+def of_verdict(unit: str, criteria: Sequence[Mapping[str, Any]]) -> list[Item]:
+    """`then: proposal-if-no`: one `fix` per criterion not met, titled by its sentence, resting on
+    its evidence and the unit; none for `unclear`."""
+    stem = re.sub(r"^[0-9]+_", "", unit)
+    out: list[Item] = []
+    for c in criteria:
+        if c.get("met") != "no":
+            continue
+        said = " ".join(str(c.get("source") or c.get("criterion") or "").split())
+        tail = f"-{str(c.get('criterion') or '').lower()}"
+        out.append(
+            {
+                "type": "fix",
+                "slug": (stem[: SLUG_MAX - len(tail)].strip("-") + tail).strip("-"),
+                "title": said if len(said) <= TITLE_MAX else said[: TITLE_MAX - 1] + "…",
+                "problem": f"{unit} shipped, but its outcome is not met: {said}\n\n"
+                f"{c.get('evidence') or ''}"[:PROBLEM_MAX],
+                "sources": [str(c.get("evidence") or ""), unit],
+            }
+        )
+    return out
+
+
 def _proposal(row: Any) -> Proposal:
     return Proposal(
         id=int(row["id"]),

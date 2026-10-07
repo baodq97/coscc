@@ -6,7 +6,9 @@ A row no state runs may say what starts it (`pack.TRIGGERS`): `event` (a bus fac
 a schedule runs it only where it is on (`pack.agent_on`); a press and Leif run it either way.
 `run` is the one road: refused before spend (`check`), then one session through `run.run` under
 the row's ceilings and the grant `issue` derives, its prompt built from what the row's `input`
-declares, its output kept by kind (`proposal`: `coscc/units/proposals.py`). One run per
+declares, its output kept by kind (`proposal`: `coscc/units/proposals.py`; `verdict`: the unit's
+`outputs` row, and with `then: proposal-if-no` one proposal per criterion not met). A row with
+`cwd: trunk` runs in the workspace's tree detached at the fetched trunk. One run per
 (workspace, agent) at a time. A run that stops at its ceiling turns the row off for the workspace
 and says so in the run log; nothing here raises a ceiling.
 """
@@ -15,20 +17,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
+from coscc import kernel
 from coscc.agent import pack, policy
 from coscc.bus import Event
+from coscc.git.gitops import GitError
 from coscc.kernel import Run
 from coscc.runner import run as run_mod
 from coscc.runner.interventions import interventions
 from coscc.runner.queue import Refused
 from coscc.store.db import Busy, Data, now
 from coscc.store.journal import BadRecord, Intervention
-from coscc.units import Invalid, contracts, proposals, submit
+from coscc.units import Invalid, contracts, proposals, submit, worktrees
 
 # The app's `Core` (`coscc/http/app.py`), a layer above: its parts are read by name.
 Core = Any
@@ -194,9 +199,23 @@ async def _run(
         else []
     )
     directory = core.ws.units_root(cwd) / unit if unit else None
-    prompt, taken = prompt_of(declared, found, made, directory, text)
-    kind = ((pack.row(key) or {}).get("output") or {}).get("kind")
+    idea = core.ideas.idea_note(cwd, unit) if unit and "idea" in declared["data"] else ""
+    prompt, taken = prompt_of(declared, found, made, directory, text, idea)
+    found_row = pack.row(key) or {}
+    output = found_row.get("output") or {}
+    kind = output.get("kind")
     sources = {i.id: proposals.Source(id=i.id, kind=i.kind, unit=i.unit, at=i.at) for i in taken}
+    tree = cwd
+    if found_row.get("cwd") == "trunk":
+        try:
+            tree = str((await worktrees.main_tree(cwd, core.config.data_dir))[0])
+        except (GitError, OSError) as e:
+            await asyncio.to_thread(
+                _ended, journal, ws, unit, key, by, "failed", f"no trunk tree to read: {e}"
+            )
+            return ""
+    row = policy.row_for(key)
+    tools = _feature_tools(core, key, row, cwd, ws, unit, tree, directory)
 
     async def finish(got: Run) -> Mapping[str, Any]:
         """What it handed back kept by kind, and how far it read, before its `end`."""
@@ -211,19 +230,32 @@ async def _run(
                 proposals.add, data, ws, key, unit, keep, run=got.run, sources=sources
             )
             out.update(proposals=len(keep), rejected=rejected)
+        if kind == "verdict" and got.output:
+            meta = core.ws.unit_meta()
+            out["verdict"] = await asyncio.to_thread(
+                meta.record_verdict, ws, unit, key, got.run, got.output
+            )
+            if output.get("then") == "proposal-if-no":
+                items = proposals.of_verdict(unit, got.output.get("criteria") or ())
+                await asyncio.to_thread(proposals.add, data, ws, key, unit, items, run=got.run)
+                out["proposals"] = len(items)
         return out
 
     got = Run("cancelled")
     stream = run_mod.run(
-        core.models.agent(key, policy.row_for(key)),
+        core.models.agent(key, row),
         run_mod.Input(
-            cwd,
+            tree,
             prompt,
             ws,
+            workspace_dir=cwd,
             unit=unit,
             started_by=by,
             start={"trigger": by, **({"reason": reason.strip()} if reason.strip() else {})},
             channel=submit.Collector(key) if key in contracts.declarations() else None,
+            servers={t.server: t.make(f) for t, f in tools if t.make is not None},
+            mcp=kernel.granted(tuple(t for t, _ in tools)),
+            features=tuple(t for t in row.tools if t not in _BUILTIN),
         ),
         ctx=run_mod.Ctx(core.sessions, journal, core.config.data_dir),
         finish=finish,
@@ -285,6 +317,56 @@ def _skipped(journal: Any, ws: str, unit: str, key: str, by: str, since: str) ->
         log.exception("the skipped run of %s was not recorded", key)
 
 
+def _ended(journal: Any, ws: str, unit: str, key: str, by: str, outcome: str, why: str) -> None:
+    try:
+        journal.finished(
+            ws,
+            unit,
+            key,
+            outcome,
+            agent=key,
+            status=outcome,
+            started_by=by,
+            cost_usd=0.0,
+            detail=why,
+        )
+    except BadRecord, Busy:
+        log.exception("the end of %s was not recorded", key)
+
+
+# Claude Code's own tools: what a row names beyond them is a feature's.
+_BUILTIN = frozenset(t.name for t in kernel.BUILTINS)
+
+
+def _feature_tools(
+    core: Core,
+    key: str,
+    row: Any,
+    cwd: str,
+    ws: str,
+    unit: str,
+    tree: str,
+    directory: Path | None,
+) -> list[tuple[kernel.Tool, kernel.Facts]]:
+    """The features' tools the row names that are on and admit this run (the code index on
+    `tree`), each with the facts its server is made from."""
+    hooks = getattr(core.steps, "hooks", None)
+    if hooks is None or not any(t not in _BUILTIN for t in row.tools):
+        return []
+    facts = kernel.facts(
+        workspace=cwd,
+        workspace_key=ws,
+        unit=unit,
+        agent=key,
+        run=uuid.uuid4().hex,
+        cwd=tree,
+        watch=None,
+        directory=directory or Path(tree),
+        resumed=False,
+    )
+    return [(t, facts) for t in hooks.tools_for(facts, row)]
+
+
 def _turn_off(core: Core, journal: Any, ws: str, key: str, why: str) -> None:
     """A run at its ceiling: the row goes off here, and the run log says why. A press or Leif
     can still run it; turning it on again is the owner's."""
@@ -310,6 +392,7 @@ def prompt_of(
     made: Sequence[proposals.Proposal],
     directory: Path | None,
     text: str = "",
+    idea: str = "",
 ) -> tuple[str, list[Intervention]]:
     """The prompt of a triggered run, from what its row declares and nothing else, and the
     interventions it holds (within `PROMPT_MAX`). The row's body is its system prompt."""
@@ -319,6 +402,8 @@ def prompt_of(
             said = contracts.artifact_text(directory, name).strip()
             if said:
                 parts.append(f"# {name.rstrip('?')}.md\n\n{said}")
+    if idea.strip():
+        parts.append(f"# The idea this unit was opened from\n\n{idea.strip()}")
     if "proposals" in declared["data"]:
         parts.append(f"# Proposals already made\n\n{proposals.lists_of(made)}")
     if declared.get("given") and text.strip():

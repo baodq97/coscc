@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
-from coscc.agent import agents
+from coscc.agent import agents, pack
 from coscc.agent.policy import row_for
 from coscc.bus import Bus, Event
 from coscc.config import Config
@@ -36,8 +36,10 @@ from coscc.units.meta import (
     RoundCriterion,
     RoundFinding,
     RoundGrades,
+    Verdict,
 )
 from coscc.units.meta import Decision as DecisionRow
+from coscc.units.proposals import Proposal
 from coscc.units.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
@@ -464,6 +466,45 @@ class Worktree(TypedDict):
     path: str
 
 
+class OutcomeProposal(TypedDict):
+    id: int
+    title: str
+    state: str
+
+
+class Outcome(TypedDict):
+    """What a shipped unit's page shows of its outcome: the row a *Grade outcome* press runs (its
+    key, name and $ ceiling), its latest verdict, and the proposals the grader made of it."""
+
+    grader: str
+    name: str
+    usd: float | None
+    verdict: Verdict | None
+    proposals: list[OutcomeProposal]
+
+
+def grader() -> tuple[str, Mapping[str, Any]] | None:
+    """The row a person presses to grade a unit's outcome: the first whose output is a `verdict`
+    and whose trigger says `manual`."""
+    for key, row in pack.rows().items():
+        if (row.get("output") or {}).get("kind") == "verdict" and pack.triggered(row, "manual"):
+            return key, row
+    return None
+
+
+def outcome(
+    key: str, row: Mapping[str, Any], verdict: Verdict | None, made: Sequence[Proposal]
+) -> Outcome:
+    usd = (row.get("ceilings") or {}).get("usd")
+    return {
+        "grader": key,
+        "name": str(row.get("name") or key),
+        "usd": float(usd) if isinstance(usd, (int, float)) else None,
+        "verdict": verdict,
+        "proposals": [{"id": p["id"], "title": p["title"], "state": p["state"]} for p in made],
+    }
+
+
 class Detail(TypedDict):
     """One unit as its page shows it: the card, its stages, what was asked and answered, its
     review rounds and every run, oldest first."""
@@ -482,6 +523,8 @@ class Detail(TypedDict):
     outputs: list[OutputRecord]
     # A person's reruns, more rounds and outcomes, oldest first.
     decisions: list[Decision]
+    # Its graded outcome, `None` when no row grades outcomes.
+    outcome: Outcome | None
 
 
 def _text(v: Any) -> str:
@@ -504,6 +547,7 @@ def detail(
     outputs: list[OutputRecord],
     decisions: Sequence[DecisionRow] = (),
     graded: Mapping[int, RoundGrades] | None = None,
+    outcome: Outcome | None = None,
 ) -> Detail:
     """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`), its `outputs`
     (`UnitMeta.outputs`), its `decisions` (`UnitMeta.decisions`) and what each review round graded
@@ -619,6 +663,7 @@ def detail(
         else None,
         "hold_moves": [str(m) for m in unit.get("hold_moves") or []],
         "outputs": outputs,
+        "outcome": outcome,
         "decisions": [
             {"kind": d["kind"], "by": d["by"], "date": d["date"], "text": _decision_text(d)}
             for d in decisions

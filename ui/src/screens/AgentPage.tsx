@@ -604,7 +604,21 @@ function OnHere({ a, cwd, setPage }: Ctx) {
 }
 
 /** One paid run now, asked once with its ceiling named. */
-function RunNow({ a, cwd }: Ctx) {
+function RunNow(ctx: Ctx) {
+  const input = ctx.value("input") as Input | undefined;
+  if (input?.artifacts.length || input?.outputs.length)
+    return (
+      <div className="field">
+        <div>
+          <div className="lab">Run now</div>
+        </div>
+        <div className="muted">It reads one unit: run it from that unit's page.</div>
+      </div>
+    );
+  return <RunNowButton {...ctx} />;
+}
+
+function RunNowButton({ a, cwd }: Ctx) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
