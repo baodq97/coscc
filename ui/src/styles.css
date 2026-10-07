@@ -739,6 +739,7 @@ a.btn { text-decoration: none; }
 
 .crumb-line { font-size: 12.5px; margin-top: 2px; }
 .crumb-line a { color: inherit; text-decoration: underline; }
+
 /* Dagaz's questions and the gaps a draft names (M4). */
 .describe .dq { display: grid; gap: 4px; font-size: 13px; }
 .gaps { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent); border-radius: var(--r3); font-size: 13px; }
