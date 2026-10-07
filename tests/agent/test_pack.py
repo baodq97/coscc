@@ -611,6 +611,16 @@ class TriggersAreChecked(unittest.TestCase):
         said = self.reasons(_scan(trigger={"event": {"name": "chat-turn.ended"}}))
         self.assertIn("names no workspace", said)
 
+    def test_an_agent_run_fact_does_not_start_a_row_by_itself(self):
+        # Every run publishes these, the row's own too: on one, the row would start itself again.
+        for name in ("agent-run.ended", "agent-run.started"):
+            said = self.reasons(_scan(trigger={"event": {"name": name}}))
+            self.assertIn("it would start itself", said)
+            with self.assertRaises(ValueError):
+                pack.write("scan", "trigger", {"event": {"name": name}})
+        # The neighbour stays open: another fact naming a workspace.
+        self.assertEqual(self.reasons(_scan(trigger={"event": {"name": "unit.shipped"}})), "")
+
     def test_an_engine_mixed_with_others(self):
         said = self.reasons(_scan(trigger={"engine": "estimate", "manual": True}, default=None))
         self.assertIn("an engine row has no other trigger", said)

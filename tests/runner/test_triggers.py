@@ -543,6 +543,21 @@ class AnEventRunsItWhereItIsOn(_Core):
         await self.settle()
         self.assertEqual([g.started_by for g in self.given], ["event"])
 
+    async def test_a_rows_own_run_never_starts_it_again(self):
+        # As if a hand edit got past the check: the run's own end must not start it.
+        row = {
+            **pack.row("scan"),
+            "trigger": {"event": {"name": "agent-run.ended"}, "manual": True},
+        }
+        with (
+            mock.patch.object(pack, "rows", return_value={"scan": row}),
+            mock.patch.object(pack, "row", return_value=row),
+            mock.patch.object(pack, "problems", return_value=[]),
+        ):
+            await self.go("scan", self.ws, by="manual")
+            self.assertEqual(triggers._TASKS, set())
+        self.assertEqual([g.started_by for g in self.given], ["manual"])
+
 
 class ARunAtItsCeilingTurnsTheRowOff(_Core):
     async def test_it_goes_off_here_and_the_run_log_says_why(self):

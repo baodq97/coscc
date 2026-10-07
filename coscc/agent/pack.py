@@ -476,6 +476,11 @@ def _check_event(row: Mapping[str, Any], event: Any) -> list[str]:
     name = event.get("name")
     if name not in bus.NAMES:
         return [f"trigger.event.name: no bus event {name!r}"]
+    if str(name).startswith("agent-run."):
+        # Every agent's run publishes it, this row's own too: a row started on it starts itself.
+        return [
+            f"trigger.event.name: {name} is every agent's, this one's too: it would start itself"
+        ]
     fields = bus.fields_of(str(name))
     out = [] if "workspace" in fields else [f"trigger.event.name: {name} names no workspace"]
     raw = row.get("input")

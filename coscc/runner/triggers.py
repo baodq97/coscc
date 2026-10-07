@@ -691,6 +691,9 @@ def listen(core: Core) -> None:
             wanted = _trigger(found).get("event")
             if not isinstance(wanted, dict) or wanted.get("name") != event.name or not ws:
                 continue
+            if payload.get("agent") == key:
+                # A row's own run never starts it again, whatever a hand edit says.
+                continue
             if found.get("problems") or not pack.agent_on(Data(core.config.data_dir), key, ws):
                 continue
             unit = str(payload.get("unit") or "") if _unit_scoped(key) else ""
