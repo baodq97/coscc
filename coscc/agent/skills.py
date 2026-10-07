@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import tempfile
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from coscc.agent import pack
+from coscc.store.db import Busy, Unusable
 
 # A new skill's name: a pack's naming rule, shorter than a sentence.
 NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
@@ -45,8 +47,25 @@ class Skill(TypedDict):
     last_used: str
 
 
+class SkillsPage(TypedDict):
+    skills: list[Skill]
+    # Why the uses could not be counted, when the run log could not be read.
+    problems: list[str]
+
+
 def hash_of(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def page(journal: Any, now: datetime | None = None) -> SkillsPage:
+    """The Skills page: `catalog` over one read of the run log's `start`s."""
+    if journal is None:
+        return {"skills": catalog((), now), "problems": []}
+    try:
+        records = journal.records(None, kinds=("start",))
+    except (Unusable, Busy, sqlite3.Error, OSError) as e:
+        return {"skills": catalog((), now), "problems": [f"the run log could not be read: {e}"]}
+    return {"skills": catalog(records, now), "problems": []}
 
 
 def text(names: Iterable[str]) -> str:

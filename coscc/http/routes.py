@@ -33,8 +33,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response, StreamingResponse
 
 from coscc import kernel
-from coscc.agent import pack
+from coscc.agent import pack, skills
 from coscc.agent.pack import PackShown
+from coscc.agent.skills import SkillsPage
 from coscc.store.db import Data
 from coscc.bus import Event
 from coscc.http import plugin
@@ -324,6 +325,38 @@ async def set_agent_state(request: Request) -> AgentPage:
     body = await kernel.body(request)
     cwd = str(body.get("cwd") or "")
     return _core(request).agents.set_state(cwd, body.get("key"), body.get("on"))
+
+
+@router.get("/api/skills")
+async def get_skills(request: Request) -> SkillsPage:
+    """Every skill of every pack once: its pack, whether the owner wrote or edited it, its text,
+    the agents naming it and the runs whose `start` named it in the last 30 days."""
+    core = _core(request)
+    with pack.held():
+        return await asyncio.to_thread(skills.page, core.ws.journal())
+
+
+@router.post("/api/skills/new")
+async def new_skill(request: Request) -> SkillsPage:
+    """`{name, text, agent?, cwd?}` writes a new skill into the owner's layer,
+    `local/skills/<name>/SKILL.md`, and with `agent` adds it to that row's `skills` (an
+    `agent-setting` record `by: owner`, as `/api/agents/field`). A bad or taken name, text that is
+    empty or over 16 KB, or a link on the way is a 400 and nothing is written. Same trust as
+    editing a prompt: every run of a row naming it is given its text."""
+    body = await kernel.body(request)
+    core, name, agent = _core(request), body.get("name"), body.get("agent")
+    found = pack.row(agent) if isinstance(agent, str) and agent else None
+    if agent and found is None:
+        raise Invalid(f"no such agent: {agent}")
+    try:
+        skills.new(name, body.get("text"))
+    except ValueError as e:
+        raise Invalid(str(e)) from e
+    if found is not None:
+        named = [*(found.get("skills") or []), name]
+        core.agents.set_agent_field(agent, "skills", named, cwd=str(body.get("cwd") or ""))
+    with pack.held():
+        return await asyncio.to_thread(skills.page, core.ws.journal())
 
 
 class Started(TypedDict):

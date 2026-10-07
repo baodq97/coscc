@@ -2648,3 +2648,42 @@ class OwnAgentsAndPacksOverHttp(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post(f"/api/packs/import?cwd={self.cwd}", content=out.getvalue())
         self.assertEqual(r.status_code, 400)
         self.assertIn("coder: a vault secret names an agent coder", r.json()["reasons"])
+
+
+class SkillsOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`/api/skills`: every skill with its uses; `/api/skills/new` writes one into the owner's layer
+    and gives it to an agent, or refuses with a 400 and writes nothing."""
+
+    asyncSetUp = PacksOverHttp.asyncSetUp
+
+    async def post(self, **body):
+        return await self.client.post("/api/skills/new", json={"cwd": self.cwd, **body})
+
+    async def test_a_new_skill_given_to_an_agent_is_listed_named_and_counted(self):
+        r = await self.post(name="note-taking", text="Write down what you found.", agent="scout")
+        self.assertEqual(r.status_code, 200, r.text)
+        mine = next(s for s in r.json()["skills"] if s["name"] == "note-taking")
+        self.assertEqual((mine["pack"], mine["own"], mine["agents"]), ("local", True, ["scout"]))
+        self.assertEqual(mine["uses_30d"], 0)
+        self.assertEqual((pack.row("scout") or {})["skills"], ["note-taking"])
+        core = self.app.state.core
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        core.ws.journal().started(
+            core.ws.key(self.cwd), "", "scout", "manual", skills=["note-taking@abc"], at=now
+        )
+        got = (await self.client.get("/api/skills")).json()
+        mine = next(s for s in got["skills"] if s["name"] == "note-taking")
+        self.assertEqual(mine["uses_30d"], 1)
+
+    async def test_a_bad_name_a_taken_name_bad_text_or_no_such_agent_is_a_400(self):
+        for body in (
+            {"name": "../evil", "text": "x"},
+            {"name": "write-intent", "text": "x"},
+            {"name": "fine", "text": ""},
+            {"name": "fine", "text": "x" * 16_001},
+            {"name": "fine", "text": "x", "agent": "nobody"},
+        ):
+            with self.subTest(body=body["name"]):
+                r = await self.post(**body)
+                self.assertEqual(r.status_code, 400, body)
+        self.assertFalse((pack.owner_dir() / "skills").exists())
