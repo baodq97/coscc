@@ -333,7 +333,7 @@ class ThePage(_WithAService):
                 _end("ask", "done", 1, cost=0.02, unit="") | {"agent": "scan", "parent_run": "r"},
             ]
         )
-        page = self.core.agents.agent_page(now=NOW)
+        page = self.core.agents.agent_page(now=NOW, agent="scan")
         scan = self._row(page, "scan")
         # Its cost counts; it is not a run: not its last, not in its count, groups or chip.
         self.assertEqual((scan["runs_30d"], scan["cost_30d"]), (1, 0.12))
