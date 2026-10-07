@@ -170,6 +170,20 @@ class AWarmRunIsResumed(_Asking):
         # In the data root of the run that opened the session: the CLI's words stay the same.
         self.assertEqual(given.scratch_as, "b" * 32)
         self.assertTrue(given.prompt.startswith(ask.RESUMED))
+        self.assertNotIn("- #", given.prompt)
+
+    async def test_it_is_told_the_numbers_its_proposals_were_kept_under(self):
+        from coscc.units import proposals
+
+        self.asked_run()
+        item = {"type": "fix", "slug": "pack-400s", "title": "Pack routes fail", "problem": "p"}
+        (pid,) = proposals.add(self.data, self.ws, "scan", "", [item], run="p1")
+        proposals.add(self.data, self.ws, "scan", "", [{**item, "slug": "x"}], run="other")
+        await self.asked(f"why #{pid}?")
+        ((_, given),) = self.runs
+        self.assertIn(f"- #{pid} Pack routes fail\n", given.prompt)
+        self.assertEqual(given.prompt.count("\n- #"), 1)
+        self.assertTrue(given.prompt.endswith(f"why #{pid}?"))
         self.assertEqual(given.spent_before["cost_usd"], 0.4)
         self.assertEqual(given.spent_before["cache_creation_tokens"], 60_000)
         self.assertTrue(given.cache_hour)

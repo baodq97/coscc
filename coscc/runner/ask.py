@@ -340,6 +340,18 @@ def last_words(data: Data, run: str, limit: int = LAST_WORDS) -> str:
     return str(said[-1].get("text") or "")[:limit] if said else ""
 
 
+def _numbered(core: Core, start: Mapping[str, Any]) -> str:
+    """The numbers the owner sees the run's proposals under, which the run never saw."""
+    data = Data(core.config.data_dir)
+    run = str(start.get("run") or "")
+    made = [p for p in proposals.listed(data, str(start.get("workspace"))) if p["run"] == run]
+    if not made:
+        return ""
+    return "The app kept what you proposed as:\n" + "\n".join(
+        f"- #{p['id']} {p['title']}" for p in made
+    )
+
+
 def _summary(core: Core, start: Mapping[str, Any], end: Mapping[str, Any], tree: str) -> str:
     """What a fresh follow-up is told of the run: who, how it ended, what it made, its last
     words, and the end of its transcript."""
@@ -407,7 +419,8 @@ async def _ask(
         head = await triggers.tree_head(plan.tree)
         await _decide(core, journal, root_run, start, end, plan, head)
         if plan.session:
-            prompt = RESUMED + text
+            kept = await asyncio.to_thread(_numbered, core, start)
+            prompt = RESUMED + (f"{kept}\n\n" if kept else "") + text
         else:
             summary = await asyncio.to_thread(_summary, core, start, end, plan.tree)
             prompt = f"{summary}\n\n# The question\n\n{text}"
