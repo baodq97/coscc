@@ -13,6 +13,17 @@ import { Button, Dot, Markdown, SkeletonRows } from "../components/ui";
 
 type Shown = { role: string; text: string; tools?: string[] };
 
+/** The side list's rows: a conversation just begun is not in the server's list yet, so it stays on top
+ *  (the open one, or while its first message is sent a temporary row saying that message). */
+export function talkRows(listed: ChatSession[], session: ChatSession | null, sending: string | null): ChatSession[] {
+  if (session?.resumable && !listed.some((s) => s.session_id === session.session_id)) return [session, ...listed];
+  if (!session && sending) return [{ session_id: "", summary: sending, last_modified: Date.now(), created_at: null, git_branch: null, resumable: true }, ...listed];
+  return listed;
+}
+
+/** The empty-list hint shows only when nothing is listed, open or being sent. */
+export const showHint = (rows: ChatSession[], session: ChatSession | null, busy: boolean) => !rows.length && !session && !busy;
+
 export function Talk() {
   const { boards, loading } = useBoards();
   // The address holds the project and the open conversation, so a reload reopens both.
@@ -25,6 +36,8 @@ export function Talk() {
   const [messages, setMessages] = useState<Shown[]>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  // The first message of a conversation while its turn runs, before the stream names the session.
+  const [sending, setSending] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const [elsewhere, setElsewhere] = useState(false);
@@ -34,7 +47,7 @@ export function Talk() {
   // The app's own chats first; sessions begun in a terminal or by an agent's run are read only.
   const listed = sessions.data?.sessions.filter((s) => s.resumable) ?? [];
   // A conversation just begun is not in the server's list yet: keep it on top so the list does not jump.
-  const mine = session?.resumable && !listed.some((s) => s.session_id === session.session_id) ? [session, ...listed] : listed;
+  const mine = talkRows(listed, session, sending);
   const others = sessions.data?.sessions.filter((s) => !s.resumable) ?? [];
 
   useEffect(() => {
@@ -67,6 +80,7 @@ export function Talk() {
     if (!said || busy) return;
     setText("");
     setBusy(true);
+    setSending(session ? null : said);
     setError(null);
     setMessages((m) => [...m, { role: "user", text: said }, { role: "assistant", text: "" }]);
     const add = (f: (last: Shown) => Shown) => setMessages((m) => [...m.slice(0, -1), f(m[m.length - 1])]);
@@ -85,6 +99,7 @@ export function Talk() {
       setError(e as Error);
     } finally {
       setBusy(false);
+      setSending(null);
     }
   };
 
@@ -204,7 +219,7 @@ export function Talk() {
         ) : (
           <>
             <SessionList sessions={mine} current={session} busy={busy} onOpen={open} />
-            {!mine.length && <div className="faint" style={{ fontSize: 12.5 }}>Your conversations appear here once you send one.</div>}
+            {showHint(mine, session, busy) && <div className="faint" style={{ fontSize: 12.5 }}>Your conversations appear here once you send one.</div>}
             {others.length > 0 && (
               <button className="link-btn faint" style={{ fontSize: 12, marginTop: 12 }} onClick={() => setElsewhere(!(elsewhere || readOnly))}>
                 {elsewhere || readOnly ? "Hide" : "Show"} {others.length} begun elsewhere (read only)
