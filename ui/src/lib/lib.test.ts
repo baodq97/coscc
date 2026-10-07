@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
 import { match } from "./router";
 import { findUnit, needsYou, failedLink, proposalLink, type PlacedUnit } from "./boards";
@@ -24,7 +24,7 @@ import { featureView } from "../screens/Feature";
 import { filterUnits } from "../screens/Work";
 import type { NextStep } from "../api.gen";
 import type { AgentRow } from "../api.gen";
-import { afterAgentSaved, draftOf, draftParts, draftTools, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
+import { afterAgentSaved, answeredTask, draftOf, draftParts, draftTools, keepDraft, keptDraft, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
 import { asks, rerunFor, addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
 import { sandboxed, sandboxLine, sandboxOf } from "./build";
 
@@ -431,6 +431,40 @@ describe("Dagaz's draft fills the forms", () => {
     expect(draftOf({ draft: { why: "w" } })).toBeNull();
     expect(draftOf({})).toBeNull();
     expect(draftOf({ draft: { why: "w", agent: { key: "x" } } })).toBeNull();
+  });
+
+  it("a draft that asks first is read with its questions, and its gaps with it", () => {
+    const questions = [{ n: 1, text: "Which code?", recommendation: "All of it" }];
+    const gaps = [{ part: "trigger", need: "every morning", instead: "every 24 h" }];
+    const d = draftOf({ draft: { why: "w", questions, gaps } });
+    expect(d?.questions).toEqual(questions);
+    expect(d?.gaps).toEqual(gaps);
+    expect(d?.agent).toBeUndefined();
+    expect(draftOf({ draft: { why: "w", agent, gaps } })?.gaps).toEqual(gaps);
+    expect(draftOf({ draft: { why: "w", questions: [] } })).toBeNull();
+  });
+
+  it("answers go back with the task, an empty answer as the recommendation", () => {
+    const qs = [
+      { n: 1, text: "Which code?", recommendation: "All of it" },
+      { n: 2, text: "When?", recommendation: "Weekly" },
+    ];
+    const text = answeredTask("code quality", qs, ["Only coscc/", " "]);
+    expect(text).toBe("code quality\n\nYour questions, answered:\n1. Which code?\n   Only coscc/\n2. When?\n   Weekly");
+  });
+
+  it("a kept draft is per project until it is set aside", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) });
+    keepDraft("agent", "/a", { run: "r1", words: "tell me" });
+    expect(keptDraft("agent", "/a")).toEqual({ run: "r1", words: "tell me" });
+    expect(keptDraft("agent", "/b")).toBeNull();
+    expect(keptDraft("process", "/a")).toBeNull();
+    keepDraft("agent", "/a", null);
+    expect(keptDraft("agent", "/a")).toBeNull();
+    localStorage.setItem("coscc.draft.agent./a", "{not json");
+    expect(keptDraft("agent", "/a")).toBeNull();
+    vi.unstubAllGlobals();
   });
 
   it("a drafted process becomes the editor's steps in walk order", () => {

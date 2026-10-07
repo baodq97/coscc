@@ -62,7 +62,18 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
             <Chip square tone={state.group === "Needs you" ? "amber" : shipped ? "accent" : ""}>{state.label}</Chip>
           )}
         </div>
-        <h1 className="title" style={{ marginTop: 10 }}>{unitTitle(placed.name)}</h1>
+        <h1 className="title" style={{ marginTop: 10 }}>{d?.origin?.title || unitTitle(placed.name)}</h1>
+        {d?.origin && (
+          <div className="faint" style={{ fontSize: 12.5, marginTop: 4 }} id="unit-origin">
+            From {d.origin.name} <Link to={`/up-next?ws=${encodeURIComponent(workspace)}#proposal-${d.origin.id}`}>proposal #{d.origin.id}</Link>
+            {d.origin.run && (
+              <>
+                {" · "}
+                <Link to={`/run/${workspace}/${d.origin.run}`}>run</Link>
+              </>
+            )}
+          </div>
+        )}
         {d?.brief && <Brief text={d.brief} />}
         {placed.paused && <PausedBanner unit={placed} paused={placed.paused} onDone={() => detail.reload()} />}
         {open.length > 0 && (

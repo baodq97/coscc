@@ -1,5 +1,6 @@
-// What the autopilot works on next, per project: the shortlist in its order, the other units in
-// the order their estimates give (Leif's suggestion, with the why), and what has no estimate yet.
+// What the autopilot works on next, per project: the shortlist in its order, the agents' proposals
+// waiting on a decision, the other units in the order their estimates give (Leif's suggestion, with
+// the why), and what has no estimate yet.
 // Every change saves the whole shortlist again with a reason, so the run log keeps who and why.
 
 import { useEffect, useState, type ReactNode } from "react";
@@ -120,6 +121,8 @@ function Project({ workspace }: { workspace: Workspace }) {
         </div>
       )}
 
+      <Proposals workspace={workspace} />
+
       <div className="sec-h">
         Leif's order <span className="faint">{v.order.length || ""}</span>
       </div>
@@ -138,7 +141,6 @@ function Project({ workspace }: { workspace: Workspace }) {
         {!v.order.length && <div className="card-b faint">Nothing estimated waits outside the shortlist.</div>}
       </div>
 
-      <Proposals workspace={workspace} />
       {v.unestimated.length > 0 && (
         <>
           <div className="sec-h">
