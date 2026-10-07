@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { EventsPage, StepEvent } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { stageLabel } from "../lib/pack";
-import { modelName, money, unitCode, unitTitle } from "../lib/format";
+import { modelName, startedBy, money, unitCode, unitTitle } from "../lib/format";
 import { Link } from "../lib/router";
 import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
@@ -47,7 +47,7 @@ export function runFacts(events: StepEvent[], page: Pick<EventsPage, "status" | 
     { label: "Turns", value: result?.num_turns != null ? String(result.num_turns) : "" },
     { label: "Took", value: took },
     { label: "Model", value: config?.model ? [modelName(config.model), config.effort].filter(Boolean).join(" · ") : "" },
-    { label: "Started by", value: page.started_by ?? "" },
+    { label: "Started by", value: startedBy(page.started_by) },
   ];
   return facts.filter((f) => f.value);
 }
@@ -78,7 +78,7 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
                   {unitCode(workspace, number)} {unitTitle(page.unit)}
                 </Link>
               ) : (
-                `No unit: a run of the workspace${page.started_by ? `, started by ${page.started_by}` : ""}.`
+                `A run of the workspace, not of a unit${page.started_by ? `; started by ${startedBy(page.started_by)}` : ""}.`
               )}{" "}
               {page.status === "running" ? <Chip tone="accent">running</Chip> : null}
             </>

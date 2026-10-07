@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ago, modelName, money, unitCode, unitTitle } from "./format";
+import { startedBy, ago, modelName, money, unitCode, unitTitle } from "./format";
 import { match } from "./router";
 import { findUnit, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
@@ -536,7 +536,7 @@ describe("a run's header", () => {
   it("reads outcome, cost, turns, time, model and starter", () => {
     const e = (o: object) => ({ run: "r", seq: 1, at: 0, ...o }) as never;
     const facts = runFacts([e({ kind: "config", model: "claude-sonnet-4-5", effort: "high" }), e({ kind: "result", cost_usd: 1.5, num_turns: 12, duration_ms: 125000 })], { status: "ended", outcome: "done", started_by: "autopilot" });
-    expect(Object.fromEntries(facts.map((f) => [f.label, f.value]))).toMatchObject({ Outcome: "done", Cost: "$1.50", Turns: "12", Took: "2 min 5 s", "Started by": "autopilot" });
+    expect(Object.fromEntries(facts.map((f) => [f.label, f.value]))).toMatchObject({ Outcome: "done", Cost: "$1.50", Turns: "12", Took: "2 min 5 s", "Started by": "the autopilot" });
     expect(runFacts([], { status: "running" })[0].value).toBe("running");
   });
 });
@@ -631,7 +631,7 @@ describe("runRow", () => {
   const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "" };
   it("opens the log of a unitless run and names who started it", () => {
     expect(runRow({ ...run, run: "abc", started_by: "leif" }, "ws")).toMatchObject({ to: "/run/ws/abc", title: "Run by Leif" });
-    expect(runRow({ ...run, run: "abc", started_by: "schedule" }, "ws").title).toBe("Scheduled run");
+    expect(runRow({ ...run, run: "abc", started_by: "schedule" }, "ws").title).toBe("Run by the schedule");
   });
   it("makes a skip a muted line, not a link", () => {
     expect(runRow({ ...run, skipped: true, detail: "nothing new" }, "ws")).toMatchObject({ to: "", title: "Skipped — nothing new", muted: true });
@@ -641,5 +641,11 @@ describe("runRow", () => {
   });
   it("sends a unit's run without a log to its unit", () => {
     expect(runRow({ ...run, unit: "0007_a-thing" }, "ws").to).toBe("/unit/ws/7");
+  });
+});
+
+describe("startedBy", () => {
+  it("says who in plain words", () => {
+    expect(["manual", "person", "leif", "schedule", "event", "autopilot", "", null].map(startedBy)).toEqual(["you", "you", "Leif", "the schedule", "an event", "the autopilot", "", ""]);
   });
 });

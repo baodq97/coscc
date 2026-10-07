@@ -40,3 +40,10 @@ export function unitTitle(slug: string): string {
 export function pausedAt(p: Paused): string {
   return p.ceiling === "turns" ? `Paused at ${p.turns ?? "?"} of ${p.max_turns ?? "?"} turns` : `Paused at ${money(p.usd)} of ${money(p.max_usd)}`;
 }
+
+const WHO: Record<string, string> = { manual: "you", person: "you", leif: "Leif", schedule: "the schedule", event: "an event", autopilot: "the autopilot" };
+
+/** Who started a run, in plain words ("you", "Leif", "the schedule"); `""` when unknown. */
+export function startedBy(by: string | null | undefined): string {
+  return by ? (WHO[by] ?? by) : "";
+}
