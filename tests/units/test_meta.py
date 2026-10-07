@@ -860,15 +860,15 @@ class ThePullRequestAndTheShipAreReadFromTheirMoves(Rows):
     def test_a_ship_is_its_last_ready_or_refused_move(self):
         self.ship("ship-ready", "draft", round=1)
         self.assertEqual(
-            self.entry()["artifacts"]["ship.md"]["ship"], {"round": 1, "refused": None}
+            self.entry()["artifacts"]["ship.md"]["merge"], {"round": 1, "refused": None}
         )
         self.ship("merge-refused", "draft", round=2, refused="conflicts")
         self.assertEqual(
-            self.entry()["artifacts"]["ship.md"]["ship"], {"round": 2, "refused": "conflicts"}
+            self.entry()["artifacts"]["ship.md"]["merge"], {"round": 2, "refused": "conflicts"}
         )
         self.ship("ship-ready", "draft", round=3)
         self.assertEqual(
-            self.entry()["artifacts"]["ship.md"]["ship"], {"round": 3, "refused": None}
+            self.entry()["artifacts"]["ship.md"]["merge"], {"round": 3, "refused": None}
         )
 
     def test_a_ship_move_of_another_guard_says_nothing(self):

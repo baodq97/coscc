@@ -530,7 +530,9 @@ def passed_over(unit, name):
 
 def spike_findings(unit):
     p = proc(unit)
-    spike = nullish(dig(unit, "artifacts", p.file(p.spike), "spike"), {"round": None, "items": {}})
+    spike = nullish(
+        dig(unit, "artifacts", p.file(p.spike), "verdicts"), {"round": None, "items": {}}
+    )
     fails = []
     missing_ids = []
     reasons = []
@@ -812,7 +814,7 @@ def _artifact(unit, known, file):
         if ids:
             a["unmeasured"] = {"ids": ids}
     if name == p.spike and "verdicts" in fields:
-        a["spike"] = {
+        a["verdicts"] = {
             "round": nullish(dig(known, "artifacts", file, "round")),
             "items": {
                 js(dig(v, "id")): {"verdict": dig(v, "verdict")}
@@ -820,9 +822,9 @@ def _artifact(unit, known, file):
             },
         }
     if name == p.merge:
-        ship = nullish(dig(known, "artifacts", file, "ship"))
-        if ship and (ship.get("round") is not None or ship.get("refused") is not None):
-            a["ship"] = ship
+        merged = nullish(dig(known, "artifacts", file, "merge"))
+        if merged and (merged.get("round") is not None or merged.get("refused") is not None):
+            a["merge"] = merged
     if name == p.rests and "rests_on" in fields and p.spike in route(unit):
         a["restsOn"] = list(nullish(dig(result, "rests_on"), []))
     questions = join_answers(

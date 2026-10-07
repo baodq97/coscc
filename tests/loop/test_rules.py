@@ -219,7 +219,7 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
     put(s, "0038_every-claimed", accepted("pr.md", **{"review.md": "changes-requested"}),
         **claim, **open_one)  # fmt: skip
     put(s, "0039_ship-refused", accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
-        ship_md={"ship": {"round": 1, "refused": "not up to date"}},
+        ship_md={"merge": {"round": 1, "refused": "not up to date"}},
         **rounds(row(1, "pass")))  # fmt: skip
     put(s, "0040_ship-draft-old", accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
         **rounds(row(1, "pass")))  # fmt: skip
@@ -579,7 +579,7 @@ class AShipThatAskedForAMergeIsMergingNotRefused(unittest.TestCase):
 
     def _put(self, name: str, refused: str | None) -> None:
         put(self.store, name, accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
-            ship_md={"ship": {"round": 1, "refused": refused}}, **rounds(row(1, "pass")))  # fmt: skip
+            ship_md={"merge": {"round": 1, "refused": refused}}, **rounds(row(1, "pass")))  # fmt: skip
 
     def test_status_and_next_say_merging_and_never_ship_refused(self):
         self._put("0001_a", None)

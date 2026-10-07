@@ -30,7 +30,7 @@ from coscc.runner.run import LIVE
 from coscc.runner.step import Runner, check_started_by
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, Data, now as _now
-from coscc.store.journal import NOT_STEPS, SHIP_RECORD, BadRecord, Journal, paused_stage
+from coscc.store.journal import NOT_STEPS, MERGE_RECORD, BadRecord, Journal, paused_stage
 from coscc.units import backlog, mentions, planmap, retake, states, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
@@ -454,7 +454,7 @@ class Steps:
             if states.action_of(str(found.get("process") or ""), stage) == "merge" and result:
                 journal.append(
                     {
-                        "kind": SHIP_RECORD,
+                        "kind": MERGE_RECORD,
                         "workspace": key,
                         "unit": unit,
                         "stage": stage,

@@ -995,7 +995,7 @@ def make_outcome_fixture(work: Path, data_dir: Path, proj: Path) -> None:
     from datetime import datetime, timedelta, timezone
 
     from coscc.store.db import Data
-    from coscc.store.journal import SHIP_RECORD, Journal
+    from coscc.store.journal import MERGE_RECORD, Journal
     from coscc.units import proposals as table
     from coscc.units.meta import UnitMeta
     from coscc.units.read import grader
@@ -1008,7 +1008,7 @@ def make_outcome_fixture(work: Path, data_dir: Path, proj: Path) -> None:
     at = lambda days: (now - timedelta(days=days)).isoformat(timespec="seconds")
     journal.append(
         {
-            "kind": SHIP_RECORD,
+            "kind": MERGE_RECORD,
             "workspace": key,
             "unit": unit,
             "stage": "ship",

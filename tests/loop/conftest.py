@@ -127,7 +127,7 @@ def entry(
     """A snapshot entry as `UnitMeta.snapshot` builds it: `{file: status}` and the rest.
 
     `artifact_fields` adds keys to one artifact's entry: `review_md={"rounds": [round_row(...)]}`,
-    `pr_md=pr_row(7)`, `ship_md={"ship": {"round": 1, "refused": None}}`, `spec_md={"record": 3}`.
+    `pr_md=pr_row(7)`, `ship_md={"merge": {"round": 1, "refused": None}}`, `spec_md={"record": 3}`.
     `reruns` are `rerun_row(...)`s; `rounds_granted` the more rounds a person allowed.
     """
     arts: dict[str, dict] = {f: {"status": s} for f, s in (artifacts or {}).items()}

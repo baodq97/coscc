@@ -42,7 +42,7 @@ def _ship(result: str) -> dict:
     return {
         "v": 1,
         "at": "2026-09-27T10:00:00Z",
-        "kind": "ship",
+        "kind": "merge",
         "workspace": WS,
         "unit": "0007_x",
         "stage": "ship",

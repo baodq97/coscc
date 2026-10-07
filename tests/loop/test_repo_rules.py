@@ -173,7 +173,7 @@ class Scene:
             fields["review_md"] = {"rounds": rounds}
         if ship is not None:
             arts["ship.md"] = "draft"
-            fields["ship_md"] = {"ship": ship}
+            fields["ship_md"] = {"merge": ship}
         files = {f: header("Tiêu đề", "accepted", KIND[f]) for f in arts}
         self.store.unit(UNIT, files, entry(arts, rounds_granted=granted, **fields))
 

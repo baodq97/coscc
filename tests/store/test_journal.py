@@ -522,7 +522,7 @@ class AppendCheckedReadsAndWritesInOneTransaction(unittest.TestCase):
 class TheBellWakesAReaderAndTheReadsNarrow(unittest.TestCase):
     """What the notice stream reads, and what wakes it."""
 
-    SOURCE = ("autopilot-stop", "questions", "end", "ship")
+    SOURCE = ("autopilot-stop", "questions", "end", "merge")
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -564,20 +564,20 @@ class TheBellWakesAReaderAndTheReadsNarrow(unittest.TestCase):
         self.j.append(
             {"kind": "start", "workspace": "w", "unit": "u", "stage": "spec", "mode": "manual"}
         )
-        self.j.append({"kind": "ship", "workspace": "w", "unit": "u", "result": "shipped"})
+        self.j.append({"kind": "merge", "workspace": "w", "unit": "u", "result": "shipped"})
         self.j.append({"kind": "questions", "workspace": "w", "unit": "u"})
         rows = self.j.notice_rows(0, self.SOURCE)
-        self.assertEqual([r["kind"] for _, r in rows], ["end", "ship", "questions"])
+        self.assertEqual([r["kind"] for _, r in rows], ["end", "merge", "questions"])
         ids = [i for i, _ in rows]
         self.assertEqual(ids, sorted(ids))
         self.assertEqual(
-            [r["kind"] for _, r in self.j.notice_rows(ids[0], self.SOURCE)], ["ship", "questions"]
+            [r["kind"] for _, r in self.j.notice_rows(ids[0], self.SOURCE)], ["merge", "questions"]
         )
         self.assertEqual(len(self.j.notice_rows(0, self.SOURCE, limit=1)), 1)
 
     def test_notice_rows_narrow_to_one_workspace(self):
-        self.j.append({"kind": "ship", "workspace": "w", "unit": "u", "result": "shipped"})
-        self.j.append({"kind": "ship", "workspace": "other", "unit": "u", "result": "shipped"})
+        self.j.append({"kind": "merge", "workspace": "w", "unit": "u", "result": "shipped"})
+        self.j.append({"kind": "merge", "workspace": "other", "unit": "u", "result": "shipped"})
         self.assertEqual(
             [r["workspace"] for _, r in self.j.notice_rows(0, self.SOURCE, "w")], ["w"]
         )

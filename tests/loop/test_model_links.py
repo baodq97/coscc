@@ -926,7 +926,7 @@ def test_next_offers_ship_when_a_differing_title_is_the_only_thing_closing_its_g
             "review.md": review_art("accepted", [round_(1, "pass")]),
             "ship.md": {
                 **art("draft"),
-                "ship": {"round": 1, "refused": "Pull request is not mergeable"},
+                "merge": {"round": 1, "refused": "Pull request is not mergeable"},
             },
         }
     )
