@@ -348,7 +348,9 @@ function TrialOutput({ cwd, trial }: { cwd: string; trial: Extract<Trial, { at: 
   const ws = useResource("/api/workspaces").data?.workspaces.find((w) => w.path === cwd)?.name ?? "";
   // What it handed back comes into view once the run ends, above the dialog's sticky footer.
   const at = useRef<HTMLDivElement | null>(null);
-  useEffect(() => at.current?.scrollIntoView({ block: "end" }), [trial.run]);
+  useEffect(() => {
+    at.current?.scrollIntoView({ block: "end" });
+  }, [trial.run]);
   const items = (trial.tried as { proposals?: { title?: string; problem?: string }[] } | undefined)?.proposals;
   return (
     <div className="try-out" ref={at}>
