@@ -236,3 +236,8 @@ export function renameStep(d: Draft, key: string, to: string): Draft {
 
 /** The input a reason says is not produced, from "its input impl is not produced on every path". */
 export const missingInput = (reason: string): string | null => /input (\S+) is not produced/.exec(reason)?.[1] ?? null;
+
+/** An agent's name: 1 to 24 ASCII letters, digits or dashes, starting with a letter. */
+export function agentNameProblem(name: string): string | null {
+  return /^[A-Za-z][A-Za-z0-9-]{0,23}$/.test(name) ? null : "Use 1 to 24 letters, digits or dashes, starting with a letter.";
+}

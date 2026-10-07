@@ -4,7 +4,7 @@
 import { useState, type ReactNode } from "react";
 import type { AgentPage } from "../api.gen";
 import { api, ApiError } from "../lib/api";
-import { keyProblem, packTitle, slugKey, sortReasons, type BuildAgent, type NewAgentField } from "../lib/build";
+import { agentNameProblem, keyProblem, packTitle, slugKey, sortReasons, type BuildAgent, type NewAgentField } from "../lib/build";
 import { refreshPacks } from "../lib/pack";
 import { navigate } from "../lib/router";
 import { Button, Dialog } from "./ui";
@@ -32,6 +32,7 @@ export function NewAgent({ rows, cwd, onClose }: { rows: BuildAgent[]; cwd: stri
   const [said, setSaid] = useState<{ byField: Partial<Record<NewAgentField, string[]>>; rest: string[] }>({ byField: {}, rest: [] });
   const shownKey = keyTouched ? key : slugKey(name);
   const problem = shownKey ? keyProblem(shownKey, rows.map((r) => r.key)) : null;
+  const nameBad = name.trim() ? agentNameProblem(name.trim()) : null;
   const groups = [...new Set(rows.map(packTitle))];
 
   const save = async () => {
@@ -49,12 +50,12 @@ export function NewAgent({ rows, cwd, onClose }: { rows: BuildAgent[]; cwd: stri
       setBusy(false);
     }
   };
-  const ready = name.trim() && shownKey && !problem;
+  const ready = name.trim() && !nameBad && shownKey && !problem;
   const at = (f: NewAgentField) => said.byField[f];
 
   return (
     <Dialog title="New agent" onClose={onClose}>
-      <Part label="Name" errors={at("name")} hint="What the board calls it.">
+      <Part label="Name" errors={[...(nameBad ? [nameBad] : []), ...(at("name") ?? [])]} hint="What the board calls it. Letters, digits and dashes.">
         <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Tidy" />
       </Part>
       <Part label="Key" errors={[...(problem ? [problem] : []), ...(at("key") ?? [])]} hint="Its address, as in /agents/tidy. It cannot change later.">
@@ -84,7 +85,7 @@ export function NewAgent({ rows, cwd, onClose }: { rows: BuildAgent[]; cwd: stri
         <Button kind="ghost" onClick={onClose}>Cancel</Button>
         <Button kind="primary" disabled={busy || !ready} onClick={save}>{busy ? "Creating…" : "Create agent"}</Button>
       </div>
-      {!ready && (name || shownKey) && <div className="faint" style={{ fontSize: 12 }}>{!name.trim() ? "Give it a name to continue." : "Fix the key to continue."}</div>}
+      {!ready && (name || shownKey) && <div className="faint" style={{ fontSize: 12 }}>{!name.trim() ? "Give it a name to continue." : nameBad ? "Fix the name to continue." : "Fix the key to continue."}</div>}
     </Dialog>
   );
 }

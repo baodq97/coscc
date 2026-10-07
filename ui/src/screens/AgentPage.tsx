@@ -105,7 +105,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
     for (const field of pending) {
       try {
         const v = draft[field];
-        const next = await api.post<Page>("/api/agents/field", { key: a.key, field, value: v === undefined || same(v, builtin[field]) ? null : v, cwd });
+        const next = await api.post<Page>("/api/agents/field", { key: a.key, field, value: v === undefined || (!a.own && same(v, builtin[field])) ? null : v, cwd });
         setFresh(next);
         setDraft((d) => {
           const { [field]: _, ...rest } = d;
@@ -149,7 +149,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
           <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
             <Chip square tone="plain">Runs {triggerWords(a, page.rows)}</Chip>
             {look && <Chip square tone={look.tone}>{look.label}</Chip>}
-            {a.edited.length > 0 ? <Chip square tone="accent">{a.edited.length} part{a.edited.length > 1 ? "s" : ""} edited</Chip> : <Chip square tone="plain">as built in</Chip>}
+            {own ? <Chip square tone="accent">Yours</Chip> : a.edited.length > 0 ? <Chip square tone="accent">{a.edited.length} part{a.edited.length > 1 ? "s" : ""} edited</Chip> : <Chip square tone="plain">as built in</Chip>}
           </div>
         </div>
         {own && (
@@ -242,8 +242,8 @@ function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; la
       <div>
         <div className="lab">{label}</div>
         <div className="hint">
-          <Chip square tone={source === "built-in" ? "plain" : source === "edited" ? "accent" : "amber"}>{source}</Chip>
-          {source !== "built-in" && ctx.editable && (
+          {(!ctx.a.own || source === "unsaved") && <Chip square tone={source === "built-in" ? "plain" : source === "edited" ? "accent" : "amber"}>{source}</Chip>}
+          {!ctx.a.own && source !== "built-in" && ctx.editable && (
             <button className="linkish" onClick={() => ctx.edit(top, put(ctx.value(top), rest, base))}>
               Reset to built-in
             </button>
