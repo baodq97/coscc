@@ -42,7 +42,8 @@ from coscc.kernel import Invalid
 from coscc.leif.agents import AgentPage, Live, ProposalsView
 from coscc.leif.chat import ChatHistory, ChatSessions
 from coscc.leif.insights import Insights
-from coscc.runner import triggers
+from coscc.runner import ask, triggers
+from coscc.runner.queue import Refused
 from coscc.runner.steps import NextStep
 from coscc.runner.watch import EventsPage
 from coscc.units import proposals
@@ -389,7 +390,7 @@ async def chat(request: Request) -> Any:
     body = await kernel.body(request)
     cwd, text = str(body.get("cwd") or ""), str(body.get("text") or "")
     core = _core(request)
-    core.chat.check_send(cwd, text)
+    core.chat.check_send(cwd, text, body.get("session_id") or None)
 
     async def turn() -> AsyncIterator[tuple[str, Any]]:
         async for kind, payload in core.chat.stream(cwd, text, body.get("session_id") or None):
@@ -696,6 +697,39 @@ async def get_run_events(run: str, request: Request) -> Any:
         seq=_number(request, "seq"),
         **({"limit": limit} if limit else {}),
     )
+
+
+@router.get("/api/runs/{run}/thread")
+async def get_run_thread(run: str, request: Request) -> ask.Thread:
+    """`?cwd=`: the questions asked of one run and their answers, oldest first, and whether one may
+    be asked now: resuming its warm session, or afresh and why not."""
+    return await ask.state(_core(request), _cwd(request), run)
+
+
+@router.post("/api/runs/{run}/ask")
+async def ask_run(run: str, request: Request) -> ask.Asked:
+    """`{cwd, text}` **opens one paid, read-only follow-up session** about an ended run, in the
+    background: it resumes the run's session when it ended under 55 min ago with the same row,
+    grant, head and model, else starts afresh from its summary. It writes nothing and hands back
+    no object, under $0.50 and 3 turns and the daily cap. Refused before spend (`code`): no such
+    run here (`no-run`), a run still going or one already being asked (`unit-busy`), an update,
+    the cap. Its `start` names the `parent_run` and the question; its `end` its own cost."""
+    body = await kernel.body(request)
+    return await ask.ask(
+        _core(request), str(body.get("cwd") or ""), run, str(body.get("text") or "")
+    )
+
+
+@router.post("/api/runs/{run}/stop")
+async def stop_run(run: str, request: Request) -> Started:
+    """`{cwd}` stops one agent run or follow-up this process runs in that workspace; it ends
+    `cancelled`. A board step is stopped from its unit."""
+    body = await kernel.body(request)
+    core, cwd = _core(request), str(body.get("cwd") or "")
+    core.ws.check(cwd)
+    if not triggers.stop_run(run, core.ws.key(cwd)):
+        raise Refused("no agent run or follow-up of that id runs in this workspace", ("no-run",))
+    return {"agent": "", "started": False, "run": run}
 
 
 @router.get("/api/runs/{run}/follow")

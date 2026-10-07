@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -44,7 +45,7 @@ from coscc.runner.resume import Resume
 from coscc.runner import triggers
 from coscc.runner.steps import Steps
 from coscc.runner.watch import Watch
-from coscc.store.db import Data
+from coscc.store.db import Busy, Data
 from coscc.units.ideas import Ideas
 from coscc import units
 from coscc.units import proposals, read, states
@@ -78,6 +79,8 @@ class Core:
         self.ws = Workspaces(self.config, self.sessions)
         # One question, asked in two places. See `Sessions.membership`.
         self.sessions.membership = self.ws.is_member
+        # Which sessions are this app's runs, from the run log: resumable after a restart too.
+        self.sessions.known = self._known_session
         # Told of every step, integration and chat turn that ends.
         self.updater = updater_mod.Updater(self.config, self)
         self.bus = self.sessions.bus
@@ -97,7 +100,7 @@ class Core:
             self.sessions,
             lambda: refuse_while_updating(self.updater),
             self.models.agent,
-            lambda cwd: triggers.leif_server(self, cwd, chat.read_tools(self, cwd)),
+            lambda cwd, turn: triggers.leif_server(self, cwd, chat.read_tools(self, cwd), turn),
         )
         self.ideas = Ideas(self.config, self.ws)
         self.backlog = Backlog(
@@ -234,6 +237,18 @@ class Core:
         if slot == "agent":
             return int(autopilot_values(self.config, workspace)["max_parallel"])
         return 1
+
+    def _known_session(self, session_id: str) -> bool:
+        """Whether an `end` or a `suspend` row of the run log names `session_id`; a run log that
+        cannot be read now names none."""
+        journal = self.ws.journal()
+        if journal is None:
+            return False
+        try:
+            return bool(journal.where("session_id", session_id, ("end", "suspend")))
+        except Busy, OSError, sqlite3.Error:
+            log.warning("the run log could not be read for session %s", session_id)
+            return False
 
     def _admitting(self) -> bool:
         """No queued attempt is moved on from the press of Apply until the update goes no

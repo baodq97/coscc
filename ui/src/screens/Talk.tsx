@@ -2,14 +2,14 @@
 // its code and units; what Leif remembers and recommends comes with Leif's own backend. Past
 // conversations are listed beside it; one begun in a terminal is read only.
 
-import { useEffect, useRef, useState } from "react";
-import type { ChatMessage, ChatSession } from "../api.gen";
+import { Fragment, useEffect, useRef, useState } from "react";
+import type { ChatMessage, ChatSession, LeifRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
-import { ago } from "../lib/format";
+import { ago, money, toolName } from "../lib/format";
 import { Icon, LeifAvatar } from "../lib/icons";
-import { setQuery, useQuery } from "../lib/router";
-import { Button, SkeletonRows } from "../components/ui";
+import { Link, setQuery, useQuery } from "../lib/router";
+import { Button, Dot, Markdown, SkeletonRows } from "../components/ui";
 
 type Shown = { role: string; text: string; tools?: string[] };
 
@@ -28,6 +28,9 @@ export function Talk() {
   const [error, setError] = useState<Error | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const [elsewhere, setElsewhere] = useState(false);
+  // The runs Leif started from this conversation, read again as any agent run starts or ends.
+  const told = useResource(session?.resumable ? "/api/chat/history" : null, { cwd, session_id: session?.session_id ?? "" }, { on: ["agent-run.", "chat-turn."] });
+  const runs: LeifRun[] = told.data?.runs ?? [];
   // The app's own chats first; sessions begun in a terminal or by an agent's run are read only.
   const listed = sessions.data?.sessions.filter((s) => s.resumable) ?? [];
   // A conversation just begun is not in the server's list yet: keep it on top so the list does not jump.
@@ -37,7 +40,7 @@ export function Talk() {
   useEffect(() => {
     // Braces: `scrollIntoView` returns a Promise in newer browsers, and React would call it as the cleanup.
     end.current?.scrollIntoView({ block: "end" });
-  }, [messages]);
+  }, [messages, runs.map((r) => r.run + r.outcome).join()]);
 
   const open = async (s: ChatSession | null) => {
     setQuery("session", s?.session_id ?? "");
@@ -86,6 +89,17 @@ export function Talk() {
   };
 
   if (loading) return <div className="page"><SkeletonRows rows={4} /></div>;
+  // Where each run's line goes: before the person's next message after the one that started it
+  // (found by its words, the last such), else at the end.
+  const before = new Map<number, LeifRun[]>();
+  const last: LeifRun[] = [];
+  for (const r of runs) {
+    const said = r.said.trim();
+    const at = said ? messages.map((m, i) => (m.role === "user" && m.text.trim().startsWith(said) ? i : -1)).filter((i) => i >= 0).pop() : undefined;
+    const next = at === undefined ? -1 : messages.findIndex((m, i) => i > at && m.role === "user");
+    if (next < 0) last.push(r);
+    else before.set(next, [...(before.get(next) ?? []), r]);
+  }
   const readOnly = session !== null && !session.resumable;
   return (
     <div className="split">
@@ -104,13 +118,16 @@ export function Talk() {
             </div>
           )}
           {messages.map((m, i) => (
-            <div key={i} className={`msg ${m.role === "user" ? "me" : ""}`}>
+            <Fragment key={i}>
+            {/* The runs started in the turn before this message, under that turn's answer. */}
+            {(before.get(i) ?? []).map((r) => <RunLine key={r.run} r={r} workspace={workspace?.name ?? ""} />)}
+            <div className={`msg ${m.role === "user" ? "me" : ""}`}>
               {m.role === "user" ? <span className="av">B</span> : <LeifAvatar />}
               <div className="mb">
                 <div className="who">{m.role === "user" ? "You" : "Leif"}</div>
-                {m.tools && m.tools.length > 0 && <div className="faint mono" style={{ fontSize: 12 }}>used {m.tools.join(", ")}</div>}
-                <div className="tx" style={{ whiteSpace: "pre-wrap" }}>
-                  {m.text ||
+                {m.tools && m.tools.length > 0 && <div className="faint" style={{ fontSize: 12 }}>used {[...new Set(m.tools.map(toolName))].join(", ")}</div>}
+                <div className="tx" style={m.role === "user" ? { whiteSpace: "pre-wrap" } : undefined}>
+                  {(m.text && (m.role === "user" ? m.text : <Markdown text={m.text} />)) ||
                     (busy && i === messages.length - 1 ? (
                       <span className="typing">
                         <i />
@@ -123,7 +140,9 @@ export function Talk() {
                 </div>
               </div>
             </div>
+            </Fragment>
           ))}
+          {last.map((r) => <RunLine key={r.run} r={r} workspace={workspace?.name ?? ""} />)}
           {error && <div style={{ color: "var(--red)", fontSize: 12.5 }}>{error.message}</div>}
           <div ref={end} />
         </div>
@@ -210,6 +229,23 @@ function SessionList({ sessions, current, busy, onOpen }: { sessions: ChatSessio
           </span>
         </button>
       ))}
+    </div>
+  );
+}
+
+/** One run Leif started, named as Leif names it, where the turn that started it ended. */
+function RunLine({ r, workspace }: { r: LeifRun; workspace: string }) {
+  const who = r.name === r.agent ? r.name : `${r.name} (${r.agent})`;
+  return (
+    <div className="faint" style={{ fontSize: 12.5 }}>
+      {r.outcome === "running" ? (
+        <>
+          <Dot tone="live" /> {who} is running, started by Leif.{" "}
+        </>
+      ) : (
+        `${who} ${r.outcome === "done" ? "finished" : r.outcome}: ${r.proposals} proposal${r.proposals === 1 ? "" : "s"}, ${money(r.cost_usd)}. `
+      )}
+      <Link to={`/run/${workspace}/${r.run}`}>{r.outcome === "running" ? "Watch it" : "Open the run"}</Link>
     </div>
   );
 }

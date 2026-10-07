@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { until, startedBy, ago, modelName, money, unitCode, unitTitle } from "./format";
+import { until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
 import { match } from "./router";
 import { findUnit, needsYou, proposalLink, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
@@ -631,7 +631,7 @@ describe("work and needs you", () => {
 });
 
 describe("runRow", () => {
-  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "", made: null };
+  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "", made: null, session: false };
   it("opens the log of a unitless run and names who started it", () => {
     expect(runRow({ ...run, run: "abc", started_by: "leif" }, "ws")).toMatchObject({ to: "/run/ws/abc", title: "Run by Leif" });
     expect(runRow({ ...run, run: "abc", started_by: "schedule" }, "ws").title).toBe("Run by the schedule");
@@ -710,5 +710,33 @@ describe("matches with something left out", () => {
     expect(matches(run, [""], "", ["agent-run."])).toBe(false);
     expect(matches({ subject: "step.ended", workspace: "w", unit: "u", going_down: false }, [""], "", ["agent-run."])).toBe(true);
     expect(matches({ subject: "", workspace: "" }, [""], "", ["agent-run.", "chat-turn."])).toBe(true);
+  });
+});
+
+describe("an agent's markdown and tool names", () => {
+  it("reads emphasis, code and only safe links", () => {
+    const line = "**#31** uses `step_events`, see [run](/run/proj/a) or [x](javascript:alert(1))";
+    const spans = mdSpans(line);
+    expect(spans.slice(0, 5)).toEqual([
+      { kind: "b", text: "#31" },
+      { kind: "text", text: " uses " },
+      { kind: "code", text: "step_events" },
+      { kind: "text", text: ", see " },
+      { kind: "link", text: "run", href: "/run/proj/a" },
+    ]);
+    // A link anywhere but the app or the web stays words.
+    expect(spans.slice(5).every((s) => s.kind === "text")).toBe(true);
+    expect(spans.slice(5).map((s) => s.text).join("")).toBe(" or [x](javascript:alert(1))");
+  });
+  it("groups lines into headings, lists, paragraphs and code", () => {
+    const blocks = mdBlocks("## Why\n- one\n- two\n\nText\nmore\n```\ncode **x**\n```\n1. first");
+    expect(blocks.map((b) => b.kind)).toEqual(["h", "ul", "p", "pre", "ol"]);
+    expect(blocks[1].lines).toHaveLength(2);
+    expect(blocks[3].code).toBe("code **x**");
+  });
+  it("names a tool by its own name", () => {
+    expect(toolName("mcp__cos__proposals")).toBe("proposals");
+    expect(toolName("mcp__code-graph__explore")).toBe("explore");
+    expect(toolName("Read")).toBe("Read");
   });
 });

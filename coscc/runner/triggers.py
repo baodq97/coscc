@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,7 @@ from typing import Any, NotRequired, TypedDict
 from coscc import kernel
 from coscc.agent import pack, policy
 from coscc.bus import Event
+from coscc.git import gitops
 from coscc.git.gitops import GitError
 from coscc.kernel import Run
 from coscc.runner import run as run_mod
@@ -58,6 +60,8 @@ LEIF_TOOL = policy.RUN_AGENT_TOOL.rsplit("__", 1)[-1]
 # time, and the tasks `start` made.
 _RUNNING: dict[tuple[str, str], tuple[str, str]] = {}
 _TASKS: set[asyncio.Task] = set()
+# Each task's workspace key: a stop names the workspace it is asked from.
+_WS: dict[asyncio.Task, str] = {}
 
 
 def running() -> list[dict[str, str]]:
@@ -99,7 +103,8 @@ def check(
 ) -> str:
     """The workspace's run-log key, or `Invalid` (codes `guards.REASONS`) before anything is spent:
     a row this trigger does not start, Leif without a reason, a unit the row does not read or the
-    workspace does not hold (`no-unit`), words it takes none of, an update under way, the daily cap reached, a run of it already here."""
+    workspace does not hold (`no-unit`), an update under way, the daily cap reached, a run of it
+    already here. Every row takes a person's words (`text`)."""
     if by not in BY:
         raise Invalid(f"started_by must be one of {', '.join(BY)}")
     found = pack.row(key)
@@ -121,8 +126,6 @@ def check(
         raise Refused(f"{workspace} holds no unit {unit}", ("no-unit",))
     if _unit_scoped(key) != bool(unit):
         raise Invalid(f"{key} reads {'a unit' if _unit_scoped(key) else 'no unit'}")
-    if text and not contracts.input_of(key).get("given"):
-        raise Invalid(f"{key} takes no words")
     if (found.get("output") or {}).get("kind") == "draft" and not text.strip():
         raise Invalid(f"{key} drafts from a task in words: give the task")
     if len(text) > TEXT_MAX:
@@ -190,26 +193,56 @@ async def begin(
 
 
 def _hold(
-    core: Core, key: str, cwd: str, ws: str, unit: str, by: str, reason: str, text: str
+    core: Core,
+    key: str,
+    cwd: str,
+    ws: str,
+    unit: str,
+    by: str,
+    reason: str,
+    text: str,
+    asked_in: str = "",
 ) -> str:
     """The run in the background, holding its (workspace, agent) from here, so a second press is
     refused at once (`unit-busy`; asked again, since `check` may have run off the loop). Its run
-    id, which the caller may follow before the run has begun."""
+    id, which the caller may follow before the run has begun. `asked_in` is the chat turn Leif
+    started it from, on its `start` as `chat_run`."""
     if (ws, key) in _RUNNING:
         raise Refused(f"a run of {key} in this workspace is already going", ("unit-busy",))
     run_id = uuid.uuid4().hex
     _RUNNING[ws, key] = (run_id, now())
     core.bus.publish("agent-run.started", {"workspace": ws, "agent": key, "run": run_id})
-    task = asyncio.get_running_loop().create_task(
-        _held(core, key, cwd, ws, unit, by, reason, text, run_id)
+    spawn(
+        asyncio.get_running_loop(),
+        _held(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in),
+        run_id,
+        ws,
     )
-    _TASKS.add(task)
-    task.add_done_callback(_done)
     return run_id
+
+
+def spawn(loop: asyncio.AbstractEventLoop, work: Any, run_id: str, ws: str) -> None:
+    """`work` as a background task named by its run, of workspace key `ws`, which `stop_run` and
+    `stop` reach."""
+    task = loop.create_task(work, name=run_id)
+    _TASKS.add(task)
+    _WS[task] = ws
+    task.add_done_callback(_done)
+
+
+def stop_run(run_id: str, ws: str) -> bool:
+    """Cancel the one background run `run_id` of workspace key `ws` (it writes its `cancelled`
+    `end`); whether this process runs it there."""
+    found = [t for t in _TASKS if t.get_name() == run_id and _WS.get(t) == ws and not t.done()]
+    for task in found:
+        task.cancel()
+    return bool(found)
 
 
 def _done(task: asyncio.Task) -> None:
     _TASKS.discard(task)
+    _WS.pop(task, None)
+    _LEIF_HELD.discard(task.get_name())
     if not task.cancelled() and task.exception() is not None:
         log.error("a triggered run failed", exc_info=task.exception())
 
@@ -231,10 +264,11 @@ async def _held(
     reason: str,
     text: str,
     run_id: str = "",
+    asked_in: str = "",
 ) -> str:
     """`_run` while its (workspace, agent) is held; let go however it ends."""
     try:
-        return await _run(core, key, cwd, ws, unit, by, reason, text, run_id)
+        return await _run(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in)
     finally:
         run, _ = _RUNNING.pop((ws, key), ("", ""))
         core.bus.publish("agent-run.ended", {"workspace": ws, "agent": key, "run": run})
@@ -251,6 +285,7 @@ async def _run(
     reason: str,
     text: str,
     run_id: str = "",
+    asked_in: str = "",
 ) -> str:
     journal = core.ws.journal()
     if journal is None:
@@ -293,7 +328,8 @@ async def _run(
             )
             return ""
     row = policy.row_for(key)
-    tools = _feature_tools(core, key, row, cwd, ws, unit, tree, directory)
+    tools = feature_tools(core, key, row, cwd, ws, unit, tree, directory)
+    head = await tree_head(tree)
 
     async def finish(got: Run) -> Mapping[str, Any]:
         """What it handed back kept by kind, and how far it read, before its `end`."""
@@ -331,7 +367,12 @@ async def _run(
             workspace_dir=cwd,
             unit=unit,
             started_by=by,
-            start={"trigger": by, **({"reason": reason.strip()} if reason.strip() else {})},
+            start={
+                "trigger": by,
+                **({"reason": reason.strip()} if reason.strip() else {}),
+                **({"head": head} if head else {}),
+                **({"chat_run": asked_in} if asked_in else {}),
+            },
             channel=(
                 submit.Collector(key, effects(core.steps.hooks))
                 if key in contracts.declarations()
@@ -341,6 +382,7 @@ async def _run(
             mcp=kernel.granted(tuple(t for t, _ in tools)),
             features=tuple(t for t in row.tools if t not in _BUILTIN),
             run=run_id,
+            cache_hour=True,
         ),
         ctx=run_mod.Ctx(core.sessions, journal, core.config.data_dir),
         finish=finish,
@@ -436,7 +478,16 @@ def effects(hooks: kernel.Hooks) -> dict[str, str]:
 _BUILTIN = frozenset(t.name for t in kernel.BUILTINS)
 
 
-def _feature_tools(
+async def tree_head(tree: str) -> str:
+    """The commit `tree` stands on, `""` when it is no git tree: what a run's `start` records so a
+    follow-up knows whether it still reads the same code."""
+    try:
+        return (await gitops.head_and_branch(Path(tree)))[0] or ""
+    except GitError, OSError:
+        return ""
+
+
+def feature_tools(
     core: Core,
     key: str,
     row: Any,
@@ -516,7 +567,7 @@ def prompt_of(
         parts.append(f"# The idea this unit was opened from\n\n{idea.strip()}")
     if "proposals" in declared["data"]:
         parts.append(f"# Proposals already made\n\n{proposals.lists_of(made)}")
-    if declared.get("given") and text.strip():
+    if text.strip():
         parts.append(f"# The person's words\n\n{text.strip()}")
     taken: list[Intervention] = []
     if "interventions" in declared["data"]:
@@ -654,6 +705,7 @@ LEIF_SCHEMA = {
         "unit": {"type": "string"},
         "reason": {"type": "string"},
         "text": {"type": "string"},
+        "confirmed": {"type": "boolean"},
     },
     "required": ["key", "reason"],
     "additionalProperties": False,
@@ -672,19 +724,97 @@ class Reply(TypedDict):
     is_error: NotRequired[bool]
 
 
-async def leif_call(core: Core, cwd: str, args: Mapping[str, Any]) -> Reply:
-    """One `run_agent` call: the run started in the background, or the refusal with its codes."""
+# Leif asks the person before a run that may cost more than this, and starts at most `LEIF_DAILY`
+# runs a local day.
+ASK_OVER = 0.25
+LEIF_DAILY = 10
+# The (chat run, agent) pairs Leif was told to ask about: a confirmation counts only from a later
+# turn of the same conversation, so a person's message came between.
+_ASKED: set[tuple[str, str]] = set()
+# Runs Leif started that are still going (a place taken, then its run id), counted with today's
+# `start`s: a run held has none yet. Counted and taken under `_LEIF_LOCK`, so two calls together
+# cannot both pass the last place.
+_LEIF_HELD: set[str] = set()
+_LEIF_LOCK = threading.Lock()
+
+
+def _leif_today(journal: Any) -> int:
+    """How many runs Leif started this local day, every workspace, those still held included."""
+    today = datetime.now().astimezone().date()
+    runs = set(_LEIF_HELD)
+    for r in journal.where("started_by", "leif", ("start",)):
+        try:
+            if datetime.fromisoformat(str(r.get("at") or "")).astimezone().date() == today:
+                runs.add(str(r.get("run") or id(r)))
+        except ValueError:
+            continue
+    return len(runs)
+
+
+def _asked_before(journal: Any, key: str, turn: Mapping[str, str]) -> bool:
+    """Whether Leif was refused `needs-confirm` for `key` in an earlier turn of this conversation."""
+    session, now_run = turn.get("session") or "", turn.get("run") or ""
+    if not session:
+        return False
+    for run, agent in list(_ASKED):
+        if agent != key or run == now_run:
+            continue
+        if any(r.get("session_id") == session for r in journal.where("run", run, ("end",))):
+            return True
+    return False
+
+
+def _leif_may(core: Core, key: str, args: Mapping[str, Any], turn: Mapping[str, str]) -> str:
+    """Refused `leif-daily-runs` past `LEIF_DAILY` runs today; refused `needs-confirm` for a row
+    whose $ ceiling passes `ASK_OVER` until a later turn of the same chat says `confirmed`. Else
+    the place it took in `_LEIF_HELD`, for the caller to swap for its run id or give back."""
+    journal = core.ws.journal()
+    _confirmed(journal, key, args, turn)
+    with _LEIF_LOCK:
+        if journal is not None and _leif_today(journal) >= LEIF_DAILY:
+            raise Refused(
+                f"Leif has started {LEIF_DAILY} runs today, the most a day: say so instead",
+                ("leif-daily-runs",),
+            )
+        place = uuid.uuid4().hex
+        _LEIF_HELD.add(place)
+        return place
+
+
+def _confirmed(journal: Any, key: str, args: Mapping[str, Any], turn: Mapping[str, str]) -> None:
+    usd = float(((pack.row(key) or {}).get("ceilings") or {}).get("usd") or 0.0)
+    if usd <= ASK_OVER:
+        return
+    if args.get("confirmed") is True and journal is not None and _asked_before(journal, key, turn):
+        return
+    _ASKED.add((turn.get("run") or "", key))
+    raise Refused(
+        f"{key} may spend up to ${usd:.2f} and no yes was asked for in an earlier turn: ask the "
+        "person now, naming that sum, and end your turn; after they say yes, call again with "
+        "confirmed: true",
+        ("needs-confirm",),
+    )
+
+
+async def leif_call(
+    core: Core, cwd: str, args: Mapping[str, Any], turn: Mapping[str, str] | None = None
+) -> Reply:
+    """One `run_agent` call: the run started in the background, or the refusal with its codes.
+    `turn` is the chat turn calling (`run`, and the conversation's `session` when it has one)."""
     key = str(args.get("key") or "")
+    turn = turn or {}
+    unit, reason, text = (str(args.get(k) or "") for k in ("unit", "reason", "text"))
     try:
-        run_id = await begin(
-            core,
-            key,
-            cwd,
-            str(args.get("unit") or ""),
-            by="leif",
-            reason=str(args.get("reason") or ""),
-            text=str(args.get("text") or ""),
-        )
+        with pack.held():
+            ws = await asyncio.to_thread(
+                check, core, key, cwd, unit, by="leif", reason=reason, text=text
+            )
+            place = await asyncio.to_thread(_leif_may, core, key, args, turn)
+            try:
+                run_id = _hold(core, key, cwd, ws, unit, "leif", reason, text, turn.get("run", ""))
+                _LEIF_HELD.add(run_id)
+            finally:
+                _LEIF_HELD.discard(place)
     except Invalid as e:
         codes = ", ".join(getattr(e, "reasons", ()) or ())
         said = f"refused{f' ({codes})' if codes else ''}: {e}"
@@ -698,7 +828,9 @@ async def leif_call(core: Core, cwd: str, args: Mapping[str, Any]) -> Reply:
     return {"content": [{"type": "text", "text": said}]}
 
 
-def leif_server(core: Core, cwd: str, reads: Sequence[Any] = ()) -> Any:
+def leif_server(
+    core: Core, cwd: str, reads: Sequence[Any] = (), turn: Mapping[str, str] | None = None
+) -> Any:
     """The chat's `cos` server holding `run_agent` (`leif_call`) and `reads`, the read-only tools
     beside it (`coscc/leif/chat.py`). `run_agent` starts a row whose trigger says `leif`, in the
     chat's workspace, with Leif's reason on its `start`; any other row is refused `not-leif`."""
@@ -707,7 +839,7 @@ def leif_server(core: Core, cwd: str, reads: Sequence[Any] = ()) -> Any:
     named = ", ".join(k for k, r in pack.rows().items() if _trigger(r).get("leif")) or "none"
 
     async def _handle(args: dict[str, Any]) -> dict[str, Any]:
-        return dict(await leif_call(core, cwd, args))
+        return dict(await leif_call(core, cwd, args, turn))
 
     described = (
         "Start one agent run in this workspace, read-only and paid, under the agent's own "
@@ -715,7 +847,10 @@ def leif_server(core: Core, cwd: str, reads: Sequence[Any] = ()) -> Any:
         "answer a question yourself. "
         f"`key` is one of: {named}; `unit` only for an agent that "
         "reads one; `reason` is why, in a sentence, and is recorded on the run; `text` the "
-        "person's words, for an agent that takes them (Dagaz drafts from the task they state)."
+        "person's words (Dagaz drafts from the task they state). Call it without `confirmed` "
+        f"first: a run that may cost over ${ASK_OVER:.2f} is refused `needs-confirm`, which "
+        "records the ask; then ask the person, naming the sum, and end your turn, and after they "
+        "say yes call again with `confirmed: true`."
     )
     return create_sdk_mcp_server(
         submit.SERVER, "1.0.0", [tool(LEIF_TOOL, described, LEIF_SCHEMA)(_handle), *reads]

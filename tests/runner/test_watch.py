@@ -14,6 +14,7 @@ from coscc.config import Config
 from coscc.kernel import Invalid
 from coscc.http.app import Core
 from coscc.runner.run import LIVE
+from coscc.store.db import Data
 from coscc.agent.sessions import Sessions
 from tests.http.test_app import create_sync
 from tests.units.test_meta import seed
@@ -133,6 +134,33 @@ class AStepCanBeWatched(unittest.TestCase):
         [start] = [r for r in self.core.ws.journal().records(kind="start")]
         [end] = [r for r in self.core.ws.journal().records(kind="end")]
         self.assertEqual((start["run"], end["run"], end["events_lost"]), (run, run, 0))
+
+    def test_a_follower_of_a_run_abandoned_with_no_end_is_let_go(self):
+        ws = str(self.repo)
+        key = self.core.ws.key(ws)
+
+        async def go():
+            recorder = events_mod.Recorder(
+                "r-stopped", Data(self.root / "data"), str(self.root / "work"), key, "", "scan"
+            )
+            LIVE[recorder.run] = recorder
+            recorder.start()
+            got = []
+
+            async def follow():
+                async for kind, _ in self.core.watch.follow_events(ws, recorder.run):
+                    got.append(kind)
+
+            follower = asyncio.create_task(follow())
+            await asyncio.sleep(0.05)
+            await recorder.abandon()
+            LIVE.pop(recorder.run, None)
+            await asyncio.wait_for(follower, 5)
+            return got
+
+        with mock.patch.object(events_mod, "IDLE_WAKE", 0.05):
+            got = asyncio.run(go())
+        self.assertEqual(got[-1], "status")
 
     def _live(self):
         """The recorders of this test's workspace that run now."""

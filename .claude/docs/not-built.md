@@ -67,7 +67,10 @@ Read this before adding a route, a button or a grant.
   only the chat's grant holds, refused `not-leif` for a row without `trigger.leif`) each open one
   paid session under the row's ceilings and the daily cap, its `start` naming who started it.
   `POST /api/proposals/{id}` is the owner's accept or dismiss of a proposal, `by: owner`; no agent
-  holds a tool that reaches it.
+  holds a tool that reaches it. `POST /api/runs/{run}/ask` opens one paid follow-up about an ended
+  run (≤ $0.50, 3 turns, the daily cap): a triggered row's session is resumed with its grant less
+  `submit`, any other run gets a new reader holding Read, Grep and Glob only; it writes nothing
+  and its `start` names the `parent_run` and the question. `POST /api/runs/{run}/stop` cancels one.
 - **A screenshot is an agent's look,** not a person's.
 - **Say what a new route can do,** to whom, at what cost, and where the trace is. Prefer a row
   in the run log to a claim in prose.

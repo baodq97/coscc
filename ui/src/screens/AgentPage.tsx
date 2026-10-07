@@ -757,9 +757,11 @@ function OnHere({ a, cwd, setPage }: Ctx) {
   );
 }
 
-/** One paid run now, asked once with its ceiling named; once started, a link to its live page. */
+/** One paid run now, asked once with its ceiling named and an optional note; once started, a link
+ * to its live page. With no run going, a link to ask its last run a question. */
 function RunNowButton({ a, cwd, workspace }: Ctx) {
   const [asking, setAsking] = useState(false);
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [started, setStarted] = useState("");
   const [error, setError] = useState("");
@@ -769,17 +771,32 @@ function RunNowButton({ a, cwd, workspace }: Ctx) {
     setBusy(true);
     setError("");
     try {
-      const got = await api.post<{ run: string }>("/api/agents/run", { cwd, key: a.key });
+      const got = await api.post<{ run: string }>("/api/agents/run", { cwd, key: a.key, text: note.trim() });
       setStarted(got.run);
       setAsking(false);
+      setNote("");
     } catch (e) {
       setError((e as Error).message);
     }
     setBusy(false);
   };
   const live = a.running ? a.running.run : started;
+  // The newest run that kept a session and was not stopped: the one a question can be put to.
+  const last = live ? "" : (a.groups.flatMap((g) => g.runs).filter((r) => r.run && r.session && r.outcome !== "cancelled").sort((x, y) => y.at.localeCompare(x.at))[0]?.run ?? "");
   return (
-    <span className="row" style={{ gap: 8 }}>
+    <span className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+      {asking && (
+        <input
+          className="input"
+          style={{ width: 280 }}
+          aria-label="A note for this run"
+          placeholder="A note for this run (optional)"
+          value={note}
+          maxLength={4000}
+          disabled={busy}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      )}
       <Button size="sm" kind={asking ? "primary" : ""} icon="bolt" disabled={busy || !!a.running} onClick={run}>
         {busy ? "Starting…" : a.running ? "Running" : asking ? `Spend up to ${money(usd ?? 0)}?` : "Run now"}
       </Button>
@@ -791,6 +808,11 @@ function RunNowButton({ a, cwd, workspace }: Ctx) {
       {live && workspace && (
         <Link to={`/run/${workspace}/${live}`} className="live-link">
           {a.running ? <><span className="dot live" /> Watch it live ▸</> : "Open its run ▸"}
+        </Link>
+      )}
+      {last && workspace && !asking && (
+        <Link to={`/run/${workspace}/${last}?ask=1`} className="live-link">
+          Ask its last run ▸
         </Link>
       )}
       {error && <span className="field-err">{error}</span>}

@@ -330,7 +330,7 @@ class Resume:
                 continue  # not taken: the next start sees it again
             record = {**row, "pieces": pieces, "message": resume_message(row.get("dropped"))}
             if not problem:
-                self.sessions.adopt(str(row.get("session_id") or ""))
+                # Its `suspend` row names the session, so `Sessions.known` lets it be resumed.
                 try:
                     starts.append(self._take_up(kind, record))
                 except Invalid as e:

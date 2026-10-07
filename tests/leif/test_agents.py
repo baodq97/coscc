@@ -323,6 +323,23 @@ class ThePage(_WithAService):
             (True, "nothing new since its last run", "", "manual"),
         )
         self.assertEqual((by[_at(1)]["skipped"], by[_at(1)]["run"]), (False, ""))
+        # Only a run that kept a session can be asked a question.
+        self.assertEqual((by[_at(1)]["session"], by[_at(3)]["session"]), (True, False))
+
+    def test_a_question_to_a_run_counts_only_to_the_asked_agents_cost(self):
+        self._seed(
+            [
+                _end("scan", "done", 2, cost=0.1, unit="") | {"agent": "scan"},
+                _end("ask", "done", 1, cost=0.02, unit="") | {"agent": "scan", "parent_run": "r"},
+            ]
+        )
+        page = self.core.agents.agent_page(now=NOW)
+        scan = self._row(page, "scan")
+        # Its cost counts; it is not a run: not its last, not in its count, groups or chip.
+        self.assertEqual((scan["runs_30d"], scan["cost_30d"]), (1, 0.12))
+        self.assertEqual(scan["last"]["at"], _at(2))
+        self.assertEqual([r["at"] for g in scan["groups"] for r in g["runs"]], [_at(2)])
+        self.assertNotIn("ask", [r["key"] for r in page["rows"]])
 
     def test_a_setting_since_the_last_run_heads_a_group_of_no_run(self):
         self.core.agents.set_agent_field("spec", "body", "New.")

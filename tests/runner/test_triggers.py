@@ -95,6 +95,15 @@ class _Core(unittest.IsolatedAsyncioTestCase):
 
     async def _run(self, agent, given, *, ctx, finish=None):
         self.given.append(given)
+        self.journal.started(
+            given.workspace,
+            given.unit,
+            agent.key,
+            "manual",
+            started_by=given.started_by,
+            run=given.run,
+            **given.start,
+        )
         await self.gate.wait()
         got = Run(
             self.reply.status, self.reply.output, dict(self.reply.cost), session="s1", run="r1"
@@ -236,6 +245,20 @@ class APressRunsTheRow(_Core):
         await self.settle()
         self.assertEqual(len(self.given), 1)
 
+    async def test_any_row_takes_a_note_and_its_start_says_what_it_read_on(self):
+        self.found = found(1)
+
+        async def head(tree):
+            return "abc123"
+
+        with mock.patch.object(triggers, "tree_head", head):
+            triggers.start(self.core, "scan", self.ws, by="manual", text="Look at reruns.")
+            await self.settle()
+        (given,) = self.given
+        self.assertIn("# The person's words\n\nLook at reruns.", given.prompt)
+        self.assertEqual(given.start["head"], "abc123")
+        self.assertTrue(given.cache_hour)
+
     async def test_the_daily_cap_and_a_row_with_no_such_trigger_are_refused(self):
         self.found = found(1)
         self.core.autopilot.today = lambda cwd: (120.0, 120.0)
@@ -320,6 +343,99 @@ class LeifRunsARowThatSaysLeif(_Core):
         self.assertIn("not-leif", said["content"][0]["text"])
 
 
+class LeifAsksBeforeACostlyRunAndStartsTenADay(_Core):
+    """Over `ASK_OVER` a run waits for a person's yes in a later turn of the same chat; past
+    `LEIF_DAILY` runs a day Leif starts none."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.found = found(1)
+        self.addCleanup(triggers._ASKED.clear)
+
+    async def call(self, turn: str, session: str = "S", **args) -> dict:
+        said = await triggers.leif_call(
+            self.core,
+            self.ws,
+            {"key": "scan", "reason": "asked", **args},
+            {"run": turn, "session": session},
+        )
+        await self.settle()
+        return said
+
+    def turn_ended(self, turn: str, session: str = "S") -> None:
+        self.journal.finished(
+            self.ws, "", "chat", "done", agent="leif", run=turn, session_id=session
+        )
+
+    def code(self, said: dict) -> str:
+        return said["content"][0]["text"] if said.get("is_error") else ""
+
+    async def test_a_yes_counts_only_from_a_later_turn_of_the_same_chat(self):
+        self.assertIn("needs-confirm", self.code(await self.call("t1")))
+        self.assertIn("$0.68", self.code(await self.call("t1")))
+        # Leif saying yes for the person in the same turn is refused.
+        self.assertIn("needs-confirm", self.code(await self.call("t1", confirmed=True)))
+        self.turn_ended("t1")
+        # Another conversation's earlier ask is not this one's.
+        self.assertIn(
+            "needs-confirm", self.code(await self.call("t2", session="other", confirmed=True))
+        )
+        self.assertEqual(self.given, [])
+        said = await self.call("t2", confirmed=True)
+        self.assertFalse(said.get("is_error"), said)
+        (given,) = self.given
+        self.assertEqual(given.start.get("chat_run"), "t2")
+
+    async def test_a_yes_with_no_ask_before_it_is_refused(self):
+        self.assertIn("needs-confirm", self.code(await self.call("t9", confirmed=True)))
+        self.assertEqual(self.given, [])
+
+    async def test_a_cheap_run_starts_at_once_and_the_eleventh_of_the_day_is_refused(self):
+        self.set_row("ceilings", {"turns": 4, "usd": 0.2})
+        # Something new each time, so no run is skipped.
+        p = mock.patch("coscc.runner.triggers.interventions", lambda *a: found(1))
+        p.start()
+        self.addCleanup(p.stop)
+        yesterday = "2000-01-01T00:00:00+00:00"
+        self.journal.append(
+            {
+                "kind": "start",
+                "workspace": self.ws,
+                "unit": "",
+                "stage": "scan",
+                "started_by": "leif",
+                "at": yesterday,
+            }
+        )
+        for i in range(triggers.LEIF_DAILY):
+            said = await self.call(f"t{i}")
+            self.assertFalse(said.get("is_error"), said)
+        self.assertIn("leif-daily-runs", self.code(await self.call("t99")))
+        self.assertEqual(len(self.given), triggers.LEIF_DAILY)
+
+    async def test_two_calls_together_at_nine_start_one(self):
+        self.set_row("ceilings", {"turns": 4, "usd": 0.2})
+        self.addCleanup(triggers._LEIF_HELD.clear)
+        for i in range(triggers.LEIF_DAILY - 1):
+            self.journal.append(
+                {"kind": "start", "workspace": self.ws, "unit": "", "stage": "scan"}
+                | {"started_by": "leif", "run": f"r{i}"}
+            )
+        got = await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    triggers._leif_may, self.core, "scan", {}, {"run": t, "session": "S"}
+                )
+                for t in ("a", "b")
+            ),
+            return_exceptions=True,
+        )
+        refused = [g for g in got if isinstance(g, Invalid)]
+        self.assertEqual([r.reasons for r in refused], [("leif-daily-runs",)])
+        # A place held for a run with no `start` yet counts as one.
+        self.assertEqual(triggers._leif_today(self.journal), triggers.LEIF_DAILY)
+
+
 class DagazDraftsFromWords(_Core):
     """Dagaz reads the catalog and the person's words; its draft is kept on its `end` alone."""
 
@@ -350,6 +466,8 @@ class DagazDraftsFromWords(_Core):
         self.assertEqual(self.given, [])
 
     async def test_leif_hands_the_words_and_the_owner_the_run(self):
+        # Under the sum Leif asks about, so it starts at once.
+        pack.write("dagaz", "ceilings", {"turns": 8, "usd": 0.25})
         said = await triggers.leif_call(
             self.core, self.ws, {"key": "dagaz", "reason": "asked", "text": "Docs changes"}
         )

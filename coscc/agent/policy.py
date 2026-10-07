@@ -84,7 +84,7 @@ PEERS_TOOL = "mcp__cos__peers"
 # The kernel's own tool Leif's chat starts a triggered row with (`coscc/runner/triggers.py`).
 RUN_AGENT_TOOL = "mcp__cos__run_agent"
 # The kernel's read-only tools beside it, which read the app's own state (`coscc/leif/chat.py`).
-LEIF_READS = ("board", "unit", "needs_you", "spend", "agents", "proposals")
+LEIF_READS = ("board", "unit", "needs_you", "spend", "agents", "proposals", "runs")
 LEIF_TOOLS = (RUN_AGENT_TOOL, *(f"mcp__cos__{n}" for n in LEIF_READS))
 # Lists every Claude session on the machine, not only this run's helpers.
 LIST_AGENTS = "ListAgents"

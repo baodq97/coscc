@@ -4,6 +4,7 @@ None of these create a session — the guards are exactly the paths that must re
 *before* anything is spawned, so testing them costs nothing. What needs a
 real session is `scripts/verify_0001.py`, which is run on purpose."""
 
+import asyncio
 from datetime import datetime, timezone
 import json
 import os
@@ -396,6 +397,43 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post("/api/agents/run", json=body)
         self.assertEqual((r.status_code, r.json()["code"]), (400, "no-unit"))
         self.assertEqual(triggers._TASKS, set())
+
+    async def test_asking_a_run_says_its_thread_and_refuses_one_that_is_not_here(self):
+        cwd = str(self.ws)
+        r = await self.client.post("/api/runs/nope/ask", json={"cwd": cwd, "text": "why?"})
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "no-run"))
+        r = await self.client.get("/api/runs/nope/thread", params={"cwd": cwd})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual((r.json()["followups"], r.json()["ask"]["may"]), ([], False))
+        told = {"run": "f1", "resumed": True, "why": ""}
+
+        async def asked(core, cwd_, run, text):
+            return told
+
+        with mock.patch("coscc.http.routes.ask.ask", asked):
+            r = await self.client.post("/api/runs/p1/ask", json={"cwd": cwd, "text": "why?"})
+        self.assertEqual((r.status_code, r.json()), (200, told))
+        self.assertEqual(triggers._TASKS, set())
+
+    async def test_stop_reaches_one_run_of_this_process_and_none_other(self):
+        r = await self.client.post("/api/runs/nope/stop", json={"cwd": str(self.ws)})
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "no-run"))
+        held = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        triggers.spawn(loop, held.wait(), "r2", "another workspace's key")
+        triggers.spawn(loop, held.wait(), "r1", self.core.ws.key(str(self.ws)))
+        # Another workspace's run is not stopped from this one.
+        r = await self.client.post("/api/runs/r2/stop", json={"cwd": str(self.ws)})
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "no-run"))
+        tasks = {t.get_name(): t for t in triggers._TASKS}
+        r = await self.client.post("/api/runs/r1/stop", json={"cwd": str(self.ws)})
+        self.assertEqual(r.status_code, 200)
+        await asyncio.gather(tasks["r1"], return_exceptions=True)
+        self.assertEqual((tasks["r1"].cancelled(), tasks["r2"].done()), (True, False))
+        held.set()
+        await asyncio.gather(*triggers._TASKS, return_exceptions=True)
+        r = await self.client.post("/api/runs/r1/stop", json={"cwd": "/etc"})
+        self.assertEqual(r.status_code, 400)
 
     async def test_proposals_name_their_agent_and_the_owner_decides(self):
         from coscc.store.db import Data

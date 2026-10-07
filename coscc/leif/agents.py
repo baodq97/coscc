@@ -51,7 +51,7 @@ class RunView(TypedDict):
     workspace's resolved path; `row_hash` the definition its `start` ran (`""` before rows had
     one). `run` is the run-log id its events were kept under (`""` when none); `skipped` and
     `detail` say a run that spent nothing and why; `started_by` is who started it; `made` how many
-    proposals it kept (`None` when it makes none)."""
+    proposals it kept (`None` when it makes none); `session` whether it kept a session to ask."""
 
     workspace: str
     unit: str
@@ -65,6 +65,7 @@ class RunView(TypedDict):
     detail: str
     started_by: str
     made: int | None
+    session: bool
 
 
 class Setting(TypedDict):
@@ -296,6 +297,7 @@ def _run_view(record: dict[str, Any]) -> RunView:
         detail=str(record.get("detail") or ""),
         started_by=str(record.get("started_by") or ""),
         made=made if isinstance(made := record.get("proposals"), int) else None,
+        session=bool(record.get("session_id")),
     )
 
 
@@ -489,7 +491,8 @@ class Agents:
         dict[tuple[str, str], dict[str, Any]],
         list[str],
     ]:
-        """Every `end` by agent, oldest first, each with the `label` and `row_hash` of the `start`
+        """Every `end` by its `agent` (a chat turn is Leif's, a question to a run is the asked
+        agent's), else by its stage, oldest first, each with the `label` and `row_hash` of the `start`
         it closes (a run is measured against its own ceiling, grouped by its own definition); every
         `agent-setting` by agent, oldest first; the newest `agent-state` of each (workspace, agent).
         One read of the run log."""
@@ -528,7 +531,7 @@ class Agents:
                 starts[step] = record
             else:
                 start = starts.pop(step, {})
-                ends.setdefault(step[2], []).append(
+                ends.setdefault(str(record.get("agent") or step[2]), []).append(
                     {
                         "started_by": start.get("started_by"),
                         **record,
@@ -577,7 +580,8 @@ class Agents:
             )
             rows[-1]["problems"] = pack.problems(key, effects)
             rows[-1]["on"] = self._on(data, key, workspace)
-            self._live_fields(rows[-1], found, data, workspace, ends.get(key, []), by)
+            runs = [r for r in ends.get(key, []) if r.get("stage") != "ask"]
+            self._live_fields(rows[-1], found, data, workspace, runs, by)
         table = agents.table()
         return AgentPage(
             rows=rows,
@@ -686,8 +690,14 @@ class Agents:
         settings: dict[str, list[Setting]],
         since: str,
     ) -> AgentRow:
-        mine = ends.get(key, [])
+        # A question to one of its runs (`ask`) is no run of it: only its cost counts.
+        mine = [r for r in ends.get(key, []) if r.get("stage") != "ask"]
         recent = [r for r in mine if str(r.get("at") or "") >= since]
+        asked = [
+            r
+            for r in ends.get(key, [])
+            if r.get("stage") == "ask" and str(r.get("at") or "") >= since
+        ]
         last = _run_view(mine[-1]) if mine else None
         budget = config["ceilings"]["max_budget_usd"]
         if mine and mine[-1].get("label") == policy.NOVEL and novel is not None:
@@ -709,7 +719,7 @@ class Agents:
             novel=novel,
             last=last,
             runs_30d=len(recent),
-            cost_30d=round(sum(r["cost_usd"] or 0.0 for r in views), 6),
+            cost_30d=round(sum(r.get("cost_usd") or 0.0 for r in (*recent, *asked)), 6),
             chip=chip_of(last, budget, len(recent)),
             groups=groups_of(views, [s for s in settings.get(key, []) if s["at"] >= since]),
             on=None,
