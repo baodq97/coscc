@@ -437,6 +437,7 @@ class OneRunIsStopped(_Asking):
 
 
 DRAFT = {"why": "a weekly reader", "agent": _draft_agent()}
+ASKED = {"why": "which code?", "questions": [{"n": 1, "text": "?", "recommendation": "all"}]}
 
 
 class ADraftsAnswersGoOnInItsSession(_Asking):
@@ -456,7 +457,7 @@ class ADraftsAnswersGoOnInItsSession(_Asking):
         async for item in super()._run(agent, given, ctx=ctx, finish=judged):
             yield item
 
-    def asked_dagaz(self, run="d1", **start):
+    def asked_dagaz(self, run="d1", outcome="done", **start):
         row = policy.row_for("dagaz")
         self.journal.started(
             self.ws,
@@ -473,7 +474,15 @@ class ADraftsAnswersGoOnInItsSession(_Asking):
             **start,
         )
         self.journal.finished(
-            self.ws, "", "dagaz", "done", agent="dagaz", run=run, session_id="s1", cost_usd=0.18
+            self.ws,
+            "",
+            "dagaz",
+            outcome,
+            agent="dagaz",
+            run=run,
+            session_id="s1",
+            cost_usd=0.18,
+            **({"draft": ASKED} if outcome == "done" else {}),
         )
 
     async def answered(self, run="d1", task="code quality", text="1. All of it") -> ask.Asked:
@@ -522,6 +531,23 @@ class ADraftsAnswersGoOnInItsSession(_Asking):
             [("dagaz", "manual", "code quality\n\n# Your questions, answered\n\n1. All of it")],
         )
         self.assertEqual(self.runs, [])
+
+    async def test_a_failed_dagaz_run_or_one_that_drafted_without_asking_takes_no_answers(self):
+        self.asked_dagaz(outcome="failed")
+        with self.assertRaises(Invalid) as e:
+            await ask.continue_draft(self.core, self.ws, "d1", "task", "1. yes")
+        self.assertIn("asked no questions", str(e.exception))
+        await self.answered_after_a_draft_without_questions()
+        self.assertEqual(self.runs, [])
+
+    async def answered_after_a_draft_without_questions(self):
+        self.asked_dagaz(run="d2")
+        await self.answered(run="d2")  # asks, so a follow-up drafts
+        follow = self.runs[-1][1].run
+        self.runs.clear()
+        with self.assertRaises(Invalid):
+            # The follow-up's own end holds a draft that asks nothing more.
+            await ask.continue_draft(self.core, self.ws, follow, "task", "1. yes")
 
     async def test_a_run_that_drafts_nothing_takes_no_answers(self):
         self.asked_run()

@@ -418,14 +418,23 @@ def continue_draft(core: Core, cwd: str, run: str, task: str, text: str) -> asyn
     goes on in the thread's warm session under the rules `ask` resumes by, its own grant and
     ceilings kept (with `submit`), and the run's `end` keeps the new draft as any draft's. When the
     session cannot be resumed, a new run of the row starts from the `task` and the answers.
-    Refused before spend as `ask` is, and when `run` is no draft."""
+    Refused before spend as `ask` is, and unless the end of `run` kept a draft that asks."""
     if not text.strip() or not task.strip():
         raise Invalid("give the task and the answers")
     root_run, start, end, journal = _check(core, cwd, run, text)
     key = str(start.get("agent") or start.get("stage") or "")
     found = pack.row(key) or {}
-    if not start.get("trigger") or (found.get("output") or {}).get("kind") != "draft":
-        raise Invalid(f"run {root_run} drafted nothing: answers go to a draft")
+    # The questions answered are those the end of `run` itself kept (the first run's, or the
+    # follow-up's that asked again); a run that ended with no draft asked none.
+    _, own_end = _run_records(journal, run)
+    asked = (own_end or {}).get("draft")
+    if (
+        not start.get("trigger")
+        or (found.get("output") or {}).get("kind") != "draft"
+        or not isinstance(asked, dict)
+        or not asked.get("questions")
+    ):
+        raise Invalid(f"run {run} asked no questions: answers go to a draft that asked")
     plan = _plan(core, cwd, start)
     row = policy.row_for(key)
     today = core.autopilot.today(cwd)
