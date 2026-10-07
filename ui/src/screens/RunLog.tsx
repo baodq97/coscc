@@ -35,6 +35,13 @@ export function toolLines(input: unknown): { first: string; more: number; full: 
   return { first: lines[0], more: lines.length - 1, full };
 }
 
+/** A `submit` call in plain words: "handed back 0 proposals", from the arrays its input holds. */
+export function submitWords(input: unknown): string {
+  const lists = input && typeof input === "object" ? Object.entries(input).filter(([, v]) => Array.isArray(v)) : [];
+  if (!lists.length) return "handed back its result";
+  return `handed back ${lists.map(([k, v]) => `${(v as unknown[]).length} ${(v as unknown[]).length === 1 ? k.replace(/s$/, "") : k}`).join(", ")}`;
+}
+
 /** `text` with every path into the unit's own worktree read from that worktree: `…/0001_x/a.py` is `a.py`. */
 export function inUnit(text: string, unit: string): string {
   return unit ? text.split(new RegExp(`[^\\s'"]*/${unit}/`)).join("") : text;
@@ -390,7 +397,7 @@ function ToolUse({ event: e, unit, who }: { event: StepEvent; unit: string; who:
     <div className="rl-l mono">
       {who}
       <span className="rl-tool">{toolName(e.name ?? "")}</span>{" "}
-      {open ? null : inUnit(first, unit)}
+      {open ? null : toolName(e.name ?? "") === "submit" ? submitWords(e.input) : inUnit(first, unit)}
       {more > 0 && (
         <>
           {" "}

@@ -17,6 +17,10 @@ import { kinds } from "../../../coscc/features/release/ui/index";
 import { onWords } from "../screens/AgentActivity";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Inline } from "../components/ui";
+import { submitWords } from "../screens/RunLog";
 import { runCount } from "../screens/AgentActivity";
 import { proposingWords } from "../components/Proposals";
 import { builtinOf, chainTo, changedParts, unsavedWords, changes, errorIsHere, get, modelOptions, plainReasons, put, savedApart } from "../screens/AgentPage";
@@ -853,6 +857,18 @@ describe("an agent's markdown and tool names", () => {
     expect(toolName("mcp__cos__proposals")).toBe("proposals");
     expect(toolName("mcp__code-graph__explore")).toBe("explore");
     expect(toolName("Read")).toBe("Read");
+  });
+});
+
+describe("submitWords and inline marks", () => {
+  it("says a submit in plain words", () => {
+    expect(submitWords({ proposals: [] })).toBe("handed back 0 proposals");
+    expect(submitWords({ proposals: [{ a: 1 }] })).toBe("handed back 1 proposal");
+    expect(submitWords({ why: "x" })).toBe("handed back its result");
+  });
+  it("shows code inside bold as code, with no backticks left", () => {
+    const html = renderToStaticMarkup(createElement(Inline, { text: "**`GET /api/units`:** and `x`" }));
+    expect(html).toBe("<b><code>GET /api/units</code><span>:</span></b><span> and </span><code>x</code>");
   });
 });
 

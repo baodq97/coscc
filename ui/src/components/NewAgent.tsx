@@ -13,7 +13,7 @@ import { failureWords } from "../lib/format";
 import { refreshPacks } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
 import { EFFECT, TIER } from "../screens/AgentPage";
-import { Button, Chip, Dialog, Dot } from "./ui";
+import { Button, Chip, Dialog, Dot, Inline } from "./ui";
 
 function Part({ label, hint, errors, children }: { label: string; hint?: string; errors?: string[]; children: ReactNode }) {
   return (
@@ -452,8 +452,8 @@ export function Gaps({ cwd, run, gaps }: { cwd: string; run: string; gaps: Draft
           <div key={i} className="gap-row">
             <Chip square tone="amber">{GAP_PART[g.part] ?? g.part}</Chip>
             <div className="grow" style={{ minWidth: 0 }}>
-              <div>{g.need}</div>
-              {g.instead && <div className="faint" style={{ fontSize: 12 }}>Instead: {g.instead}</div>}
+              <div><Inline text={g.need} /></div>
+              {g.instead && <div className="faint" style={{ fontSize: 12 }}>Instead: <Inline text={g.instead} /></div>}
               {typeof m === "string" && <div className="field-err">{m}</div>}
             </div>
             {m && typeof m !== "string" ? (
