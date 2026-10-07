@@ -44,6 +44,9 @@ class _App(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.core = self.app.state.core
+        # A read leaves the next board read running in the background; it ends before the
+        # folder it writes in is removed (cleanups run last in, first out).
+        self.addAsyncCleanup(self.core.shutdown)
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
         self.addAsyncCleanup(client.aclose)
         made = []
