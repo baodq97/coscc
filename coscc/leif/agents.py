@@ -897,8 +897,12 @@ class Agents:
         timed = pack.triggered(found, "event") or pack.triggered(found, "schedule")
         return pack.agent_on(data, key, workspace) if timed and workspace else None
 
-    def _proposing(self, data: Data, key: str, name: Callable[[str], str], ws: str) -> ProposingAgent:
-        leader = str((((pack.row(key) or {}).get("trigger") or {}).get("event") or {}).get("from") or "")
+    def _proposing(
+        self, data: Data, key: str, name: Callable[[str], str], ws: str
+    ) -> ProposingAgent:
+        leader = str(
+            (((pack.row(key) or {}).get("trigger") or {}).get("event") or {}).get("from") or ""
+        )
         return ProposingAgent(
             key=key,
             name=name(key),

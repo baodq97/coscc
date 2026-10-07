@@ -937,7 +937,11 @@ class ACliThatOutlastsTheSdksCloseIsStillEnded(unittest.IsolatedAsyncioTestCase)
     async def test_a_close_under_a_stop_does_not_wait_the_full_disconnect_timeout(self):
         process = _Process(obeys=True)
         h = sessions.StepHandle(client=_StubbornClient(process))
-        with mock.patch.object(sessions, "DISCONNECT_TIMEOUT", 30.0), mock.patch.object(sessions, "STOP_DISCONNECT_TIMEOUT", 0.05):
+        with (
+            mock.patch.object(sessions, "DISCONNECT_TIMEOUT", 30.0),
+            mock.patch.object(sessions, "STOP_DISCONNECT_TIMEOUT", 0.05),
+        ):
+
             async def stream():
                 try:
                     await asyncio.sleep(60)

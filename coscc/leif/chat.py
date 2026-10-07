@@ -653,7 +653,11 @@ def _runs(core: Core, ws: str, asked: str) -> list[str]:
             f"started by {start.get('started_by') or '?'}: {end.get('outcome')}, "
             f"{_usd(end.get('cost_usd'))}"
             + (f", {end.get('detail')}" if end.get("detail") else "")
-            + (f"; the owner asked this run {asks[run]} follow-up question(s) afterwards, already answered (none waits for them)" if asks[run] else "")
+            + (
+                f"; the owner asked this run {asks[run]} follow-up question(s) afterwards, already answered (none waits for them)"
+                if asks[run]
+                else ""
+            )
         )
         lines += [
             f"  proposed #{p['id']} ({p['state']}): {p['title']}" for p in made if p["run"] == run

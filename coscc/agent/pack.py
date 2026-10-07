@@ -1607,7 +1607,9 @@ def write(
         and naming(key)
     ):
         who = after.get("name") or key
-        reasons.append(f"skills: {who} runs a stage of your process, so it needs at least one skill")
+        reasons.append(
+            f"skills: {who} runs a stage of your process, so it needs at least one skill"
+        )
     if reasons:
         raise ValueError("; ".join(reasons))
     path = owner_dir() / "agents" / f"{key}.md"

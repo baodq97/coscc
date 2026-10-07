@@ -353,7 +353,9 @@ async def _shut(client: Any, transport: Any, reached: bool, quick: bool = False)
 
     closing = _begin(sdk())
     try:
-        await asyncio.wait_for(asyncio.shield(closing), STOP_DISCONNECT_TIMEOUT if quick else DISCONNECT_TIMEOUT)
+        await asyncio.wait_for(
+            asyncio.shield(closing), STOP_DISCONNECT_TIMEOUT if quick else DISCONNECT_TIMEOUT
+        )
     except TimeoutError:
         pass
     process = process or getattr(transport, "_process", None)
