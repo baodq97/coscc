@@ -17,13 +17,17 @@ export function workspacesChanged(): void {
 const NOT_BOARD = ["agent-run.", "chat-turn."];
 
 // The stream carries what the app does; a pull request merged or CI finished on GitHub reaches
-// the board only through a slow refresh.
+// the board only through a slow refresh. A reader starts from the last boards any reader got (the
+// sidebar's, read before the page opened) and reads again, rather than showing nothing until then.
+let last: { key: string; boards: WorkspaceBoard[] } = { key: "", boards: [] };
+
 export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading: boolean } {
   const ws = useResource("/api/workspaces");
-  const [boards, setBoards] = useState<WorkspaceBoard[]>([]);
+  const [mine, setBoards] = useState<{ key: string; boards: WorkspaceBoard[] }>(last);
   const [tick, setTick] = useState(0);
-  const list = ws.data?.workspaces.filter((w) => !w.missing) ?? [];
+  const list = ws.data ? ws.data.workspaces.filter((w) => !w.missing) : last.boards.map((b) => b.workspace);
   const key = list.map((w) => w.path).join("|");
+  const boards = mine.key === key ? mine.boards : last.key === key ? last.boards : [];
 
   useEffect(() => {
     if (!list.length) return;
@@ -35,7 +39,10 @@ export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading:
           .then((board): WorkspaceBoard => ({ workspace: w, board }))
           .catch((error: Error): WorkspaceBoard => ({ workspace: w, error })),
       ),
-    ).then((got) => live && setBoards(got));
+    ).then((got) => {
+      last = { key, boards: got };
+      if (live) setBoards(last);
+    });
     return () => {
       live = false;
     };
@@ -54,7 +61,7 @@ export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading:
     return () => clearInterval(id);
   }, [every]);
 
-  return { boards, loading: ws.state === "loading" || (list.length > 0 && boards.length === 0) };
+  return { boards, loading: boards.length === 0 && (ws.state === "loading" || list.length > 0) };
 }
 
 /** What agents are doing across every project: the runs in flight and the proposals waiting for a decision. */
