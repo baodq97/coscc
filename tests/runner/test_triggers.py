@@ -413,6 +413,28 @@ class LeifAsksBeforeACostlyRunAndStartsTenADay(_Core):
         self.assertIn("leif-daily-runs", self.code(await self.call("t99")))
         self.assertEqual(len(self.given), triggers.LEIF_DAILY)
 
+    async def test_two_calls_together_at_nine_start_one(self):
+        self.set_row("ceilings", {"turns": 4, "usd": 0.2})
+        self.addCleanup(triggers._LEIF_HELD.clear)
+        for i in range(triggers.LEIF_DAILY - 1):
+            self.journal.append(
+                {"kind": "start", "workspace": self.ws, "unit": "", "stage": "scan"}
+                | {"started_by": "leif", "run": f"r{i}"}
+            )
+        got = await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    triggers._leif_may, self.core, "scan", {}, {"run": t, "session": "S"}
+                )
+                for t in ("a", "b")
+            ),
+            return_exceptions=True,
+        )
+        refused = [g for g in got if isinstance(g, Invalid)]
+        self.assertEqual([r.reasons for r in refused], [("leif-daily-runs",)])
+        # A place held for a run with no `start` yet counts as one.
+        self.assertEqual(triggers._leif_today(self.journal), triggers.LEIF_DAILY)
+
 
 class DagazDraftsFromWords(_Core):
     """Dagaz reads the catalog and the person's words; its draft is kept on its `end` alone."""

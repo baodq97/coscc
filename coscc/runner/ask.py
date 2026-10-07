@@ -153,9 +153,10 @@ def _thread(journal: Any, run: str) -> list[tuple[Mapping[str, Any], Mapping[str
     return [(s, ends.get(s.get("run"))) for s in journal.where("parent_run", run, ("start",))]
 
 
-def _plan(core: Core, cwd: str, start: Mapping[str, Any]) -> _Plan:
+def _plan(core: Core, cwd: str, start: Mapping[str, Any], serve: bool = True) -> _Plan:
     """The follow-up's agent and grant: a triggered row's own, minus `submit`, with its servers
-    as before; any other run's a reader of its tree."""
+    as before (built only when `serve`: a look at the thread needs none); any other run's a
+    reader of its tree."""
     key = str(start.get("agent") or start.get("stage") or "")
     tree = str((start.get("grants") or {}).get("cwd") or "")
     if not tree or not Path(tree).is_dir():
@@ -172,8 +173,8 @@ def _plan(core: Core, cwd: str, start: Mapping[str, Any]) -> _Plan:
         mcp = kernel.granted(tuple(t for t, _ in tools))
         builtin = {t.name for t in kernel.BUILTINS}
         features = tuple(t for t in row.tools if t not in builtin)
-        servers = {t.server: t.make(f) for t, f in tools if t.make is not None}
-        if row.submits:
+        servers = {t.server: t.make(f) for t, f in tools if t.make is not None and serve}
+        if row.submits and serve:
             # Its `submit` is still offered, so the tool list the cache holds is the same; the
             # grant below no longer holds it, so every call is refused.
             servers[submit.SERVER] = submit.Collector(
@@ -219,9 +220,11 @@ async def _decide(
     start: Mapping[str, Any],
     end: Mapping[str, Any],
     plan: _Plan,
+    head: str | None,
 ) -> None:
     """Sets `plan.session` to the thread's last session when it may be resumed, else
-    `plan.why`, the reason a new session is opened."""
+    `plan.why`, the reason a new session is opened. `head` `None` leaves the code it read
+    unasked (a look at the thread, every 2 s while one is answered: no git)."""
     last: tuple[Mapping[str, Any], Mapping[str, Any]] | None = (
         (start, end) if plan.triggered and end.get("session_id") else None
     )
@@ -238,7 +241,6 @@ async def _decide(
     base, ended = last
     session = str(ended["session_id"])
     granted = base.get("row_grants") if base.get("parent_run") else base.get("grants")
-    head = await triggers.tree_head(plan.tree)
     model = run_mod.model_of(run_mod.Ctx(core.sessions, None), plan.agent)
     if _age(str(ended.get("at") or "")) >= WINDOW:
         plan.why = f"its session ended over {int(WINDOW.total_seconds() // 60)} min ago"
@@ -246,7 +248,7 @@ async def _decide(
         plan.why = "the agent was edited since"
     elif granted != plan.grant_now:
         plan.why = "its tools or grant changed since"
-    elif str(base.get("head") or "") != head:
+    elif head is not None and str(base.get("head") or "") != head:
         plan.why = "the code it read moved since"
     elif (base.get("model") or None) != model:
         plan.why = "its model changed since"
@@ -305,8 +307,8 @@ async def state(core: Core, cwd: str, run: str) -> Thread:
         )
     try:
         _check(core, cwd, root_run)
-        plan = _plan(core, cwd, start)
-        await _decide(core, journal, root_run, start, end or {}, plan)
+        plan = _plan(core, cwd, start, serve=False)
+        await _decide(core, journal, root_run, start, end or {}, plan, None)
     except Invalid as e:
         return Thread(
             run=root_run, followups=shown, ask=AskState(may=False, resume=False, why=str(e))
@@ -374,6 +376,7 @@ def ask(core: Core, cwd: str, run: str, text: str) -> asyncio.Future[Asked]:
         loop,
         _ask(core, cwd, journal, root_run, start, end, plan, text.strip(), run_id, told),
         run_id,
+        str(start.get("workspace") or ""),
     )
     return told
 
@@ -391,8 +394,8 @@ async def _ask(
     told: asyncio.Future[Asked],
 ) -> None:
     try:
-        await _decide(core, journal, root_run, start, end, plan)
         head = await triggers.tree_head(plan.tree)
+        await _decide(core, journal, root_run, start, end, plan, head)
         if plan.session:
             prompt = RESUMED + text
         else:

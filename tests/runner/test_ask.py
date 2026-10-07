@@ -5,8 +5,10 @@ never writing, never handing back an object; decided from the run log alone."""
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -289,6 +291,66 @@ class AStageStepIsAskedByAReader(_Asking):
         self.assertEqual(self.runs[1][1].session_id, "s-new")
 
 
+class ASandboxedBashNeverWritesTheTree(_Asking):
+    """A triggered row holds Bash only in the OS sandbox (`pack._check_sandbox`); its runs and their
+    follow-ups write only in the session's own data root. The refusals are the sandbox's, not the
+    gate's words: `echo > f`, `tee`, `sed -i`, `mv`, `cp`, `git commit`, `git push` into the tree
+    fail with "Read-only file system" under these settings, `git log` and `grep` run."""
+
+    async def test_the_run_and_its_follow_up_deny_writes_in_the_workspace(self):
+        from coscc.agent import sessions
+        from coscc.config import Config
+
+        base = policy.row_for("scan")
+        boxed = replace(base, tools=(*base.tools, "Bash"), sandbox=("127.0.0.1:3000",))
+        with mock.patch.object(policy, "row_for", lambda key, *a: boxed):
+            self.asked_run()
+            told = await self.asked()
+        self.assertTrue(told["resumed"])
+        ((agent, given),) = self.runs
+        config = Config(data_dir=str(self.data.root), home="/home/o")
+        for grant in (
+            grant_of(boxed, self.ws),
+            grant_of(agent.row, given.cwd, mcp=given.mcp, features=given.features),
+        ):
+            self.assertEqual((grant.write, grant.sandbox), ((), ("127.0.0.1:3000",)))
+            with tempfile.TemporaryDirectory() as run:
+                options = sessions._options(
+                    config, self.ws, None, tools=list(grant.tools), gate=Gate(grant), data_dir=run
+                )
+                box = json.loads(options.settings or "")["sandbox"]
+                self.assertEqual(box["filesystem"]["allowWrite"], [run])
+            self.assertEqual(box["filesystem"]["denyWrite"], [self.ws])
+            self.assertFalse(box["allowUnsandboxedCommands"])
+            for line in ("git log --oneline -3", "grep -rn x .", "sqlite3 -readonly db 'select 1'"):
+                self.assertFalse(Gate(grant).refused("Bash", {"command": line}, None), line)
+            self.assertTrue(
+                Gate(grant).refused("Write", {"file_path": f"{self.ws}/x", "content": "x"}, None)
+            )
+
+    async def test_a_triggered_row_cannot_hold_bash_outside_the_sandbox(self):
+        problems = pack.check({"key": "x", "tools": {"Bash": "allow"}, "trigger": {"manual": True}})
+        self.assertTrue(any("Bash" in p for p in problems), problems)
+
+
+class ALookAtTheThread(_Asking):
+    async def test_builds_no_server_and_reads_no_git(self):
+        self.asked_run()
+        heads = []
+
+        async def head(tree):
+            heads.append(tree)
+            return self.head
+
+        with (
+            mock.patch("coscc.runner.ask.triggers.tree_head", head),
+            mock.patch.object(ask.submit, "Collector") as collector,
+        ):
+            got = await ask.state(self.core, self.ws, "p1")
+        self.assertEqual((got["ask"]["may"], got["ask"]["resume"]), (True, True))
+        self.assertEqual((heads, collector.call_count), ([], 0))
+
+
 class RefusedBeforeSpend(_Asking):
     async def test_no_such_run_another_workspaces_and_a_conversation(self):
         self.assertEqual(await self.refused("nope"), ("no-run",))
@@ -332,10 +394,11 @@ class OneRunIsStopped(_Asking):
             await gate.wait()
 
         loop = asyncio.get_running_loop()
-        triggers.spawn(loop, held(), "a")
-        triggers.spawn(loop, held(), "b")
-        self.assertTrue(triggers.stop_run("a"))
-        self.assertFalse(triggers.stop_run("zzz"))
+        triggers.spawn(loop, held(), "a", "/ws")
+        triggers.spawn(loop, held(), "b", "/ws")
+        self.assertFalse(triggers.stop_run("a", "/other"))
+        self.assertFalse(triggers.stop_run("zzz", "/ws"))
+        self.assertTrue(triggers.stop_run("a", "/ws"))
         await asyncio.sleep(0)
         names = {t.get_name(): t for t in triggers._TASKS}
         self.assertTrue(names["a"].cancelled() if "a" in names else True)

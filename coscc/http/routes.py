@@ -722,12 +722,13 @@ async def ask_run(run: str, request: Request) -> ask.Asked:
 
 @router.post("/api/runs/{run}/stop")
 async def stop_run(run: str, request: Request) -> Started:
-    """`{cwd}` stops one agent run or follow-up this process runs; it ends `cancelled`. A board
-    step is stopped from its unit."""
+    """`{cwd}` stops one agent run or follow-up this process runs in that workspace; it ends
+    `cancelled`. A board step is stopped from its unit."""
     body = await kernel.body(request)
-    _core(request).ws.check(str(body.get("cwd") or ""))
-    if not triggers.stop_run(run):
-        raise Refused("no agent run or follow-up of that id runs here", ("no-run",))
+    core, cwd = _core(request), str(body.get("cwd") or "")
+    core.ws.check(cwd)
+    if not triggers.stop_run(run, core.ws.key(cwd)):
+        raise Refused("no agent run or follow-up of that id runs in this workspace", ("no-run",))
     return {"agent": "", "started": False, "run": run}
 
 

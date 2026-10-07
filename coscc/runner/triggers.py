@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
@@ -59,6 +60,8 @@ LEIF_TOOL = policy.RUN_AGENT_TOOL.rsplit("__", 1)[-1]
 # time, and the tasks `start` made.
 _RUNNING: dict[tuple[str, str], tuple[str, str]] = {}
 _TASKS: set[asyncio.Task] = set()
+# Each task's workspace key: a stop names the workspace it is asked from.
+_WS: dict[asyncio.Task, str] = {}
 
 
 def running() -> list[dict[str, str]]:
@@ -213,21 +216,24 @@ def _hold(
         asyncio.get_running_loop(),
         _held(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in),
         run_id,
+        ws,
     )
     return run_id
 
 
-def spawn(loop: asyncio.AbstractEventLoop, work: Any, run_id: str) -> None:
-    """`work` as a background task named by its run, which `stop_run` and `stop` reach."""
+def spawn(loop: asyncio.AbstractEventLoop, work: Any, run_id: str, ws: str) -> None:
+    """`work` as a background task named by its run, of workspace key `ws`, which `stop_run` and
+    `stop` reach."""
     task = loop.create_task(work, name=run_id)
     _TASKS.add(task)
+    _WS[task] = ws
     task.add_done_callback(_done)
 
 
-def stop_run(run_id: str) -> bool:
-    """Cancel the one background run `run_id` (it writes its `cancelled` `end`); whether this
-    process runs it."""
-    found = [t for t in _TASKS if t.get_name() == run_id and not t.done()]
+def stop_run(run_id: str, ws: str) -> bool:
+    """Cancel the one background run `run_id` of workspace key `ws` (it writes its `cancelled`
+    `end`); whether this process runs it there."""
+    found = [t for t in _TASKS if t.get_name() == run_id and _WS.get(t) == ws and not t.done()]
     for task in found:
         task.cancel()
     return bool(found)
@@ -235,6 +241,8 @@ def stop_run(run_id: str) -> bool:
 
 def _done(task: asyncio.Task) -> None:
     _TASKS.discard(task)
+    _WS.pop(task, None)
+    _LEIF_HELD.discard(task.get_name())
     if not task.cancelled() and task.exception() is not None:
         log.error("a triggered run failed", exc_info=task.exception())
 
@@ -723,19 +731,24 @@ LEIF_DAILY = 10
 # The (chat run, agent) pairs Leif was told to ask about: a confirmation counts only from a later
 # turn of the same conversation, so a person's message came between.
 _ASKED: set[tuple[str, str]] = set()
+# Runs Leif started that are still going (a place taken, then its run id), counted with today's
+# `start`s: a run held has none yet. Counted and taken under `_LEIF_LOCK`, so two calls together
+# cannot both pass the last place.
+_LEIF_HELD: set[str] = set()
+_LEIF_LOCK = threading.Lock()
 
 
 def _leif_today(journal: Any) -> int:
-    """How many runs Leif started this local day, every workspace."""
+    """How many runs Leif started this local day, every workspace, those still held included."""
     today = datetime.now().astimezone().date()
-    count = 0
+    runs = set(_LEIF_HELD)
     for r in journal.where("started_by", "leif", ("start",)):
         try:
             if datetime.fromisoformat(str(r.get("at") or "")).astimezone().date() == today:
-                count += 1
+                runs.add(str(r.get("run") or id(r)))
         except ValueError:
             continue
-    return count
+    return len(runs)
 
 
 def _asked_before(journal: Any, key: str, turn: Mapping[str, str]) -> bool:
@@ -751,15 +764,24 @@ def _asked_before(journal: Any, key: str, turn: Mapping[str, str]) -> bool:
     return False
 
 
-def _leif_may(core: Core, key: str, args: Mapping[str, Any], turn: Mapping[str, str]) -> None:
+def _leif_may(core: Core, key: str, args: Mapping[str, Any], turn: Mapping[str, str]) -> str:
     """Refused `leif-daily-runs` past `LEIF_DAILY` runs today; refused `needs-confirm` for a row
-    whose $ ceiling passes `ASK_OVER` until a later turn of the same chat says `confirmed`."""
+    whose $ ceiling passes `ASK_OVER` until a later turn of the same chat says `confirmed`. Else
+    the place it took in `_LEIF_HELD`, for the caller to swap for its run id or give back."""
     journal = core.ws.journal()
-    if journal is not None and _leif_today(journal) >= LEIF_DAILY:
-        raise Refused(
-            f"Leif has started {LEIF_DAILY} runs today, the most a day: say so instead",
-            ("leif-daily-runs",),
-        )
+    _confirmed(journal, key, args, turn)
+    with _LEIF_LOCK:
+        if journal is not None and _leif_today(journal) >= LEIF_DAILY:
+            raise Refused(
+                f"Leif has started {LEIF_DAILY} runs today, the most a day: say so instead",
+                ("leif-daily-runs",),
+            )
+        place = uuid.uuid4().hex
+        _LEIF_HELD.add(place)
+        return place
+
+
+def _confirmed(journal: Any, key: str, args: Mapping[str, Any], turn: Mapping[str, str]) -> None:
     usd = float(((pack.row(key) or {}).get("ceilings") or {}).get("usd") or 0.0)
     if usd <= ASK_OVER:
         return
@@ -787,8 +809,12 @@ async def leif_call(
             ws = await asyncio.to_thread(
                 check, core, key, cwd, unit, by="leif", reason=reason, text=text
             )
-            await asyncio.to_thread(_leif_may, core, key, args, turn)
-        run_id = _hold(core, key, cwd, ws, unit, "leif", reason, text, turn.get("run", ""))
+            place = await asyncio.to_thread(_leif_may, core, key, args, turn)
+            try:
+                run_id = _hold(core, key, cwd, ws, unit, "leif", reason, text, turn.get("run", ""))
+                _LEIF_HELD.add(run_id)
+            finally:
+                _LEIF_HELD.discard(place)
     except Invalid as e:
         codes = ", ".join(getattr(e, "reasons", ()) or ())
         said = f"refused{f' ({codes})' if codes else ''}: {e}"
