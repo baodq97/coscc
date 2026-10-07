@@ -38,7 +38,9 @@ export function Shell({ title, crumbs, children }: { title: string; crumbs: stri
   // On a phone the sidebar is a drawer: shut until the menu button opens it, shut again on a move.
   const [navOpen, setNavOpen] = useState(false);
   const path = usePath();
-  useEffect(() => setNavOpen(false), [path]);
+  useEffect(() => {
+    setNavOpen(false);
+  }, [path]);
   const [theme, setTheme] = useState<"light" | "dark">(() => (stored("cos-theme", "light") === "dark" ? "dark" : "light"));
   const pendingG = useRef(0);
 
@@ -46,7 +48,9 @@ export function Shell({ title, crumbs, children }: { title: string; crumbs: stri
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("cos-theme", theme);
   }, [theme]);
-  useEffect(() => localStorage.setItem("cos-leif", leifOpen ? "1" : "0"), [leifOpen]);
+  useEffect(() => {
+    localStorage.setItem("cos-leif", leifOpen ? "1" : "0");
+  }, [leifOpen]);
   useEffect(() => {
     document.title = `${title} · cos studio`;
   }, [title]);
