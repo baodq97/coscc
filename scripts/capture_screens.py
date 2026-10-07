@@ -789,8 +789,6 @@ DRAFT_PROCESS = {
 
 def seed_drafts(journal: Any, key: str) -> None:
     for run, outcome, extra in (
-        ("capture-draft-agent", "done", {"draft": DRAFT_AGENT, "cost_usd": 0.41}),
-        ("capture-draft-process", "done", {"draft": DRAFT_PROCESS, "cost_usd": 0.38}),
         (
             "capture-draft-refused",
             "failed",
@@ -800,6 +798,8 @@ def seed_drafts(journal: Any, key: str) -> None:
                 "(agent: tools.send_email: no such tool in the catalog).",
             },
         ),
+        ("capture-draft-agent", "done", {"draft": DRAFT_AGENT, "cost_usd": 0.41}),
+        ("capture-draft-process", "done", {"draft": DRAFT_PROCESS, "cost_usd": 0.38}),
     ):
         journal.started(key, "", "dagaz", "manual", run=run, started_by="manual")
         journal.finished(key, "", "dagaz", outcome, run=run, agent="dagaz", **extra)

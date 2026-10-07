@@ -105,7 +105,7 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
         rows={3}
         value={words}
         disabled={phase.at === "running"}
-        placeholder={want === "agent" ? "On request, read the interventions since the last run and propose at most two changes to the review skill." : "Docs changes: intent, then build, then review, then merge; no spec or plan."}
+        placeholder={want === "agent" ? "For example: on request, read the interventions since the last run and propose at most two changes to the review skill." : "For example: docs changes go intent, then build, then review, then merge; no spec or plan."}
         onChange={(e) => setWords(e.target.value)}
       />
       {phase.at === "running" ? (
@@ -115,7 +115,7 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
       ) : (
         <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <Button size="sm" kind="primary" disabled={!words.trim()} onClick={start}>Draft it</Button>
-          <span className="faint" style={{ fontSize: 12 }}>One paid run of about $0.50 that saves nothing; you save the draft.</span>
+          <span className="faint" style={{ fontSize: 12 }}>{words.trim() ? "One paid run of about $0.50 that saves nothing; you save the draft." : "Write the task first. A draft is one paid run of about $0.50 that saves nothing."}</span>
         </div>
       )}
       {phase.at === "failed" && (
@@ -228,7 +228,7 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
           <ul>{said.rest.map((r) => <li key={r}>{r}</li>)}</ul>
         </div>
       )}
-      <div className="dlg-f">
+      <div className={`dlg-f${agent ? " sticky" : ""}`}>
         {agent && <span className="faint grow" style={{ fontSize: 12 }}>Saved as your own agent; change any part on its page.</span>}
         <Button kind="ghost" onClick={onClose}>Cancel</Button>
         <Button kind="primary" disabled={busy || !ready} onClick={save}>{busy ? "Saving…" : agent ? "Save agent" : "Create agent"}</Button>
