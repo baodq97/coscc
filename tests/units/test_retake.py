@@ -312,7 +312,6 @@ class TheRecordAndTheSection(unittest.TestCase):
                 "kind": "screens",
                 "workspace": "/w",
                 "unit": "0001_x",
-                "stage": "review",
                 "head_before": "a" * 40,
                 "head_after": "b" * 40,
                 "addresses": ["/board"],

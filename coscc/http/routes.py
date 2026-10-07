@@ -542,9 +542,12 @@ async def get_units(request: Request) -> Cards:
 @router.get("/api/units/next")
 async def get_next(request: Request) -> NextStep:
     """The one stage the run button may offer for a unit, as `coscc.loop next` answered it:
-    `{stage, action, blocked}`. Asks `gh`, so it can wait up to 60s. It starts nothing;
+    `{stage, action, blocked, gate}`, `gate` being what the gate says of that stage when it is
+    closed. Asks `gh`, so it can wait up to 60s. It starts nothing;
     `/api/board/run` still asks the gate."""
-    return await _core(request).steps.next_step(_cwd(request), request.query_params.get("unit", ""))
+    return await _core(request).steps.next_step(
+        _cwd(request), request.query_params.get("unit", ""), with_gate=True
+    )
 
 
 @router.get("/api/units/{name}")

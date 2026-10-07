@@ -17,7 +17,7 @@ from coscc.units import board as board_reader
 from coscc.git import gh, gitops
 from coscc.units import hold as hold_rules
 from coscc.units import more_rounds as more_rounds_rules
-from coscc.agent import agents, policy
+from coscc.agent import agents, pack, policy
 from coscc.github import prcomment, prmachine, prsync
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
@@ -175,8 +175,9 @@ class Answers:
                 "reason": "the round has no number",
             }
         pr_url = (found.get("pr") or {}).get("url") or ""
-        # The `review` agent as its row names it now.
-        reviewer = self.agent("review")
+        process = str(found.get("process") or "")
+        review = next(iter(states.states_where(kind="review", process=process)), "")
+        reviewer = self.agent(pack.agent_for(process or pack.DEFAULT_PROCESS, review) or "")
         result = await prcomment.post(
             unit,
             n,
@@ -190,7 +191,7 @@ class Answers:
             "kind": "pr-comment",
             "workspace": self.ws.key(cwd),
             "unit": unit,
-            "stage": "review",
+            "stage": review,
             "round": n,
             "pr": pr_url,
             "outcome": result.state,
@@ -219,15 +220,15 @@ class Answers:
         `pr-sync` row says how it went (`existed` is `None` when the lookup before a `pr` step
         could not answer). `pr.md` is never touched.
         """
-        url, outcome, detail = "", "failed", ""
+        url, outcome, detail, process = "", "failed", "", ""
         try:
             key = self.ws.key(cwd)
             now = prmachine.state(self.ws.unit_meta().history, key, unit)
             url = str(now.get("url") or "")
             snap = self.ws.snapshot(cwd, [unit])
-            type_ = ((snap.get("units") or {}).get(f"{snap.get('workspace')}/{unit}") or {}).get(
-                "type"
-            )
+            known = (snap.get("units") or {}).get(f"{snap.get('workspace')}/{unit}") or {}
+            type_ = known.get("type")
+            process = str(known.get("process") or "")
             if now["state"] not in prmachine.WATCHED:
                 outcome, detail = "skipped", f"the pull request is {now['state']}, not open"
             elif not url or not gh.PR_URL_RE.match(url):
@@ -245,7 +246,7 @@ class Answers:
             log.exception("the %s of %s could not be read", stage, unit)
             detail = str(e) or type(e).__name__
         record: dict[str, Any] = {"unit": unit, "stage": stage, "pr": url}
-        if states.action_of(None, stage) == "open-pr":
+        if states.action_of(process, stage) == "open-pr":
             record["existed"] = None if pr_before is None else bool(pr_before)
         record["outcome"] = outcome
         if outcome in ("failed", "skipped"):
@@ -275,9 +276,10 @@ class Answers:
         workspace = self.ws.key(cwd)
         stage = str(done.get("stage") or "")
         try:
-            apply = (
-                self._apply_round if states.kind_of(None, stage) == "review" else self._apply_result
-            )
+            snap = self.ws.snapshot(cwd, [unit])
+            known = (snap.get("units") or {}).get(f"{snap.get('workspace')}/{unit}") or {}
+            kind = states.kind_of(str(known.get("process") or ""), stage)
+            apply = self._apply_round if kind == "review" else self._apply_result
             await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
             return {}
         except (BadTransition, Busy, sqlite3.Error) as e:
