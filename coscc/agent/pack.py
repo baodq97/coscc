@@ -1553,6 +1553,10 @@ def owner_fields(key: str) -> tuple[dict[str, Any], str]:
     return parse(path.read_text(encoding="utf-8"))
 
 
+# What may be saved with another part, checked as one: a chain's `default` with its `trigger`.
+ALSO = ("default",)
+
+
 def write(
     key: str,
     field: str,
@@ -1571,11 +1575,12 @@ def write(
         raise ValueError(f"no such agent: {key} (use one of {', '.join(rows())})")
     if field.startswith(SKILL) and not also:
         return _write_skill(found, field.removeprefix(SKILL), value)
-    if field not in (*KEYS, BODY) or any(f not in KEYS for f in also or {}):
+    if field not in (*KEYS, BODY):
         raise ValueError(
-            f"{field}: no such key (use one of {', '.join((*KEYS, BODY))}, {SKILL}<name>; "
-            "saved with another, a frontmatter key)"
+            f"{field}: no such key (use one of {', '.join((*KEYS, BODY))}, {SKILL}<name>)"
         )
+    if set(also or {}) - set(ALSO):
+        raise ValueError(f"saved with another part: only {', '.join(ALSO)}")
     own = bool(found["own"])
     base = {"key": key} if own else found["builtin"]
     fields, body = owner_fields(key)

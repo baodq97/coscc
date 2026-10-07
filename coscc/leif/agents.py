@@ -956,8 +956,8 @@ class Agents:
         if not isinstance(key, str) or pack.row(key) is None:
             raise Invalid(f"no such agent: {key} (use one of {', '.join(pack.rows())})")
         field = str(field)
-        if also is not None and not isinstance(also, dict):
-            raise Invalid("also is {field: value}")
+        if also is not None and (not isinstance(also, dict) or set(also) - set(pack.ALSO)):
+            raise Invalid(f"also is {{field: value}}, its fields only {', '.join(pack.ALSO)}")
         parts: dict[str, Any] = {k: (None if v == "" else v) for k, v in (also or {}).items()}
         if "trigger" in (field, *parts) and not pack.triggered(
             (pack.row(key) or {}).get("builtin")

@@ -969,8 +969,9 @@ ASK_SCHEMA = {
     "required": ["key", "question", "reason"],
     "additionalProperties": False,
 }
-# How long `ask_agent` waits for the run before it says the run goes on.
-ASK_WAIT = 600.0
+# How long `ask_agent` waits for the run before it says the run goes on, with its link: under the
+# CLI's wait on one tool call. A run past it ends in Talk, where Leif is told.
+ASK_WAIT = 240.0
 
 
 class Text(TypedDict):

@@ -691,8 +691,10 @@ class TriggersAreChecked(unittest.TestCase):
         # Undone with its default back, in one write too.
         pack.write("scan", "trigger", None, None, {"default": "on"})
         self.assertEqual((pack.row("scan")["default"], pack.after_of(pack.row("scan"))), ("on", ""))
-        with self.assertRaises(ValueError):
-            pack.write("scan", "trigger", chain, None, {"body": "x"})
+        # Nothing else rides with a part past its own checks.
+        for other in ({"body": "x"}, {"output": {"kind": "x"}}, {"input": {"data": ["gossip"]}}):
+            with self.assertRaises(ValueError, msg=other):
+                pack.write("scan", "trigger", chain, None, other)
 
     def test_a_reserved_name_is_refused_in_any_case(self):
         for name in ("Ansuz", "othala", "JERA"):

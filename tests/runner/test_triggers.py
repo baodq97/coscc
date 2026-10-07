@@ -1095,8 +1095,11 @@ class LeifAsksAnAgent(_Core):
     async def test_past_its_wait_it_says_the_run_goes_on_and_leaves_it_running(self):
         self.set_row("ceilings", {"turns": 4, "usd": 0.2})
         self.gate.clear()
+        # Under the CLI's wait on one tool call: past it, the run's link and Talk's line.
+        self.assertLessEqual(triggers.ASK_WAIT, 240)
         said = await self.ask(wait=0.01)
         self.assertIn("still running", said)
+        self.assertIn("[live run](/run/proj/", said)
         self.assertEqual(len(triggers._TASKS), 1)
         self.gate.set()
         await self.settle()

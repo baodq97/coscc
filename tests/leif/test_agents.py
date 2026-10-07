@@ -131,8 +131,10 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
             [(f, new) for _, f, _, new, _ in self._settings()][-2:],
             [("trigger", chain), ("default", "off")],
         )
-        with self.assertRaises(Invalid):
-            self.core.agents.set_agent_field("scan", "trigger", chain, also=["default"])
+        for wrong in (["default"], {"output": {"kind": "x"}}, {"input": {"data": []}}):
+            with self.assertRaises(Invalid, msg=wrong):
+                self.core.agents.set_agent_field("scan", "trigger", None, also=wrong)
+        self.assertEqual(pack.after_of(pack.row("scan")), "outcome")
 
     def test_an_empty_value_puts_the_builtin_back(self):
         self.core.agents.set_agent_field("spec", "body", "Another role.")
