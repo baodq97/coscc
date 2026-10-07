@@ -758,7 +758,7 @@ describe("until and statusWords", () => {
     const failed = { ...row, last: { at: "", made: null, outcome: "failed" } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" };
     expect(statusWords(failed, "a")).toMatch(/ · failed .* · next in/);
     expect(onWords({ ...row, next_at: "2999-01-01T00:00:00Z" }, "a")).toMatch(/^On here \(also on in b\) · next in \d+ d$/);
-    expect(attention({ ...failed, chip: "failed", running: { run: "r", started: "" } } as unknown as AgentRow)).toBeNull();
+    expect(attention({ ...failed, problems: [], chip: "failed", running: { run: "r", started: "" } } as unknown as AgentRow)).toBeNull();
   });
   it("says running now, not never ran or next, while the first run is in flight", () => {
     const said = statusWords({ ...row, running: { run: "r", started: "" }, next_at: "2999-01-01T00:00:00Z" }, "a");
