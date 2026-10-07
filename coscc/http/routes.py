@@ -33,7 +33,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response, StreamingResponse
 
 from coscc import kernel
-from coscc.agent import pack
+from coscc.agent import pack, policy
 from coscc.agent.pack import PackShown
 from coscc.store.db import Data
 from coscc.bus import Event
@@ -248,6 +248,29 @@ async def get_agents_live(request: Request) -> Live:
     """The agent runs in flight and the proposals waiting for a person, across every listed
     workspace: what the Briefing and Needs you show."""
     return await asyncio.to_thread(_core(request).agents.live)
+
+
+class PromptPreview(TypedDict):
+    # What the row's own text says (its body), and what its run is handed beside it: `""` for
+    # a row no trigger starts, whose input is the unit's.
+    system: str
+    task: str
+
+
+@router.get("/api/agents/{key}/prompt")
+async def get_agent_prompt(key: str, request: Request) -> PromptPreview:
+    """What a run of `key` would be given now in `cwd`: its system text, and for a row a
+    trigger starts the prompt `triggers.compose` builds from its input. Read only, starts and
+    spends nothing."""
+    core, cwd = _core(request), _cwd(request)
+    row = pack.row(key)
+    if row is None:
+        raise Invalid(f"no agent {key}")
+    system = core.models.agent(key, policy.row_for(key)).system
+    task = ""
+    if cwd and pack.triggered(row):
+        task = await triggers.preview(core, key, cwd, core.ws.key(core.ws.check(cwd)))
+    return {"system": system, "task": task}
 
 
 @router.post("/api/agents/field")

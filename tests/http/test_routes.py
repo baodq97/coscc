@@ -218,6 +218,14 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         return r.json()
 
+    async def test_the_prompt_preview_shows_the_text_a_run_is_given_and_changes_nothing(self):
+        r = await self.client.get("/api/agents/scan/prompt")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["system"], pack.row("scan")[pack.BODY])
+        self.assertEqual(r.json()["task"], "")
+        r = await self.client.get("/api/agents/nobody/prompt")
+        self.assertEqual(r.status_code, 400)
+
     async def test_set_then_reset(self):
         body = {"key": "spec", "field": "ceilings", "value": {"turns": 30, "usd": 4.0}}
         r = await self.client.post("/api/agents/field", json=body)
