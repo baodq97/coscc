@@ -72,6 +72,8 @@ FOREIGN_SQL: set[tuple[str, str]] = {
     ("coscc.store.db", "outputs"),
     # `_to_17` copies the scan feature's proposals in.
     ("coscc.store.db", "proposals"),
+    # The step to 18 copies a finding's `rule` into its `criterion`.
+    ("coscc.store.db", "review_findings"),
     ("coscc.store.db", "unit_meta"),
     ("coscc.store.db", "unit_links"),
     ("coscc.store.db", "transitions"),
