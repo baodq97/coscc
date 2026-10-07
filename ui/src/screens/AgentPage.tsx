@@ -118,7 +118,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
     }
     setBusy(false);
   };
-  const own = Boolean((a as { own?: boolean }).own);
+  const own = a.own;
   const remove = async () => {
     setBusy(true);
     setRefused([]);

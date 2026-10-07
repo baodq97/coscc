@@ -3,14 +3,12 @@
 
 import type { AgentRow, Condition, PackShown, ProcessShown, State } from "../api.gen";
 
-/** G1 adds these to the packs and processes the app lists. */
-export type BuildPack = PackShown & { own?: boolean; imported?: boolean; problems?: string[] };
-/** An agent row as G1 lists it: the pack it came from, and whether it is a whole row of the owner's own. */
-export type BuildAgent = AgentRow & { pack?: string; own?: boolean };
+export type BuildPack = PackShown;
+export type BuildAgent = AgentRow;
 export const isBuiltIn = (r: BuildAgent) => !r.pack || r.pack === "coscc-sdlc";
 export const packTitle = (r: BuildAgent) => (r.pack === "local" ? "Yours" : isBuiltIn(r) ? "Built in" : (r.pack as string));
 
-export type BuildProcess = ProcessShown & { own?: boolean };
+export type BuildProcess = ProcessShown;
 
 export const KEY = /^[a-z][a-z0-9-]*$/;
 export const KEY_MAX = 24;

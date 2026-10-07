@@ -223,7 +223,7 @@ export function ProcessEditor({
     }
   };
   const process = toProcess(draft);
-  const drawn: ProcessShown = { ...process, ref: `local/${draft.name}`, name: draft.name || "new process" };
+  const drawn: ProcessShown = { ...process, own: true, ref: `local/${draft.name}`, name: draft.name || "new process" };
   const why = !draft.steps.length ? "Add a step first." : problem;
 
   return (
