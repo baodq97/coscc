@@ -14,10 +14,10 @@ import { NewAgent } from "../components/NewAgent";
 import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 export const GROUPS: { key: AgentRow["group"]; title: string; lede: string }[] = [
+  { key: "triggered", title: "Periodic and on request", lede: "A schedule, an event, your press or Leif starts these; they only read." },
   { key: "stage", title: "Stage agents", lede: "Each opens when a unit reaches its state." },
   { key: "engine", title: "Engine agents", lede: "The app opens these itself, or on your press." },
   { key: "helper", title: "Helpers", lede: "Started by another agent inside its run." },
-  { key: "triggered", title: "Periodic and on request", lede: "A schedule, an event, your press or Leif starts these; they only read." },
 ];
 
 const ENGINE_WORDS: Record<string, string> = {
@@ -26,7 +26,19 @@ const ENGINE_WORDS: Record<string, string> = {
   chat: "when you talk to Leif",
 };
 
-const EVENT_WORDS: Record<string, string> = { "unit.shipped": "a ship" };
+const EVENT_WORDS: Record<string, string> = {
+  "unit.shipped": "a ship",
+  "unit.merged": "a merge",
+  "chat-turn.ended": "a chat turn",
+  "agent-run.ended": "another agent's run",
+};
+
+/** How often a schedule runs: `24` is "daily", `168` "weekly", `48` "every 2 days", `6` "every 6 hours". */
+export function everyWords(h: number): string {
+  if (h === 24) return "daily";
+  if (h === 168) return "weekly";
+  return h % 24 ? `every ${h} hours` : `every ${h / 24} days`;
+}
 
 /** `168` is "7 days", `24` "1 day", `6` "6 h". */
 export function hoursWords(h: number): string {
@@ -37,15 +49,15 @@ export function hoursWords(h: number): string {
 /** When an agent runs, in words: its trigger, or who starts a helper. */
 export function triggerWords(a: AgentRow, rows: AgentRow[] = []): string {
   const t = a.row.trigger ?? {};
-  if (t.state) return `on state ${t.state}`;
+  if (t.state) return `when a unit reaches ${t.state.split(" ")[0]}`;
   if (t.engine) return ENGINE_WORDS[t.engine] ?? `by the engine (${t.engine})`;
   const said: string[] = [];
-  if (t.schedule) said.push(`every ${t.schedule.hours} h`);
+  if (t.schedule) said.push(everyWords(t.schedule.hours));
   if (t.event) {
-    const what = EVENT_WORDS[t.event.name ?? ""] ?? t.event.name;
+    const what = EVENT_WORDS[t.event.name ?? ""] ?? (t.event.name ?? "").replace(/[.-]/g, " ");
     said.push(t.event.after_hours ? `${hoursWords(t.event.after_hours)} after ${what}` : `on ${what}`);
   }
-  if (t.manual || t.leif) said.push("on request");
+  if (t.manual || t.leif) said.push("when you or Leif ask");
   if (said.length) return said.join(", ");
   if (a.group === "helper") {
     const by = rows.filter((r) => (r.row.helpers ?? []).includes(a.key)).map((r) => r.row.name ?? r.key);

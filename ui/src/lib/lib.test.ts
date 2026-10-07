@@ -228,11 +228,11 @@ describe("agents", () => {
   it("says when an agent runs, and what needs a look first", () => {
     const helper = row({ key: "scout", group: "helper", row: { name: "Scout" } });
     const impl = row({ key: "impl", row: { name: "Uruz", trigger: { state: "impl" }, helpers: ["scout"] } });
-    expect(triggerWords(impl)).toBe("on state impl");
+    expect(triggerWords(impl)).toBe("when a unit reaches impl");
     expect(triggerWords(helper, [impl, helper])).toBe("started by Uruz");
     expect(triggerWords(row({ row: { trigger: { engine: "chat" } } }))).toBe("when you talk to Leif");
-    expect(triggerWords(row({ group: "triggered", row: { trigger: { schedule: { hours: 24 }, manual: true, leif: true } } }))).toBe("every 24 h, on request");
-    expect(triggerWords(row({ group: "triggered", row: { trigger: { event: { name: "unit.shipped", after_hours: 168 }, manual: true } } }))).toBe("7 days after a ship, on request");
+    expect(triggerWords(row({ group: "triggered", row: { trigger: { schedule: { hours: 24 }, manual: true, leif: true } } }))).toBe("daily, when you or Leif ask");
+    expect(triggerWords(row({ group: "triggered", row: { trigger: { event: { name: "unit.shipped", after_hours: 168 }, manual: true } } }))).toBe("7 days after a ship, when you or Leif ask");
     expect(attention(row({ problems: ["bad"], chip: "failed" }))?.label).toBe("Cannot run");
     expect(attention(row({ chip: "costly" }))?.tone).toBe("amber");
     expect(attention(row({}))).toBeNull();
@@ -631,7 +631,7 @@ describe("work and needs you", () => {
 });
 
 describe("runRow", () => {
-  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "", made: null, session: false };
+  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "", made: null, session: false, verdict: "", refused: null, helpers: null, shallow: false };
   it("opens the log of a unitless run and names who started it", () => {
     expect(runRow({ ...run, run: "abc", started_by: "leif" }, "ws")).toMatchObject({ to: "/run/ws/abc", title: "Run by Leif" });
     expect(runRow({ ...run, run: "abc", started_by: "schedule" }, "ws").title).toBe("Run by the schedule");
