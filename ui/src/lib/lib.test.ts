@@ -614,6 +614,7 @@ describe("a run's header", () => {
     const facts = runFacts([e({ kind: "config", model: "claude-sonnet-4-5", effort: "high" }), e({ kind: "result", cost_usd: 1.5, num_turns: 12, duration_ms: 125000 })], { status: "ended", outcome: "done", started_by: "autopilot" });
     expect(Object.fromEntries(facts.map((f) => [f.label, f.value]))).toMatchObject({ Outcome: "done", Cost: "$1.50", Turns: "12", Took: "2 min 5 s", "Started by": "the autopilot" });
     expect(runFacts([], { status: "running" })[0].value).toBe("running");
+    expect(runFacts([e({ kind: "end", outcome: "cancelled" })], { status: "running" })[0].value).toBe("cancelled");
   });
 });
 

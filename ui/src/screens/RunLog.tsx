@@ -58,7 +58,7 @@ export function runFacts(events: StepEvent[], page: Pick<EventsPage, "status" | 
   const config = events.find((e) => e.kind === "config");
   const result = [...events].reverse().find((e) => e.kind === "result");
   const end = [...events].reverse().find((e) => e.kind === "end");
-  const outcome = page.status === "running" ? "running" : (page.outcome || end?.outcome || "").replace("paused-budget", "paused at its ceiling");
+  const outcome = page.status === "running" && !end ? "running" : (page.outcome || end?.outcome || "").replace("paused-budget", "paused at its ceiling");
   const secs = result?.duration_ms != null ? Math.round(result.duration_ms / 1000) : null;
   const took = secs == null ? "" : secs >= 60 ? `${Math.floor(secs / 60)} min ${secs % 60} s` : `${secs} s`;
   const facts = [
@@ -134,7 +134,7 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
       )}
       {page && page.outcome && <RunResult page={page} />}
       {stopError && <div className="rl-bad" style={{ fontSize: 12.5 }}>{stopError}</div>}
-      <div style={{ marginTop: 16 }}>{cwd ? <RunLog cwd={cwd} run={run} live={false} whole onEnd={head.reload} /> : <SkeletonRows rows={3} />}</div>
+      <div style={{ marginTop: 16 }}>{cwd ? <RunLog cwd={cwd} run={run} live={false} whole over={!!page && page.status !== "running"} onEnd={head.reload} /> : <SkeletonRows rows={3} />}</div>
       {cwd && page && page.status !== "running" && page.stage !== "chat" && <AskRun cwd={cwd} run={run} workspace={workspace} />}
     </div>
   );
@@ -267,7 +267,7 @@ function AskRun({ cwd, run, workspace }: { cwd: string; run: string; workspace: 
 }
 
 /** `whole`: the run on a page of its own, with a header; an ended run opens at its start. */
-export function RunLog({ cwd, run, live, whole = false, onEnd }: { cwd: string; run: string; live: boolean; whole?: boolean; onEnd?: () => void }) {
+export function RunLog({ cwd, run, live, whole = false, over = false, onEnd }: { cwd: string; run: string; live: boolean; whole?: boolean; over?: boolean; onEnd?: () => void }) {
   const [page, setPage] = useState<EventsPage | null>(null);
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [error, setError] = useState<Error | null>(null);
@@ -284,6 +284,24 @@ export function RunLog({ cwd, run, live, whole = false, onEnd }: { cwd: string; 
       .catch(setError);
   }, [cwd, run]);
 
+  // Ended, stopped or gone: one fact, from the run's `end` event or the page head (`over`); stop following and read its head
+  // again, so the header says how it ended in the same moment as the end line.
+  const ended = over || events.some((e) => e.kind === "end");
+  const finish = () => {
+    setFollowing(false);
+    api
+      .get("/api/runs/{run}", { cwd, run, limit: PAGE })
+      .then((p) => {
+        setPage(p);
+        setEvents((now) => merged(now, p.events));
+      })
+      .catch(setError);
+    onEnd?.();
+  };
+  useEffect(() => {
+    if (ended && following) finish();
+  }, [ended]);
+
   const last = useRef(0);
   last.current = events.length ? events[events.length - 1].seq : 0;
   const [round, setRound] = useState(0);
@@ -299,23 +317,10 @@ export function RunLog({ cwd, run, live, whole = false, onEnd }: { cwd: string; 
       source.close();
       setRound((r) => r + 1);
     };
-    // Ended, stopped or gone: read its head again, so how it ended shows without a reload.
-    const over = () => {
-      source.close();
-      setFollowing(false);
-      api
-        .get("/api/runs/{run}", { cwd, run, limit: PAGE })
-        .then((p) => {
-          setPage(p);
-          setEvents((now) => merged(now, p.events));
-        })
-        .catch(setError);
-      onEnd?.();
-    };
     source.addEventListener("end", again);
     source.addEventListener("cut", again);
-    source.addEventListener("done", over);
-    source.addEventListener("status", over);
+    source.addEventListener("done", finish);
+    source.addEventListener("status", finish);
     return () => source.close();
   }, [following, ready, round, cwd, run]);
 
@@ -377,7 +382,7 @@ export function RunLog({ cwd, run, live, whole = false, onEnd }: { cwd: string; 
       {events.map((e) => (
         <Line key={e.seq} event={e} unit={unit} whole={whole} />
       ))}
-      {following && <div className="faint rl-note">Following…</div>}
+      {following && !ended && <div className="faint rl-note">Following…</div>}
       {page.events_lost > 0 && <div className="faint rl-note">{page.events_lost} events were not recorded.</div>}
     </div>
       {atStart && (
