@@ -30,18 +30,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 from typing import Any, Iterator
 
-# Bumped when a migration changes the shape below. `_open` refuses a database numbered higher
-# than this rather than guessing. The refusal runs the other way too: **an older build answers
-# `500` on a database a newer one has touched**, so rolling the app back means rolling the
-# database back with it. Version 7 added *columns* (`_COLUMNS`). A new `_COLUMNS` entry moves the
-# number too: a database already at this one never runs `_create` again (8: the `ci` columns;
-# 9: `attempts` and `attempt_moves`; 10: `attempts.note_by`; 11: `decisions` dropped; 12: `outputs` dropped;
-# 13: idea 0006 M2 in one step, `_before_13` and `_after_13`; 14: `exhausted` ends are `failed`;
-# 15: the agent prefs move into the owner's layer of the agents' pack, `_to_15`; 16: a unit
-# records its process, `unit_meta.process`, and plan's `impl` is `variant`, `_to_16`; 17: the scan
-# feature's tables and prefs become `proposals` and `agents.state`, `_to_17`;
-# 18: a review round keeps its graded `criteria`, a finding its `criterion` for `rule`, by `_COLUMNS`).
-SCHEMA_VERSION = 18
+# The shape below. `_open` refuses a database numbered higher than this rather than guessing, and
+# **an older build answers `500` on a database a newer one has touched**, so rolling the app back
+# means rolling the database back with it. 19 is idea 0006 whole: an empty database is created at
+# it, one at `FROM` (0.14, the last release) takes `_from_12` in one step, any other is refused.
+SCHEMA_VERSION = 19
+FROM = 12
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -118,7 +112,8 @@ CREATE TABLE IF NOT EXISTS prefs (
 -- under one configuration and read under another compares states that never meant the
 -- same thing, and that failure runs rather than stops.
 --
--- `guard`, `authority`, `run` and `inputs` are added by `_COLUMNS`.
+-- `guard` is which guard decided it, `authority` on whose word, `run` in which run, `inputs` what
+-- it read (JSON: SHA, revision, PR number); `unknown` for a row older than the guards.
 CREATE TABLE IF NOT EXISTS transitions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     at         TEXT NOT NULL,
@@ -133,7 +128,11 @@ CREATE TABLE IF NOT EXISTS transitions (
     session    TEXT NOT NULL,
     source     TEXT NOT NULL,
     machine    TEXT NOT NULL,
-    once_key   TEXT NOT NULL DEFAULT ''
+    once_key   TEXT NOT NULL DEFAULT '',
+    guard      TEXT NOT NULL DEFAULT 'unknown',
+    authority  TEXT NOT NULL DEFAULT 'unknown',
+    run        TEXT NOT NULL DEFAULT 'unknown',
+    inputs     TEXT NOT NULL DEFAULT '{}'
 )""",
     """-- Oldest-first within a unit is every read this table has; `id` is monotonic where `at`
 -- is only second-resolution, the same reasoning as `runs_scope`.
@@ -168,7 +167,8 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     """-- One row per board step's `run`, written when its recorder starts and kept
 -- after its events are purged. Times are epoch milliseconds, the unit of an event's
 -- `at`. `ended_at` stays NULL for a step the app went down under: `ended-unknown`.
--- `events` and `bytes` count what was stored, `lost` what never was.
+-- `events` and `bytes` count what was stored, `lost` what never was. `head` and `revisions` are the
+-- head and the artifacts' revisions the run was handed when it opened.
 CREATE TABLE IF NOT EXISTS step_runs (
     run        TEXT PRIMARY KEY,
     root       TEXT NOT NULL,
@@ -180,7 +180,9 @@ CREATE TABLE IF NOT EXISTS step_runs (
     events     INTEGER NOT NULL DEFAULT 0,
     bytes      INTEGER NOT NULL DEFAULT 0,
     lost       INTEGER NOT NULL DEFAULT 0,
-    purged_at  TEXT
+    purged_at  TEXT,
+    head       TEXT NOT NULL DEFAULT '',
+    revisions  TEXT NOT NULL DEFAULT '{}'
 )""",
     """CREATE INDEX IF NOT EXISTS step_runs_scope ON step_runs (root, workspace, unit, started_at)""",
     """-- Every event of a `run`, whole, as the JSON the recorder composed. Not
@@ -195,12 +197,11 @@ CREATE TABLE IF NOT EXISTS step_events (
     bytes INTEGER NOT NULL,
     PRIMARY KEY (run, seq)
 )""",
-    # The owner's typed decisions and delegations, never used; Leif's knowledge replaces them.
-    "DROP TABLE IF EXISTS decisions",
     """-- One row per directory under a store's `.cos/`, whatever its name --
 -- `number` and `slug` are NULL for one that does not match NNNN_<slug>. `type` is the
 -- intent's record hands over (the word `intent.md` declares for a unit with no record),
--- or `unknown` until one is read. Status is not here: it is the fold over `transitions`.
+-- or `unknown` until one is read. Status is not here: it is the fold over `transitions`. `process`
+-- is the one the unit walks, `<pack>/<process>`, fixed when it is created.
 CREATE TABLE IF NOT EXISTS unit_meta (
     root        TEXT NOT NULL,
     workspace   TEXT NOT NULL,
@@ -209,6 +210,7 @@ CREATE TABLE IF NOT EXISTS unit_meta (
     number      INTEGER,
     slug        TEXT,
     imported_at TEXT NOT NULL,
+    process     TEXT NOT NULL DEFAULT 'coscc-sdlc/full',
     PRIMARY KEY (root, workspace, unit)
 )""",
     """-- The idea a unit was opened from and each unit it depends on, in the order given. Written
@@ -312,11 +314,11 @@ CREATE TABLE IF NOT EXISTS outputs (
     workspace TEXT NOT NULL,
     unit      TEXT NOT NULL,
     agent     TEXT NOT NULL,
-    version   INTEGER NOT NULL DEFAULT 1,
     run       TEXT NOT NULL,
     revision  TEXT NOT NULL,
     judgement TEXT NOT NULL,
-    object    TEXT NOT NULL
+    object    TEXT NOT NULL,
+    version   INTEGER NOT NULL DEFAULT 1
 )""",
     """CREATE INDEX IF NOT EXISTS outputs_scope ON outputs (root, workspace, unit, id)""",
     """-- Work an agent proposed for the Backlog (`coscc/units/proposals.py`): `unit` the unit it is
@@ -401,7 +403,8 @@ CREATE TABLE IF NOT EXISTS impl_claims (
 -- names from the merge-base with `origin/main` (JSON, or NULL when they could not be read,
 -- which counts as every file) and, once merged, the merge commit. Where the pull request
 -- stands (`open`, `merge-requested`, `merged`, `closed`) and its CI are transitions of the
--- PR/CI machine, folded like any other.
+-- PR/CI machine, folded like any other; `ci` is the answer read at `ci_head`, written only with a
+-- `ci-at-head` transition, from the checks `ci_checks` (JSON) at `ci_at`.
 CREATE TABLE IF NOT EXISTS pull_requests (
     root         TEXT NOT NULL,
     workspace    TEXT NOT NULL,
@@ -411,6 +414,10 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     files        TEXT,
     merge_commit TEXT NOT NULL DEFAULT '',
     at           TEXT NOT NULL,
+    ci           TEXT NOT NULL DEFAULT 'pending',
+    ci_head      TEXT NOT NULL DEFAULT '',
+    ci_checks    TEXT,
+    ci_at        TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (root, workspace, number, head)
 )""",
     """CREATE INDEX IF NOT EXISTS pull_requests_unit ON pull_requests (root, workspace, unit)""",
@@ -419,7 +426,8 @@ CREATE TABLE IF NOT EXISTS pull_requests (
 -- column here; `stop_asked_at` is a Stop recorded, not a state. `workspace` is the journal
 -- key; `run` the step's events once it launched; `road` an integration's, `rebase` or `gebo`.
 -- `started_by`, `rerun` and `note` are what a queued one is launched with, by this process or
--- the next.
+-- the next; `note_by` who wrote `note`: `person` (a rerun's) or `app` (what the autopilot hands a
+-- step it queued).
 CREATE TABLE IF NOT EXISTS attempts (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     machine       TEXT NOT NULL,
@@ -433,7 +441,8 @@ CREATE TABLE IF NOT EXISTS attempts (
     stop_asked_at TEXT,
     stop_asked_by TEXT,
     run           TEXT NOT NULL DEFAULT '',
-    road          TEXT NOT NULL DEFAULT ''
+    road          TEXT NOT NULL DEFAULT '',
+    note_by       TEXT NOT NULL DEFAULT 'person'
 )""",
     """CREATE INDEX IF NOT EXISTS attempts_unit ON attempts (workspace, unit)""",
     """-- Every move of an attempt, in order: the state it `moved_to`. `outcome` is an `ended` move's outcome or a
@@ -447,36 +456,6 @@ CREATE TABLE IF NOT EXISTS attempt_moves (
     PRIMARY KEY (attempt, seq)
 )""",
     """CREATE INDEX IF NOT EXISTS attempt_moves_to ON attempt_moves (moved_to, attempt)""",
-)
-
-# Columns added to a table that already existed, as `(table, column, declaration)`. `_SCHEMA`
-# cannot carry them: `CREATE TABLE IF NOT EXISTS` leaves an old table as it was. `_create`
-# adds each one a table lacks. SQLite will not add a `NOT NULL` column without a default, so
-# the default is the word a row that predates the column carries.
-_COLUMNS = (
-    # Which guard decided a transition, on whose authority, in which run, reading what (JSON: SHA, revision, PR number).
-    ("transitions", "guard", "TEXT NOT NULL DEFAULT 'unknown'"),
-    ("transitions", "authority", "TEXT NOT NULL DEFAULT 'unknown'"),
-    ("transitions", "run", "TEXT NOT NULL DEFAULT 'unknown'"),
-    ("transitions", "inputs", "TEXT NOT NULL DEFAULT '{}'"),
-    # The head and the artifacts' revisions a run was handed when it opened.
-    ("step_runs", "head", "TEXT NOT NULL DEFAULT ''"),
-    ("step_runs", "revisions", "TEXT NOT NULL DEFAULT '{}'"),
-    # The CI answer read at `ci_head`, written only with a `ci-at-head` transition; the checks
-    # it was read from (JSON, for the names of the red ones) and when.
-    ("pull_requests", "ci", "TEXT NOT NULL DEFAULT 'pending'"),
-    ("pull_requests", "ci_head", "TEXT NOT NULL DEFAULT ''"),
-    ("pull_requests", "ci_checks", "TEXT"),
-    ("pull_requests", "ci_at", "TEXT NOT NULL DEFAULT ''"),
-    # Who wrote an attempt's `note`: `person` (a rerun's) or `app` (what the autopilot hands a
-    # step it queued: a draft to go on with, the red checks of a head).
-    ("attempts", "note_by", "TEXT NOT NULL DEFAULT 'person'"),
-    # The process a unit walks, `<pack>/<process>`, fixed when it is created: the pack's default
-    # process for every unit opened before units recorded one.
-    ("unit_meta", "process", "TEXT NOT NULL DEFAULT 'coscc-sdlc/full'"),
-    # A review round's graded criteria (JSON) and the criterion a finding is raised under.
-    ("review_rounds", "criteria", "TEXT NOT NULL DEFAULT '[]'"),
-    ("review_findings", "criterion", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -510,7 +489,7 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-# The prefs `_to_15` moves, and the one row renamed on the way.
+# The prefs `_from_12` moves into the pack, and the one row renamed on the way.
 _MOVED = ("agent", "model", "effort", "turns", "budget")
 _RENAMED = {"chat": "leif"}
 # Where each moved pref lands in a row: `(top key, sub key)`; `agent`'s fields are their own.
@@ -556,6 +535,144 @@ def _owner_row(
             holder = after
         holder.setdefault(top, {})[sub] = value
     return {k: v for k, v in after.items() if built.get(k) != v}, body
+
+
+def _builtin() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """The built-in pack as `_from_12` reads it (this layer sits below `coscc.agent.pack`): the
+    states of its default process and each row's frontmatter."""
+    root = Path(coscc.__file__).resolve().parent / "packs" / "coscc-sdlc"
+    process = json.loads((root / "process.json").read_text(encoding="utf-8"))
+    rows = {
+        p.stem: _front(p.read_text(encoding="utf-8"))
+        for p in sorted((root / "agents").glob("*.md"))
+    }
+    return process["processes"]["full"]["states"], rows
+
+
+def _output(row: dict[str, Any]) -> dict[str, Any]:
+    return row.get("output") or {}
+
+
+def _with(rows: dict[str, dict[str, Any]], field: str) -> list[str]:
+    """The rows whose output declares `field`."""
+    return [
+        k
+        for k, r in rows.items()
+        if field in {f.rstrip("?") for f in _output(r).get("fields") or {}}
+    ]
+
+
+def _coders(rows: dict[str, dict[str, Any]]) -> list[str]:
+    """The rows that write in the unit's branch: an artifact by the session."""
+    return [
+        k
+        for k, r in rows.items()
+        if _output(r).get("by") == "session" and _output(r).get("kind") == "artifact"
+    ]
+
+
+def _marks(keys: list[str]) -> str:
+    return ", ".join("?" * len(keys))
+
+
+def _records(conn: sqlite3.Connection, rows: dict[str, dict[str, Any]]) -> None:
+    """Each stored record at its row's current contract (`_from_12`), the keys in the order the
+    steps it replaces left them."""
+    asking, measured = _with(rows, "questions"), _with(rows, "unmeasured")
+    for key in _with(rows, "type"):
+        conn.execute(
+            "UPDATE outputs SET object = json_set(object, '$.type', "
+            "COALESCE((SELECT type FROM unit_meta m WHERE m.root = outputs.root "
+            "AND m.workspace = outputs.workspace AND m.unit = outputs.unit), 'unknown')) "
+            "WHERE agent = ?",
+            (key,),
+        )
+    for key in _with(rows, "rests_on"):
+        conn.execute(
+            "UPDATE outputs SET object = json_remove(json_set(json_set(object, "
+            "'$.impl', 'novel', '$.files', json('[]'), '$.steps', json('[]'), '$.rests_on', "
+            "json(COALESCE((SELECT json_extract(s.object, '$.unmeasured') FROM outputs s "
+            "WHERE s.root = outputs.root AND s.workspace = outputs.workspace "
+            f"AND s.unit = outputs.unit AND s.agent IN ({_marks(measured)}) "
+            "ORDER BY s.id DESC LIMIT 1), '[]'))), '$.variant', 'novel'), '$.impl') "
+            "WHERE agent = ?",
+            (*measured, key),
+        )
+    conn.execute(
+        "UPDATE outputs SET object = json_set(object, '$.questions', "
+        "(SELECT json_group_array(json_set(value, '$.recommendation', '')) "
+        "FROM json_each(outputs.object, '$.questions'))) "
+        f"WHERE json_type(object, '$.questions') = 'array' AND agent IN ({_marks(asking)})",
+        asking,
+    )
+    for key in asking:
+        conn.execute(
+            "UPDATE outputs SET version = ? WHERE agent = ?",
+            (int(_output(rows[key]).get("version") or 1), key),
+        )
+
+
+def _scan_moves(
+    conn: sqlite3.Connection, rows: dict[str, dict[str, Any]], tables: set[str]
+) -> None:
+    """The scan feature is a row of the pack, the one proposing on a schedule. Its proposals move
+    into `proposals` under that row; whether it was on in a workspace moves from `features.state`
+    (a schedule of `0` hours is off) into `agents.state`; its cursor lands as `data_until` on its
+    last `end`; `features.schedule` and its tables go. The feature had the row's key as its name."""
+    scan = next(
+        (
+            k
+            for k, r in rows.items()
+            if _output(r).get("kind") == "proposal" and (r.get("trigger") or {}).get("schedule")
+        ),
+        "",
+    )
+    if f"{scan}_proposals" in tables:
+        conn.execute(
+            "INSERT INTO proposals (workspace, agent, unit, run, type, slug, title, problem, "
+            "sources, decision, made, by, at, decided, reason) SELECT workspace, ?, '', '', "
+            "type, slug, title, problem, sources, state, unit, by, at, decided, reason "
+            f"FROM {scan}_proposals ORDER BY id",
+            (scan,),
+        )
+    if f"{scan}_cursor" in tables:
+        for workspace, after in conn.execute(f"SELECT workspace, after FROM {scan}_cursor"):
+            conn.execute(
+                "UPDATE runs SET record = json_set(record, '$.data_until', ?) WHERE id = "
+                "(SELECT id FROM runs WHERE workspace = ? AND kind = 'end' AND stage = ? "
+                "ORDER BY id DESC LIMIT 1)",
+                (after, workspace, scan),
+            )
+    prefs = dict(conn.execute("SELECT key, value FROM prefs").fetchall())
+
+    def _read(key: str) -> dict[str, Any]:
+        try:
+            got = json.loads(prefs.get(key) or "{}")
+        except ValueError:
+            return {}
+        return got if isinstance(got, dict) else {}
+
+    states, hours = _read("features.state"), _read("features.schedule")
+    chosen = states.pop(scan, None)
+    moved = {
+        ws: "off" if state == "off" or hours.get(scan, {}).get(ws) == 0 else "on"
+        for ws, state in (chosen if isinstance(chosen, dict) else {}).items()
+    }
+    if moved:
+        agents = _read("agents.state")
+        agents[scan] = {**(agents.get(scan) or {}), **moved}
+        conn.execute(
+            "INSERT INTO prefs (key, value) VALUES ('agents.state', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(agents),),
+        )
+    if chosen is not None:
+        conn.execute(
+            "UPDATE prefs SET value = ? WHERE key = 'features.state'", (json.dumps(states),)
+        )
+    conn.execute("DELETE FROM prefs WHERE key = 'features.schedule'")
+    for table in ("proposals", "runs", "cursor"):
+        conn.execute(f"DROP TABLE IF EXISTS {scan}_{table}")
 
 
 class Data:
@@ -714,28 +831,17 @@ class Data:
                     f"(database schema {found}, this build understands {SCHEMA_VERSION})"
                 )
             if found < SCHEMA_VERSION:
-                if found == 12:
-                    self._before_13(conn)
-                for statement in _SCHEMA:
-                    conn.execute(statement)
-                if found == 12:
-                    self._after_13(conn)
-                self._to_14(conn)
-                if found:
-                    self._to_15(conn)
-                    self._to_16(conn)
-                    self._to_17(conn)
-                for table, column, declaration in _COLUMNS:
-                    have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
-                    if column not in have:
-                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
-                if 0 < found < 18 and "rule" in {
-                    r[1] for r in conn.execute("PRAGMA table_info(review_findings)")
-                }:
-                    conn.execute(
-                        "UPDATE review_findings SET criterion = rule "
-                        "WHERE criterion = '' AND rule != ''"
+                if found not in (0, FROM):
+                    raise Incompatible(
+                        f"{self.db_path} is at schema {found}, and this build migrates only "
+                        f"schema {FROM}: upgrade through 0.14 first, or start from a copy made "
+                        f"at {FROM}"
                     )
+                if found == FROM:
+                    self._from_12(conn)
+                else:
+                    for statement in _SCHEMA:
+                        conn.execute(statement)
                 # Not parameterisable; `SCHEMA_VERSION` is this module's own integer.
                 conn.execute(f"PRAGMA user_version={int(SCHEMA_VERSION)}")
         except BaseException:
@@ -744,186 +850,45 @@ class Data:
         else:
             conn.execute("COMMIT")
 
-    @staticmethod
-    def _before_13(conn: sqlite3.Connection) -> None:
-        """13, from 12 (the only older database outside tests): `stage_results` becomes
-        `outputs` (column `agent`, a `version`), and the removed decisions feature's
-        `unit_decisions` goes so the new one can be made."""
+    def _from_12(self, conn: sqlite3.Connection) -> None:
+        """12 (0.14) to this schema in one step: idea 0006 whole.
+
+        - `stage_results` is `outputs` (column `agent`, a `version`); the removed decisions
+          feature's `unit_decisions`, `idea_meta`, `unit_seen`, `unit_meta.lane`, the `repo` links,
+          the `raw` unknowns and the import's `unit-meta:` marks go; a review finding's `rule` is
+          its `criterion`; a unit walks the default process.
+        - Records move to their current contract: the intent's gains the unit's `type`, the plan's
+          a `novel` `variant`, empty `files` and `steps` and `rests_on` (the unit's latest spec
+          record's `unmeasured`, so no stored gate changes), every question a `recommendation`.
+        - A stored `done` is `accepted`; an `exhausted` run is `failed`. An answer's `answered_by`
+          is `name`, and `by` replaces `authority`: `delegated` where `authority` was not
+          `person` or the name opens with Leif, Claude or agent, else `person`.
+        - The agent prefs are the owner's layer of the pack (`_owner_row`); the scan feature's
+          proposals, state and cursor are its row's; a merge's record is `merge`; the vault's
+          per-secret list, in its column and its `policy` records, is `agents`.
+
+        Every agent and state is found by what the built-in pack says it is, never by its name.
+        """
+        states, rows = _builtin()
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         conn.execute("ALTER TABLE stage_results RENAME TO outputs")
         conn.execute("ALTER TABLE outputs RENAME COLUMN stage TO agent")
         conn.execute("ALTER TABLE outputs ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
         conn.execute("DROP INDEX IF EXISTS stage_results_scope")
-        conn.execute("DROP TABLE IF EXISTS unit_decisions")
-
-    @staticmethod
-    def _to_14(conn: sqlite3.Connection) -> None:
-        """14: a run that `exhausted` its ceiling is `failed`: its session cannot be continued, and
-        a ceiling now pauses (`paused-budget`). Every run-log row, event and attempt move that
-        said it."""
-        conn.execute(
-            "UPDATE runs SET record = json_set(record, '$.outcome', 'failed', '$.status', 'failed') "
-            "WHERE json_extract(record, '$.outcome') = 'exhausted'"
-        )
-        conn.execute(
-            "UPDATE step_events SET event = json_set(event, '$.outcome', 'failed') "
-            "WHERE kind = 'end' AND json_extract(event, '$.outcome') = 'exhausted'"
-        )
-        conn.execute("UPDATE attempt_moves SET outcome = 'failed' WHERE outcome = 'exhausted'")
-
-    def _to_15(self, conn: sqlite3.Connection) -> None:
-        """15: every `agent:`, `model:`, `effort:`, `turns:` and `budget:` pref becomes the owner's
-        layer of the agents' pack (`coscc/agent/pack.py`), `<root>/packs/local/agents/<key>.md`,
-        holding only what differs from the built-in row, and the prefs go. `chat` is `leif`,
-        `<key>:novel` the row's `novel` variant; Gebo, which ran `impl`'s model and effort when it
-        had none of its own, keeps them. A key no built-in row has changed nothing and is dropped."""
-        rows = conn.execute("SELECT key, value FROM prefs").fetchall()
-        found: dict[str, dict[tuple[str, str], Any]] = {}
-        for key, raw in rows:
-            prefix, _, name = str(key).partition(":")
-            if prefix not in _MOVED or not name:
-                continue
-            try:
-                value = json.loads(raw)
-            except ValueError:
-                continue
-            base, _, variant = name.partition(":")
-            found.setdefault(_RENAMED.get(base, base), {})[(prefix, variant)] = value
-        impl = found.get("impl", {})
-        gebo = found.setdefault("integrate", {})
-        for field in ("model", "effort"):
-            if (field, "") in impl and (field, "") not in gebo:
-                gebo[(field, "")] = impl[(field, "")]
-        packs = Path(coscc.__file__).resolve().parent / "packs" / "coscc-sdlc" / "agents"
-        for key, given in found.items():
-            built = packs / f"{key}.md"
-            if not given or not built.is_file():
-                continue
-            fields, body = _owner_row(_front(built.read_text(encoding="utf-8")), given)
-            if fields or body:
-                path = self.root / "packs" / "local" / "agents" / f"{key}.md"
-                path.parent.mkdir(parents=True, exist_ok=True)
-                lines = [f"{k}: {json.dumps(v, ensure_ascii=False)}" for k, v in fields.items()]
-                path.write_text(
-                    "---\n" + "\n".join(lines) + "\n---\n" + (f"{body}\n" if body else ""),
-                    encoding="utf-8",
-                )
-        for key, _ in rows:
-            if str(key).partition(":")[0] in _MOVED:
-                conn.execute("DELETE FROM prefs WHERE key = ?", (key,))
-
-    @staticmethod
-    def _to_16(conn: sqlite3.Connection) -> None:
-        """16: plan's record names its label `variant`, not `impl` (version 4). The process column
-        is `_COLUMNS`'."""
-        conn.execute(
-            "UPDATE outputs SET version = 4, object = json_remove(json_set(object, '$.variant', "
-            "json_extract(object, '$.impl')), '$.impl') WHERE agent = 'plan' AND version = 3"
-        )
-
-    @staticmethod
-    def _to_17(conn: sqlite3.Connection) -> None:
-        """17: the scan feature is a row of the pack (`agents/scan.md`). Its proposals move into
-        `proposals` under the agent `scan`; whether it was on in a workspace moves from
-        `features.state` (a schedule of `0` hours is off) into `agents.state`; its cursor lands as
-        `data_until` on its last `end` there; `features.schedule` and its tables go."""
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if "scan_proposals" in tables:
-            conn.execute(
-                "INSERT INTO proposals (workspace, agent, unit, run, type, slug, title, problem, "
-                "sources, decision, made, by, at, decided, reason) SELECT workspace, 'scan', '', '', "
-                "type, slug, title, problem, sources, state, unit, by, at, decided, reason "
-                "FROM scan_proposals ORDER BY id"
-            )
-        if "scan_cursor" in tables:
-            for workspace, after in conn.execute("SELECT workspace, after FROM scan_cursor"):
-                conn.execute(
-                    "UPDATE runs SET record = json_set(record, '$.data_until', ?) WHERE id = "
-                    "(SELECT id FROM runs WHERE workspace = ? AND kind = 'end' AND stage = 'scan' "
-                    "ORDER BY id DESC LIMIT 1)",
-                    (after, workspace),
-                )
-        prefs = dict(conn.execute("SELECT key, value FROM prefs").fetchall())
-
-        def _read(key: str) -> dict[str, Any]:
-            try:
-                got = json.loads(prefs.get(key) or "{}")
-            except ValueError:
-                return {}
-            return got if isinstance(got, dict) else {}
-
-        states, hours = _read("features.state"), _read("features.schedule")
-        chosen = states.pop("scan", None)
-        moved = {
-            ws: "off" if state == "off" or hours.get("scan", {}).get(ws) == 0 else "on"
-            for ws, state in (chosen if isinstance(chosen, dict) else {}).items()
-        }
-        if moved:
-            agents = _read("agents.state")
-            agents["scan"] = {**(agents.get("scan") or {}), **moved}
-            conn.execute(
-                "INSERT INTO prefs (key, value) VALUES ('agents.state', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (json.dumps(agents),),
-            )
-        if chosen is not None:
-            conn.execute(
-                "UPDATE prefs SET value = ? WHERE key = 'features.state'", (json.dumps(states),)
-            )
-        conn.execute("DELETE FROM prefs WHERE key = 'features.schedule'")
-        for table in ("scan_proposals", "scan_runs", "scan_cursor"):
+        for table in ("unit_decisions", "idea_meta", "unit_seen"):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
-
-    @staticmethod
-    def _after_13(conn: sqlite3.Connection) -> None:
-        """13, the rest. Records move to their current contract: intent gains the unit's
-        `type`, plan gains `impl` `novel`, empty `files` and `steps` and `rests_on` (the unit's
-        latest spec record's `unmeasured`, so no stored gate changes), every question a
-        `recommendation` `""`. What a file fed goes (`unit_seen`, `idea_meta`, `repo` links,
-        `unit_meta.lane`, the `raw` unknowns, the import's `migrations` keys); a stored `done`
-        is `accepted`. An answer's `answered_by` becomes `name`, and `by` replaces `authority`:
-        `delegated` where `authority` was not `person` or the name opens with Leif, Claude or
-        agent, else `person`."""
-        conn.execute(
-            "UPDATE outputs SET object = json_set(object, '$.type', "
-            "COALESCE((SELECT type FROM unit_meta m WHERE m.root = outputs.root "
-            "AND m.workspace = outputs.workspace AND m.unit = outputs.unit), 'unknown')) "
-            "WHERE agent = 'intent'"
-        )
-        conn.execute(
-            "UPDATE outputs SET object = json_set(object, "
-            "'$.impl', 'novel', '$.files', json('[]'), '$.steps', json('[]'), '$.rests_on', "
-            "json(COALESCE((SELECT json_extract(s.object, '$.unmeasured') FROM outputs s "
-            "WHERE s.root = outputs.root AND s.workspace = outputs.workspace "
-            "AND s.unit = outputs.unit AND s.agent = 'spec' ORDER BY s.id DESC LIMIT 1), '[]'))) "
-            "WHERE agent = 'plan'"
-        )
-        conn.execute(
-            "UPDATE outputs SET object = json_set(object, '$.questions', "
-            "(SELECT json_group_array(json_set(value, '$.recommendation', '')) "
-            "FROM json_each(outputs.object, '$.questions'))) "
-            "WHERE json_type(object, '$.questions') = 'array' "
-            "AND agent IN ('idea', 'intent', 'spec', 'spike', 'plan', 'impl')"
-        )
-        conn.execute(
-            "UPDATE outputs SET version = CASE WHEN agent IN ('intent', 'plan', 'impl') THEN 3 "
-            "ELSE 2 END WHERE agent IN ('idea', 'intent', 'spec', 'spike', 'plan', 'impl')"
-        )
-        conn.execute("ALTER TABLE unit_meta DROP COLUMN lane")
-        conn.execute("DROP TABLE idea_meta")
-        kept = conn.execute(
+        links = conn.execute(
             "SELECT root, workspace, unit, kind, ref, pos FROM unit_links WHERE kind != 'repo'"
         ).fetchall()
         conn.execute("DROP TABLE unit_links")
-        for statement in _SCHEMA:
-            if "unit_links" in statement:
-                conn.execute(statement)
-        conn.executemany("INSERT INTO unit_links VALUES (?, ?, ?, ?, ?, ?)", kept)
-        conn.execute("DROP TABLE unit_seen")
+        conn.execute("ALTER TABLE review_findings RENAME COLUMN rule TO criterion")
+        conn.execute("ALTER TABLE review_rounds ADD COLUMN criteria TEXT NOT NULL DEFAULT '[]'")
+        conn.execute("ALTER TABLE unit_meta DROP COLUMN lane")
+        conn.execute(
+            "ALTER TABLE unit_meta ADD COLUMN process TEXT NOT NULL DEFAULT 'coscc-sdlc/full'"
+        )
         conn.execute("DELETE FROM unit_unknowns WHERE field <> 'ingest'")
         conn.execute("ALTER TABLE unit_unknowns DROP COLUMN raw")
-        conn.execute("DELETE FROM migrations WHERE key LIKE 'unit-meta:%'")
-        conn.execute("UPDATE transitions SET to_state = 'accepted' WHERE to_state = 'done'")
-        conn.execute("UPDATE transitions SET from_state = 'accepted' WHERE from_state = 'done'")
         conn.execute(
             "ALTER TABLE unit_questions ADD COLUMN recommendation TEXT NOT NULL DEFAULT ''"
         )
@@ -942,6 +907,78 @@ class Data:
             f"WHERE authority IN ('person', '') AND NOT ({agent_named})"
         )
         conn.execute("ALTER TABLE unit_answers DROP COLUMN authority")
+        if "vault_secrets" in tables:
+            conn.execute("ALTER TABLE vault_secrets RENAME COLUMN stages TO agents")
+        conn.execute(
+            "UPDATE runs SET record = json_remove(json_set(record, '$.agents', "
+            "json(json_extract(record, '$.stages'))), '$.stages') "
+            "WHERE kind = 'vault' AND json_type(record, '$.stages') IS NOT NULL"
+        )
+        for statement in _SCHEMA:
+            conn.execute(statement)
+        conn.executemany("INSERT INTO unit_links VALUES (?, ?, ?, ?, ?, ?)", links)
+        conn.execute("DELETE FROM migrations WHERE key LIKE 'unit-meta:%'")
+        conn.execute("UPDATE transitions SET to_state = 'accepted' WHERE to_state = 'done'")
+        conn.execute("UPDATE transitions SET from_state = 'accepted' WHERE from_state = 'done'")
+        conn.execute(
+            "UPDATE runs SET record = json_set(record, '$.outcome', 'failed', '$.status', 'failed') "
+            "WHERE json_extract(record, '$.outcome') = 'exhausted'"
+        )
+        conn.execute(
+            "UPDATE step_events SET event = json_set(event, '$.outcome', 'failed') "
+            "WHERE kind = 'end' AND json_extract(event, '$.outcome') = 'exhausted'"
+        )
+        conn.execute("UPDATE attempt_moves SET outcome = 'failed' WHERE outcome = 'exhausted'")
+        _records(conn, rows)
+        # A merge's run-log record was named after the state that merges; it is the action's now.
+        for state, found in states.items():
+            if found.get("action") == "merge":
+                conn.execute(
+                    "UPDATE runs SET kind = ?, record = json_set(record, '$.kind', ?) "
+                    "WHERE kind = ?",
+                    (found["action"], found["action"], state),
+                )
+        self._agent_prefs(conn, rows)
+        _scan_moves(conn, rows, tables)
+
+    def _agent_prefs(self, conn: sqlite3.Connection, rows: dict[str, dict[str, Any]]) -> None:
+        """Every `agent:`, `model:`, `effort:`, `turns:` and `budget:` pref becomes the owner's layer
+        of the pack, `<root>/packs/local/agents/<key>.md`, holding only what differs from the
+        built-in row, and the prefs go. `chat` is `leif`, `<key>:novel` the row's `novel` variant;
+        Gebo, which ran the coder's model and effort when it had none of its own, keeps them. A key
+        no built-in row has changed nothing and is dropped."""
+        prefs = conn.execute("SELECT key, value FROM prefs").fetchall()
+        found: dict[str, dict[tuple[str, str], Any]] = {}
+        for key, raw in prefs:
+            prefix, _, name = str(key).partition(":")
+            if prefix not in _MOVED or not name:
+                continue
+            try:
+                value = json.loads(raw)
+            except ValueError:
+                continue
+            base, _, variant = name.partition(":")
+            found.setdefault(_RENAMED.get(base, base), {})[(prefix, variant)] = value
+        gebo = found.setdefault("integrate", {})
+        for coder in _coders(rows):
+            for field in ("model", "effort"):
+                if (field, "") in found.get(coder, {}) and (field, "") not in gebo:
+                    gebo[(field, "")] = found[coder][(field, "")]
+        for key, given in found.items():
+            if not given or key not in rows:
+                continue
+            fields, body = _owner_row(rows[key], given)
+            if fields or body:
+                path = self.root / "packs" / "local" / "agents" / f"{key}.md"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                lines = [f"{k}: {json.dumps(v, ensure_ascii=False)}" for k, v in fields.items()]
+                path.write_text(
+                    "---\n" + "\n".join(lines) + "\n---\n" + (f"{body}\n" if body else ""),
+                    encoding="utf-8",
+                )
+        for key, _ in prefs:
+            if str(key).partition(":")[0] in _MOVED:
+                conn.execute("DELETE FROM prefs WHERE key = ?", (key,))
 
     def version(self) -> int:
         with self.connect() as conn:

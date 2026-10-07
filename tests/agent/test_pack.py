@@ -456,6 +456,10 @@ class TheOwnersLayer(unittest.TestCase):
         self.assertEqual(skill_for("spec"), "# my rules\n")
 
 
+# A database at 12 (0.14), the one the agent prefs move out of.
+V12 = Path(__file__).resolve().parents[1] / "store" / "fixtures" / "v12.sql"
+
+
 class TheOldPrefsMoveOnce(unittest.TestCase):
     PREFS = {
         "model:impl": "claude-opus-5-5[1m]",
@@ -470,12 +474,13 @@ class TheOldPrefsMoveOnce(unittest.TestCase):
     def test_every_override_lands_in_the_owners_layer_and_the_prefs_go(self):
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
-            data.version()
-            for k, v in self.PREFS.items():
-                data.set_pref(k, v)
-            data.set_pref("autopilot", True)
+            data.ensure_dir()
             with sqlite3.connect(data.db_path) as conn:
-                conn.execute("PRAGMA user_version=14")
+                conn.executescript(V12.read_text(encoding="utf-8"))
+                for k, v in {**self.PREFS, "autopilot": True}.items():
+                    conn.execute("INSERT INTO prefs VALUES (?, ?)", (k, json.dumps(v)))
+                conn.execute("PRAGMA user_version=12")
+            conn.close()
             data.version()
             with mock.patch.object(pack, "ROOT", d):
                 self.assertEqual(

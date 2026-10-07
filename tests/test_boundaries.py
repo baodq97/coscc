@@ -68,18 +68,15 @@ FOREIGN_SQL: set[tuple[str, str]] = {
     ("coscc.github.prmachine", "review_rounds"),
     ("coscc.github.prmachine", "transitions"),
     ("coscc.run", "unit_meta"),
-    # The step to 13 rewrites records, links, unknowns, a stored `done` and answers.
+    # `_from_12`, the one step from 0.14: records, links, unknowns, a stored `done`, answers, the
+    # scan feature's proposals, every `exhausted` end, a merge's record kind.
     ("coscc.store.db", "outputs"),
-    # `_to_17` copies the scan feature's proposals in.
     ("coscc.store.db", "proposals"),
-    # The step to 18 copies a finding's `rule` into its `criterion`.
-    ("coscc.store.db", "review_findings"),
     ("coscc.store.db", "unit_meta"),
     ("coscc.store.db", "unit_links"),
     ("coscc.store.db", "transitions"),
     ("coscc.store.db", "unit_unknowns"),
     ("coscc.store.db", "unit_answers"),
-    # The step to 14 turns every `exhausted` end into `failed`.
     ("coscc.store.db", "runs"),
     ("coscc.store.db", "attempt_moves"),
     ("coscc.run", "workspaces"),

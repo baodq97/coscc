@@ -3,12 +3,12 @@
 The engine reads what a state is (its action, who writes its output, its output kind, its row's
 skills and declared inputs), never which state it is. This scans every `coscc/**/*.py` for a
 string constant equal to a state key, to an agent key a state binds, or to `<key>.md`. The bare
-`idea`, `pr`, `review` and `outcome` are also the engine's words (the idea link, `gh pr`, the
-output kind, how a run ended), so they count only where a stage, agent or artifact is compared
-with them.
+`idea`, `pr`, `review`, `outcome` and `scan` are also the engine's words (the idea link, `gh pr`
+and its machine, the output kind, how a run ended, the vault's leak scan), so they count only where
+a stage, agent or artifact is compared with them, or key a table no other key of which is
+something else (an output kind, a machine). `coscc/loop/` is counted with the rest.
 
-`ALLOWED` is the whole list of exceptions, each with its reason. `coscc/loop/` is the loop's own
-module, rebuilt as the process walk; its names are counted apart (`test_the_loop_is_counted`).
+`ALLOWED` is the whole list of exceptions, each with its reason: none.
 """
 
 from __future__ import annotations
@@ -21,35 +21,12 @@ from pathlib import Path
 from coscc.agent import pack
 
 ROOT = Path(__file__).resolve().parents[1] / "coscc"
-BARE = {"idea", "pr", "review", "outcome"}
+BARE = {"idea", "pr", "review", "outcome", "scan"}
 STAGE_WORDS = {"stage", "agent", "artifact", "state", "at"}
 LOOKUPS = {"agent", "row_of", "action_of", "by_of", "kind_of", "data_of", "get_agent"}
-LOOP = "loop"
 
 # `(file, enclosing function or "", constant)`: why it may stay.
-ALLOWED = {
-    ("store/journal.py", "", "ship"): "the run-log record kind of a merge; notices read it",
-    ("features/notices/__init__.py", "", "ship"): (
-        "the same run-log record kind, read by a feature that imports only the kernel"
-    ),
-    ("features/notices/__init__.py", "_kind_and_text", "ship"): "the same run-log record kind",
-    (
-        "units/meta.py",
-        "snapshot",
-        "ship",
-    ): "the key of the merge record on its artifact, which the loop reads by that name",
-    ("runner/prompt.py", "", "review"): "keyed by output kind: the fast-lane review block",
-    ("units/contracts.py", "", "review"): "the contract of the output kind `review`",
-    ("units/guards.py", "", "pr"): "the guard table of the output kind `pr`",
-    ("store/db.py", "_after_13", "*"): "an old migration's data rewrite names the stored values",
-    ("store/db.py", "_to_15", "*"): "an old migration's data rewrite names the stored values",
-    ("store/db.py", "_to_16", "*"): "an old migration's data rewrite names the stored values",
-    ("store/db.py", "_to_17", "*"): "an old migration's data rewrite names the stored values",
-    # The vault's own leak scan, which shares the scan row's word and nothing else.
-    ("vault/__init__.py", "", "scan"): "the vault's `scan` function, named in `__all__`",
-    ("features/vault/__init__.py", "_leaks", "scan"): "the id of one leak scan, a vault field",
-    ("features/vault/__init__.py", "leaks", "scan"): "the same leak-scan id, read back",
-}
+ALLOWED: dict[tuple[str, str, str], str] = {}
 
 
 def keys() -> set[str]:
@@ -95,7 +72,9 @@ def _is_stage_ref(node: ast.AST) -> bool:
     return False
 
 
-def _stage_use(node: ast.AST, holder: ast.AST | None, parents: dict[ast.AST, ast.AST]) -> bool:
+def _stage_use(
+    node: ast.Constant, holder: ast.AST | None, parents: dict[ast.AST, ast.AST], known: set[str]
+) -> bool:
     """A bare word used as a stage: compared with one, a key of a module-level table, a `stage:` value, or the
     first argument of an agent or row lookup."""
     if isinstance(holder, ast.Compare):
@@ -103,9 +82,15 @@ def _stage_use(node: ast.AST, holder: ast.AST | None, parents: dict[ast.AST, ast
     if isinstance(holder, ast.Dict):
         if node in holder.keys:
             table = parents.get(holder)
-            return isinstance(table, (ast.Assign, ast.AnnAssign)) and any(
-                isinstance(t, ast.Name) and t.id.isupper()
-                for t in (table.targets if isinstance(table, ast.Assign) else [table.target])
+            # A table keyed by something else as well (an output kind, a machine) is that table.
+            others = {k.value for k in holder.keys if isinstance(k, ast.Constant)} - {node.value}
+            return (
+                isinstance(table, (ast.Assign, ast.AnnAssign))
+                and any(
+                    isinstance(t, ast.Name) and t.id.isupper()
+                    for t in (table.targets if isinstance(table, ast.Assign) else [table.target])
+                )
+                and others <= known
             )
         at = holder.values.index(node) if node in holder.values else -1
         key = holder.keys[at] if at >= 0 else None
@@ -137,7 +122,7 @@ def findings(tree: ast.AST, known: set[str]) -> list[tuple[int, str, str]]:
             holder = parent
             while isinstance(holder, (ast.Tuple, ast.List, ast.Set)):
                 holder = parents.get(holder)
-            if not _stage_use(node, holder, parents):
+            if not _stage_use(node, holder, parents, known):
                 continue
         func = ""
         up = parents.get(node)
@@ -150,14 +135,12 @@ def findings(tree: ast.AST, known: set[str]) -> list[tuple[int, str, str]]:
     return out
 
 
-def scan(under: str = "") -> list[str]:
+def scan() -> list[str]:
     known = keys()
     out = []
     for path in sorted(ROOT.rglob("*.py")):
         rel = path.relative_to(ROOT).as_posix()
-        if rel.startswith(("packs/", "_web/", "_harness/")) or (
-            (rel.startswith(LOOP + "/")) != bool(under == LOOP)
-        ):
+        if rel.startswith(("packs/", "_web/", "_harness/")):
             continue
         for line, func, value in findings(ast.parse(path.read_text(encoding="utf-8")), known):
             if (rel, func, value) in ALLOWED or (rel, func, "*") in ALLOWED:
@@ -210,9 +193,14 @@ class NoStageNames(unittest.TestCase):
         )
         self.assertEqual([line for line, _, _ in findings(tree, known)], [1, 2, 3, 4])
 
-    def test_the_loop_is_counted(self):
-        # Its own rebuild; the number only shrinks.
-        self.assertLessEqual(len(scan(LOOP)), 7)
+    def test_a_table_keyed_by_something_else_too_is_not_stage_keyed(self):
+        known = {"impl", "review", "pr"}
+        tree = ast.parse(
+            "K = {'review': 1, 'session': 2}\nM = {'unit': 1, 'pr': 2}\nS = {'review': 1, 'impl': 2}"
+        )
+        self.assertEqual(
+            [(line, v) for line, _, v in findings(tree, known)], [(3, "review"), (3, "impl")]
+        )
 
 
 if __name__ == "__main__":

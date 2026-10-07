@@ -28,7 +28,6 @@ MODES = ("env", "file", "placeholder", "ssh")
 
 
 # The agents a secret's list may name ("Agents that may use it"): those whose row holds `vault`.
-# The column keeps its name, `stages`, until M8 renames it.
 def vault_agents() -> tuple[str, ...]:
     """The agents whose row holds the vault now: the ones a secret's list may name."""
     return tuple(k for k, r in pack.rows().items() if "vault" in pack.tools(r))
@@ -66,7 +65,7 @@ TABLES = (
     name        TEXT NOT NULL,
     workspace   TEXT NOT NULL,
     description TEXT NOT NULL,
-    stages      TEXT NOT NULL,
+    agents      TEXT NOT NULL,
     modes       TEXT NOT NULL,
     broker      INTEGER NOT NULL,
     created_by  TEXT NOT NULL,
@@ -187,7 +186,7 @@ class Store:
                 name=r["name"],
                 workspace=r["workspace"],
                 description=r["description"],
-                agents=tuple(json.loads(r["stages"])),
+                agents=tuple(json.loads(r["agents"])),
                 modes=tuple(json.loads(r["modes"])),
                 broker=bool(r["broker"]),
                 granted=tuple(granted.get(r["name"], ())) if r["workspace"] == "" else (),
@@ -216,7 +215,7 @@ class Store:
         try:
             with self.data.write() as conn:
                 conn.execute(
-                    "INSERT INTO vault_secrets (name, workspace, description, stages, modes, "
+                    "INSERT INTO vault_secrets (name, workspace, description, agents, modes, "
                     "broker, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         name,
@@ -259,7 +258,7 @@ class Store:
             if kept != s.agents:
                 with self.data.write() as conn:
                     conn.execute(
-                        "UPDATE vault_secrets SET stages = ? WHERE name = ? AND workspace = ?",
+                        "UPDATE vault_secrets SET agents = ? WHERE name = ? AND workspace = ?",
                         (json.dumps(kept), s.name, s.workspace),
                     )
 
@@ -285,7 +284,7 @@ class Store:
         modes = ("ssh",) if secret.broker else _subset("mode", modes, MODES)
         with self.data.write() as conn:
             conn.execute(
-                "UPDATE vault_secrets SET stages = ?, modes = ? WHERE name = ? AND workspace = ?",
+                "UPDATE vault_secrets SET agents = ?, modes = ? WHERE name = ? AND workspace = ?",
                 (json.dumps(agents), json.dumps(modes), secret.name, secret.workspace),
             )
         return self.known(name, workspace)
