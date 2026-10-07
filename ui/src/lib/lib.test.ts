@@ -27,7 +27,7 @@ import type { NextStep } from "../api.gen";
 import type { AgentRow } from "../api.gen";
 import { afterAgentSaved, answersText, draftOf, draftParts, draftTools, keepDraft, keptDraft, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
 import { asks, rerunFor, addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
-import { sandboxed, sandboxLine, sandboxOf } from "./build";
+import { sandboxed, sandboxLine, sandboxOf, nameTaken } from "./build";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -850,5 +850,17 @@ describe("api.get", () => {
     await api.get("/api/units", { cwd: "/w" });
     expect(fetched).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("a name another agent has", () => {
+  const rows = [{ key: "pr-review", row: { name: "Tiwaz" } }, { key: "x", row: {} }];
+  it("is refused before the save, without case", () => {
+    expect(nameTaken("tiwaz", rows)).toMatch(/another agent's name/);
+    expect(nameTaken("Tidy", rows)).toBeNull();
+    expect(nameTaken("", rows)).toBeNull();
+  });
+  it("is not taken by the row it names", () => {
+    expect(nameTaken("Tiwaz", rows, "pr-review")).toBeNull();
   });
 });

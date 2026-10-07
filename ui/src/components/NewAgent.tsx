@@ -4,10 +4,10 @@
 // leaving the page loses nothing. A refusal's reasons land beside the field they are about.
 // `DescribeTask` is the "Describe the task" box the process editor shares.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { AgentPage, Asked, CatalogTool, ProposalRow, Started, StepEvent } from "../api.gen";
 import { api, ApiError, useResource } from "../lib/api";
-import { afterAgentSaved, agentNameProblem, answersText, draftOf, draftParts, draftTools, GAP_PART, keepDraft, keptDraft, runsByItself, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type DraftGap, type Drafted, type NewAgentField } from "../lib/build";
+import { afterAgentSaved, agentNameProblem, answersText, draftOf, draftParts, draftTools, GAP_PART, keepDraft, keptDraft, nameTaken, runsByItself, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type DraftGap, type Drafted, type NewAgentField } from "../lib/build";
 import { Rune } from "../lib/icons";
 import { refreshPacks } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
@@ -27,6 +27,23 @@ function Part({ label, hint, errors, children }: { label: string; hint?: string;
   );
 }
 
+/** A textarea as tall as its text, at any width: an answer is read whole, never scrolled to. */
+function GrowingText({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const at = useRef<HTMLTextAreaElement | null>(null);
+  const fit = () => {
+    const t = at.current;
+    if (!t) return;
+    t.style.height = "auto";
+    t.style.height = `${t.scrollHeight + 2}px`;
+  };
+  useLayoutEffect(fit, [value]);
+  useEffect(() => {
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
+  return <textarea ref={at} className="ta" rows={2} aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} />;
+}
+
 type Phase = { at: "idle" } | { at: "running"; run: string; line: string } | { at: "failed"; why: string } | { at: "asked"; run: string; d: Drafted } | { at: "drafted"; run: string };
 
 /**
@@ -35,7 +52,7 @@ type Phase = { at: "idle" } | { at: "running"; run: string; line: string } | { a
  * here with its answers filled in; answering runs it again with them. `run` follows a run already
  * started; with none, the project's kept draft is followed again.
  */
-export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "agent" | "process"; run?: string; onDraft: (d: Drafted, run: string) => void }) {
+export function DescribeTask({ cwd, want, run, onDraft, onRunning, onDiscard }: { cwd: string; want: "agent" | "process"; run?: string; onDraft: (d: Drafted, run: string) => void; onRunning?: (running: boolean) => void; onDiscard?: () => void }) {
   // Only an agent's draft is kept: the process editor holds its own until it is saved.
   const keeps = want === "agent" && Boolean(cwd);
   const kept = keeps ? keptDraft(want, cwd) : null;
@@ -79,6 +96,14 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
     for (const e of ["done", "status", "end", "cut"]) s.addEventListener(e, over);
   };
 
+  // The caller sets its old draft aside while Dagaz works on a new one.
+  const onRunningRef = useRef(onRunning);
+  onRunningRef.current = onRunning;
+  const running = phase.at === "running";
+  useEffect(() => {
+    onRunningRef.current?.(running);
+  }, [running]);
+
   const follows = run || kept?.run;
   useEffect(() => {
     if (follows && cwd) void ended(follows);
@@ -101,6 +126,7 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
   const again = () => {
     if (keeps) keepDraft(want, cwd, null);
     setPhase({ at: "idle" });
+    onDiscard?.();
   };
 
   if (phase.at === "drafted") {
@@ -125,7 +151,7 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
             <span>
               <b>{q.n}.</b> {q.text}
             </span>
-            <textarea className="ta" rows={2} aria-label={`Your answer to question ${q.n}`} value={answers[i] ?? ""} onChange={(e) => setAnswers(answers.map((a, j) => (j === i ? e.target.value : a)))} />
+            <GrowingText label={`Your answer to question ${q.n}`} value={answers[i] ?? ""} onChange={(v) => setAnswers(answers.map((a, j) => (j === i ? v : a)))} />
             <span className="faint" style={{ fontSize: 12 }}>{answers[i] === q.recommendation ? "Dagaz's recommendation; change it if it is not what you want." : "Your answer."}</span>
           </label>
         ))}
@@ -184,9 +210,26 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
   const [said, setSaid] = useState<{ byField: Partial<Record<NewAgentField, string[]>>; rest: string[] }>({ byField: {}, rest: [] });
   const shownKey = keyTouched ? key : slugKey(name);
   const problem = shownKey ? keyProblem(shownKey, rows.map((r) => r.key)) : null;
-  const nameBad = name.trim() ? agentNameProblem(name.trim()) : null;
+  const nameBad = name.trim() ? agentNameProblem(name.trim()) || nameTaken(name, rows) : null;
   const groups = [...new Set(rows.map(packTitle))];
   const agent = drafted?.d.agent;
+
+  // A draft is set aside while the next one is made, and with it the form it filled: nothing of the old task stays under the new.
+  const discard = () => {
+    if (!drafted) return;
+    setDrafted(null);
+    setName("");
+    setKey("");
+    setKeyTouched(false);
+    setGlyph("");
+    setFrom("");
+    setSaid({ byField: {}, rest: [] });
+  };
+  const [drafting, setDrafting] = useState(false);
+  const working = (running: boolean) => {
+    setDrafting(running);
+    if (running) discard();
+  };
 
   const take = (d: Drafted, id: string) => {
     setDrafted({ d, run: id });
@@ -216,12 +259,12 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
       setBusy(false);
     }
   };
-  const ready = name.trim() && !nameBad && shownKey && !problem;
+  const ready = name.trim() && !nameBad && shownKey && !problem && !drafting;
   const at = (f: NewAgentField) => said.byField[f];
 
   return (
     <Dialog title="New agent" onClose={onClose} wide={Boolean(agent)}>
-      <DescribeTask cwd={cwd} want="agent" run={run} onDraft={take} />
+      <DescribeTask cwd={cwd} want="agent" run={run} onDraft={take} onRunning={working} onDiscard={discard} />
       {drafted && !agent && (
         <div className="callout amber">
           <span>
@@ -390,7 +433,7 @@ export function Gaps({ cwd, run, gaps }: { cwd: string; run: string; gaps: Draft
   const ws = useResource("/api/workspaces").data?.workspaces.find((w) => w.path === cwd)?.name ?? "";
   // A gap proposed on an earlier visit shows as proposed: its proposal rests on this run and names the gap.
   const before = useResource("/api/proposals", { cwd }).data?.proposals.filter((p) => p.run === run) ?? [];
-  const earlier = (g: DraftGap) => before.find((p) => p.problem.includes(`lacks this ${g.part}: ${g.need.split(/\s+/).join(" ")}.`));
+  const earlier = (g: DraftGap) => before.find((p) => p.problem.includes(`lacks this ${g.part}: ${g.need.split(/\s+/).join(" ").replace(/[. ]+$/, "")}.`));
   const propose = async (i: number) => {
     try {
       const p = await api.post<ProposalRow>("/api/proposals", { cwd, run, gap: i });

@@ -241,10 +241,15 @@ def origin(data: Data, workspace: str, unit: str) -> Proposal | None:
     return _proposal(row) if row is not None else None
 
 
+def _sentence(text: Any) -> str:
+    """Words on one line without a closing full stop, for a sentence that adds its own."""
+    return " ".join(str(text or "").split()).rstrip(". ")
+
+
 def of_gap(why: str, gap: Mapping[str, Any], run: str) -> Item:
     """A person's "propose this capability" on a gap a draft named (`{part, need, instead}`): a
     `feat` for the part the catalog lacks, resting on the draft's run."""
-    need = " ".join(str(gap.get("need") or "").split())
+    need = _sentence(gap.get("need"))
     part = str(gap.get("part") or "")
     if not need or not part:
         raise Invalid("a gap names its part and what is needed")
@@ -253,7 +258,7 @@ def of_gap(why: str, gap: Mapping[str, Any], run: str) -> Item:
     slug = words[:SLUG_MAX].rsplit("-", 1)[0] if len(words) > SLUG_MAX else words
     problem = (
         f"A person asked for an agent the catalog cannot build whole. It lacks this {part}: {need}. "
-        f"The draft does instead: {' '.join(str(gap.get('instead') or '').split()) or 'nothing'}."
+        f"The draft does instead: {_sentence(gap.get('instead')) or 'nothing'}."
         f"\n\nWhat the draft understood of the task: {' '.join(why.split())}"
     )
     return {

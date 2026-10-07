@@ -165,6 +165,17 @@ class AGapBecomesAProposal(unittest.TestCase):
         self.assertIn("lacks this trigger: a time of day, as every morning at 7.", item["problem"])
         self.assertTrue(proposals.SLUG.match(item["slug"]))
 
+    def test_a_gap_ending_in_a_full_stop_does_not_double_it(self):
+        gap = {
+            "part": "trigger",
+            "need": "a time of day.",
+            "instead": "every 24 h, plus a manual run.",
+        }
+        problem = proposals.of_gap("w", gap, "r9")["problem"]
+        self.assertNotIn("..", problem)
+        self.assertIn("lacks this trigger: a time of day. ", problem)
+        self.assertIn("plus a manual run.\n", problem)
+
     def test_a_long_need_keeps_a_slug_and_title_within_bounds(self):
         item = proposals.of_gap("w", {"part": "data", "need": "word " * 80, "instead": ""}, "r")
         self.assertLessEqual(len(item["slug"]), proposals.SLUG_MAX)

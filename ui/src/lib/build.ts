@@ -263,6 +263,13 @@ export function agentNameProblem(name: string): string | null {
   return /^[A-Za-z][A-Za-z0-9-]{0,23}$/.test(name) ? null : "Use 1 to 24 letters, digits or dashes, starting with a letter.";
 }
 
+/** Why a name cannot be used though its shape is fine: another agent already has it (the app compares without case). */
+export function nameTaken(name: string, rows: { key: string; row: { name?: unknown } }[], own = ""): string | null {
+  const n = name.trim().toLowerCase();
+  const hit = n ? rows.find((r) => r.key !== own && String(r.row.name ?? "").toLowerCase() === n) : undefined;
+  return hit ? `${String(hit.row.name)} is another agent's name; pick another.` : null;
+}
+
 // --- Dagaz's drafts -------------------------------------------------------------------------
 
 /** A question Dagaz asks before it drafts, with the answer it recommends. */
