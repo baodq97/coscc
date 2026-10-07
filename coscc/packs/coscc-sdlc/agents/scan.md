@@ -11,7 +11,7 @@ input: {"artifacts": [], "outputs": [], "answers": false, "findings": false, "da
 output: {"kind": "proposal", "version": 1, "purpose": "Hand the app the work you propose, each item with the interventions it gathers.", "fields": {"proposals": {"list": {"type": "text", "slug": "text", "title": "text", "problem": "text", "sources": {"list": "text"}}}}}
 trigger: {"schedule": {"hours": 24}, "manual": true, "leif": true}
 default: "off"
-ceilings: {"turns": 2, "usd": 0.68}
+ceilings: {"turns": 4, "usd": 0.68}
 warning: "Each run opens one paid, read-only session ($0.68 ceiling) on this row's model; a run with nothing new since the last is skipped at $0."
 ---
 You read the times a person had to step in on this workspace's work, and propose the work that would stop them happening again.
