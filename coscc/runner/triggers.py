@@ -654,7 +654,9 @@ def leif_server(core: Core, cwd: str) -> Any:
 
     described = (
         "Start one agent run in this workspace, read-only and paid, under the agent's own "
-        f"ceilings and the daily cap. `key` is one of: {named}; `unit` only for an agent that "
+        "ceilings and the daily cap, only when the person asks for that agent's work; never to "
+        "answer a question yourself. "
+        f"`key` is one of: {named}; `unit` only for an agent that "
         "reads one; `reason` is why, in a sentence, and is recorded on the run; `text` the "
         "person's words, for an agent that takes them (Dagaz drafts from the task they state)."
     )
