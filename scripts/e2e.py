@@ -133,7 +133,7 @@ def a_pack_is_turned_off_and_its_default_process_chosen(context, base, api) -> b
     page = open_studio(context, base, "/may-do")
     try:
         page.wait_for_selector("text=New units walk")
-        page.select_option("select", "coscc-sdlc/short")
+        page.get_by_label("New units walk").first.select_option("coscc-sdlc/short")
         page.wait_for_function(
             "fetch('/api/packs?cwd=' + encodeURIComponent(%r)).then(r => r.json()).then(p => p[0].process === 'coscc-sdlc/short')"
             % cwd
@@ -172,7 +172,7 @@ def a_person_builds_an_agent_and_a_process(context, base, api) -> bool:
     try:
         page.get_by_role("button", name="New agent").click()
         page.get_by_label("Name").fill("Tidy")
-        page.select_option("select", "impl")
+        page.get_by_label("Start from").select_option("impl")
         page.get_by_role("button", name="Create agent").click()
         page.wait_for_url("**/agents/tidy")
         page.wait_for_selector("text=tidy")

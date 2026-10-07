@@ -583,8 +583,9 @@ class Steps:
         found = next((u for u in data["units"] if u["name"] == unit), None)
         if found is None:
             raise Invalid(f"no such work unit in this workspace: {unit}")
-        if stage not in data["stages"]:
-            raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
+        names = [r["stage"] for r in found["stages"]]
+        if stage not in names:
+            raise Invalid(f"no such stage: {stage} (use one of {', '.join(names)})")
 
         try:
             journal.set_mode(self.ws.key(cwd), unit, stage, mode)
@@ -1019,7 +1020,8 @@ class Steps:
         row = next((r for r in found["stages"] if r["stage"] == stage), None)
         if row is None:
             raise Refused(
-                f"no such stage: {stage} (use one of {', '.join(data['stages'])})", ("no-stage",)
+                f"no such stage: {stage} (use one of {', '.join(r['stage'] for r in found['stages'])})",
+                ("no-stage",),
             )
         # the loop's own field, read before any worktree is opened — the gate
         # below would refuse too, but only after `worktree` had reopened a dropped tree.

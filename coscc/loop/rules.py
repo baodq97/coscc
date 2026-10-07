@@ -782,6 +782,10 @@ def cmd_status(json, cos_dir, limit, state, out):
             "afterAnswers": p.rerun("answers"),
             "units": rows,
         }
+        # The stages of every other process a unit walks: an owner's state is no default one.
+        others = {r for r in (proc_of(u.get("process")).ref for u in rows) if r != p.ref}
+        if others:
+            body["processes"] = {r: proc_of(r).stages for r in sorted(others)}
         out(stringify(body, 2))
         return 0
 

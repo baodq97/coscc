@@ -11,11 +11,11 @@ import { inUnit, merged, toolSummary } from "../screens/RunLog";
 import { moved } from "../screens/UpNext";
 import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
-import { attention, triggerWords } from "../screens/Agents";
+import { attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
 import { changes, get, put } from "../screens/AgentPage";
 import type { AgentRow } from "../api.gen";
-import { afterAgentSaved, draftOf, draftParts, draftTools, liveLine, runsByItself } from "./build";
+import { afterAgentSaved, draftOf, draftParts, draftTools, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
 import { addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
 
 describe("format", () => {
@@ -225,6 +225,52 @@ describe("agents", () => {
     expect(attention(row({ problems: ["bad"], chip: "failed" }))?.label).toBe("Cannot run");
     expect(attention(row({ chip: "costly" }))?.tone).toBe("amber");
     expect(attention(row({}))).toBeNull();
+  });
+
+  it("lists your periodic agent with the periodic ones, and one nothing runs under your pack", () => {
+    const yours = (over: Partial<AgentRow>) => row({ pack: "local", ...over } as Partial<AgentRow>);
+    expect(groupOf(yours({ group: "triggered", row: { trigger: { schedule: { hours: 24 } } } }))).toBe("triggered");
+    expect(groupOf(yours({ group: "stage" }))).toBe("stage");
+    expect(groupOf(yours({ group: "engine" }))).toBeNull();
+    expect(groupOf(row({ group: "engine", row: { trigger: { engine: "chat" } } }))).toBe("engine");
+  });
+
+  it("reads the workspace the address names, else the one the draft's run is of, else the first", () => {
+    const list = [{ name: "coscc", path: "/a" }, { name: "scratch", path: "/b" }];
+    expect(pickWorkspace(list, "scratch", "")?.path).toBe("/b");
+    expect(pickWorkspace(list, "", "/b")?.path).toBe("/b");
+    expect(pickWorkspace(list, "", null)).toBeUndefined();
+    expect(pickWorkspace(list, "", "")?.path).toBe("/a");
+    expect(pickWorkspace(list, "gone", "")?.path).toBe("/a");
+    expect(pickWorkspace([], "", "")).toBeUndefined();
+  });
+});
+
+describe("a pack's choices", () => {
+  const proc = (ref: string) => ({ ref, name: ref.split("/")[1] }) as never;
+  const packs = [
+    { name: "coscc-sdlc", on: true, own: false, process: "coscc-sdlc/full", processes: [proc("coscc-sdlc/full"), proc("coscc-sdlc/short")] },
+    { name: "local", on: true, own: true, process: "coscc-sdlc/full", processes: [proc("local/changelog")] },
+    { name: "extra", on: false, own: false, process: "coscc-sdlc/full", processes: [proc("extra/one")] },
+  ];
+
+  it("offers every process of every pack that is on in one select, showing the stored default", () => {
+    const { stored, choices } = walkChoices(packs);
+    expect(stored).toBe("coscc-sdlc/full");
+    expect(choices.map((c) => c.ref)).toEqual(["coscc-sdlc/full", "coscc-sdlc/short", "local/changelog"]);
+    expect(choices[2].label).toBe("changelog · yours");
+  });
+
+  it("keeps the stored default in view when its pack is off", () => {
+    const off = packs.map((p) => ({ ...p, process: "extra/one" }));
+    expect(walkChoices(off).choices.map((c) => c.ref)).toContain("extra/one");
+  });
+
+  it("drops the drafted agent once the loaded rows hold it", () => {
+    const d = { why: "w", agent: { key: "changelog", fields: {}, body: "" } };
+    expect(unsavedAgent(d, [{ key: "impl" }])?.key).toBe("changelog");
+    expect(unsavedAgent(d, [{ key: "impl" }, { key: "changelog" }])).toBeUndefined();
+    expect(unsavedAgent(d, [])).toBeUndefined();
   });
 });
 

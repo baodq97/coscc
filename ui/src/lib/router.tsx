@@ -22,6 +22,18 @@ export function usePath(): string {
   return path;
 }
 
+/** One parameter of the address's query, `""` when absent, kept current across moves. */
+export function useQuery(name: string): string {
+  const read = () => new URLSearchParams(location.search).get(name) ?? "";
+  const [value, setValue] = useState(read);
+  useEffect(() => {
+    const on = () => setValue(read());
+    addEventListener("popstate", on);
+    return () => removeEventListener("popstate", on);
+  }, [name]);
+  return value;
+}
+
 /** `match("/unit/:ws/:n", "/unit/coscc/162")` gives `{ws: "coscc", n: "162"}`, or null. */
 export function match(pattern: string, path: string): Record<string, string> | null {
   const want = pattern.split("/").filter(Boolean);

@@ -9,18 +9,19 @@ import { useBoards } from "../lib/boards";
 import { money } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { ProcessDiagram, ProcessEditor } from "../components/process";
-import { draftInAddress } from "../components/NewAgent";
-import { useAgents } from "./Agents";
+import { useQuery } from "../lib/router";
+import { useRunWorkspace } from "./Agents";
 import { refreshPacks } from "../lib/pack";
 import { ApiError } from "../lib/api";
-import { sizeWords, type BuildAgent, type BuildPack, type BuildProcess } from "../lib/build";
+import { sizeWords, walkChoices, type BuildAgent, type BuildPack, type BuildProcess } from "../lib/build";
 import { Button, Chip, Dialog, ErrorState, Meter, PageHead, SkeletonRows } from "../components/ui";
 
 export function MayDo() {
   const { boards, loading } = useBoards();
   const cap = boards.map((b) => b.board?.autopilot?.cap).find(Boolean);
-  // `?draft=<run>`: Dagaz's process opens in the first project's editor, as Leif hands it over.
-  const [run] = useState(draftInAddress);
+  // `?draft=<run>`: Dagaz's process opens in the editor of the project it was run in, as Leif hands it over.
+  const run = useQuery("draft");
+  const ofRun = useRunWorkspace(run, boards.map((b) => b.workspace));
 
   return (
     <div className="page mid">
@@ -37,7 +38,7 @@ export function MayDo() {
         </div>
       </Section>
       <Section title="Each project">
-        {loading ? <SkeletonRows rows={3} /> : boards.map((b, i) => <Project key={b.workspace.path} workspace={b.workspace} run={i === 0 ? run : ""} />)}
+        {loading ? <SkeletonRows rows={3} /> : boards.map((b, i) => <Project key={b.workspace.path} workspace={b.workspace} run={ofRun === b.workspace.path || (ofRun === "" && i === 0) ? run : ""} />)}
       </Section>
       <Section title="The app">
         <TheApp />
@@ -135,7 +136,7 @@ function Project({ workspace, run }: { workspace: Workspace; run: string }) {
 
 /** The packs of one project, each as a card, and the one door in for a pack from outside. */
 function Packs({ cwd, workspace, packs, run, disabled, onSave, onChanged }: { cwd: string; workspace: string; packs: PackShown[]; run: string; disabled: boolean; onSave: (name: string, body: { on?: boolean; process?: string }) => void; onChanged: () => void }) {
-  const { agents } = useAgents();
+  const agents = useResource("/api/agents", { cwd });
   const [importing, setImporting] = useState(false);
   const [added, setAdded] = useState("");
   const rows = (agents.data?.rows ?? []) as BuildAgent[];
@@ -147,6 +148,7 @@ function Packs({ cwd, workspace, packs, run, disabled, onSave, onChanged }: { cw
         <Button size="sm" onClick={() => (setAdded(""), setImporting(true))}>Import a pack</Button>
       </div>
       {added && <div className="pack-added" role="status">{added}</div>}
+      <NewUnitsWalk packs={packs} disabled={disabled} onSave={(ref) => onSave(ref.split("/")[0], { process: ref })} />
       {packs.map((p) => (
         <Pack key={p.name} cwd={cwd} workspace={workspace} pack={p as BuildPack} rows={rows} run={p.own ? run : ""} disabled={disabled} onSave={(body) => onSave(p.name, body)} onChanged={onChanged} />
       ))}
@@ -167,16 +169,37 @@ function Packs({ cwd, workspace, packs, run, disabled, onSave, onChanged }: { cw
   );
 }
 
+/** The one process a new unit of the project records: every process of every pack that is on, in one select. */
+function NewUnitsWalk({ packs, disabled, onSave }: { packs: PackShown[]; disabled: boolean; onSave: (ref: string) => void }) {
+  const { stored, choices } = walkChoices(packs);
+  if (!choices.length) return null;
+  return (
+    <Field label="New units walk" hint="The process a new unit records when it opens. A unit keeps its own for good.">
+      <select className="input" aria-label="New units walk" value={stored} disabled={disabled} onChange={(e) => onSave(e.target.value)}>
+        {choices.map((c) => (
+          <option key={c.ref} value={c.ref}>
+            {c.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
 const KIND_WORDS = (p: BuildPack) => (p.own ? "Yours" : p.imported ? "Imported" : "Built in");
 
 /** A pack in one project: what it is, on or off, the process a new unit walks, those processes drawn, and its export. */
-function Pack({ cwd, workspace, pack, rows, run, disabled, onSave, onChanged }: { cwd: string; workspace: string; pack: BuildPack; rows: BuildAgent[]; run: string; disabled: boolean; onSave: (body: { on?: boolean; process?: string }) => void; onChanged: () => void }) {
+function Pack({ cwd, workspace, pack, rows, run, disabled, onSave, onChanged }: { cwd: string; workspace: string; pack: BuildPack; rows: BuildAgent[]; run: string; disabled: boolean; onSave: (body: { on?: boolean }) => void; onChanged: () => void }) {
   const [shown, setShown] = useState(pack.process);
   const [editor, setEditor] = useState<"new" | string | null>(run ? "new" : null);
   const here = useRef<HTMLDivElement>(null);
+  // The run is known once the project it ran in is found, after the first draw.
   useEffect(() => {
-    if (run) here.current?.scrollIntoView({ block: "start" });
+    if (run) setEditor("new");
   }, [run]);
+  useEffect(() => {
+    if (run && editor === "new") here.current?.scrollIntoView({ block: "start" });
+  }, [run, editor]);
   const [removing, setRemoving] = useState(false);
   const [refused, setRefused] = useState<string[]>([]);
   const processes = pack.processes as BuildProcess[];
@@ -207,17 +230,6 @@ function Pack({ cwd, workspace, pack, rows, run, disabled, onSave, onChanged }: 
           <b>Not removed:</b>
           <ul>{refused.map((p) => <li key={p}>{p}</li>)}</ul>
         </div>
-      )}
-      {processes.length > 0 && (
-        <Field label="New units walk" hint="The process a new unit records when it opens. A unit keeps its own for good.">
-          <select className="input" value={pack.process} disabled={disabled} onChange={(e) => (setShown(e.target.value), onSave({ process: e.target.value }))}>
-            {processes.map((p) => (
-              <option key={p.ref} value={p.ref}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </Field>
       )}
       <div className="pack-acts">
         <a className="btn sm" href={`/api/packs/${encodeURIComponent(pack.name)}/export?cwd=${encodeURIComponent(cwd)}`} download={`${pack.name}.zip`}>
