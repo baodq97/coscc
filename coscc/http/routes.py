@@ -45,7 +45,8 @@ from coscc.leif.insights import Insights
 from coscc.runner import triggers
 from coscc.runner.steps import NextStep
 from coscc.runner.watch import EventsPage
-from coscc.units import proposals, read
+from coscc import units
+from coscc.units import proposals, read, states
 from coscc.units.backlog import SHORTLIST_MAX
 from coscc.units.read import Cards, Detail, UpNext, cards, detail
 from coscc.units.workspaces import WorkspaceList
@@ -412,14 +413,20 @@ async def create_unit(request: Request) -> Any:
     """Start a work unit. `brief` is the originator's own words and becomes the unit's
     `idea.md`, which the intent step reads."""
     body = await kernel.body(request)
-    return await _core(request).answers.create_unit(
-        str(body.get("cwd") or ""),
+    core, cwd = _core(request), str(body.get("cwd") or "")
+    made = await core.answers.create_unit(
+        cwd,
         str(body.get("slug") or ""),
         str(body.get("brief") or ""),
         # A unit opened from a shared idea: no brief; its link is a row of `unit_links`.
         idea=str(body.get("idea") or ""),
         depends_on=str(body.get("depends_on") or ""),
     )
+    # The page opens the unit at once and asks for the held board: it must hold the unit, opened.
+    # A board never read is read whole on its first ask, so only a held one is read again.
+    if core.ws.key(cwd) in core.boards.held:
+        await asyncio.shield(core.boards.refresh(cwd, again=True))
+    return made
 
 
 @router.post("/api/ideas")
@@ -667,7 +674,9 @@ async def get_unit(name: str, request: Request) -> Detail:
             proposals.listed, Data(core.config.data_dir), core.ws.key(cwd), found[0]
         )
         shown = read.outcome(*found, verdict, [p for p in made if p["unit"] == name])
-    return detail(unit, timeline, outputs, decisions, graded, shown)
+    idea = units.unit_dir(cwd, name, core.config.data_dir) / states.brief_file()
+    brief = await asyncio.to_thread(idea.read_text, "utf-8") if idea.is_file() else ""
+    return detail(unit, timeline, outputs, decisions, graded, shown, brief)
 
 
 def _number(request: Request, name: str) -> int | None:

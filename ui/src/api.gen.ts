@@ -263,6 +263,7 @@ export type Detail = {
   "outputs": OutputRecord[];
   "decisions": Decision[];
   "outcome": Outcome | null;
+  "brief": string;
 };
 
 export type EstimateBrief = {

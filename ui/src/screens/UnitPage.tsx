@@ -9,7 +9,7 @@ import { allUnits, findUnit, useBoards } from "../lib/boards";
 import { FeatureSlots } from "../lib/feature";
 import { ago, modelName, money, pausedAt, unitCode, unitTitle } from "../lib/format";
 import { AgentAvatar, Icon, LeifMark } from "../lib/icons";
-import { unitState } from "../lib/model";
+import { consequence, liveQuestions, runnable, unitState } from "../lib/model";
 import { stageLabel, useIndex } from "../lib/pack";
 import { ProcessDiagram } from "../components/process";
 import { Link } from "../lib/router";
@@ -43,7 +43,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
 
   const state = unitState(placed);
   const d = detail.data;
-  const open = d?.questions.filter((q) => !q.answered) ?? [];
+  const open = liveQuestions(placed, 1) ? (d?.questions.filter((q) => !q.answered) ?? []) : [];
   const now = running ? running.stage : next.data?.stage || "";
   const shipped = state.group === "Shipped";
 
@@ -63,6 +63,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
           )}
         </div>
         <h1 className="title" style={{ marginTop: 10 }}>{unitTitle(placed.name)}</h1>
+        {d?.brief && <Brief text={d.brief} />}
         {placed.paused && <PausedBanner unit={placed} paused={placed.paused} onDone={() => detail.reload()} />}
         {open.length > 0 && (
           <div className="callout amber" style={{ marginTop: 18 }}>
@@ -79,7 +80,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
           </div>
         )}
         {next.data && !shipped && !open.length && !placed.paused && (
-          <div className={next.data.gate || next.data.blocked ? "callout amber" : "callout"} style={{ marginTop: 18 }}>
+          <div className={next.data.gate || (next.data.blocked && !runnable(next.data)) ? "callout amber" : "callout"} style={{ marginTop: 18 }}>
             <Icon name="arrow" size={15} />
             <div className="grow">
               <b>{next.data.stage ? `Next: ${stageLabel(next.data.stage)}` : next.data.blocked ? "Nothing can run yet" : "Nothing to run"}</b>
@@ -171,7 +172,9 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
         <Actions
           unit={placed}
           running={Boolean(running)}
-          stage={next.data && !next.data.blocked && !next.data.gate && !placed.paused ? next.data.stage ?? "" : ""}
+          stage={runnable(next.data) && !placed.paused ? next.data?.stage ?? "" : ""}
+          upNext={next.data?.stage || placed.next_stage}
+          lines={Object.fromEntries((agents.data?.rows ?? []).map((a) => [a.key, consequence(a.config)]))}
           moves={d?.hold_moves ?? []}
           onDone={() => {
             detail.reload();
@@ -268,6 +271,22 @@ function PausedBanner({ unit, paused, onDone }: { unit: PlacedUnit; paused: Paus
         {asking === "drop" && <textarea className="ta" rows={2} style={{ fontSize: 12.5, marginTop: 8 }} placeholder="Why drop it? (kept with the unit)" value={reason} onChange={(e) => setReason(e.target.value)} />}
         {error && <div style={{ color: "var(--red)", fontSize: 12.5, marginTop: 8 }}>{error.message}</div>}
       </div>
+    </div>
+  );
+}
+
+/** The words that opened the unit; a long brief shows its start and opens on a press. */
+function Brief({ text }: { text: string }) {
+  const [all, setAll] = useState(false);
+  const long = text.length > 360;
+  return (
+    <div className="muted" style={{ marginTop: 10, whiteSpace: "pre-wrap", maxWidth: 720 }} title="Your words that opened this unit">
+      {long && !all ? `${text.slice(0, 360).trimEnd()}… ` : text}
+      {long && (
+        <button className="link-btn faint" onClick={() => setAll(!all)}>
+          {all ? " Show less" : "Show all"}
+        </button>
+      )}
     </div>
   );
 }
@@ -492,9 +511,9 @@ function Outputs({ outputs, names }: { outputs: OutputRecord[]; names: Record<st
             <Chip square tone="plain">v{o.version}</Chip>
             <span className="faint" title={o.at}>{ago(o.at)}</span>
           </div>
-          {Object.entries(o.fields).map(([k, v]) => (
+          {Object.entries(o.fields).filter(([, v]) => !isEmpty(v)).map(([k, v]) => (
             <div key={k} style={{ marginTop: 6 }}>
-              <span className="faint">{k}</span>
+              <span className="faint">{fieldLabel(k)}</span>
               <FieldValue value={v} />
             </div>
           ))}
@@ -502,6 +521,20 @@ function Outputs({ outputs, names }: { outputs: OutputRecord[]; names: Record<st
       ))}
     </div>
   );
+}
+
+/** A field's name as a person reads it: `rests_on` is "Rests on". */
+export function fieldLabel(key: string): string {
+  const words = key.replace(/[_-]+/g, " ").trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** A field with nothing in it (no text, an empty list or object) is left out of an output. */
+export function isEmpty(value: unknown): boolean {
+  if (value == null || value === "") return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.values(value).every(isEmpty);
+  return false;
 }
 
 /** A list is one line per item; an object is each field under its name, a list field (a plan
@@ -524,7 +557,7 @@ function FieldValue({ value }: { value: unknown }) {
       <div>
         {Object.entries(value).map(([k, v]) => (
           <div key={k}>
-            <span className="faint">{k}: </span>
+            <span className="faint">{fieldLabel(k)}: </span>
             {v && typeof v === "object" ? <FieldValue value={v} /> : String(v)}
           </div>
         ))}
@@ -685,7 +718,7 @@ function AnswerItem({ group }: { group: AnswerGroup }) {
  * What a person may do to the unit now. A paid or lasting action asks once more before it acts:
  * a step spends quota, a drop closes the pull request.
  */
-function Actions({ unit, running, stage, moves, onDone }: { unit: PlacedUnit; running: boolean; stage: string; moves: string[]; onDone: () => void }) {
+function Actions({ unit, running, stage, upNext, lines, moves, onDone }: { unit: PlacedUnit; running: boolean; stage: string; upNext: string; lines: Record<string, string>; moves: string[]; onDone: () => void }) {
   const [asking, setAsking] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -707,6 +740,8 @@ function Actions({ unit, running, stage, moves, onDone }: { unit: PlacedUnit; ru
       setBusy(false);
     }
   };
+  const dropped = unitState(unit).group === "Dropped";
+  const line = (key: string) => lines[key] ?? consequence(undefined);
   const hold = (to: string) => api.post("/api/units/hold", { ...at, to, reason: reason.trim() });
 
   return (
@@ -720,14 +755,20 @@ function Actions({ unit, running, stage, moves, onDone }: { unit: PlacedUnit; ru
           {asking === "run" ? `Spend quota on ${stageLabel(stage)}?` : `Run ${stageLabel(stage)}`}
         </Button>
       ) : null}
+      {!running && stage && <div className="faint" style={{ fontSize: 12 }}>{line(stage)}</div>}
       {moves.includes("active") && (
         <Button icon="refresh" disabled={busy} onClick={() => act("active", () => hold("active"))}>
           {asking === "active" ? "Resume it? Nothing starts by itself" : "Resume"}
         </Button>
       )}
+      {moves.includes("active") && (
+        <div className="faint" style={{ fontSize: 12 }}>
+          Puts the unit back on the board; nothing starts by itself.{upNext ? ` Next up is ${stageLabel(upNext)}. ${line(upNext)}` : ""}
+        </div>
+      )}
       {moves.includes("paused") && (
         <Button icon="pause" disabled={busy} onClick={() => act("paused", () => hold("paused"))}>
-          {asking === "paused" ? "Pause it?" : "Pause"}
+          {asking === "paused" ? (dropped ? "Reopen it, paused?" : "Pause it?") : dropped ? "Reopen, paused" : "Pause"}
         </Button>
       )}
       {moves.includes("dropped") &&

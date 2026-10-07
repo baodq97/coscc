@@ -1405,6 +1405,17 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         board = await self.app.state.core.board(self.cwd, "new")
         self.assertEqual([u["name"] for u in board["units"]], [name])
 
+    async def test_the_held_board_holds_the_new_unit_as_an_idea_at_once(self):
+        await self.client.get("/api/units", params={"cwd": self.cwd})
+        made = await self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": "a-first-problem", "brief": "Say it."}
+        )
+        name = made.json()["unit"]
+        held = (await self.client.get("/api/units", params={"cwd": self.cwd})).json()
+        self.assertEqual([(u["name"], u["phase"]) for u in held["units"]], [(name, "pre-intent")])
+        page = (await self.client.get(f"/api/units/{name}", params={"cwd": self.cwd})).json()
+        self.assertEqual(page["brief"], "Say it.")
+
     async def test_the_brief_is_stored_as_the_idea_the_intent_step_will_read(self):
         made = await self.client.post(
             "/api/units",

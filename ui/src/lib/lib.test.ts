@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ago, modelName, money, unitCode, unitTitle } from "./format";
 import { match } from "./router";
 import { findUnit, type PlacedUnit } from "./boards";
-import { unitState, type Unit } from "./model";
+import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { fill, readLines } from "./api";
 import { FEATURE_UIS } from "./feature";
@@ -14,6 +14,8 @@ import { kinds } from "../../../coscc/features/release/ui/index";
 import { attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
 import { changes, get, put } from "../screens/AgentPage";
+import { fieldLabel, isEmpty } from "../screens/UnitPage";
+import type { NextStep } from "../api.gen";
 import type { AgentRow } from "../api.gen";
 import { afterAgentSaved, draftOf, draftParts, draftTools, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
 import { addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
@@ -471,5 +473,39 @@ describe("Dagaz's draft fills the forms", () => {
     expect(liveLine([{ kind: "tool_use", name: "mcp__cos__submit" }])).toMatch(/checks/);
     expect(liveLine([{ kind: "tool_result", is_error: true }])).toMatch(/refused/);
     expect(liveLine([{ kind: "end" }])).toBe("Finished.");
+  });
+});
+
+describe("work and needs you", () => {
+  const unit = (over: Record<string, unknown>) => ({ why: "", phase: "started", open: 2, hold: null, missing: [], paused: null, next_stage: "spec", ...over }) as unknown as Unit;
+  const next = (over: Partial<NextStep>) => ({ stage: "spec", blocked: false, reasons: [], ...over }) as NextStep;
+
+  it("counts no open questions on a dropped or shipped unit", () => {
+    expect(liveQuestions(unit({}))).toBe(2);
+    expect(liveQuestions(unit({ why: "dropped" }))).toBe(0);
+    expect(liveQuestions(unit({ why: "finished" }))).toBe(0);
+    expect(liveQuestions(unit({ why: "dropped" }), 1)).toBe(0);
+  });
+
+  it("offers the run for a stage whose only reason is missing", () => {
+    expect(runnable(next({}))).toBe(true);
+    expect(runnable(next({ blocked: true, reasons: ["missing"] }))).toBe(true);
+    expect(runnable(next({ blocked: true, reasons: ["missing", "waiting-on"] }))).toBe(false);
+    expect(runnable(next({ blocked: true, reasons: [] }))).toBe(false);
+    expect(runnable(next({ gate: "closed" }))).toBe(false);
+    expect(runnable(next({ stage: null }))).toBe(false);
+    expect(runnable(undefined)).toBe(false);
+  });
+
+  it("says what a run is: model, effort and ceilings", () => {
+    const c = { model: "claude-sonnet-5-5", effort: "medium", ceilings: { max_turns: 40, max_budget_usd: 3 } } as never;
+    expect(consequence(c)).toBe("Runs Sonnet 5.5 at medium effort, at most 40 turns and $3.00. Spends account quota.");
+  });
+
+  it("reads an output field plainly and leaves empty ones out", () => {
+    expect(fieldLabel("rests_on")).toBe("Rests on");
+    expect(fieldLabel("judgement")).toBe("Judgement");
+    expect([[], "", null, {}, { a: [] }].every(isEmpty)).toBe(true);
+    expect(["x", ["x"], 0].some(isEmpty)).toBe(false);
   });
 });
