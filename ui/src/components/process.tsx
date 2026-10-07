@@ -269,7 +269,7 @@ export function ProcessEditor({
           </div>
         )}
         {drafted?.d.process && (
-          <div className="callout accent why">
+          <div className="callout accent why" id="draft-why">
             <span>
               <b>Why this process</b>
               <br />

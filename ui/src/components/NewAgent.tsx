@@ -119,7 +119,7 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
         </div>
       )}
       {phase.at === "failed" && (
-        <div className="pe-refused" role="alert">
+        <div className="pe-refused" role="alert" id="draft-none">
           <b>No draft</b>
           <div>{phase.why}</div>
         </div>
@@ -184,7 +184,7 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
         </div>
       )}
       {agent && (
-        <div className="callout accent why">
+        <div className="callout accent why" id="draft-why">
           <span>
             <b>Why this agent</b>
             <br />
