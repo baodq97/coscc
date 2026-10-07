@@ -508,9 +508,12 @@ _READ: list[tuple[object, dict[str, Output], dict[str, Input]]] = []
 
 def _read() -> tuple[dict[str, Output], dict[str, Input]]:
     rows = pack.rows()
-    if not _READ or _READ[0][0] is not rows:
-        _READ[:] = [(rows, load(rows), load_inputs(rows))]
-    return _READ[0][1], _READ[0][2]
+    # Read once into a local: another thread (or a trial's rows) may replace the cache meanwhile.
+    cached = next(iter(_READ), None)
+    if cached is None or cached[0] is not rows:
+        cached = (rows, load(rows), load_inputs(rows))
+        _READ[:] = [cached]
+    return cached[1], cached[2]
 
 
 def _inputs() -> dict[str, Input]:

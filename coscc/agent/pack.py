@@ -420,6 +420,10 @@ def _check_trigger(
     for k in ("manual", "leif"):
         if k in trigger and trigger[k] is not True:
             out.append(f"trigger.{k} is true")
+    # A run a trigger starts is bounded in money by its own row: without `usd` it has no limit.
+    ceilings = row.get("ceilings")
+    if not isinstance(ceilings, dict) or "usd" not in ceilings:
+        out.append("ceilings.usd: a row a trigger starts says what one run may spend")
     if "schedule" in trigger:
         out += _check_hours("trigger.schedule", trigger["schedule"], "hours", required=True)
     if "event" in trigger:

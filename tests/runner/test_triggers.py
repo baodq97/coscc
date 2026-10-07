@@ -791,6 +791,10 @@ class ATrialRunsARowNotSaved(_Core):
         self.assertEqual(await self.refused(key="scan"), ("agent-invalid",))
         self.assertEqual(await self.refused(ceilings={"turns": 4, "usd": 500}), ("agent-invalid",))
 
+    async def test_a_row_with_no_dollar_ceiling_runs_no_trial(self):
+        for ceilings in ({"turns": 4}, {"turns": 4, "usd": 0}):
+            self.assertEqual(await self.refused(ceilings=ceilings), ("agent-invalid",), ceilings)
+
     async def test_a_row_that_reads_a_unit_runs_no_trial(self):
         given = {"artifacts": ["intent"], "outputs": [], "answers": False, "findings": False}
         await self.refused(input={**given, "data": []})

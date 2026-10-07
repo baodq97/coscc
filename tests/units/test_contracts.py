@@ -454,3 +454,22 @@ class AnInputDeclarationIsChecked(unittest.TestCase):
         del raw["agents"]["spec"]["input"]["findings"]
         with self.assertRaises(ContractError):
             self.inputs(raw)
+
+
+class TheCacheIsReadOnce(unittest.TestCase):
+    def test_a_cache_replaced_meanwhile_does_not_change_what_this_read_returns(self):
+        from unittest import mock
+
+        real = contracts.load_inputs
+
+        def others_write_meanwhile(rows):
+            got = real(rows)
+            contracts._READ[:] = [(object(), {}, {})]
+            return got
+
+        contracts._READ.clear()
+        with mock.patch.object(contracts, "load_inputs", others_write_meanwhile):
+            outputs, inputs = contracts._read()
+        self.assertIn("dagaz", outputs)
+        self.assertIn("dagaz", inputs)
+        contracts._READ.clear()

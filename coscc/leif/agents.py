@@ -586,6 +586,9 @@ class Agents:
             step = (str(record.get("workspace")), str(record.get("unit")), str(record.get("stage")))
             if record.get("kind") == "start":
                 starts[step] = record
+            elif step[2] == triggers.TRIAL:
+                # A trial ran a row before it was saved: no run of any agent, saved later or not.
+                starts.pop(step, None)
             else:
                 start = starts.pop(step, {})
                 ends.setdefault(str(record.get("agent") or step[2]), []).append(
@@ -765,8 +768,8 @@ class Agents:
 
     def _failed(self, by_key: dict[str, str], name: Callable[[str], str]) -> list[LiveFailed]:
         """The agents whose latest run in a workspace failed within `FAILED_DAYS`, newest first:
-        a later run that did not fail clears it. A follow-up, a skip and a chat turn are no run
-        of the agent's own."""
+        a later run that did not fail clears it. A follow-up, a skip, a chat turn and a trial are no
+        run of the agent's own."""
         journal = self.ws.journal()
         if journal is None:
             return []
@@ -778,7 +781,9 @@ class Agents:
             for r in journal.records(None, kinds=("end",), since=since):
                 if r.get("workspace") in by_key and r.get("agent") and not r.get("unit"):
                     if not (
-                        r.get("skipped") or r.get("parent_run") or r.get("stage") in ("ask", "chat")
+                        r.get("skipped")
+                        or r.get("parent_run")
+                        or r.get("stage") in ("ask", "chat", triggers.TRIAL)
                     ):
                         latest[str(r["workspace"]), str(r["agent"])] = r
         except Unusable, Busy, sqlite3.Error, OSError:
