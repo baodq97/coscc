@@ -14,7 +14,7 @@ paths:
 - A `Grant` is one run's permission (`run.issue`), the only thing `critical` reads; a feature
   binds by catalog name and reads `facts.grant`, never a stage. The owner edits a row's tools, so
   no rule here trusts a row; `ask` is refused `asks-a-person`.
-- The critical check reads words and is a tripwire, not a sandbox (`python -c` walks past it).
+- The critical check reads words and is a tripwire, not a sandbox (`"gi"+"t"` walks past it).
   Keep it to the few calls that must never run.
 - No read boundary: a session reads anything but the secrets; prompts name artifacts by path.
 - A quoted word shaped like a command line is read again as one, except a commit message or a
