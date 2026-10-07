@@ -422,6 +422,11 @@ export type Meta = {
   "granted": boolean | null;
 };
 
+export type Named = {
+  "key": string;
+  "name": string;
+};
+
 export type NextStep = {
   "cwd": string;
   "unit": string;
@@ -765,7 +770,7 @@ export type Skill = {
   "hash": string;
   "chars": number;
   "text": string;
-  "agents": string[];
+  "agents": Named[];
   "uses_30d": number;
   "last_used": string;
 };
@@ -780,6 +785,7 @@ export type SkillText = {
 export type SkillsPage = {
   "skills": Skill[];
   "problems": string[];
+  "counted_since": string;
 };
 
 export type Source = {

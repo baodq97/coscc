@@ -1498,6 +1498,10 @@ def write(
     after = {**_fields(base), **fields, **({BODY: body.strip()} if body.strip() else {})}
     others = {k: _fields(r) for k, r in rows().items() if k != key}
     reasons = check(after, catalog, {**others, key: after})
+    # A stage's rules are its skills, or the body of a row no built-in ships (`prompt.skill_for`).
+    bare = found["pack"] == manifest()["name"] or not str(after.get(BODY) or "").strip()
+    if field in ("skills", BODY) and not after.get("skills") and bare and (used := naming(key)):
+        reasons.append(f"skills: {key} runs in {', '.join(used)}, so it needs a skill")
     if reasons:
         raise ValueError("; ".join(reasons))
     path = owner_dir() / "agents" / f"{key}.md"

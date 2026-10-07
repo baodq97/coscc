@@ -28,7 +28,10 @@ describe("a skill's line", () => {
     expect(whose({ own: false, builtin: false, edited: false, pack: "audits" })).toBe("audits");
   });
   it("counts its uses", () => {
-    expect(usesWords({ uses_30d: 0, last_used: "" })).toBe("Not used in 30 days");
-    expect(usesWords({ uses_30d: 1, last_used: new Date().toISOString() })).toMatch(/^1 use in 30 days, last /);
+    const now = Date.parse("2026-10-07T12:00:00Z");
+    expect(usesWords({ uses_30d: 0, last_used: "" }, "", now)).toBe("Not counted yet");
+    expect(usesWords({ uses_30d: 0, last_used: "" }, "2026-10-07T10:00:00Z", now)).toBe("No use since Oct 7");
+    expect(usesWords({ uses_30d: 1, last_used: "2026-10-07T11:00:00Z" }, "2026-10-07T10:00:00Z", now)).toMatch(/^1 use since Oct 7, last /);
+    expect(usesWords({ uses_30d: 2, last_used: "2026-10-07T11:00:00Z" }, "2026-08-01T00:00:00Z", now)).toMatch(/^2 uses in 30 days, last /);
   });
 });

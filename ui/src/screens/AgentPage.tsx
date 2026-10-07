@@ -952,7 +952,7 @@ function Prompt(ctx: Ctx) {
         Skills <span className="faint">rules given with its prompt on every run; a skill's text is shared by every agent that names it</span>
       </div>
       <div className="card card-b">
-        <SkillPicker agent={a.key} names={(ctx.value("skills") as string[] | undefined) ?? []} editable={ctx.editable} onChange={(n) => ctx.edit("skills", n)} />
+        <SkillPicker agent={a.key} title={a.row.name ?? a.key} names={(ctx.value("skills") as string[] | undefined) ?? []} editable={ctx.editable} onChange={(n) => ctx.edit("skills", n)} />
         {a.skills.map((s) => (
           <TextPart key={s.name} ctx={ctx} field={`skill:${s.name}`} label={s.name} rows={18} mono />
         ))}

@@ -28,10 +28,15 @@ export function whose(s: Pick<Skill, "own" | "builtin" | "edited" | "pack">): st
   return s.edited ? `${from}, edited by you` : from;
 }
 
-/** How often runs were given it, in words. */
-export function usesWords(s: Pick<Skill, "uses_30d" | "last_used">): string {
-  if (!s.uses_30d) return "Not used in 30 days";
-  return `${s.uses_30d} ${s.uses_30d === 1 ? "use" : "uses"} in 30 days, last ${ago(s.last_used)}`;
+const DAY = 86_400_000;
+
+/** How often runs were given it, in words; uses are counted only since runs began naming their skills (`since`). */
+export function usesWords(s: Pick<Skill, "uses_30d" | "last_used">, since: string, now = Date.now()): string {
+  if (!since) return "Not counted yet";
+  const from = Date.parse(since);
+  const window = now - from < 30 * DAY ? `since ${new Date(from).toLocaleDateString("en", { month: "short", day: "numeric" })}` : "in 30 days";
+  if (!s.uses_30d) return `No use ${window}`;
+  return `${s.uses_30d} ${s.uses_30d === 1 ? "use" : "uses"} ${window}, last ${ago(s.last_used)}`;
 }
 
 export function Skills() {
@@ -39,7 +44,9 @@ export function Skills() {
   const open = useQuery("skill");
   const adding = useQuery("new") === "1";
   const agent = useQuery("agent");
+  const agentName = useQuery("as") || agent;
   const skills = res.data?.skills ?? [];
+  const since = res.data?.counted_since ?? "";
   const shown = skills.find((s) => s.name === open);
   return (
     <div className="page">
@@ -74,26 +81,29 @@ export function Skills() {
                 </span>
                 <span className="ms">
                   <span className="m">{whose(s)}</span>
-                  <span className="m">{s.agents.length ? `Given to ${s.agents.join(", ")}` : "Given to no agent"}</span>
-                  <span className="m">{usesWords(s)}</span>
+                  <span className="m">{s.agents.length ? `Given to ${s.agents.map((a) => a.name).join(", ")}` : "Given to no agent"}</span>
+                  <span className="m">{usesWords(s, since)}</span>
                 </span>
               </button>
             ))}
           </div>
         </>
       )}
-      {shown && <SkillText s={shown} onClose={() => setQuery("skill", "")} />}
+      {shown && <SkillText s={shown} since={since} onClose={() => setQuery("skill", "")} />}
       {adding && (
         <NewSkill
           agent={agent}
+          agentName={agentName}
           onClose={() => {
             setQuery("new", "");
             setQuery("agent", "");
+            setQuery("as", "");
           }}
           onSaved={(name) => {
             res.reload();
             setQuery("new", "");
             setQuery("agent", "");
+            setQuery("as", "");
             setQuery("skill", name);
           }}
         />
@@ -102,7 +112,7 @@ export function Skills() {
   );
 }
 
-function SkillText({ s, onClose }: { s: Skill; onClose: () => void }) {
+function SkillText({ s, since, onClose }: { s: Skill; since: string; onClose: () => void }) {
   return (
     <Dialog title={s.name} onClose={onClose} wide>
       <div className="kv">
@@ -110,10 +120,10 @@ function SkillText({ s, onClose }: { s: Skill; onClose: () => void }) {
         <span>{whose(s)}</span>
         <span className="k">Given to</span>
         <span className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-          {s.agents.length ? s.agents.map((a) => <Link key={a} to={`/agents/${a}/prompt`}>{a}</Link>) : <span className="faint">No agent names it yet: add it on an agent's Prompt & skills tab.</span>}
+          {s.agents.length ? s.agents.map((a) => <Link key={a.key} to={`/agents/${a.key}/prompt`}>{a.name}</Link>) : <span className="faint">No agent names it yet: add it on an agent's Prompt & skills tab.</span>}
         </span>
         <span className="k">Used</span>
-        <span>{usesWords(s)}</span>
+        <span>{usesWords(s, since)}</span>
       </div>
       <pre className="skill-text">{s.text}</pre>
       <div className="row" style={{ gap: 10, alignItems: "center" }}>
@@ -124,7 +134,7 @@ function SkillText({ s, onClose }: { s: Skill; onClose: () => void }) {
   );
 }
 
-function NewSkill({ agent, onClose, onSaved }: { agent: string; onClose: () => void; onSaved: (name: string) => void }) {
+function NewSkill({ agent, agentName, onClose, onSaved }: { agent: string; agentName: string; onClose: () => void; onSaved: (name: string) => void }) {
   const [name, setName] = useState("");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -143,7 +153,7 @@ function NewSkill({ agent, onClose, onSaved }: { agent: string; onClose: () => v
     }
   };
   return (
-    <Dialog title={agent ? `New skill for ${agent}` : "New skill"} onClose={onClose} wide>
+    <Dialog title={agent ? `New skill for ${agentName}` : "New skill"} onClose={onClose} wide>
       <div className="kv">
         <span className="k">Name</span>
         <input className="input mono" aria-label="Skill name" value={name} placeholder="for-example-cite-sources" onChange={(e) => setName(e.target.value.trim())} />
@@ -157,7 +167,7 @@ function NewSkill({ agent, onClose, onSaved }: { agent: string; onClose: () => v
       )}
       <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <Button kind="primary" size="sm" disabled={busy || Boolean(problem)} onClick={save}>
-          {agent ? `Save and give to ${agent}` : "Save"}
+          {agent ? `Save and give to ${agentName}` : "Save"}
         </Button>
         <Button size="sm" kind="ghost" onClick={onClose}>Cancel</Button>
         <span className="faint" style={{ fontSize: 12 }}>{problem || "Saved in your own layer; nothing runs until an agent names it."}</span>

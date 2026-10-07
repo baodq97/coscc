@@ -94,8 +94,7 @@ class _Asking(unittest.IsolatedAsyncioTestCase):
             run=given.run,
             grants=policy.record(grant),
             model=agent.model,
-            **pack.stamp(agent.key),
-            **given.start,
+            **{**pack.stamp(agent.key), **given.start},
         )
         got = Run("done", "the answer", {"cost_usd": 0.03}, session=given.session_id or "s-new")
         extra = dict(await finish(got)) if finish else {}
@@ -189,6 +188,8 @@ class AWarmRunIsResumed(_Asking):
         self.assertEqual(given.spent_before["cache_creation_tokens"], 60_000)
         self.assertTrue(given.cache_hour)
         self.assertEqual((given.stage, given.start["parent_run"]), (ask.STAGE, "p1"))
+        # A triggered row's follow-up holds its row's prompt, so `pack.stamp` names its skills.
+        self.assertNotIn("skills", given.start)
         (end,) = [r for r in self.journal.records(self.ws, kinds=("end",)) if r["stage"] == "ask"]
         self.assertEqual((end["parent_run"], end["resumed"], end["agent"]), ("p1", True, "scan"))
 
@@ -304,6 +305,8 @@ class AStageStepIsAskedByAReader(_Asking):
         self.assertEqual(grant.tools, policy.READ_TOOLS)
         self.assertEqual((grant.write, grant.branch, grant.helpers, grant.mcp), ((), "", (), ()))
         self.assertFalse(given.cache_hour)
+        # It is told only `ASK_SYSTEM`, so its `start` names no skill: the stage's are not a use.
+        self.assertEqual((agent.system, given.start["skills"]), (ask.ASK_SYSTEM, []))
         # Bash is not offered at all; what is offered and writes is refused.
         self.assertNotIn("Bash", grant.tools)
         for tool, args in (

@@ -518,6 +518,8 @@ async def _ask(
                     "resumed": bool(plan.session),
                     "triggered": plan.triggered,
                     "row_grants": plan.grant_now,
+                    # A stage's follow-up is told `ASK_SYSTEM`, never the stage's skills.
+                    **({} if plan.triggered else {"skills": []}),
                     **({"fresh_why": plan.why} if plan.why else {}),
                     **({"head": head} if head else {}),
                 },

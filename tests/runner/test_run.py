@@ -116,6 +116,13 @@ class EachStatus(Base):
         self.go(Fake(obj={"units": []}))
         self.assertEqual(self.rows("end")[-1]["started_by"], "person")
 
+    def test_the_start_names_the_rows_skills_unless_the_run_says_otherwise(self):
+        spec = run_mod.Agent("spec", Row(max_turns=4, max_budget_usd=1.0), model="m")
+        self.go(Fake(obj={"units": []}), agent=spec)
+        self.assertRegex(self.rows("start")[-1]["skills"][0], r"^write-spec@[0-9a-f]{12}$")
+        self.go(Fake(obj={"units": []}), agent=spec, start={"skills": []})
+        self.assertEqual(self.rows("start")[-1]["skills"], [])
+
     def test_a_ceiling_is_paused_budget(self):
         got = self.go(Fake(obj={"units": []}, terminal="error_max_budget_usd"))[-1][1]
         self.assertEqual((got.status, got.output), ("paused-budget", None))

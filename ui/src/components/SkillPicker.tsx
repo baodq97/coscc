@@ -10,7 +10,7 @@ export function toggleSkill(names: string[], name: string): string[] {
   return names.includes(name) ? names.filter((n) => n !== name) : [...names, name];
 }
 
-export function SkillPicker({ agent, names, editable, onChange }: { agent: string; names: string[]; editable: boolean; onChange: (names: string[]) => void }) {
+export function SkillPicker({ agent, title, names, editable, onChange }: { agent: string; title: string; names: string[]; editable: boolean; onChange: (names: string[]) => void }) {
   const all = useResource("/api/skills").data?.skills ?? [];
   const more = all.filter((s) => !names.includes(s.name));
   return (
@@ -36,7 +36,7 @@ export function SkillPicker({ agent, names, editable, onChange }: { agent: strin
           ))}
         </select>
       )}
-      {editable && <Link to={`/skills?new=1&agent=${agent}`}>New skill…</Link>}
+      {editable && <Link to={`/skills?${new URLSearchParams({ new: "1", agent, as: title })}`}>New skill…</Link>}
     </div>
   );
 }

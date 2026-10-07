@@ -30,7 +30,7 @@ Read this before adding a route, a button or a grant.
 - **Whoever holds the password can write new skills.** `POST /api/skills/new` writes
   `local/skills/<name>/SKILL.md` (a new name only, no link on the way, at most 16 KB), the same
   trust as editing a prompt: every run of a row naming it is given its text, and its `start`
-  names it as `name@hash`.
+  names it as `name@hash`. An owner's skill wins over a same-named skill an update adds later.
 - **Whoever holds the password can add agents, processes and packs.** `POST /api/agents/new`
   (a copy, a blank reader, or a whole `row`: Dagaz's draft, which holds no tool and writes
   nothing; its `end` keeps the draft and a person saves it) and `/api/agents/delete` write a whole

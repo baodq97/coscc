@@ -10,11 +10,8 @@ it is given; every run records them on its `start` as `name@hash` (`pack.stamp`)
 from __future__ import annotations
 
 import hashlib
-import json
-import os
 import re
 import sqlite3
-import tempfile
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
@@ -33,6 +30,12 @@ WINDOW_DAYS = 30
 _DESCRIPTION = re.compile(r"\A---\n(?:.*\n)*?description:[ \t]*(.+)\n(?:.*\n)*?---", re.M)
 
 
+class Named(TypedDict):
+    key: str
+    # Its display name, its key when it has none.
+    name: str
+
+
 class Skill(TypedDict):
     name: str
     pack: str
@@ -44,7 +47,7 @@ class Skill(TypedDict):
     hash: str
     chars: int
     text: str
-    agents: list[str]
+    agents: list[Named]
     uses_30d: int
     last_used: str
 
@@ -53,6 +56,8 @@ class SkillsPage(TypedDict):
     skills: list[Skill]
     # Why the uses could not be counted, when the run log could not be read.
     problems: list[str]
+    # The first run whose `start` named its skills: no use before it was counted.
+    counted_since: str
 
 
 def hash_of(text: str) -> str:
@@ -61,13 +66,18 @@ def hash_of(text: str) -> str:
 
 def page(journal: Any, now: datetime | None = None) -> SkillsPage:
     """The Skills page: `catalog` over one read of the run log's `start`s."""
-    if journal is None:
-        return {"skills": catalog((), now), "problems": []}
+    records: list[dict[str, Any]] = []
+    problems = []
     try:
-        records = journal.records(None, kinds=("start",))
+        records = journal.records(None, kinds=("start",)) if journal is not None else []
     except (Unusable, Busy, sqlite3.Error, OSError) as e:
-        return {"skills": catalog((), now), "problems": [f"the run log could not be read: {e}"]}
-    return {"skills": catalog(records, now), "problems": []}
+        problems.append(f"the run log could not be read: {e}")
+    stamped = (str(r.get("at") or "") for r in records if "skills" in r)
+    return {
+        "skills": catalog(records, now),
+        "problems": problems,
+        "counted_since": min(stamped, default=""),
+    }
 
 
 def text(names: Iterable[str]) -> str:
@@ -144,7 +154,11 @@ def catalog(records: Iterable[Mapping[str, Any]] = (), now: datetime | None = No
                 hash=hash_of(said),
                 chars=len(said),
                 text=said,
-                agents=sorted(k for k, r in rows.items() if name in (r.get("skills") or [])),
+                agents=[
+                    Named(key=k, name=str(r.get("name") or k))
+                    for k, r in sorted(rows.items())
+                    if name in (r.get("skills") or [])
+                ],
                 uses_30d=counts.get(name, 0),
                 last_used=last.get(name, ""),
             )
@@ -199,18 +213,6 @@ def new(name: Any, said: Any) -> Path:
     path = folder / pack.SKILL_FILE
     if path.resolve().parent.parent != (owner / "skills").resolve():
         raise ValueError(f"{name}: would be written outside the owner's skills")
-    folder.mkdir(parents=True)
-    fd, tmp = tempfile.mkstemp(dir=folder, prefix=f".{pack.SKILL_FILE}.")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write((said if said.endswith("\n") else said + "\n").encode("utf-8"))
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-    manifest = owner / pack.MANIFEST
-    if not manifest.is_file():
-        manifest.parent.mkdir(parents=True, exist_ok=True)
-        said = json.dumps({"name": pack.LOCAL_NAME, "version": "1.0.0"}, indent=2)
-        manifest.write_text(said + "\n", encoding="utf-8")
+    pack._own_manifest()
+    pack._atomic(path, said if said.endswith("\n") else said + "\n")
     return path

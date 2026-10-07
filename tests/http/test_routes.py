@@ -2663,16 +2663,19 @@ class SkillsOverHttp(unittest.IsolatedAsyncioTestCase):
         r = await self.post(name="note-taking", text="Write down what you found.", agent="scout")
         self.assertEqual(r.status_code, 200, r.text)
         mine = next(s for s in r.json()["skills"] if s["name"] == "note-taking")
-        self.assertEqual((mine["pack"], mine["own"], mine["agents"]), ("local", True, ["scout"]))
+        self.assertEqual(
+            (mine["pack"], mine["own"], mine["agents"]),
+            ("local", True, [{"key": "scout", "name": "Scout"}]),
+        )
         self.assertEqual(mine["uses_30d"], 0)
         self.assertEqual((pack.row("scout") or {})["skills"], ["note-taking"])
         core = self.app.state.core
         logged = core.ws.journal().records(None, kind="agent-setting")
         self.assertEqual(
             [(r["agent"], r["field"], r["new"], r["by"]) for r in logged][:1],
-            [("", "skill:note-taking", "new", "owner")],
+            [("scout", "skill:note-taking", "new", "owner")],
         )
-        self.assertIn("scout", [r["agent"] for r in logged])
+        self.assertEqual([r["field"] for r in logged], ["skill:note-taking", "skills"])
         run = core.models.agent("scout", policy.row_for("scout"))
         self.assertTrue(run.system.endswith("Write down what you found."))
         self.assertRegex(pack.stamp("scout")["skills"][0], r"^note-taking@[0-9a-f]{12}$")
@@ -2697,3 +2700,11 @@ class SkillsOverHttp(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(r.status_code, 400, body)
         self.assertFalse((pack.owner_dir() / "skills").exists())
         self.assertEqual(self.app.state.core.ws.journal().records(None, kind="agent-setting"), [])
+        r = await self.post(name="loose", text="Cite sources.")
+        self.assertEqual(r.status_code, 200)
+        (logged,) = self.app.state.core.ws.journal().records(None, kind="agent-setting")
+        self.assertEqual((logged["agent"], logged["field"]), ("", "skill:loose"))
+        with mock.patch.object(pack, "_atomic", side_effect=OSError("disk full")):
+            r = await self.post(name="full", text="x")
+        self.assertEqual((r.status_code, pack.skill_path("full")), (400, None))
+        self.assertIn("disk full", r.text)

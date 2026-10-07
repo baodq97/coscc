@@ -138,7 +138,9 @@ class Catalog(_Root):
         self.assertEqual(
             (idea["pack"], idea["own"], idea["edited"]), (pack.manifest()["name"], False, True)
         )
-        self.assertEqual((idea["agents"], idea["uses_30d"]), (["idea"], 1))
+        self.assertEqual(
+            (idea["agents"], idea["uses_30d"]), ([{"key": "idea", "name": "Ingwaz"}], 1)
+        )
         self.assertEqual(idea["text"], "my idea rules\n")
         self.assertEqual(idea["description"], "my idea rules")
         self.assertEqual(found["write-intent"]["uses_30d"], 0)
@@ -146,3 +148,40 @@ class Catalog(_Root):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AStageKeepsASkill(_Root):
+    def test_a_stage_left_with_no_skill_is_refused_and_nothing_is_written(self):
+        with self.assertRaisesRegex(ValueError, "spec runs in .*needs a skill"):
+            pack.write("spec", "skills", [])
+        self.assertEqual(pack.row("spec")["skills"], ["write-spec"])
+        self.assertFalse((self.owner / "agents" / "spec.md").exists())
+
+    def test_its_neighbours_are_saved(self):
+        skills.new("note-taking", "NOTES")
+        pack.write("spec", "skills", ["note-taking"])  # one left
+        pack.write("spec", "skills", ["write-spec", "note-taking"])
+        pack.write("scan", "skills", [])  # a triggered row runs on its body
+        pack.write("scout", "skills", ["note-taking"])
+        pack.write("scout", "skills", [])  # a helper no process state runs
+        self.assertEqual(pack.row("scout").get("skills") or [], [])
+        pack.write("spec", "body", "Be brief.")  # a body edit while it has skills
+        pack.write("spec", "skills", None)  # back to the built-in's
+        self.assertEqual(pack.row("spec")["skills"], ["write-spec"])
+
+
+class Page(_Root):
+    def test_uses_are_counted_since_the_first_start_that_named_skills(self):
+        journal = mock.Mock()
+        journal.records.return_value = [
+            {"kind": "start", "at": "2026-10-01T00:00:00+00:00"},
+            {"kind": "start", "at": "2026-10-06T00:00:00+00:00", "skills": []},
+            {"kind": "start", "at": "2026-10-07T00:00:00+00:00", "skills": ["write-idea@ab"]},
+        ]
+        got = skills.page(journal, NOW)
+        self.assertEqual((got["counted_since"], got["problems"]), ("2026-10-06T00:00:00+00:00", []))
+        journal.records.side_effect = OSError("gone")
+        got = skills.page(journal, NOW)
+        self.assertEqual(got["counted_since"], "")
+        self.assertIn("gone", got["problems"][0])
+        self.assertEqual(skills.page(None, NOW)["counted_since"], "")
