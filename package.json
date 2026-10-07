@@ -7,6 +7,9 @@
     "test": "npm run lint && npm run test:python",
     "lint": "uv run ruff check && uv run ruff format --check && uv run ty check",
     "test:python": "uv run pytest -n auto",
+    "ci:branch": "uv run python -m coscc.loop check-branch $HEAD_REF",
+    "ci:tests": "uv sync --frozen && uv run python -m coscc.loop check-version && npm test && npm --prefix ui ci --no-audit --no-fund && npm --prefix ui run check && npm --prefix ui test && npm --prefix ui run build",
+    "ci": "npm run ci:branch && npm run ci:tests",
     "e2e": "uv run python scripts/e2e.py"
   }
 }

@@ -28,6 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Node is here only because the command list is an npm script.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           python-version: '3.14'
@@ -35,7 +39,7 @@ jobs:
         # `github.head_ref` is the branch the pull request comes from. The check is the
         # same one that runs locally, from the same module, so CI and `coscc.loop` cannot
         # disagree about what a valid name is.
-        run: uv run python -m coscc.loop check-branch "$HEAD_REF"
+        run: npm run ci:branch
         env:
           HEAD_REF: ${{ github.head_ref }}
 
@@ -50,15 +54,8 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           python-version: '3.14'
-      - run: uv sync --frozen
-      - name: The version is in step across all five places
-        run: uv run python -m coscc.loop check-version
+      # The command list is `ci:tests` in `package.json`, the one `npm run ci` runs locally.
       # A green result here measures a different interpreter patch than the one every proof
       # in `scripts/` was measured on, so it does not replace running the same command
       # locally.
-      - run: npm test
-      # The studio (`ui/`): its types, its tests and its build.
-      - run: npm --prefix ui ci --no-audit --no-fund
-      - run: npm --prefix ui run check
-      - run: npm --prefix ui test
-      - run: npm --prefix ui run build
+      - run: npm run ci:tests

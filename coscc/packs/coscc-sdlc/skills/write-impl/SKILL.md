@@ -26,9 +26,11 @@ From the board the gate was asked (the prompt says so); at a terminal ask
 ## Work
 
 1. Write the code from the plan, starting from an existing example of the same kind and its
-   shared helpers. Run the tests of the files you change while working, and the plan's
-   `## Verification` and `tests/test_*.py` (the repository's checks, ~25 s) at the end. The
-   whole suite is CI's: a red CI sends the work back.
+   shared helpers. Run the tests of the files you change while working.
+   Before done, run the repository's whole CI command list (`npm run ci` where the project
+   instructions name it) on the very commit that will be the PR head; it must exit 0, and no
+   commit outside `.cos/` may follow. If the SHA in `impl.md` is not the PR head at submit, the
+   run counts as not made.
 2. For each rule you change, search again for every other path to the same outcome, plan or no
    plan: other writers of the same field or state, the automatic paths and the ones a person
    starts, every caller. Change one the plan missed to the new rule and note it under
@@ -44,7 +46,14 @@ From the board the gate was asked (the prompt says so); at a terminal ask
    outside `.cos/` reaches the PR head), and record which commit fixed which finding. For each
    open `high`/`medium` finding of the last round, read its location at the commit you push and
    apply the same fix to the other paths to the same outcome, searched as in step 2. A `low`
-   need not be fixed; never list one under `## Needs a person`.
+   need not be fixed; never list one under `## Needs a person`. For a red CI, in order:
+   read the failed log (`gh run view <id> --log-failed`); rerun the red command once here; if
+   it is green, run the file holding the red test 20 times under `pytest -n auto` on the same
+   SHA; fix it in code, then rerun the whole CI list to exit 0 before you push. A test is fixed
+   only when its result no longer depends on load or order. A longer timeout, `skip`, `xfail`,
+   a rerun plugin or `ignore_cleanup_errors` is no fix. Rerunning CI until it turns green is
+   no fix. Record the red step, the red test, how often it reproduced (`1/1` or `k/20`) and
+   the fixing commit.
 6. Write `impl.md`.
 
 **A finding this stage cannot close** (needs real money, a command the grant lacks, a person's
@@ -82,7 +91,7 @@ Intent: intent.md. Plan: plan.md. Author: <name>.
 ```
 
 `## Screens` only on a UI unit; `## Needs a person` only on a run a review sent back.
-`## What was measured` holds commands with the count they printed, not adjectives; name a
+`## What was measured` holds commands with the count they printed, not adjectives; the CI list's command, SHA, exit code and the number of Python tests it printed; name a
 figure's source or mark it unverifiable; say when a proof was not run.
 
 ## Done when
