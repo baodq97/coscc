@@ -208,7 +208,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
             }
         if status == "draft":
             refused = (
-                nullish(dig(unit, "artifacts", s["file"], "ship", "round"))
+                nullish(dig(unit, "artifacts", s["file"], "merge", "round"))
                 if name == p.merge
                 else None
             )
@@ -217,7 +217,7 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
             if (
                 refused is not None
                 and last_round(unit)
-                and nullish(dig(unit, "artifacts", s["file"], "ship", "refused")) is None
+                and nullish(dig(unit, "artifacts", s["file"], "merge", "refused")) is None
             ):
                 number = nullish(dig(pr_of(unit), "number"))
                 return {
@@ -599,7 +599,7 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
         return next_
 
     if why == "ship-refused":
-        ship = unit["artifacts"][p.file(merge)]["ship"]
+        ship = unit["artifacts"][p.file(merge)]["merge"]
         last = last_round(unit)
         g = evaluate_(merge)
         if g["ok"] and g["said"].get("merged"):

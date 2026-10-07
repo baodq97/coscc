@@ -2122,7 +2122,7 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0002_b", "impl", "autopilot")])
         self.assertEqual(gh.count("pr", "merge"), 0, "a merge made elsewhere is only recorded")
         # No `ship` step follows it, so the reader writes what one did.
-        ships = [(r["unit"], r["result"]) for r in self.core.ws.journal().records(kind="ship")]
+        ships = [(r["unit"], r["result"]) for r in self.core.ws.journal().records(kind="merge")]
         self.assertEqual((ships, cleaned), ([("0001_a", "shipped")], ["0001_a"]))
 
     async def test_a_merge_the_start_up_reconcile_records_leaves_the_ship_row(self):
@@ -2150,7 +2150,7 @@ class Scripted(_Base):
         self.core.integration.cleanup = cleanup
         got = await self.core.integration.reconcile_prs()
         self.assertEqual([o["result"] for o in got], ["recorded"])
-        ships = [(r["unit"], r["result"]) for r in self.core.ws.journal().records(kind="ship")]
+        ships = [(r["unit"], r["result"]) for r in self.core.ws.journal().records(kind="merge")]
         self.assertEqual(
             (ships, cleaned, gh.count("pr", "merge")), ([("0001_a", "shipped")], ["0001_a"], 1)
         )

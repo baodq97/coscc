@@ -2368,7 +2368,7 @@ class OwnAgentsAndPacksOverHttp(unittest.IsolatedAsyncioTestCase):
         store = vault.Store(Data(self.app.state.core.config.data_dir))
         store.create("ws:db", self.cwd, "x", agents=("impl",))
         with store.data.write() as conn:
-            conn.execute("UPDATE vault_secrets SET stages = '[\"coder\"]'")
+            conn.execute("UPDATE vault_secrets SET agents = '[\"coder\"]'")
         out = io.BytesIO()
         with zipfile.ZipFile(out, "w") as z:
             z.writestr(".claude-plugin/plugin.json", json.dumps({"name": "x"}))

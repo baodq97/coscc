@@ -769,7 +769,7 @@ class UnitMeta:
                 a = artifact(r)
                 if a is not None:
                     read = json.loads(r["inputs"] or "{}")
-                    a["ship"] = {
+                    a["merge"] = {
                         "round": read.get("round"),
                         "refused": (read.get("refused") or None)
                         if r["guard"] == "merge-refused"

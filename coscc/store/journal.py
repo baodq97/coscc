@@ -164,7 +164,7 @@ BELL = Bell()
 NOT_STEPS = ("precedent",)
 
 # The run-log record of a merge: the unit shipped or its merge was refused. Notices read it.
-SHIP_RECORD = "ship"
+MERGE_RECORD = "merge"
 
 
 def is_step(record: dict[str, Any]) -> bool:

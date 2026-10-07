@@ -613,7 +613,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
         with mock.patch.object(board_reader, "read", read):
             asyncio.run(self.core.steps.after_end(str(self.repo), self.unit, stage, self.key))
-        return [r for r in self.records() if r["kind"] == "ship"]
+        return [r for r in self.records() if r["kind"] == "merge"]
 
     def test_a_done_ship_records_shipped_when_the_unit_is_finished(self):
         [row] = self._after_end_with("finished")
@@ -2639,7 +2639,7 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         self.assertEqual(
             (rec["outcome"], rec["merge_refused"], rec["detail"]), ("failed", True, "gh down")
         )
-        [ship] = core.ws.journal().records(kind="ship")
+        [ship] = core.ws.journal().records(kind="merge")
         self.assertEqual(ship["result"], "refused")
 
 

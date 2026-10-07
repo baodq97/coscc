@@ -10,7 +10,7 @@ from typing import Any, TypedDict, get_args
 
 from coscc.leif import spend
 from coscc.store.db import Busy
-from coscc.store.journal import SHIP_RECORD
+from coscc.store.journal import MERGE_RECORD
 from coscc.kernel import Invalid
 from coscc.units.contracts import Graded
 
@@ -167,7 +167,7 @@ class Activity:
         # When the app merged it: its `ship` record. A unit merged by hand has none and is left out.
         shipped_at: dict[str, str] = {}
         for r in rows:
-            if r.get("kind") == SHIP_RECORD and r.get("result") == "shipped" and r.get("unit"):
+            if r.get("kind") == MERGE_RECORD and r.get("result") == "shipped" and r.get("unit"):
                 shipped_at[str(r["unit"])] = str(r.get("at") or "")
         for u in units:
             name = str(u["name"])

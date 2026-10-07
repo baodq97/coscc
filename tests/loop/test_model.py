@@ -1296,11 +1296,11 @@ def test_the_loop_reads_no_prose_for_spec_spike_and_impl_decisions(tmp_path):
     state, entry = with_entry(files)
     u = read_unit(str(d), "0039_x", state)
     assert "unmeasured" not in u["artifacts"]["spec.md"]
-    assert u["artifacts"]["spike.md"]["spike"] == {"round": None, "items": {}}
+    assert u["artifacts"]["spike.md"]["verdicts"] == {"round": None, "items": {}}
     assert u["artifacts"]["impl.md"]["needsPerson"] == []
     entry["artifacts"]["spike.md"]["round"] = 2
     again = read_unit(str(d), "0039_x", state)
-    assert again["artifacts"]["spike.md"]["spike"]["round"] == 2
+    assert again["artifacts"]["spike.md"]["verdicts"]["round"] == 2
 
 
 def test_a_round_and_the_claims_the_app_holds_decide(tmp_path):

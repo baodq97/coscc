@@ -34,7 +34,7 @@ from coscc.runner.run import NO_SUBMISSION
 from coscc.runner.step import check_started_by, config_sources, with_ceilings
 from coscc.runner.steps import Steps
 from coscc.store.db import Busy, now as _now
-from coscc.store.journal import SHIP_RECORD, BadRecord, Journal
+from coscc.store.journal import MERGE_RECORD, BadRecord, Journal
 from coscc.units import states, submit as submit_mod, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
@@ -1177,7 +1177,7 @@ class Integration:
             try:
                 journal.append(
                     {
-                        "kind": SHIP_RECORD,
+                        "kind": MERGE_RECORD,
                         "workspace": key,
                         "unit": unit,
                         "stage": states.states_where(action="merge")[0],

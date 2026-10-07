@@ -31,7 +31,7 @@ class InsightsMeasureTheShippedUnitsAgainstTheTargets(unittest.TestCase):
             end("0004_open", "2026-10-03T00:00:00+00:00", 2.0),
             # Shipped by the app: the oldest before the window, the others in it.
             *(
-                {"kind": "ship", "unit": u, "stage": "ship", "result": "shipped", "at": at}
+                {"kind": "merge", "unit": u, "stage": "ship", "result": "shipped", "at": at}
                 for u, at in (
                     ("0001_old", "2026-08-01T01:00:00+00:00"),
                     ("0002_a", "2026-10-01T01:00:00+00:00"),
@@ -101,7 +101,7 @@ class InsightsCountTheGradedOutcomes(unittest.TestCase):
     def test_on_time_met_and_missed(self):
         now = datetime(2026, 10, 30, tzinfo=timezone.utc)
         ship = lambda u, at: {
-            "kind": "ship",
+            "kind": "merge",
             "unit": u,
             "stage": "ship",
             "result": "shipped",

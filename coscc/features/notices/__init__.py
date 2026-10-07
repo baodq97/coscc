@@ -23,7 +23,7 @@ from starlette.routing import BaseRoute
 from coscc.kernel import BELL, STREAM_SECONDS, Busy, Ctx, Feature, Invalid, is_step, line
 
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
-SOURCE_KINDS = ("autopilot-stop", "questions", "end", "ship", "agent-state")
+SOURCE_KINDS = ("autopilot-stop", "questions", "end", "merge", "agent-state")
 # The six kinds, in order.
 Kind = Literal["autopilot-stop", "questions", "step-ended", "ship-refused", "shipped", "agent-off"]
 KINDS: tuple[Kind, ...] = get_args(Kind)
@@ -111,7 +111,7 @@ def _kind_and_text(record: dict[str, Any]) -> tuple[str, str] | None:
             "agent-off",
             f"{record.get('agent') or 'An agent'} is off in {where}: {record.get('reason') or 'its run stopped at its ceiling'}.",
         )
-    if kind == "ship":
+    if kind == "merge":
         result = record.get("result")
         if result == "shipped":
             return "shipped", f"{unit} in {where} was merged."

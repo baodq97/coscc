@@ -80,7 +80,7 @@ def review_art(status, *rounds):
 
 def ship_art(n=None, refused=BEHIND):
     """A draft `ship.md`, with the round and the refusal the app recorded; none says neither."""
-    return {**art("draft"), **({"ship": {"round": n, "refused": refused}} if n else {})}
+    return {**art("draft"), **({"merge": {"round": n, "refused": refused}} if n else {})}
 
 
 def asked(*rounds):

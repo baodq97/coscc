@@ -645,14 +645,14 @@ def accepted_pass(extra=None):
 def test_read_unit_attaches_ship_only_to_a_ship_row_that_says_something(tmp_path):
     d = files_in(tmp_path, {"ship.md": "# Ship: x\n"}, "0001_x")
     said = known(
-        {"ship.md": "draft"}, fields={"ship_md": {"ship": {"round": 1, "refused": BEHIND}}}
+        {"ship.md": "draft"}, fields={"ship_md": {"merge": {"round": 1, "refused": BEHIND}}}
     )
-    assert read(d, "0001_x", said)["artifacts"]["ship.md"]["ship"] == {
+    assert read(d, "0001_x", said)["artifacts"]["ship.md"]["merge"] == {
         "round": 1,
         "refused": BEHIND,
     }
     mute = known(
-        {"ship.md": "draft"}, fields={"ship_md": {"ship": {"round": None, "refused": None}}}
+        {"ship.md": "draft"}, fields={"ship_md": {"merge": {"round": None, "refused": None}}}
     )
     assert "ship" not in read(d, "0001_x", mute)["artifacts"]["ship.md"]
 
@@ -790,7 +790,7 @@ def test_status_offers_no_acceptance_of_a_ship_md_naming_its_round_only(tmp_path
         root, _ = tree(tmp_path, files)
         fields = {"pr_md": {"pr": PR["pr"]}, "review_md": {"rounds": [rnd(1, "pass")]}}
         if ship:
-            fields["ship_md"] = {"ship": ship}
+            fields["ship_md"] = {"merge": ship}
         return json_of(
             root,
             "status",
