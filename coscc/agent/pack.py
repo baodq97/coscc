@@ -482,10 +482,9 @@ def _check_event(row: Mapping[str, Any], event: Any) -> list[str]:
 
 
 def reads_only(found: Mapping[str, Any] | None) -> bool:
-    """Whether a row holds only reading tools, with no one to ask: a trigger other than the
-    engine's starts it (`_check_trigger`'s rule, and what the page hides from its Tools tab)."""
-    trigger = (found or {}).get("trigger")
-    return isinstance(trigger, dict) and any(k in trigger for k in TRIGGERS if k != "engine")
+    """Whether a row holds only reading tools, with no one to ask: a trigger starts it, which is
+    what `triggered` says (`_check_trigger`'s rule, and what the page hides from its Tools tab)."""
+    return triggered(found)
 
 
 def triggered(found: Mapping[str, Any] | None, how: str = "") -> bool:

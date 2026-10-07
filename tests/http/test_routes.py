@@ -221,10 +221,13 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_the_prompt_preview_shows_the_text_a_run_is_given_and_changes_nothing(self):
         r = await self.client.get("/api/agents/scan/prompt")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json()["system"], pack.row("scan")[pack.BODY])
-        self.assertEqual(r.json()["task"], "")
+        self.assertEqual(r.json(), {"task": ""})
         r = await self.client.get("/api/agents/nobody/prompt")
         self.assertEqual(r.status_code, 400)
+        # A folder that is no workspace is refused, for a triggered row and for any other.
+        for key in ("scan", "spec"):
+            r = await self.client.get(f"/api/agents/{key}/prompt", params={"cwd": "/etc"})
+            self.assertEqual(r.status_code, 400, key)
 
     async def test_set_then_reset(self):
         body = {"key": "spec", "field": "ceilings", "value": {"turns": 30, "usd": 4.0}}

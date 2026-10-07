@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
 import { match } from "./router";
-import { findUnit, needsYou, proposalLink, type PlacedUnit } from "./boards";
+import { findUnit, needsYou, failedLink, proposalLink, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { fill, readLines } from "./api";
@@ -16,7 +16,7 @@ import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
-import { changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
+import { builtinOf, changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
 import { runRow, resultWords, shallowWords } from "../screens/AgentActivity";
 import { fieldLabel, isEmpty, itemLine } from "../screens/UnitPage";
 import { inboxView } from "../screens/Inbox";
@@ -648,6 +648,21 @@ describe("runRow", () => {
   });
 });
 
+describe("builtinOf", () => {
+  const skill = (over: object) => ({ name: "write-spec", text: "mine", builtin: "", edited: false, ...over });
+  it("keeps an unedited part as the built-in's, so a reset of it is a no-op", () => {
+    const got = builtinOf({ row: { model: { id: "m" }, ceilings: { usd: 5 } }, builtin: { ceilings: { usd: 2 } }, edited: ["ceilings"], skills: [skill({}), skill({ name: "b", text: "new", builtin: "old", edited: true })] } as never);
+    expect(got.model).toEqual({ id: "m" });
+    expect(got.ceilings).toEqual({ usd: 2 });
+    expect(got["skill:write-spec"]).toBe("mine");
+    expect(got["skill:b"]).toBe("old");
+  });
+  it("leaves out a part the owner added that the built-in lacks", () => {
+    const got = builtinOf({ row: { description: "mine" }, builtin: {}, edited: ["description"], skills: [] } as never);
+    expect("description" in got).toBe(false);
+  });
+});
+
 describe("what a run made", () => {
   const run = { made: null, verdict: "", refused: null, shallow: false } as unknown as Parameters<typeof resultWords>[0];
   it("says proposed N, a verdict, or nothing", () => {
@@ -696,7 +711,7 @@ describe("until and statusWords", () => {
   const row = { on: true, on_in: ["a", "b"], off_reason: "", last: null, next_at: null } as unknown as AgentRow;
   it("tells on, last and next in one line", () => {
     const said = statusWords({ ...row, last: { at: "", made: 3 } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" }, "a");
-    expect(said).toMatch(/^On here \(also on in b\) · ran .*, made 3 · next in \d+ d$/);
+    expect(said).toMatch(/^On here \(also on in b\) · ran .*, and made 3 · next in \d+ d$/);
   });
   it("says why an agent is off and that it never ran", () => {
     expect(statusWords({ ...row, on: false, on_in: [], off_reason: "a run stopped at its ceiling" }, "a")).toBe("Off here: a run stopped at its ceiling · never ran");
@@ -708,6 +723,13 @@ describe("until and statusWords", () => {
   it("says running now, not never ran or next, while the first run is in flight", () => {
     const said = statusWords({ ...row, running: { run: "r", started: "" }, next_at: "2999-01-01T00:00:00Z" }, "a");
     expect(said).toBe("On here (also on in b) · running now");
+  });
+});
+
+describe("failedLink", () => {
+  it("opens the run, or the agent's page in its workspace when no log was kept", () => {
+    expect(failedLink({ workspace: "my proj", agent: "scan", run: "r1" })).toBe("/run/my%20proj/r1");
+    expect(failedLink({ workspace: "my proj", agent: "scan", run: "" })).toBe("/agents/scan?ws=my%20proj");
   });
 });
 

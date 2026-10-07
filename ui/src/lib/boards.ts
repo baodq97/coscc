@@ -79,7 +79,7 @@ export function needsYou<P, F>(units: PlacedUnit[], proposals: P[], failed: F[] 
 
 /** Where a failed agent run opens: its run page, or the agent's own page when no log was kept. */
 export const failedLink = (f: { workspace: string; agent: string; run: string }) =>
-  f.run ? `/run/${f.workspace}/${f.run}` : `/agents/${f.agent}?ws=${encodeURIComponent(f.workspace)}`;
+  f.run ? `/run/${encodeURIComponent(f.workspace)}/${f.run}` : `/agents/${f.agent}?ws=${encodeURIComponent(f.workspace)}`;
 
 /** Where a proposal is decided: Up next, on its project, scrolled to it. */
 export const proposalLink = (p: { workspace: string; id: number }) => `/up-next?ws=${encodeURIComponent(p.workspace)}#proposal-${p.id}`;

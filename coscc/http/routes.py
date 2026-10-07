@@ -33,7 +33,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response, StreamingResponse
 
 from coscc import kernel
-from coscc.agent import pack, policy
+from coscc.agent import pack
 from coscc.agent.pack import PackShown
 from coscc.store.db import Data
 from coscc.bus import Event
@@ -251,26 +251,25 @@ async def get_agents_live(request: Request) -> Live:
 
 
 class PromptPreview(TypedDict):
-    # What the row's own text says (its body), and what its run is handed beside it: `""` for
-    # a row no trigger starts, whose input is the unit's.
-    system: str
+    # What a run is handed to work on beside the row's own text (its role); `""` for a row no
+    # trigger starts, whose input is the unit's, handed when a step begins.
     task: str
 
 
-@router.get("/api/agents/{key}/prompt")
+@router.get("/api/agents/{key}/prompt", response_model=PromptPreview)
 async def get_agent_prompt(key: str, request: Request) -> PromptPreview:
-    """What a run of `key` would be given now in `cwd`: its system text, and for a row a
-    trigger starts the prompt `triggers.compose` builds from its input. Read only, starts and
-    spends nothing."""
+    """What a run of a triggered agent would be handed now in `cwd`: the prompt
+    `triggers.compose` builds from its input. Read only, starts and spends nothing. A folder that
+    is no workspace, or an agent that does not exist, is a 400."""
     core, cwd = _core(request), _cwd(request)
     row = pack.row(key)
     if row is None:
         raise Invalid(f"no agent {key}")
-    system = core.models.agent(key, policy.row_for(key)).system
+    ws = core.ws.key(core.ws.check(cwd)) if cwd else ""
     task = ""
-    if cwd and pack.triggered(row):
-        task = await triggers.preview(core, key, cwd, core.ws.key(core.ws.check(cwd)))
-    return {"system": system, "task": task}
+    if ws and pack.triggered(row):
+        task = await triggers.preview(core, key, cwd, ws)
+    return {"task": task}
 
 
 @router.post("/api/agents/field")

@@ -260,6 +260,9 @@ class AgentRow(TypedDict):
     skips_30d: int
     # Holds only reading tools and no `ask`: a trigger starts it (`pack.reads_only`).
     reads_only: bool
+    # The app's data a run of it is handed: all of `contracts.DATA`, or what a triggered row's
+    # prompt reads (`contracts.TRIGGERED_DATA`).
+    usable_data: list[str]
     # Whether its event or schedule runs it in the workspace asked about; `None` for a row with
     # neither, or no workspace.
     on: bool | None
@@ -344,16 +347,6 @@ def _run_view(record: dict[str, Any], counts: dict[str, tuple[int, int]] | None 
     )
 
 
-def _plain(reason: str) -> str:
-    """A reason the app logged for turning an agent off, said once and plainly: its run stopped
-    at its turn limit, or at its spend limit."""
-    if "max_turns" in reason:
-        return "its last run stopped at its turn limit"
-    if "budget" in reason:
-        return "its last run stopped at its spend limit"
-    return reason
-
-
 def groups_of(runs: list[RunView], settings: list[Setting]) -> list[RunGroup]:
     """`runs` and `settings` (each oldest first) as `RunGroup`s, newest first: a run on another
     `row_hash` than the one before it, or after a setting, opens a group headed by the settings
@@ -424,6 +417,16 @@ def _skills(found: dict[str, Any]) -> list[SkillText]:
         edited = text != base
         out.append(SkillText(name=name, text=text, builtin=base if edited else "", edited=edited))
     return out
+
+
+def _off_reason(said: dict[str, Any], mine: list[dict[str, Any]]) -> str:
+    """Why the app or the owner turned a row off, from what the run log recorded: a pause at a
+    ceiling is read from the run's own outcome, not from the words logged beside it."""
+    if said.get("by") != OWNER and mine and mine[-1].get("outcome") == "paused-budget":
+        return "its last run stopped at its ceiling"
+    return str(said.get("reason") or "") or (
+        "turned off by you" if said.get("by") == OWNER else "turned off"
+    )
 
 
 class Agents:
@@ -703,12 +706,7 @@ class Agents:
             return
         if not row["on"]:
             said = by.states.get((workspace, key))
-            row["off_reason"] = (
-                "off until you turn it on"
-                if said is None
-                else _plain(str(said.get("reason") or ""))
-                or ("turned off by you" if said.get("by") == OWNER else "turned off")
-            )
+            row["off_reason"] = "not turned on yet" if said is None else _off_reason(said, mine)
             return
         ceiling = float((found.get("ceilings") or {}).get("usd") or 0.0)
         if by.cap and by.cap[0] + ceiling > by.cap[1]:
@@ -777,7 +775,7 @@ class Agents:
         )
         latest: dict[tuple[str, str], dict[str, Any]] = {}
         try:
-            for r in journal.records(None, kinds=("end",)):
+            for r in journal.records(None, kinds=("end",), since=since):
                 if r.get("workspace") in by_key and r.get("agent") and not r.get("unit"):
                     if not (
                         r.get("skipped") or r.get("parent_run") or r.get("stage") in ("ask", "chat")
@@ -785,6 +783,7 @@ class Agents:
                         latest[str(r["workspace"]), str(r["agent"])] = r
         except Unusable, Busy, sqlite3.Error, OSError:
             return []
+        data = Data(self.config.data_dir)
         out = [
             LiveFailed(
                 workspace=by_key[ws],
@@ -795,7 +794,7 @@ class Agents:
                 detail=str(r.get("detail") or ""),
             )
             for (ws, key), r in latest.items()
-            if r.get("outcome") == "failed" and str(r.get("at") or "") >= since
+            if r.get("outcome") == "failed" and self._on(data, key, ws) is not False
         ]
         return sorted(out, key=lambda f: f["at"], reverse=True)
 
@@ -861,6 +860,7 @@ class Agents:
             pending=made.get("pending", 0),
             skips_30d=len(recent) - len(ran),
             reads_only=pack.reads_only(found),
+            usable_data=list(contracts.TRIGGERED_DATA if pack.triggered(found) else contracts.DATA),
             on=None,
             running=None,
             next_at=None,

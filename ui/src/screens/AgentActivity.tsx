@@ -9,7 +9,7 @@ import { Chip, Empty } from "../components/ui";
 import { statusWords } from "./Agents";
 
 const VERDICT: Record<string, string> = { met: "met", "not-met": "not met", unclear: "unclear" };
-const OUTCOME: Record<string, string> = { failed: "failed", "paused-budget": "paused at its ceiling", cancelled: "stopped", stopped: "stopped" };
+export const OUTCOME: Record<string, string> = { failed: "failed", "paused-budget": "paused at its ceiling", cancelled: "stopped", stopped: "stopped" };
 
 /** What a run made, in words: "proposed 2", "verdict: met"; `""` for a run that makes nothing. */
 export function resultWords(r: Pick<RunView, "verdict" | "made">): string {
@@ -88,7 +88,7 @@ export function Activity({ a, page, names, workspace }: { a: AgentRow; page: Pag
           {last && !last.skipped && resultWords(last) && <div className="faint">{resultWords(last)}</div>}
         </Stat>
         {(proposes || made) && (
-          <Stat label="Made in 30 days">
+          <Stat label="Proposals in 30 days">
             {made || "no proposals yet"}
           </Stat>
         )}

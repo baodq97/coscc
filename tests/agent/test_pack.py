@@ -636,6 +636,10 @@ class TriggersAreChecked(unittest.TestCase):
         self.assertTrue(pack.reads_only(_scan()))
         self.assertFalse(pack.reads_only(_scan(trigger={"engine": "estimate"})))
         self.assertFalse(pack.reads_only({"tools": {"Write": "ask"}}))
+        # Both ask one rule: an engine row with another key, an unknown key, an empty trigger.
+        for trigger in ({"engine": "estimate", "manual": True}, {"cron": "x"}, {}, "x", None):
+            row = {"trigger": trigger}
+            self.assertEqual(pack.reads_only(row), pack.triggered(row), trigger)
         self.assertEqual(
             pack.check(_scan(tools={"Read": "ask"})),
             pack.check(_scan(tools={"Read": "ask"}), CATALOG),

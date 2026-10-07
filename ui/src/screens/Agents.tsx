@@ -86,7 +86,7 @@ export function statusWords(a: AgentRow, here: string): string {
     said.push(a.on ? `On here${also}${held}` : `Off here${a.off_reason ? `: ${a.off_reason}` : ""}${also}`);
   }
   if (a.running) said.push("running now");
-  else if (a.last) said.push(`${a.last.skipped ? "skipped" : "ran"} ${ago(a.last.at)}${a.last.made != null ? `, made ${a.last.made}` : ""}`);
+  else if (a.last) said.push(`${a.last.skipped ? "skipped" : "ran"} ${ago(a.last.at)}${a.last.made != null ? `, and made ${a.last.made}` : ""}`);
   else said.push("never ran");
   if (a.next_at && !a.running) said.push(`next ${until(a.next_at)}`);
   return said.join(" · ");

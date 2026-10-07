@@ -102,6 +102,14 @@ export function changedParts(draft: Draft, saved: Record<string, unknown>): stri
   return [...new Set(out)];
 }
 
+/** The built-in's value of each part, from what the page sends: the edited parts hold it, every other part is still the built-in's. */
+export function builtinOf(a: Pick<AgentRow, "row" | "builtin" | "edited" | "skills">): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...a.builtin };
+  for (const [k, v] of Object.entries(a.row)) if (!(k in out) && !a.edited.includes(k)) out[k] = v;
+  for (const s of a.skills) out[`skill:${s.name}`] = s.edited ? s.builtin : s.text;
+  return out;
+}
+
 export function AgentPage({ name, tab = "activity" }: { name: string; tab?: string }) {
   const { ws, list, workspace, cwd, agents } = useAgents(name);
   const [draft, setDraft] = useState<Draft>({});
@@ -131,10 +139,7 @@ export function AgentPage({ name, tab = "activity" }: { name: string; tab?: stri
 
   const saved: Record<string, unknown> = { ...a.row };
   for (const s of a.skills) saved[`skill:${s.name}`] = s.text;
-  // The built-in's value of each edited part; every other part is still the built-in's.
-  const builtin: Record<string, unknown> = { ...a.builtin };
-  for (const [k, v] of Object.entries(a.row)) if (!(k in builtin) && !a.edited.includes(k)) builtin[k] = v;
-  for (const s of a.skills) builtin[`skill:${s.name}`] = s.edited ? s.builtin : s.text;
+  const builtin = builtinOf(a);
   const pending = changes(draft, saved);
   const value = (k: string) => (k in draft ? draft[k] : saved[k]);
   // `v` may be a function of the part as it then stands, so two quick edits both land.
@@ -499,7 +504,7 @@ function Tools(ctx: Ctx) {
   const { a, page } = ctx;
   const tools = (ctx.value("tools") as Record<string, unknown> | undefined) ?? {};
   const output = (ctx.value("output") as { by?: string; kind?: string } | undefined) ?? {};
-  const readsOnly = output.by === "app";
+  const appWrites = output.by === "app";
   const helper = a.group === "helper";
   const helpers = page.rows.filter((r) => r.group === "helper");
   const chosen = (ctx.value("helpers") as string[] | undefined) ?? [];
@@ -512,20 +517,20 @@ function Tools(ctx: Ctx) {
   };
   // A row a trigger starts holds Bash only inside the OS sandbox.
   // What the row can never hold, from the rule saving it uses (`pack.reads_only`): no one to ask, no writes.
-  const silent = a.reads_only;
-  const choices = (t: CatalogTool) => (triggered && t.name === "Bash" ? ["sandboxed", "off"] : silent ? ["allow", "off"] : ["allow", "ask", "off"]);
+  const noOneToAsk = a.reads_only;
+  const choices = (t: CatalogTool) => (triggered && t.name === "Bash" ? ["sandboxed", "off"] : noOneToAsk ? ["allow", "off"] : ["allow", "ask", "off"]);
   const why = (t: CatalogTool) =>
-    readsOnly && t.effect !== "read" ? "The app writes this agent's output from its reply, so it holds only reading tools." : helper && t.name === "Agent" ? "A helper starts no helper." : "";
-  const shown = page.catalog.filter((t) => !(silent && t.effect !== "read" && t.name !== "Bash" && !tools[t.name]));
+    appWrites && t.effect !== "read" ? "The app writes this agent's output from its reply, so it holds only reading tools." : helper && t.name === "Agent" ? "A helper starts no helper." : "";
+  const shown = page.catalog.filter((t) => !(noOneToAsk && t.effect !== "read" && t.name !== "Bash" && !tools[t.name]));
   return (
     <>
       <p className="muted" style={{ marginTop: 0 }}>
-        {silent
+        {noOneToAsk
           ? "This agent starts on its own, so it has no one to ask and only reads: tools that change things are not offered. Allow gives a tool to its runs; Off leaves it out."
           : "Allow gives the tool to its runs; Ask offers it and refuses every call until a person can be asked; Off leaves it out. No setting here lifts the app's critical blocks."}
       </p>
-      {(readsOnly || helper) && (
-        <p className="muted">{readsOnly ? "The app writes this agent's output from its reply, so it holds only reading tools." : "A helper starts no helper."}</p>
+      {(appWrites || helper) && (
+        <p className="muted">{appWrites ? "The app writes this agent's output from its reply, so it holds only reading tools." : "A helper starts no helper."}</p>
       )}
       <div className="card">
         {shown.map((t) => {
@@ -622,7 +627,7 @@ function InputOutput(ctx: Ctx) {
               ))}
             </Part>
             <Part ctx={ctx} path="input.data" label="The app's data">
-              {Object.entries(DATA).map(([k, words]) => (
+              {Object.entries(DATA).filter(([k]) => ctx.a.usable_data.includes(k) || input.data.includes(k)).map(([k, words]) => (
                 <label key={k} className="check" title={k}>
                   <input type="checkbox" checked={input.data.includes(k)} disabled={!ctx.editable} onChange={(e) => set("data", e.target.checked ? [...input.data, k] : input.data.filter((x) => x !== k))} /> {words}
                 </label>
@@ -904,29 +909,29 @@ function RunNowButton({ a, cwd, workspace }: Ctx) {
   );
 }
 
-/** What a run of the agent would be given now: its role and what its input declares, read from
- * the app. A preview; it starts nothing and costs nothing. */
+/** What a run is handed to work on beside its role: for an agent a trigger starts, the prompt the app builds
+ * from its input now (a preview that starts nothing); for a stage agent, where its input comes from. */
 function Receives({ a, cwd }: Ctx) {
-  const got = useResource("/api/agents/{key}/prompt", { key: a.key, cwd });
+  const triggered = a.group === "triggered";
+  const got = useResource(triggered && cwd ? "/api/agents/{key}/prompt" : null, { key: a.key, cwd });
+  const input = a.row.input as { artifacts?: string[] } | undefined;
   return (
     <>
-      <div className="sec-h">What it receives <span className="faint">a preview, not a run</span></div>
+      <div className="sec-h">What it receives {triggered && <span className="faint">a preview, not a run</span>}</div>
       <div className="card card-b">
-        {got.state === "error" ? (
+        {!triggered ? (
+          <div className="faint">
+            {input?.artifacts?.length
+              ? `The unit's ${input.artifacts.map((n) => n.replace(/\?$/, "")).join(", ")} files, handed whole by the app when a step starts.`
+              : "What the app hands it when its step starts."}{" "}
+            Its role and skills are below.
+          </div>
+        ) : got.state === "error" ? (
           <div className="field-err">Could not read it: {String((got.error as Error)?.message ?? "")}</div>
         ) : !got.data ? (
           <div className="faint">Reading…</div>
         ) : (
-          <>
-            <div className="faint" style={{ marginBottom: 4 }}>Its role, given first</div>
-            <pre className="prompt-preview">{got.data.system || "(nothing)"}</pre>
-            {got.data.task && (
-              <>
-                <div className="faint" style={{ margin: "10px 0 4px" }}>What it is handed to work on</div>
-                <pre className="prompt-preview">{got.data.task}</pre>
-              </>
-            )}
-          </>
+          <pre className="prompt-preview">{got.data.task || "(nothing but its role)"}</pre>
         )}
       </div>
     </>

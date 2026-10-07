@@ -683,6 +683,23 @@ class AnOffPackStartsNothing(_Core):
         self.assertEqual(e.exception.reasons, ("agent-invalid",))
 
 
+class ATriggeredRowIsHandedOnlyTheDataItsPromptReads(unittest.TestCase):
+    def test_what_the_page_offers_is_what_the_prompt_reads(self):
+        from coscc.units import contracts
+
+        base = contracts.input_of("scan")
+
+        def prompt(data):
+            declared = base | {"data": data, "artifacts": [], "outputs": []}
+            return triggers.prompt_of(declared, [], [], None, catalog="CAT")[0]
+
+        empty = prompt([])
+        # The idea comes in through `compose`, from the unit, when the row declares it.
+        for key in (k for k in contracts.DATA if k != "idea"):
+            read = prompt([key]) != empty
+            self.assertEqual(read, key in contracts.TRIGGERED_DATA, key)
+
+
 class ASandboxedRowIsToldItsBash(unittest.TestCase):
     def test_the_prompt_names_where_it_writes_and_what_it_reaches(self):
         from coscc.units import contracts

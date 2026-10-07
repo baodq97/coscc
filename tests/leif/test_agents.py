@@ -411,6 +411,7 @@ class ThePage(_WithAService):
         listed = {"workspaces": [{"name": "proj", "path": "w", "missing": False}], "paths": ["w"]}
         self.enterContext(mock.patch.object(self.core.ws, "all", return_value=listed))
         self.enterContext(mock.patch.object(self.core.ws, "key", side_effect=lambda p: p))
+        pack.set_agent_on(self.data, "scan", "w", True)
         [got] = self.core.agents.live()["failed"]
         self.assertEqual(
             (got["workspace"], got["agent"], got["run"], got["detail"]),
@@ -420,16 +421,36 @@ class ThePage(_WithAService):
         self._seed([_end("scan", "done", 0, unit="") | later])
         self.assertEqual(self.core.agents.live()["failed"], [])
 
-    def test_an_off_reason_is_said_once_and_plainly(self):
-        from coscc.leif.agents import _plain
+    def test_a_failed_run_of_an_agent_turned_off_is_not_held_up(self):
+        now = datetime.now(timezone.utc)
+        failed = _end("scan", "failed", 1, unit="") | {
+            "run": "r1",
+            "agent": "scan",
+            "at": (now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        }
+        old = failed | {
+            "stage": "scan",
+            "agent": "scan",
+            "run": "r0",
+            "at": "2020-01-01T00:00:00+00:00",
+        }
+        self._seed([old, failed])
+        listed = {"workspaces": [{"name": "proj", "path": "w", "missing": False}], "paths": ["w"]}
+        self.enterContext(mock.patch.object(self.core.ws, "all", return_value=listed))
+        self.enterContext(mock.patch.object(self.core.ws, "key", side_effect=lambda p: p))
+        pack.set_agent_on(self.data, "scan", "w", True)
+        self.assertEqual(len(self.core.agents.live()["failed"]), 1)
+        pack.set_agent_on(self.data, "scan", "w", False)
+        self.assertEqual(self.core.agents.live()["failed"], [])
 
-        said = "a run stopped at its ceiling: stopped at its ceiling: max_turns"
-        self.assertEqual(_plain(said), "its last run stopped at its turn limit")
-        self.assertEqual(
-            _plain("stopped at its ceiling: error_max_budget_usd"),
-            "its last run stopped at its spend limit",
-        )
-        self.assertEqual(_plain("turned off by you"), "turned off by you")
+    def test_an_off_reason_comes_from_the_runs_outcome_not_from_logged_words(self):
+        from coscc.leif.agents import _off_reason
+
+        app = {"by": "app", "reason": "a run stopped at its ceiling: stopped at its ceiling: x"}
+        paused = [{"outcome": "paused-budget"}]
+        self.assertEqual(_off_reason(app, paused), "its last run stopped at its ceiling")
+        self.assertEqual(_off_reason(app, [{"outcome": "done"}]), app["reason"])
+        self.assertEqual(_off_reason({"by": "owner"}, paused), "turned off by you")
 
     def test_a_pause_or_a_stop_is_not_called_a_failure(self):
         from coscc.leif.agents import chip_of

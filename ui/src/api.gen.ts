@@ -32,6 +32,7 @@ export type AgentRow = {
   "pending": number;
   "skips_30d": number;
   "reads_only": boolean;
+  "usable_data": string[];
   "on": boolean | null;
   "running": coscc__leif__agents__Running | null;
   "next_at": string | null;
@@ -497,7 +498,6 @@ export type ProcessShown = {
 };
 
 export type PromptPreview = {
-  "system": string;
   "task": string;
 };
 

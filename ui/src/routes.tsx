@@ -78,7 +78,7 @@ export const SCREENS: Screen[] = [
     keys: "G S",
     render: () => <Insights />,
   },
-  { path: "/run/:ws/:run", title: "Run", crumbs: () => ["Agents", "Run"], render: (p) => <RunPage workspace={p.ws} run={p.run} /> },
+  { path: "/run/:ws/:run", title: "Run", crumbs: () => ["Run"], render: (p) => <RunPage workspace={p.ws} run={p.run} /> },
   {
     path: "/may-do",
     title: "What Leif may do",

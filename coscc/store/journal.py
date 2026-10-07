@@ -439,8 +439,10 @@ class Journal:
         timeout: float | None = None,
         kind: str | None = None,
         kinds: Iterable[str] | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Every record for this working folder, oldest first, optionally narrowed.
+        """Every record for this working folder, oldest first, optionally narrowed (`since`: an
+        ISO time, only records at or after it).
 
         A row whose JSON will not parse is skipped rather than repaired (the database is editable by
         hand). Ordered by `id`: `at` is only second-resolution.
@@ -464,6 +466,9 @@ class Journal:
             wanted = list(kinds)
             sql += f" AND kind IN ({', '.join('?' for _ in wanted)})" if wanted else " AND 0"
             args.extend(wanted)
+        if since is not None:
+            sql += " AND at >= ?"
+            args.append(since)
         sql += " ORDER BY id"
 
         with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:

@@ -424,6 +424,9 @@ DATA = (
     "proposals",
     "catalog",
 )
+# What `triggers.prompt_of` reads of `DATA` for a row a trigger starts: the rest are a stage's
+# (`runner/prompt.py`), so a triggered row that declares one is handed nothing of it.
+TRIGGERED_DATA = ("idea", "interventions", "proposals", "catalog")
 _OPTIONAL_INPUT = ("skip_when_empty",)
 
 

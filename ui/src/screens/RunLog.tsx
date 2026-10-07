@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Asked, EventsPage, Followup, StepEvent } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { agentFace, stageLabel } from "../lib/pack";
-import { resultWords, shallowWords } from "./AgentActivity";
+import { OUTCOME, resultWords, shallowWords } from "./AgentActivity";
 import { modelName, startedBy, money, toolName, unitCode, unitTitle } from "../lib/format";
 import { Link, useQuery } from "../lib/router";
 import { Button, Chip, ErrorState, Markdown, PageHead, SkeletonRows } from "../components/ui";
@@ -140,7 +140,7 @@ function RunResult({ page }: { page: EventsPage }) {
   const thin = shallowWords({ refused: page.refused, verdict: page.verdict });
   return (
     <div className="row run-result" style={{ gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-      {page.outcome !== "done" && <Chip square tone={page.outcome === "failed" ? "red" : "amber"}>{page.outcome}</Chip>}
+      {page.outcome !== "done" && <Chip square tone={page.outcome === "failed" ? "red" : "amber"}>{OUTCOME[page.outcome ?? ""] ?? page.outcome}</Chip>}
       {made && <Chip square tone="accent">{made}</Chip>}
       {thin && <Chip square tone="amber">partly checked: {thin}</Chip>}
       {page.helpers ? <span className="faint">{page.helpers} helper{page.helpers === 1 ? "" : "s"}</span> : null}
