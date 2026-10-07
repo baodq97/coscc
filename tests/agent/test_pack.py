@@ -395,6 +395,23 @@ class TheOwnersLayer(unittest.TestCase):
         )
         self.assertEqual(pack.stamp("intent")["edited"], ["model"])
 
+    def test_a_bad_row_of_the_owners_refuses_its_runs_and_never_stops_the_app(self):
+        from coscc.http.plugin import hooks_of
+
+        self.own(
+            "notes",
+            '---\nname: "Notes"\nmodel: {"id": "claude-sonnet-5-5", "effort": "low"}\n'
+            'tools: {"Edit": "allow"}\noutput: {"kind": "artifact", "version": 1}\n---\nWrite.\n',
+        )
+        self.assertIn("holds Bash too", "; ".join(pack.row("notes")["problems"]))
+        # With no feature the catalog lacks the built-ins' feature tools: only the owner's row
+        # is asked here.
+        real = pack.check
+        with mock.patch.object(
+            pack, "check", lambda row, *a: real(row, *a) if row.get("name") == "Notes" else []
+        ):
+            hooks_of([], {})
+
     def test_a_body_replaces_the_body(self):
         self.own("intent", "---\n---\nBegin your reply with MARKER.\n")
         self.assertEqual(pack.row("intent")[pack.BODY], "Begin your reply with MARKER.")

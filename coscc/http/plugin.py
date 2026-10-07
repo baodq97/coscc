@@ -127,7 +127,8 @@ def hooks_of(features: Sequence[Feature], ctxs: dict[str, Ctx]) -> Hooks:
     )
     # The built-in rows: a bad one stops the build. A bad owner's file refuses its agent's runs.
     effects = {n: t.effect for n, t in hooks.catalog().items()}
-    builtin = {k: r["builtin"] for k, r in pack.rows().items()}
+    shipped = pack.manifest()["name"]
+    builtin = {k: r["builtin"] for k, r in pack.rows().items() if r["pack"] == shipped}
     for key, row in builtin.items():
         bad = pack.check(row, effects, builtin)
         if bad:
