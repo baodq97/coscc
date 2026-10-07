@@ -270,7 +270,7 @@ export function ProcessEditor({
         )}
         {fresh && drafted?.d.process && (
           <div className="drafted-first" id="draft-agent-first">
-            <div className="callout amber" style={{ alignItems: "center", flexWrap: "wrap" }}>
+            <div className="callout amber" style={{ flexDirection: "column", alignItems: "flex-start" }}>
               <span className="grow">
                 It runs a new agent Dagaz drafted with it, <b>{String(fresh.fields.name ?? fresh.key)}</b> <span className="mono">{fresh.key}</span>. Read its parts below, save it first, and this process opens again after.
               </span>
