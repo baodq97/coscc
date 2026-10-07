@@ -395,13 +395,15 @@ async def propose_gap(request: Request) -> proposals.Proposal:
     core = _core(request)
     cwd = core.ws.check(str(body.get("cwd") or ""))
     run, at = str(body.get("run") or ""), body.get("gap")
-    page = await asyncio.to_thread(core.watch.events_page, cwd, run, None, 1)
-    gaps = (page.get("draft") or {}).get("gaps") or []
+    ws, data, journal = core.ws.key(cwd), Data(core.config.data_dir), core.ws.journal()
+    ends = await asyncio.to_thread(journal.records, ws, "", kinds=("end",)) if journal else []
+    end = next((r for r in reversed(ends) if r.get("run") == run), {})
+    draft = end.get("draft") if isinstance(end.get("draft"), dict) else {}
+    gaps = draft.get("gaps") or []
     if not isinstance(at, int) or isinstance(at, bool) or not 0 <= at < len(gaps):
         raise Invalid(f"run {run} drafted no gap {at}")
-    item = proposals.of_gap(str(page["draft"].get("why") or ""), gaps[at], run)
-    ws, data = core.ws.key(cwd), Data(core.config.data_dir)
-    agent = str(page.get("stage") or "dagaz")
+    item = proposals.of_gap(str(draft.get("why") or ""), gaps[at], run)
+    agent = str(end.get("agent") or "")
     made = await asyncio.to_thread(proposals.listed, data, ws, agent)
     if any(p["run"] == run and p["slug"] == item["slug"] for p in made):
         raise Invalid("this capability is proposed already")
