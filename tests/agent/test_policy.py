@@ -1054,6 +1054,7 @@ class ASecretIsOutOfEveryToolsReach(_Unit):
             "rg token ~/.config",
             "tar czf x.tgz ~/.ss*",
             f"""python3 -c "import glob; print(glob.glob('{self.home}/.ss*/id_*'))\"""",
+            f"""python3 -I -c "import glob; print(glob.glob('{self.home}/.ss*/id_*'))\"""",
         ):
             with self.subTest(line=line):
                 self.assertIn(policy.SECRETS, self.bash(line))
@@ -1768,6 +1769,12 @@ class TheHelperRulesHold(_Unit):
         """ruby -e 'system("git", "push")'""",
         """node -e "require('child_process').execSync('git commit -m x')\"""",
         """find . -exec python3 -c "import os; os.system('git add .')" ;""",
+        """python3 -I -c "import os; os.system('git commit -m x')\"""",
+        """perl -W -e 'system("git push")'""",
+        """perl -MData::Dumper -e 'system("git push")'""",
+        """ruby -E UTF-8 -e 'system("git", "push")'""",
+        """node -pe "require('child_process').execSync('git push')\"""",
+        """python3 -Wignore::DeprecationWarning <<< "import os; os.system('git commit')\"""",
     )
 
     def test_a_helpers_inline_program_naming_git_is_refused(self):
@@ -1790,6 +1797,8 @@ class TheHelperRulesHold(_Unit):
             "uv run python -m pytest tests/x.py",
             "python3 script.py",
             'node -e "console.log(1)"',
+            'python3 -I -c "print(1)"',
+            "python3 -W ignore script.py",
             "grep -n git x.py",
             "git diff",
             "git status --porcelain",

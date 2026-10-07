@@ -1201,8 +1201,6 @@ _GIT_WORD = re.compile(r"(?<![\w.-])git(?![\w.-])")
 # What `find` runs a command with.
 _FIND_EXEC = ("-exec", "-execdir", "-ok", "-okdir")
 _PYTHON = re.compile(r"python[0-9.]*")
-# Flags of an interpreter's that take a value which is not its program.
-_INLINE_VALUED = frozenset({"-W", "-X", "-I", "-r", "--require", "--import"})
 
 
 def _inline(simple: _Simple, docs: Mapping[int, str]) -> list[str]:
@@ -1226,30 +1224,7 @@ def _inline(simple: _Simple, docs: Mapping[int, str]) -> list[str]:
             k not in launched and (reader or ("/" in word and word[:1] != "/"))
         ):
             continue
-        flags, rest = _INLINE[name], words[k + 1 :]
-        code: str | None = None
-        script: str | None = None
-        i = 0
-        while i < len(rest) and code is None and script is None:
-            w = rest[i]
-            after = rest[i + 1] if i + 1 < len(rest) else ""
-            cluster = [j for j, c in enumerate(w) if j and "-" + c in flags]
-            if w in flags:
-                code = after
-            elif w[:2] == "--" and w.partition("=")[0] in flags:
-                code = w.partition("=")[2]
-            elif w[:1] == "-" and w[1:2] != "-" and cluster:
-                # `-le 'print'`, `-Bc 'code'`, `-cprint(1)`: the value is what follows the flag.
-                code = w[cluster[0] + 1 :] or after
-            elif w == "--":
-                script = after or "-"
-            elif w in _INLINE_VALUED:
-                i += 1
-            elif w == "-m":
-                script = after
-            elif w == "-" or not w.startswith("-"):
-                script = w
-            i += 1
+        code, script = _given(name, words[k + 1 :])
         if code is not None:
             out.append(code)
         elif script in (None, "-"):
@@ -1259,6 +1234,39 @@ def _inline(simple: _Simple, docs: Mapping[int, str]) -> list[str]:
                 elif r.fd in ("", "0") and r.op in ("<<", "<<-") and r.at in docs:
                     out.append(docs[r.at])
     return out
+
+
+def _given(name: str, rest: list[str]) -> tuple[str | None, str | None]:
+    """What the words after an interpreter of `_INLINE` give it: its program as text, or else
+    its script (`-` for stdin); `(None, None)` for neither, which reads stdin too."""
+    flags, takes, sticks = _INLINE[name]
+    i = 0
+    while i < len(rest):
+        w = rest[i]
+        after = rest[i + 1] if i + 1 < len(rest) else ""
+        if w in flags:
+            return after, None
+        if w[:2] == "--" and w.partition("=")[0] in flags:
+            return w.partition("=")[2], None
+        if w == "--" or (w == "-m" and name == "python"):
+            return None, after or "-"
+        if w == "-" or not w.startswith("-"):
+            return None, w
+        if w in takes:
+            i += 1
+        elif w[1:2] != "-" and sticks is not None:
+            # A cluster (`-le 'print'`, `-Bc 'code'`, `-cprint(1)`, `-Wignore`): read up to the
+            # first flag that takes a value; what follows it in the word is that value.
+            for j in range(1, len(w)):
+                flag = "-" + w[j]
+                if flag in flags:
+                    return w[j + 1 :] or after, None
+                if flag in takes and j + 1 == len(w):
+                    i += 1
+                if flag in takes or flag in sticks:
+                    break
+        i += 1
+    return None, None
 
 
 def _launched(words: list[str]) -> list[int]:
@@ -2168,13 +2176,27 @@ def _messages(words: list[str]) -> set[int]:
 
 # `node`'s flags whose value is its program.
 _CODE_FLAGS = frozenset({"-e", "-p", "--eval", "--print"})
-# Interpreters (`python` for `python3` and `python3.N` too) and their flags whose value is the
-# program: what `_inline` reads.
+# Interpreters (`python` for `python3` and `python3.N` too), what `_inline` reads: the flags whose
+# value is the program; the flags that take some other value, in the word or the next one; the
+# short flags whose value is only the rest of their word (`-MData::Dumper`), `None` where short
+# flags never cluster (`node -pe` is a flag of its own).
 _INLINE = {
-    "python": frozenset({"-c"}),
-    "perl": frozenset({"-e", "-E"}),
-    "ruby": frozenset({"-e", "-E"}),
-    "node": _CODE_FLAGS,
+    "python": (frozenset({"-c"}), frozenset({"-W", "-X"}), frozenset()),
+    "perl": (
+        frozenset({"-e", "-E"}),
+        frozenset(),
+        frozenset({"-I", "-M", "-m", "-C", "-d", "-D", "-F", "-i", "-x", "-0", "-l", "-V"}),
+    ),
+    "ruby": (
+        frozenset({"-e"}),
+        frozenset({"-I", "-r", "-C", "-E", "--encoding"}),
+        frozenset({"-W", "-x", "-0", "-F", "-i", "-K"}),
+    ),
+    "node": (
+        _CODE_FLAGS | {"-pe"},
+        frozenset({"-r", "--require", "--import", "--loader", "-C", "--conditions"}),
+        None,
+    ),
 }
 
 
