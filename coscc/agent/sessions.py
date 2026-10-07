@@ -12,6 +12,7 @@ import asyncio
 import logging
 import json
 import os
+import re
 import shutil
 import signal
 import tempfile
@@ -127,13 +128,23 @@ SCRATCH_PREFIX = "coscc-session-"
 PROMPT_FILE = "project-instructions.md"
 
 
-def scratch_dir(app_root: Path) -> Path:
-    """A new, empty data root for one session: `0700`, unguessable, in the OS temp dir.
+def scratch_dir(app_root: Path, name: str = "") -> Path:
+    """A new, empty data root for one session: `0700`, unguessable, in the OS temp dir. With
+    `name`, a run id (32 hex), always the same path for it: what the CLI tells the model of its
+    sandbox names this path, so a resumed session sees the same words and its prompt cache holds.
+    One left there from before is removed first.
 
     Refused, and removed again, if it landed inside `app_root` or holds it (a `TMPDIR` pointed
     into the data root would hand a step the app's own directory under another name).
     """
-    made = Path(tempfile.mkdtemp(prefix=SCRATCH_PREFIX)).resolve()
+    if name:
+        if not re.fullmatch(r"[0-9a-f]{32}", name):
+            raise ValueError(f"a data root is named after a run id, not {name!r}")
+        made = Path(tempfile.gettempdir()).resolve() / f"{SCRATCH_PREFIX}{name}"
+        _drop(made)
+        made.mkdir(mode=0o700)
+    else:
+        made = Path(tempfile.mkdtemp(prefix=SCRATCH_PREFIX)).resolve()
     root = Path(app_root).resolve()
     if made == root or root in made.parents or made in root.parents:
         made.rmdir()
@@ -863,6 +874,7 @@ class Sessions:
         unit_scratch: tuple[str, str] | None = None,
         recorder: Any = None,
         cache_hour: bool = False,
+        scratch_as: str = "",
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -891,7 +903,8 @@ class Sessions:
         `unit_scratch` is the unit's `(ram, disk)` directories, in the session's environment
         (`child_env`); the caller made them, and the gate it passes holds the same two.
         `recorder` hears every message of a stream with no `step` (chat); a step's is its handle's.
-        `cache_hour`: `child_env`'s. A `session_id` is resumed only when `known` names it.
+        `cache_hour`: `child_env`'s; `scratch_as` names the data root (`scratch_dir`). A
+        `session_id` is resumed only when `known` names it.
         """
         if self.paused:
             raise Refused(PAUSED)
@@ -942,6 +955,7 @@ class Sessions:
             unit_scratch=unit_scratch,
             recorder=step.recorder if step is not None else recorder,
             cache_hour=cache_hour,
+            scratch_as=scratch_as,
         )
         if isinstance(flow, dict):  # noqa: PLR1702 - still to split
             turn = flow
@@ -1002,6 +1016,7 @@ class Sessions:
         unit_scratch: tuple[str, str] | None = None,
         recorder: Any = None,
         cache_hour: bool = False,
+        scratch_as: str = "",
     ):
         member = workspace if workspace is not None else cwd
         if not self.membership(member):
@@ -1027,7 +1042,7 @@ class Sessions:
                 if live is None:
                     # Made before the client, so a client that fails to build or connect still
                     # leaves it with an owner.
-                    scratch = scratch_dir(Data(self.config.data_dir).root)
+                    scratch = scratch_dir(Data(self.config.data_dir).root, scratch_as)
                     if step is None:
                         made = scratch
                     else:

@@ -423,6 +423,19 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         env = _options(Config(), "/p", None, tools=["Read", "Bash"]).env
         self.assertEqual({k: env.get(k) for k in self.FOREGROUND}, self.FOREGROUND)
 
+    def test_a_named_data_root_is_the_same_path_each_time_and_starts_empty(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(tempfile, "tempdir", tmp):
+            first = sessions.scratch_dir(Path("/app-root"), "a" * 32)
+            (first / "left").write_text("x")
+            again = sessions.scratch_dir(Path("/app-root"), "a" * 32)
+            self.assertEqual((again, list(again.iterdir())), (first, []))
+            self.assertEqual(again.stat().st_mode & 0o777, 0o700)
+            for bad in ("../x", "a" * 31, "A" * 32):
+                with self.assertRaises(ValueError):
+                    sessions.scratch_dir(Path("/app-root"), bad)
+            other = sessions.scratch_dir(Path("/app-root"))
+            self.assertNotEqual(other, first)
+
     def test_an_hour_long_cache_only_when_asked_and_never_inherited(self):
         with mock.patch.dict(os.environ, {sessions.CACHE_HOUR_ENV: "1"}):
             plain = _options(Config(), "/p", None, tools=["Read"]).env

@@ -91,7 +91,8 @@ class Input:
     caller named it before the run began (a press that follows it), else a new one.
     `spent_before` is what the session it continues cost before (the run log's sum), so the
     `end` holds this run's own cost; `cache_hour` keeps its prompt cache an hour
-    (`sessions.child_env`)."""
+    (`sessions.child_env`), and names its session's data root after `scratch_as`, the run that
+    opened the session (this one when ""), so a resume sees the same paths and its cache holds."""
 
     cwd: str
     prompt: str
@@ -114,6 +115,7 @@ class Input:
     run: str = ""
     spent_before: Mapping[str, float] | None = None
     cache_hour: bool = False
+    scratch_as: str = ""
 
 
 @dataclass(frozen=True)
@@ -393,6 +395,7 @@ def _started(ctx: Ctx, agent: Agent, given: Input, stage: str, run: str, grant: 
             **pack.stamp(agent.key),
             run=run,
             pid=os.getpid(),
+            **({"scratch_as": given.scratch_as or run} if given.cache_hour else {}),
             **given.start,
         ).get("at")
     except BadRecord, Busy:
@@ -553,7 +556,11 @@ def _stream(
         owner=owner,
         **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
         **({"spent_before": dict(given.spent_before)} if given.spent_before else {}),
-        **({"cache_hour": True} if given.cache_hour else {}),
+        **(
+            {"cache_hour": True, "scratch_as": given.scratch_as or str(owner["run"])}
+            if given.cache_hour
+            else {}
+        ),
         **(
             {"mcp_servers": {**given.servers, submit_mod.SERVER: channel.server()}}
             if channel is not None

@@ -162,11 +162,13 @@ class _Asking(unittest.IsolatedAsyncioTestCase):
 
 class AWarmRunIsResumed(_Asking):
     async def test_within_the_hour_it_goes_on_in_the_same_session_and_pays_only_its_turn(self):
-        self.asked_run()
+        self.asked_run(scratch_as="b" * 32)
         told = await self.asked()
         self.assertEqual((told["resumed"], told["why"]), (True, ""))
         ((agent, given),) = self.runs
         self.assertEqual(given.session_id, "s1")
+        # In the data root of the run that opened the session: the CLI's words stay the same.
+        self.assertEqual(given.scratch_as, "b" * 32)
         self.assertTrue(given.prompt.startswith(ask.RESUMED))
         self.assertEqual(given.spent_before["cost_usd"], 0.4)
         self.assertEqual(given.spent_before["cache_creation_tokens"], 60_000)

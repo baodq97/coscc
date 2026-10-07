@@ -109,6 +109,8 @@ class _Plan:
     mcp: tuple[str, ...] = ()
     features: tuple[str, ...] = ()
     session: str = ""
+    # The run that opened `session`, whose data root it is resumed in (`run.Input.scratch_as`).
+    scratch_as: str = ""
     why: str = ""
 
 
@@ -256,6 +258,7 @@ async def _decide(
         plan.why = "its transcript is gone"
     else:
         plan.session = session
+        plan.scratch_as = str(base.get("scratch_as") or "")
 
 
 def _check(
@@ -435,6 +438,7 @@ async def _ask(
                 run=run_id,
                 spent_before=spent,
                 cache_hour=plan.triggered,
+                scratch_as=plan.scratch_as,
             ),
             ctx=run_mod.Ctx(core.sessions, journal, core.config.data_dir),
             finish=finish,
