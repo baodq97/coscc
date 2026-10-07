@@ -17,6 +17,7 @@ import httpx
 from coscc.kernel import Feature
 from coscc.http.app import build
 from coscc.config import Config
+from coscc.runner import triggers
 from coscc.runner.run import LIVE
 from tests.http.test_app import seed_unit, use_sessions
 
@@ -291,6 +292,12 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start.call_args.kwargs["by"], "manual")
         r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "impl"})
         self.assertEqual((r.status_code, r.json()["code"]), (400, "not-triggered"))
+
+    async def test_run_now_on_a_unit_the_workspace_does_not_hold_starts_nothing(self):
+        body = {"cwd": str(self.ws), "key": "outcome", "unit": "0047_nonexistent"}
+        r = await self.client.post("/api/agents/run", json=body)
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "no-unit"))
+        self.assertEqual(triggers._TASKS, set())
 
     async def test_proposals_name_their_agent_and_the_owner_decides(self):
         from coscc.store.db import Data
