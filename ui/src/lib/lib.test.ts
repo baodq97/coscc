@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
+import { failureWords, until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
 import { match } from "./router";
 import { findUnit, needsYou, failedLink, proposalLink, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
 import { matches } from "./stream";
-import { fill, readLines } from "./api";
+import { api, fill, readLines } from "./api";
 import { FEATURE_UIS } from "./feature";
 import { slugOf } from "../screens/NewWork";
 import { inUnit, merged, runFacts, toolLines, toolSummary } from "../screens/RunLog";
@@ -14,6 +14,7 @@ import { noRuns } from "../screens/Insights";
 import { moved } from "../screens/UpNext";
 import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
+import { onWords } from "../screens/AgentActivity";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
 import { builtinOf, changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
@@ -744,7 +745,7 @@ describe("until and statusWords", () => {
   const row = { on: true, on_in: ["a", "b"], off_reason: "", last: null, next_at: null } as unknown as AgentRow;
   it("tells on, last and next in one line", () => {
     const said = statusWords({ ...row, last: { at: "", made: 3 } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" }, "a");
-    expect(said).toMatch(/^On here \(also on in b\) · ran .*, and made 3 · next in \d+ d$/);
+    expect(said).toMatch(/^On here \(also on in b\) · ran .*, last run made 3 · next in \d+ d$/);
   });
   it("says why an agent is off and that it never ran", () => {
     expect(statusWords({ ...row, on: false, on_in: [], off_reason: "a run stopped at its ceiling" }, "a")).toBe("Off here: a run stopped at its ceiling · never ran");
@@ -752,6 +753,12 @@ describe("until and statusWords", () => {
   it("tells a stage agent's last run and says it is always on", () => {
     expect(statusWords({ ...row, on: null }, "a")).toBe("Always on · never ran");
     expect(statusWords({ ...row, on: null, last: { at: "", made: null } as AgentRow["last"] }, "a")).toMatch(/^Always on · ran /);
+  });
+  it("says a failed or stopped last run as it ended, and the tile's line has no 'never ran' mid-line", () => {
+    const failed = { ...row, last: { at: "", made: null, outcome: "failed" } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" };
+    expect(statusWords(failed, "a")).toMatch(/ · failed .* · next in/);
+    expect(onWords({ ...row, next_at: "2999-01-01T00:00:00Z" }, "a")).toMatch(/^On here \(also on in b\) · next in \d+ d$/);
+    expect(attention({ ...failed, problems: [], chip: "failed", running: { run: "r", started: "" } } as unknown as AgentRow)).toBeNull();
   });
   it("says running now, not never ran or next, while the first run is in flight", () => {
     const said = statusWords({ ...row, running: { run: "r", started: "" }, next_at: "2999-01-01T00:00:00Z" }, "a");
@@ -818,5 +825,30 @@ describe("an agent's markdown and tool names", () => {
     expect(toolName("mcp__cos__proposals")).toBe("proposals");
     expect(toolName("mcp__code-graph__explore")).toBe("explore");
     expect(toolName("Read")).toBe("Read");
+  });
+});
+
+describe("failureWords", () => {
+  it("says a killed process plainly and keeps the raw text apart", () => {
+    const raw = "the session failed: Command failed with exit code 143 (exit code: 143) Error output: Check stderr output for details";
+    const got = failureWords(raw);
+    expect(got.plain).toBe("The agent's process was stopped (exit 143) before it finished");
+    expect(got.raw).toBe(raw);
+  });
+  it("leaves a detail with no exit code as it is", () => {
+    expect(failureWords("the ceiling was reached")).toEqual({ plain: "the ceiling was reached", raw: "" });
+  });
+});
+
+describe("api.get", () => {
+  it("shares one request between two reads of the same address in flight", async () => {
+    const fetched = vi.fn(async () => new Response(JSON.stringify({ units: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetched);
+    const [a, b] = await Promise.all([api.get("/api/units", { cwd: "/w" }), api.get("/api/units", { cwd: "/w" })]);
+    expect(fetched).toHaveBeenCalledTimes(1);
+    expect(a).toBe(b);
+    await api.get("/api/units", { cwd: "/w" });
+    expect(fetched).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
   });
 });

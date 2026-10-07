@@ -3,10 +3,10 @@
 // they ran so an edit's effect can be compared.
 
 import type { AgentPage as Page, AgentRow, RunGroup, RunView } from "../api.gen";
-import { ago, money, startedBy, unitCode, unitTitle } from "../lib/format";
+import { ago, money, until, startedBy, unitCode, unitTitle } from "../lib/format";
 import { Link } from "../lib/router";
 import { Chip, Empty } from "../components/ui";
-import { statusWords } from "./Agents";
+import { onHere } from "./Agents";
 
 const VERDICT: Record<string, string> = { met: "met", "not-met": "not met", unclear: "unclear" };
 export const OUTCOME: Record<string, string> = { failed: "failed", "paused-budget": "paused at its ceiling", cancelled: "stopped", stopped: "stopped" };
@@ -66,10 +66,10 @@ function settingWords(s: RunGroup["settings"][number]): string {
 }
 
 /** Whether the agent is on and when it runs next, without its last run (the next stat has that). */
-function onWords(a: AgentRow, here: string): string {
+export function onWords(a: AgentRow, here: string): string {
   if (a.running) return "running now";
   if (a.on === null) return "Always on";
-  return statusWords({ ...a, last: null, running: null }, here).replace(/ · never ran$/, "");
+  return [onHere(a, here), a.next_at ? `next ${until(a.next_at)}` : ""].filter(Boolean).join(" · ");
 }
 
 export function Activity({ a, page, names, workspace }: { a: AgentRow; page: Page; names: Record<string, string>; workspace: string }) {

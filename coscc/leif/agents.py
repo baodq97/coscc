@@ -768,8 +768,9 @@ class Agents:
 
     def _failed(self, by_key: dict[str, str], name: Callable[[str], str]) -> list[LiveFailed]:
         """The agents whose latest run in a workspace failed within `FAILED_DAYS`, newest first:
-        a later run that did not fail clears it. A follow-up, a skip, a chat turn and a trial are no
-        run of the agent's own."""
+        a later run that did not fail clears it, and so does turning the agent off after the failure
+        (a person's run of an agent that is off here stays listed). A follow-up, a skip, a chat turn
+        and a trial are no run of the agent's own."""
         journal = self.ws.journal()
         if journal is None:
             return []
@@ -777,9 +778,15 @@ class Agents:
             timespec="seconds"
         )
         latest: dict[tuple[str, str], dict[str, Any]] = {}
+        off: dict[tuple[str, str], str] = {}
         try:
-            for r in journal.records(None, kinds=("end",), since=since):
-                if r.get("workspace") in by_key and r.get("agent") and not r.get("unit"):
+            for r in journal.records(None, kinds=("end", triggers.STATE_KIND), since=since):
+                if r.get("kind") == triggers.STATE_KIND:
+                    if r.get("on") is False:
+                        off[str(r.get("workspace")), str(r.get("agent"))] = str(r.get("at") or "")
+                    else:
+                        off.pop((str(r.get("workspace")), str(r.get("agent"))), None)
+                elif r.get("workspace") in by_key and r.get("agent") and not r.get("unit"):
                     if not (
                         r.get("skipped")
                         or r.get("parent_run")
@@ -788,7 +795,6 @@ class Agents:
                         latest[str(r["workspace"]), str(r["agent"])] = r
         except Unusable, Busy, sqlite3.Error, OSError:
             return []
-        data = Data(self.config.data_dir)
         out = [
             LiveFailed(
                 workspace=by_key[ws],
@@ -799,7 +805,7 @@ class Agents:
                 detail=str(r.get("detail") or ""),
             )
             for (ws, key), r in latest.items()
-            if r.get("outcome") == "failed" and self._on(data, key, ws) is not False
+            if r.get("outcome") == "failed" and off.get((ws, key), "") <= str(r.get("at") or "")
         ]
         return sorted(out, key=lambda f: f["at"], reverse=True)
 

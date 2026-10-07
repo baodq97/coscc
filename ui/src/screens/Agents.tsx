@@ -69,24 +69,30 @@ export function triggerWords(a: AgentRow, rows: AgentRow[] = []): string {
 /** What needs a look on a line, worst first: a problem stops its runs, then the last run's chip. */
 export function attention(a: AgentRow): { tone: "red" | "amber"; label: string } | null {
   if (a.problems.length) return { tone: "red", label: "Cannot run" };
+  // A run in flight is the news: its last run's chip waits.
+  if (a.running) return null;
   if (a.chip === "failed") return { tone: "red", label: "Last run failed" };
   if (a.chip === "paused") return { tone: "amber", label: "Paused at its ceiling" };
   if (a.chip === "costly") return { tone: "amber", label: "Near its $ ceiling" };
   return null;
 }
 
+/** Whether the agent is on or off here, and why: the first part of `statusWords`. */
+export function onHere(a: AgentRow, here: string): string {
+  if (a.on === null) return "Always on";
+  const held = a.on && a.off_reason ? ` · ${a.off_reason}` : "";
+  const elsewhere = a.on_in.filter((n) => n !== here);
+  const also = elsewhere.length ? ` (${a.on ? "also on" : "on"} in ${elsewhere.join(", ")})` : "";
+  return a.on ? `On here${also}${held}` : `Off here${a.off_reason ? `: ${a.off_reason}` : ""}${also}`;
+}
+
+const RAN: Record<string, string> = { failed: "failed", cancelled: "stopped", stopped: "stopped", "paused-budget": "paused" };
+
 /** Where an agent stands, in a line: on or off here, its last run and what it made, its next run. */
 export function statusWords(a: AgentRow, here: string): string {
-  const said: string[] = [];
-  if (a.on === null) said.push("Always on");
-  else {
-    const held = a.on && a.off_reason ? ` · ${a.off_reason}` : "";
-    const elsewhere = a.on_in.filter((n) => n !== here);
-    const also = elsewhere.length ? ` (${a.on ? "also on" : "on"} in ${elsewhere.join(", ")})` : "";
-    said.push(a.on ? `On here${also}${held}` : `Off here${a.off_reason ? `: ${a.off_reason}` : ""}${also}`);
-  }
+  const said = [onHere(a, here)];
   if (a.running) said.push("running now");
-  else if (a.last) said.push(`${a.last.skipped ? "skipped" : "ran"} ${ago(a.last.at)}${a.last.made != null ? `, and made ${a.last.made}` : ""}`);
+  else if (a.last) said.push(`${a.last.skipped ? "skipped" : RAN[a.last.outcome ?? ""] ?? "ran"} ${ago(a.last.at)}${a.last.made != null ? `, last run made ${a.last.made}` : ""}`);
   else said.push("never ran");
   if (a.next_at && !a.running) said.push(`next ${until(a.next_at)}`);
   return said.join(" · ");
@@ -159,7 +165,7 @@ export function WorkspaceSwitch({ list, workspace, to }: { list: Workspace[]; wo
   return (
     <label className="row faint" style={{ gap: 6, fontSize: 12.5 }}>
       Project
-      <select className="input sm" value={workspace.name} onChange={(e) => navigate(`${to}?ws=${encodeURIComponent(e.target.value)}`)}>
+      <select className="input sm" style={{ width: "auto", maxWidth: 240 }} value={workspace.name} onChange={(e) => navigate(`${to}?ws=${encodeURIComponent(e.target.value)}`)}>
         {list.map((w) => (
           <option key={w.path} value={w.name}>
             {w.name}

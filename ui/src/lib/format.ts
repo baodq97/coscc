@@ -59,6 +59,17 @@ export function startedBy(by: string | null | undefined): string {
   return by ? (WHO[by] ?? by) : "";
 }
 
+/** A failed run's `detail` in one plain line: "(exit 143)" says the agent's process was stopped (a signal), other
+ * exits that it broke off; any other detail is shown as it is. The raw text stays in `raw`. */
+export function failureWords(detail: string | null | undefined): { plain: string; raw: string } {
+  const raw = (detail ?? "").trim();
+  const code = /exit code[: ]+(\d+)/i.exec(raw)?.[1];
+  if (!code) return { plain: raw, raw: "" };
+  const n = Number(code);
+  const plain = n > 128 ? `The agent's process was stopped (exit ${n}) before it finished` : `The agent's process broke off (exit ${n}) before it finished`;
+  return { plain, raw };
+}
+
 /** `mcp__cos__proposals` reads "proposals": a tool by its own name, not its server's. */
 export function toolName(name: string): string {
   return name.replace(/^mcp__[\w-]+?__/, "");

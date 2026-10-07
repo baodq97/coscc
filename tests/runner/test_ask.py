@@ -279,6 +279,17 @@ class AnythingChangedStartsAfresh(_Asking):
                 (True, False, "it was stopped before it ended"),
             )
 
+    async def test_a_failed_run_with_a_session_starts_afresh_with_its_reason(self):
+        self.asked_run("p1", ended=False)
+        self.journal.finished(
+            self.ws, "", "scan", "failed", agent="scan", run="p1", session_id="s1"
+        )
+        got = await ask.state(self.core, self.ws, "p1")
+        self.assertEqual(
+            (got["ask"]["may"], got["ask"]["resume"], got["ask"]["why"]),
+            (True, False, "it failed before it ended"),
+        )
+
 
 class AStageStepIsAskedByAReader(_Asking):
     """A step's session could write: its own is never resumed, and its reader holds only reads."""

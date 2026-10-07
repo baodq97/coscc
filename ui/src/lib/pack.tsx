@@ -4,6 +4,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { PackShown } from "../api.gen";
 import { useResource } from "./api";
+import { usePath } from "./router";
 import { SkeletonRows } from "../components/ui";
 
 export type AgentFace = { name: string; glyph: string };
@@ -35,7 +36,9 @@ export function PackProvider({ children }: { children: ReactNode }) {
   const agents = useResource(cwd ? "/api/agents" : null, cwd ? { cwd } : {});
   const packs = useResource(cwd ? "/api/packs" : null, cwd ? { cwd } : {});
   const settled = ws.state !== "loading" && (!cwd || (agents.state !== "loading" && packs.state !== "loading"));
-  if (!settled) return <div className="page"><SkeletonRows rows={4} /></div>;
+  // The Briefing names agents from its own reads: it starts them now, not after these two.
+  const home = usePath() === "/";
+  if (!settled && !home) return <div className="page"><SkeletonRows rows={4} /></div>;
 
   const faces = Object.fromEntries((agents.data?.rows ?? []).map((a) => [a.key, { name: a.row.name ?? a.key, glyph: a.row.glyph ?? (a.row.name ?? a.key).slice(0, 1) }]));
   const states = (packs.data ?? []).flatMap((p) => p.processes.flatMap((pr) => Object.entries(pr.states)));
