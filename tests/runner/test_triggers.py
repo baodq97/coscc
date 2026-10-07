@@ -166,6 +166,14 @@ class APressRunsTheRow(_Core):
         (end,) = self.ends()
         self.assertEqual((end["data_until"], end["proposals"]), (self.found[-1].at, 1))
 
+    async def test_the_preview_is_the_prompt_a_run_is_given_and_starts_nothing(self):
+        self.found = found(2)
+        before = len(self.given)
+        shown = await triggers.preview(self.core, "scan", self.ws, self.ws)
+        self.assertEqual(len(self.given), before)
+        await self.go("scan", self.ws, by="manual")
+        self.assertEqual(shown, self.given[-1].prompt)
+
     async def test_the_next_run_reads_past_where_the_last_stopped(self):
         self.found = found(2)
         await self.go("scan", self.ws, by="manual")

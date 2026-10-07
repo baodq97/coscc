@@ -275,6 +275,49 @@ async def _held(
         core.updater.job_ended()
 
 
+async def compose(
+    core: Core, key: str, cwd: str, ws: str, unit: str, text: str, found: Sequence[Intervention]
+) -> tuple[str, list[Intervention]]:
+    """The prompt a run of `key` gets, and the interventions it holds: what its row declares read
+    from the app, as `_run` hands it to the session."""
+    declared = contracts.input_of(key)
+    data = Data(core.config.data_dir)
+    made = (
+        await asyncio.to_thread(proposals.listed, data, ws, key)
+        if "proposals" in declared["data"]
+        else []
+    )
+    directory = core.ws.unit_dir(cwd, unit) if unit else None
+    idea = core.ideas.idea_note(cwd, unit) if unit and "idea" in declared["data"] else ""
+    catalog = (
+        await asyncio.to_thread(core.agents.catalog_block, cwd)
+        if "catalog" in declared["data"]
+        else ""
+    )
+    return prompt_of(
+        declared,
+        found,
+        made,
+        directory,
+        text,
+        idea,
+        unit,
+        catalog,
+        pack.sandbox_of(pack.row(key) or {}),
+    )
+
+
+async def preview(core: Core, key: str, cwd: str, ws: str, unit: str = "") -> str:
+    """What a run of `key` would be given now, for the page to show: `compose` with the
+    interventions it would read. Starts nothing and spends nothing."""
+    journal = core.ws.journal()
+    found: list[Intervention] = []
+    if journal is not None and "interventions" in contracts.input_of(key)["data"]:
+        since = await asyncio.to_thread(_data_until, journal, ws, key)
+        found = await asyncio.to_thread(_interventions, core, journal, ws, since)
+    return (await compose(core, key, cwd, ws, unit, "", found))[0]
+
+
 async def _run(
     core: Core,
     key: str,
@@ -299,22 +342,9 @@ async def _run(
     if declared.get("skip_when_empty") and not found:
         await asyncio.to_thread(_skipped, journal, ws, unit, key, by, since, run_id)
         return ""
-    made = (
-        await asyncio.to_thread(proposals.listed, data, ws, key)
-        if "proposals" in declared["data"]
-        else []
-    )
-    directory = core.ws.unit_dir(cwd, unit) if unit else None
-    idea = core.ideas.idea_note(cwd, unit) if unit and "idea" in declared["data"] else ""
-    catalog = (
-        await asyncio.to_thread(core.agents.catalog_block, cwd)
-        if "catalog" in declared["data"]
-        else ""
-    )
     found_row = pack.row(key) or {}
-    prompt, taken = prompt_of(
-        declared, found, made, directory, text, idea, unit, catalog, pack.sandbox_of(found_row)
-    )
+    prompt, taken = await compose(core, key, cwd, ws, unit, text, found)
+    directory = core.ws.unit_dir(cwd, unit) if unit else None
     output = found_row.get("output") or {}
     kind = output.get("kind")
     sources = {i.id: proposals.Source(id=i.id, kind=i.kind, unit=i.unit, at=i.at) for i in taken}
