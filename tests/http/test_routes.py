@@ -1469,6 +1469,21 @@ class TheNextStageOverHttp(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(got.json()["gate"], "cannot read the required checks of #1")
 
+    async def test_a_blocked_next_asks_the_gate_nothing(self):
+        from coscc.units import board as board_reader
+
+        offered = {"stage": "review", "action": "wait", "blocked": True}
+        gate = mock.AsyncMock()
+        with (
+            mock.patch.object(board_reader, "next_step", mock.AsyncMock(return_value=offered)),
+            mock.patch.object(board_reader, "gate", gate),
+        ):
+            got = await self.client.get(
+                "/api/units/next", params={"cwd": self.cwd, "unit": self.unit}
+            )
+        self.assertEqual((got.json()["blocked"], got.json()["gate"]), (True, ""))
+        gate.assert_not_called()
+
     async def test_missing_or_unknown_arguments_are_a_400(self):
         for params in (
             {"unit": self.unit},

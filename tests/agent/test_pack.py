@@ -575,10 +575,18 @@ class TriggersAreChecked(unittest.TestCase):
         self.assertIn("holds only reading tools, not Bash", said)
         # Checked with no catalog too, as the owner's file is at load.
         self.assertIn("not Edit", "\n".join(pack.check(_scan(tools={"Edit": "allow"}))))
-        # A row only a press starts may hold one.
-        manual = _scan(trigger={"manual": True}, tools={"Read": "allow", "Bash": "allow"})
+        # A row only a press starts holds only reading tools too.
+        manual = _scan(trigger={"manual": True}, tools={"Read": "allow", "Write": "allow"})
         del manual["default"]
-        self.assertEqual(self.reasons(manual), "")
+        self.assertIn("holds only reading tools, not Write", self.reasons(manual))
+        pack.write("scan", "trigger", {"manual": True})
+        with self.assertRaises(ValueError):
+            pack.write("scan", "tools", {"Write": "allow"})
+
+    def test_with_no_catalog_only_known_reading_tools_pass(self):
+        row = _scan(tools={"Read": "allow", "vault": "allow"})
+        self.assertIn("not vault", "\n".join(pack.check(row)))
+        self.assertEqual(pack.check(_scan(tools={"Read": "allow", "Grep": "allow"})), [])
 
     def test_a_schedule_needs_hours_and_a_default(self):
         row = _scan(trigger={"schedule": {"hours": 0}})

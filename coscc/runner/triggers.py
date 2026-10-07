@@ -91,19 +91,31 @@ def check(
         raise Refused(f"{key} is not started {_words(by)}", (code,))
     if by == "leif" and not 0 < len(reason.strip()) <= REASON_MAX:
         raise Invalid(f"Leif gives a reason of 1 to {REASON_MAX} characters")
+    core.ws.check(workspace)
+    if unit:
+        core.ws.unit_dir(workspace, unit)
     if _unit_scoped(key) != bool(unit):
         raise Invalid(f"{key} reads {'a unit' if _unit_scoped(key) else 'no unit'}")
     if text and not contracts.input_of(key).get("given"):
         raise Invalid(f"{key} takes no words")
     if len(text) > TEXT_MAX:
         raise Invalid(f"the words are at most {TEXT_MAX} characters")
-    core.ws.check(workspace)
     ws = core.ws.key(workspace)
     core.steps.refuse_updating()
-    today = core.autopilot.today(workspace)
-    if today is not None and today[0] >= today[1]:
+    effects = {n: t.effect for n, t in core.steps.hooks.catalog().items()}
+    bad = pack.problems(key, effects)
+    if bad:
         raise Refused(
-            f"the daily cap of ${today[1]:.2f} is reached (${today[0]:.2f} spent)",
+            f"agent-invalid: {key}'s row cannot run: {'; '.join(bad)}", ("agent-invalid",)
+        )
+    today = core.autopilot.today(workspace)
+    if today is None:
+        raise Refused("the daily spend cannot be read now", ("unavailable",))
+    ceiling = float(((found or {}).get("ceilings") or {}).get("usd") or 0.0)
+    if today[0] + ceiling > today[1]:
+        raise Refused(
+            f"the daily cap of ${today[1]:.2f} would pass (${today[0]:.2f} spent, "
+            f"${ceiling:.2f} reserved)",
             ("budget-reached",),
         )
     if (ws, key) in _RUNNING:
@@ -282,11 +294,8 @@ def _interventions(core: Core, journal: Any, ws: str, since: str) -> list[Interv
 
 
 def _ends(journal: Any, ws: str, key: str, unit: str = "") -> list[dict[str, Any]]:
-    """The `end`s of `key` in the workspace, on `unit`, oldest first."""
-    try:
-        rows = journal.records(ws, unit, kinds=("end",))
-    except Busy:
-        return []
+    """The `end`s of `key` in the workspace, on `unit`, oldest first; `Busy` when it cannot be read."""
+    rows = journal.records(ws, unit, kinds=("end",))
     return [r for r in rows if r.get("stage") == key]
 
 
@@ -514,7 +523,11 @@ def _tick_schedule(core: Core, data: Data, cwd: str, ws: str) -> None:
         hours = (_trigger(found).get("schedule") or {}).get("hours")
         if not hours or found.get("problems") or not pack.agent_on(data, key, ws):
             continue
-        last = _ends(journal, ws, key)
+        try:
+            last = _ends(journal, ws, key)
+        except Busy:
+            log.info("the journal is busy: the schedule of %s skips this round", ws)
+            return
         if last and _hours_since(str(last[-1].get("at") or "")) < hours:
             continue
         try:

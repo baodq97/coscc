@@ -176,6 +176,22 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertIsNone(gone)
             self.assertEqual(data.pref("density"), "compact")
 
+    def test_a_version_17_finding_keeps_its_rule_as_the_criterion(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.version()
+            with data.connect() as conn:
+                conn.execute("ALTER TABLE review_findings ADD COLUMN rule TEXT NOT NULL DEFAULT ''")
+                conn.execute(
+                    "INSERT INTO review_findings (round, finding, open, label, severity, text, "
+                    "rule) VALUES (1, 'F1', 1, 'x', 'low', 't', 'no-dup')"
+                )
+                conn.execute("PRAGMA user_version=17")
+            data.version()
+            with data.connect() as conn:
+                got = conn.execute("SELECT criterion FROM review_findings").fetchone()
+            self.assertEqual(got[0], "no-dup")
+
     def test_a_newer_database_is_still_refused(self):
         """Was `version_5`, then `version_6`: it follows `SCHEMA_VERSION`, so a newer number is
         never this build's own."""
