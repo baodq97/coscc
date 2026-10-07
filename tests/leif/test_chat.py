@@ -322,6 +322,7 @@ class LeifHearsOfTheRunsItStarted(_App):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         key, j = self.core.ws.key(self.cwd), self.core.ws.journal()
+        j.finished(key, "", "chat", "done", agent="leif", run="c0", session_id="S")
         j.finished(key, "", "chat", "done", agent="leif", run="c1", session_id="S")
         j.started(
             key, "", "scan", "manual", run="a1", started_by="leif", agent="scan", chat_run="c1"
@@ -333,7 +334,7 @@ class LeifHearsOfTheRunsItStarted(_App):
             "done",
             agent="scan",
             run="a1",
-            name="Sowilo",
+            agent_name="Sowilo",
             proposals=2,
             cost_usd=0.08,
         )
@@ -346,6 +347,8 @@ class LeifHearsOfTheRunsItStarted(_App):
         self.assertEqual(
             (run["run"], run["name"], run["outcome"], run["proposals"]), ("a1", "Sowilo", "done", 2)
         )
+        # Started in the second turn: shown under that turn's answer.
+        self.assertEqual(run["turn"], 1)
         prompts, starts = [], []
 
         async def run_(agent, inp, ctx):

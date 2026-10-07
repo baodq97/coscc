@@ -2,7 +2,7 @@
 // its code and units; what Leif remembers and recommends comes with Leif's own backend. Past
 // conversations are listed beside it; one begun in a terminal is read only.
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { ChatMessage, ChatSession, LeifRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
@@ -89,6 +89,10 @@ export function Talk() {
   };
 
   if (loading) return <div className="page"><SkeletonRows rows={4} /></div>;
+  // Each message's turn: how many of the person's messages came before it, its own included.
+  const turnOf: number[] = [];
+  let asked = 0;
+  for (const m of messages) turnOf.push(m.role === "user" ? ++asked : asked);
   const readOnly = session !== null && !session.resumable;
   return (
     <div className="split">
@@ -107,7 +111,10 @@ export function Talk() {
             </div>
           )}
           {messages.map((m, i) => (
-            <div key={i} className={`msg ${m.role === "user" ? "me" : ""}`}>
+            <Fragment key={i}>
+            {/* The runs started in the turn before this message, under that turn's answer. */}
+            {m.role === "user" && turnOf[i] > 0 && runs.filter((r) => r.turn === turnOf[i] - 1).map((r) => <RunLine key={r.run} r={r} workspace={workspace?.name ?? ""} />)}
+            <div className={`msg ${m.role === "user" ? "me" : ""}`}>
               {m.role === "user" ? <span className="av">B</span> : <LeifAvatar />}
               <div className="mb">
                 <div className="who">{m.role === "user" ? "You" : "Leif"}</div>
@@ -126,23 +133,9 @@ export function Talk() {
                 </div>
               </div>
             </div>
+            </Fragment>
           ))}
-          {runs.length > 0 && (
-            <div className="col" style={{ gap: 4 }}>
-              {runs.map((r) => (
-                <div key={r.run} className="faint" style={{ fontSize: 12.5 }}>
-                  {r.outcome === "running" ? (
-                    <>
-                      <Dot tone="live" /> {r.name} is running, started by Leif.{" "}
-                    </>
-                  ) : (
-                    `${r.name} ${r.outcome === "done" ? "finished" : r.outcome}: ${r.proposals} proposal${r.proposals === 1 ? "" : "s"}, ${money(r.cost_usd)}. `
-                  )}
-                  <Link to={`/run/${workspace?.name ?? ""}/${r.run}`}>{r.outcome === "running" ? "Watch it" : "Open the run"}</Link>
-                </div>
-              ))}
-            </div>
-          )}
+          {runs.filter((r) => r.turn >= asked - 1).map((r) => <RunLine key={r.run} r={r} workspace={workspace?.name ?? ""} />)}
           {error && <div style={{ color: "var(--red)", fontSize: 12.5 }}>{error.message}</div>}
           <div ref={end} />
         </div>
@@ -229,6 +222,23 @@ function SessionList({ sessions, current, busy, onOpen }: { sessions: ChatSessio
           </span>
         </button>
       ))}
+    </div>
+  );
+}
+
+/** One run Leif started, named as Leif names it, where the turn that started it ended. */
+function RunLine({ r, workspace }: { r: LeifRun; workspace: string }) {
+  const who = r.name === r.agent ? r.name : `${r.name} (${r.agent})`;
+  return (
+    <div className="faint" style={{ fontSize: 12.5 }}>
+      {r.outcome === "running" ? (
+        <>
+          <Dot tone="live" /> {who} is running, started by Leif.{" "}
+        </>
+      ) : (
+        `${who} ${r.outcome === "done" ? "finished" : r.outcome}: ${r.proposals} proposal${r.proposals === 1 ? "" : "s"}, ${money(r.cost_usd)}. `
+      )}
+      <Link to={`/run/${workspace}/${r.run}`}>{r.outcome === "running" ? "Watch it" : "Open the run"}</Link>
     </div>
   );
 }

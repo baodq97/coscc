@@ -781,7 +781,8 @@ function RunNowButton({ a, cwd, workspace }: Ctx) {
     setBusy(false);
   };
   const live = a.running ? a.running.run : started;
-  const last = !live && a.last && !a.last.skipped && a.last.run ? a.last.run : "";
+  // The newest run that kept a session and was not stopped: the one a question can be put to.
+  const last = live ? "" : (a.groups.flatMap((g) => g.runs).filter((r) => r.run && r.session && r.outcome !== "cancelled").sort((x, y) => y.at.localeCompare(x.at))[0]?.run ?? "");
   return (
     <span className="row" style={{ gap: 8, flexWrap: "wrap" }}>
       {asking && (

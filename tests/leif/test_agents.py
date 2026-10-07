@@ -323,6 +323,8 @@ class ThePage(_WithAService):
             (True, "nothing new since its last run", "", "manual"),
         )
         self.assertEqual((by[_at(1)]["skipped"], by[_at(1)]["run"]), (False, ""))
+        # Only a run that kept a session can be asked a question.
+        self.assertEqual((by[_at(1)]["session"], by[_at(3)]["session"]), (True, False))
 
     def test_a_question_to_a_run_counts_only_to_the_asked_agents_cost(self):
         self._seed(

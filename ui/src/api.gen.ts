@@ -363,6 +363,7 @@ export type LeifRun = {
   "outcome": string;
   "cost_usd": number | null;
   "proposals": number;
+  "turn": number;
 };
 
 export type Live = {
@@ -651,6 +652,7 @@ export type RunView = {
   "detail": string;
   "started_by": string;
   "made": number | null;
+  "session": boolean;
 };
 
 export type Saved = {

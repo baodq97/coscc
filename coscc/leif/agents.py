@@ -51,7 +51,7 @@ class RunView(TypedDict):
     workspace's resolved path; `row_hash` the definition its `start` ran (`""` before rows had
     one). `run` is the run-log id its events were kept under (`""` when none); `skipped` and
     `detail` say a run that spent nothing and why; `started_by` is who started it; `made` how many
-    proposals it kept (`None` when it makes none)."""
+    proposals it kept (`None` when it makes none); `session` whether it kept a session to ask."""
 
     workspace: str
     unit: str
@@ -65,6 +65,7 @@ class RunView(TypedDict):
     detail: str
     started_by: str
     made: int | None
+    session: bool
 
 
 class Setting(TypedDict):
@@ -296,6 +297,7 @@ def _run_view(record: dict[str, Any]) -> RunView:
         detail=str(record.get("detail") or ""),
         started_by=str(record.get("started_by") or ""),
         made=made if isinstance(made := record.get("proposals"), int) else None,
+        session=bool(record.get("session_id")),
     )
 
 

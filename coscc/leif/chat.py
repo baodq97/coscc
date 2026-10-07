@@ -60,7 +60,8 @@ class ChatMessage(TypedDict):
 
 
 class LeifRun(TypedDict):
-    """A run Leif started from a conversation, and how it ended (`running` until it has)."""
+    """A run Leif started from a conversation, and how it ended (`running` until it has).
+    `turn` is the conversation's turn it was started in, from 0, so it is shown after that turn."""
 
     run: str
     agent: str
@@ -69,6 +70,7 @@ class LeifRun(TypedDict):
     outcome: str
     cost_usd: float | None
     proposals: int
+    turn: int
 
 
 class ChatHistory(TypedDict):
@@ -163,11 +165,15 @@ class Chat:
         if journal is None or not session_id:
             return []
         try:
-            turns = {
-                str(r.get("run"))
-                for r in journal.where("session_id", session_id, ("end",))
-                if r.get("stage") == CHAT
-            }
+            ended = sorted(
+                (
+                    r
+                    for r in journal.where("session_id", session_id, ("end",))
+                    if r.get("stage") == CHAT
+                ),
+                key=lambda r: str(r.get("at") or ""),
+            )
+            turns = {str(r.get("run")): i for i, r in enumerate(ended)}
             started = [
                 r
                 for r in journal.where("started_by", "leif", ("start",))
@@ -182,11 +188,12 @@ class Chat:
                     LeifRun(
                         run=run,
                         agent=key,
-                        name=str(end.get("name") or (pack.row(key) or {}).get("name") or key),
+                        name=str(end.get("agent_name") or (pack.row(key) or {}).get("name") or key),
                         at=str(end.get("at") or r.get("at") or ""),
                         outcome=str(end.get("outcome") or "running"),
                         cost_usd=end.get("cost_usd"),
                         proposals=int(end.get("proposals") or 0),
+                        turn=turns[str(r.get("chat_run"))],
                     )
                 )
         except Busy as e:
@@ -635,7 +642,7 @@ def _runs(core: Core, ws: str, asked: str) -> list[str]:
         run, key = str(end.get("run") or ""), str(end.get("agent"))
         start = next(iter(journal.where("run", run, ("start",))), {})
         lines.append(
-            f"- {end.get('name') or key} ({key}), run {run}, ended {str(end.get('at'))[:16]}, "
+            f"- {end.get('agent_name') or key} ({key}), run {run}, ended {str(end.get('at'))[:16]}, "
             f"started by {start.get('started_by') or '?'}: {end.get('outcome')}, "
             f"{_usd(end.get('cost_usd'))}"
             + (f", {end.get('detail')}" if end.get("detail") else "")

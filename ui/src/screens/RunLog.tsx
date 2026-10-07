@@ -384,7 +384,7 @@ function Line({ event: e, unit }: { event: StepEvent; unit: string }) {
       return e.role === "user" ? null : (
         <div className="rl-l rl-say">
           {who}
-          {inUnit(e.text ?? "", unit)}
+          <Markdown text={inUnit(e.text ?? "", unit)} />
         </div>
       );
     case "tool_use":
