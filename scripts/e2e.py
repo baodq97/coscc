@@ -165,10 +165,8 @@ def a_pack_is_turned_off_and_its_default_process_chosen(context, base, api) -> b
         page.close()
 
 
-def a_person_builds_an_agent_and_a_process_and_moves_a_pack(context, base, api) -> bool:
-    """New agent from `impl`; a process on it, refused for want of a review, then fixed and saved;
-    the pack exported; the same zip refused as imported (its keys are taken), a zip with a path
-    out of its folder refused, a new pack accepted and left off."""
+def a_person_builds_an_agent_and_a_process(context, base, api) -> bool:
+    """New agent from `impl`; a process on it, refused for want of a review, then fixed and saved."""
     cwd = api.get("/api/workspaces").json()["workspaces"][0]["path"]
     page = open_studio(context, base, "/agents")
     try:
@@ -178,8 +176,15 @@ def a_person_builds_an_agent_and_a_process_and_moves_a_pack(context, base, api) 
         page.get_by_role("button", name="Create agent").click()
         page.wait_for_url("**/agents/tidy")
         page.wait_for_selector("text=tidy")
-        made = next(r for r in api.get("/api/agents", params={"cwd": cwd}).json()["rows"] if r["key"] == "tidy")
-        ok = say(made.get("own") is True and made.get("pack") == "local", "the new agent is a whole row of the owner's own pack")
+        made = next(
+            r
+            for r in api.get("/api/agents", params={"cwd": cwd}).json()["rows"]
+            if r["key"] == "tidy"
+        )
+        ok = say(
+            made.get("own") is True and made.get("pack") == "local",
+            "the new agent is a whole row of the owner's own pack",
+        )
 
         page.goto(base + "/may-do", wait_until="load")
         page.wait_for_selector("text=New units walk")
@@ -191,7 +196,9 @@ def a_person_builds_an_agent_and_a_process_and_moves_a_pack(context, base, api) 
         page.get_by_role("button", name="Save process").click()
         page.wait_for_selector("text=a review state is not on every path")
         refused = page.locator(".pe-step.bad").count()
-        ok &= say(refused >= 1, "a save with no review is refused beside the step it names", str(refused))
+        ok &= say(
+            refused >= 1, "a save with no review is refused beside the step it names", str(refused)
+        )
         page.get_by_label("Add a step").select_option("agent:review")
         page.get_by_label("Move up").last.click()
         page.get_by_role("button", name="+ Add a way on").nth(3).click()
@@ -201,9 +208,25 @@ def a_person_builds_an_agent_and_a_process_and_moves_a_pack(context, base, api) 
         page.get_by_label("Goes to").last.select_option("tidy")
         page.get_by_role("button", name="Save process").click()
         page.wait_for_selector(".pack-editor", state="detached")
-        refs = [p["ref"] for p in api.get("/api/packs", params={"cwd": cwd}).json()[-1]["processes"]]
+        refs = [
+            p["ref"] for p in api.get("/api/packs", params={"cwd": cwd}).json()[-1]["processes"]
+        ]
         ok &= say("local/tiny" in refs, "the saved process is the owner's own", str(refs))
+        return ok
+    finally:
+        page.close()
 
+
+def a_pack_is_exported_and_imported(context, base, api) -> bool:
+    """The owner's pack exported as a zip; the same zip refused as imported (its keys are taken), a
+    zip with a path out of its folder refused, a new pack accepted and left off. Runs after the
+    case that builds the agent and the process."""
+    cwd = api.get("/api/workspaces").json()["workspaces"][0]["path"]
+    page = open_studio(context, base, "/may-do")
+    try:
+        page.wait_for_selector("text=New units walk")
+        mine = page.locator(".pack-card").filter(has=page.get_by_text("Yours", exact=True)).first
+        ok = True
         with page.expect_download() as got:
             mine.get_by_role("link", name="Export").click()
         data = api.get("/api/packs/local/export", params={"cwd": cwd}).content
@@ -215,17 +238,24 @@ def a_person_builds_an_agent_and_a_process_and_moves_a_pack(context, base, api) 
 
         def upload(blob: bytes):
             page.get_by_role("button", name="Import a pack").first.click()
-            page.get_by_label("Pack file").set_input_files({"name": "pack.zip", "mimeType": "application/zip", "buffer": blob})
+            page.get_by_label("Pack file").set_input_files(
+                {"name": "pack.zip", "mimeType": "application/zip", "buffer": blob}
+            )
             page.get_by_role("button", name="Import", exact=True).click()
 
         upload(data)
         page.wait_for_selector("text=Not imported")
-        ok &= say(page.locator(".pe-refused li").count() >= 1, "a pack whose keys are taken is refused with its reasons")
+        ok &= say(
+            page.locator(".pe-refused li").count() >= 1,
+            "a pack whose keys are taken is refused with its reasons",
+        )
         page.keyboard.press("Escape")
 
         bad = io.BytesIO()
         with zipfile.ZipFile(bad, "w") as z:
-            z.writestr(".claude-plugin/plugin.json", json.dumps({"name": "extra", "version": "1.0.0"}))
+            z.writestr(
+                ".claude-plugin/plugin.json", json.dumps({"name": "extra", "version": "1.0.0"})
+            )
             z.writestr("../x.md", "x")
         upload(bad.getvalue())
         page.wait_for_selector("text=Not imported")
@@ -235,12 +265,23 @@ def a_person_builds_an_agent_and_a_process_and_moves_a_pack(context, base, api) 
         row = zipfile.ZipFile(io.BytesIO(data)).read("agents/tidy.md")
         good = io.BytesIO()
         with zipfile.ZipFile(good, "w") as z:
-            z.writestr(".claude-plugin/plugin.json", json.dumps({"name": "extra", "version": "1.0.0"}))
+            z.writestr(
+                ".claude-plugin/plugin.json", json.dumps({"name": "extra", "version": "1.0.0"})
+            )
             z.writestr("agents/tidy-two.md", row)
         upload(good.getvalue())
         page.wait_for_selector("text=Added extra")
-        extra = next(p for p in api.get("/api/packs", params={"cwd": cwd}).json() if p["name"] == "extra")
-        return say(extra["on"] is False and extra.get("imported") is True, "an imported pack arrives off", str(extra["on"])) and ok
+        extra = next(
+            p for p in api.get("/api/packs", params={"cwd": cwd}).json() if p["name"] == "extra"
+        )
+        return (
+            say(
+                extra["on"] is False and extra.get("imported") is True,
+                "an imported pack arrives off",
+                str(extra["on"]),
+            )
+            and ok
+        )
     finally:
         page.close()
 
@@ -334,14 +375,8 @@ def main() -> int:
                 results.append(
                     run(a_pack_is_turned_off_and_its_default_process_chosen, context, app.base, api)
                 )
-                results.append(
-                    run(
-                        a_person_builds_an_agent_and_a_process_and_moves_a_pack,
-                        context,
-                        app.base,
-                        api,
-                    )
-                )
+                results.append(run(a_person_builds_an_agent_and_a_process, context, app.base, api))
+                results.append(run(a_pack_is_exported_and_imported, context, app.base, api))
                 results.append(run(the_sidebar_is_a_drawer_on_a_phone, browser, app.base, token))
                 results.append(run(an_unknown_api_path_is_a_404_not_the_page, api))
             finally:

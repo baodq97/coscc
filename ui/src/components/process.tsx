@@ -333,7 +333,7 @@ function StepOptions({ agents }: { agents: BuildAgent[] }) {
         ))}
       </optgroup>
       <optgroup label="The app does it">
-        <option value="action:open-pr">Opens the pull request</option>
+        <option value="action:open-pr">Opens the PR</option>
         <option value="action:merge">Merges it</option>
       </optgroup>
     </>
