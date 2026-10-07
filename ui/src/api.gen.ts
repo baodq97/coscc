@@ -363,7 +363,7 @@ export type LeifRun = {
   "outcome": string;
   "cost_usd": number | null;
   "proposals": number;
-  "turn": number;
+  "said": string;
 };
 
 export type Live = {

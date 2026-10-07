@@ -89,10 +89,17 @@ export function Talk() {
   };
 
   if (loading) return <div className="page"><SkeletonRows rows={4} /></div>;
-  // Each message's turn: how many of the person's messages came before it, its own included.
-  const turnOf: number[] = [];
-  let asked = 0;
-  for (const m of messages) turnOf.push(m.role === "user" ? ++asked : asked);
+  // Where each run's line goes: before the person's next message after the one that started it
+  // (found by its words, the last such), else at the end.
+  const before = new Map<number, LeifRun[]>();
+  const last: LeifRun[] = [];
+  for (const r of runs) {
+    const said = r.said.trim();
+    const at = said ? messages.map((m, i) => (m.role === "user" && m.text.trim().startsWith(said) ? i : -1)).filter((i) => i >= 0).pop() : undefined;
+    const next = at === undefined ? -1 : messages.findIndex((m, i) => i > at && m.role === "user");
+    if (next < 0) last.push(r);
+    else before.set(next, [...(before.get(next) ?? []), r]);
+  }
   const readOnly = session !== null && !session.resumable;
   return (
     <div className="split">
@@ -113,7 +120,7 @@ export function Talk() {
           {messages.map((m, i) => (
             <Fragment key={i}>
             {/* The runs started in the turn before this message, under that turn's answer. */}
-            {m.role === "user" && turnOf[i] > 0 && runs.filter((r) => r.turn === turnOf[i] - 1).map((r) => <RunLine key={r.run} r={r} workspace={workspace?.name ?? ""} />)}
+            {(before.get(i) ?? []).map((r) => <RunLine key={r.run} r={r} workspace={workspace?.name ?? ""} />)}
             <div className={`msg ${m.role === "user" ? "me" : ""}`}>
               {m.role === "user" ? <span className="av">B</span> : <LeifAvatar />}
               <div className="mb">
@@ -135,7 +142,7 @@ export function Talk() {
             </div>
             </Fragment>
           ))}
-          {runs.filter((r) => r.turn >= asked - 1).map((r) => <RunLine key={r.run} r={r} workspace={workspace?.name ?? ""} />)}
+          {last.map((r) => <RunLine key={r.run} r={r} workspace={workspace?.name ?? ""} />)}
           {error && <div style={{ color: "var(--red)", fontSize: 12.5 }}>{error.message}</div>}
           <div ref={end} />
         </div>

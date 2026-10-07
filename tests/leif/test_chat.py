@@ -322,7 +322,7 @@ class LeifHearsOfTheRunsItStarted(_App):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         key, j = self.core.ws.key(self.cwd), self.core.ws.journal()
-        j.finished(key, "", "chat", "done", agent="leif", run="c0", session_id="S")
+        j.started(key, "", "chat", "manual", agent="leif", run="c1", said="run the scan")
         j.finished(key, "", "chat", "done", agent="leif", run="c1", session_id="S")
         j.started(
             key, "", "scan", "manual", run="a1", started_by="leif", agent="scan", chat_run="c1"
@@ -347,8 +347,8 @@ class LeifHearsOfTheRunsItStarted(_App):
         self.assertEqual(
             (run["run"], run["name"], run["outcome"], run["proposals"]), ("a1", "Sowilo", "done", 2)
         )
-        # Started in the second turn: shown under that turn's answer.
-        self.assertEqual(run["turn"], 1)
+        # Found by the words of the turn that started it: shown under that turn's answer.
+        self.assertEqual(run["said"], "run the scan")
         prompts, starts = [], []
 
         async def run_(agent, inp, ctx):
@@ -366,7 +366,7 @@ class LeifHearsOfTheRunsItStarted(_App):
         self.assertIn("Sowilo (scan) run a1: done, 2 proposals, $0.08", prompts[0])
         self.assertTrue(prompts[0].endswith(f"{chat.NOTE_END}\nwhat did it find?"))
         # Once a turn has heard it, the next one is not told again.
-        self.assertEqual(starts[0], {"told": ["a1"]})
+        self.assertEqual(starts[0], {"said": "what did it find?", "told": ["a1"]})
         key, j = self.core.ws.key(self.cwd), self.core.ws.journal()
         j.started(key, "", "chat", "manual", run="c2", agent="leif", **starts[0])
         j.finished(key, "", "chat", "done", agent="leif", run="c2", session_id="S")

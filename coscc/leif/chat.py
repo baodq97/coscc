@@ -61,7 +61,8 @@ class ChatMessage(TypedDict):
 
 class LeifRun(TypedDict):
     """A run Leif started from a conversation, and how it ended (`running` until it has).
-    `turn` is the conversation's turn it was started in, from 0, so it is shown after that turn."""
+    `said` is the start of the person's message of the turn that started it (`SAID` characters),
+    so it is shown after that turn's answer; "" for a turn that kept none."""
 
     run: str
     agent: str
@@ -70,7 +71,7 @@ class LeifRun(TypedDict):
     outcome: str
     cost_usd: float | None
     proposals: int
-    turn: int
+    said: str
 
 
 class ChatHistory(TypedDict):
@@ -78,6 +79,9 @@ class ChatHistory(TypedDict):
     messages: list[ChatMessage]
     runs: list[LeifRun]
 
+
+# How much of the person's message a chat turn's `start` keeps: what Talk finds the turn by.
+SAID = 200
 
 # What the app puts before a person's message when runs Leif started have ended since its last
 # turn, and the line after which the person's own words follow; `history` shows only those.
@@ -165,15 +169,11 @@ class Chat:
         if journal is None or not session_id:
             return []
         try:
-            ended = sorted(
-                (
-                    r
-                    for r in journal.where("session_id", session_id, ("end",))
-                    if r.get("stage") == CHAT
-                ),
-                key=lambda r: str(r.get("at") or ""),
-            )
-            turns = {str(r.get("run")): i for i, r in enumerate(ended)}
+            turns = {
+                str(r.get("run"))
+                for r in journal.where("session_id", session_id, ("end",))
+                if r.get("stage") == CHAT
+            }
             started = [
                 r
                 for r in journal.where("started_by", "leif", ("start",))
@@ -193,7 +193,13 @@ class Chat:
                         outcome=str(end.get("outcome") or "running"),
                         cost_usd=end.get("cost_usd"),
                         proposals=int(end.get("proposals") or 0),
-                        turn=turns[str(r.get("chat_run"))],
+                        said=next(
+                            (
+                                str(t.get("said") or "")
+                                for t in journal.where("run", str(r.get("chat_run")), ("start",))
+                            ),
+                            "",
+                        ),
                     )
                 )
         except Busy as e:
@@ -302,7 +308,7 @@ class Chat:
                 self.ws.key(cwd),
                 stage=CHAT,
                 run=run_id,
-                start={"told": told} if told else {},
+                start={"said": text[:SAID], **({"told": told} if told else {})},
                 session_id=session_id,
                 keep=True,
                 resume=resume,
