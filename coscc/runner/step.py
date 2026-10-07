@@ -1812,7 +1812,7 @@ class Runner:
             **ship_extra,
             # The agent's key, as its `end` names it, and its name when the step began (none for a
             # stage the agent table has no row for).
-            agent=stage,
+            agent=agent_key,
             **({"agent_name": agent["name"]} if agent is not None else {}),
             # Whose step this is, so the next start can tell one this process still runs from one the app
             # went down under.
@@ -2105,7 +2105,7 @@ class Runner:
                 stage,
                 run_mod.status_of(outcome),
                 outcome=outcome,
-                agent=stage,
+                agent=key,
                 session_id=session_id,
                 model=kw.get("model"),
                 denials=denials,

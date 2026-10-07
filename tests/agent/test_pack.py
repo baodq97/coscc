@@ -737,6 +737,14 @@ class ManyPacks(unittest.TestCase):
         self.assertEqual(pack.row("tidy")["ceilings"], {"turns": 20, "usd": 1.0})
         self.assertEqual(pack.stamp("tidy")["pack"], "local@1.0.0")
 
+    def test_a_copy_drops_the_variants_and_model_trial_it_would_run_unseen(self):
+        pack.new_row("tidy", "Tidy", "impl", CATALOG)
+        src, copy = pack.row("impl"), pack.row("tidy")
+        self.assertNotIn("variants", copy)
+        self.assertNotIn("trial", copy["model"])
+        self.assertEqual(copy["model"].get("id"), src["model"].get("id"))
+        self.assertEqual(copy["model"].get("effort"), src["model"].get("effort"))
+
     def test_a_taken_or_bad_key_or_name_is_refused_and_nothing_written(self):
         for key, name, why in (
             ("impl", "Other", "impl is taken"),

@@ -1423,8 +1423,8 @@ BLANK: dict[str, Any] = {
 def new_row(
     key: str, name: str, start: str | None, catalog: Mapping[str, str] | None = None
 ) -> None:
-    """Write `local/agents/<key>.md`: a copy of row `start` (every key, its body, its skills by
-    name) named `name`, or with no `start` the `BLANK` row. A taken or bad key, or a row `check`
+    """Write `local/agents/<key>.md`: a copy of row `start` (every key but `variants` and
+    `model.trial`, which would run what the page does not show; its body, its skills by name) named `name`, or with no `start` the `BLANK` row. A taken or bad key, or a row `check`
     refuses, is a `PackError` with every reason and nothing is written."""
     reasons = [why] if (why := key_problem(key)) else []
     if key in rows():
@@ -1435,7 +1435,9 @@ def new_row(
         if found is None:
             reasons.append(f"no agent {start} to start from")
         else:
-            base = {k: found[k] for k in KEYS if k in found}
+            base = {k: found[k] for k in KEYS if k in found and k != "variants"}
+            if isinstance(base.get("model"), dict):
+                base["model"] = {k: v for k, v in base["model"].items() if k != "trial"}
             base[BODY] = found.get(BODY) or ""
     fields = {k: v for k, v in {**base, "name": name}.items() if k != BODY}
     body = str(base.get(BODY) or "")
