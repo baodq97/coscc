@@ -8,13 +8,16 @@ import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { ago } from "../lib/format";
 import { Icon, LeifAvatar } from "../lib/icons";
+import { setQuery, useQuery } from "../lib/router";
 import { Button, SkeletonRows } from "../components/ui";
 
 type Shown = { role: string; text: string; tools?: string[] };
 
 export function Talk() {
   const { boards, loading } = useBoards();
-  const [project, setProject] = useState("");
+  // The address holds the project and the open conversation, so a reload reopens both.
+  const project = useQuery("project");
+  const wanted = useQuery("session");
   const workspace = boards.find((b) => b.workspace.name === project)?.workspace ?? boards[0]?.workspace;
   const cwd = workspace?.path ?? "";
   const sessions = useResource(cwd ? "/api/chat/sessions" : null, { cwd }, { on: ["chat-turn."] });
@@ -26,7 +29,9 @@ export function Talk() {
   const end = useRef<HTMLDivElement>(null);
   const [elsewhere, setElsewhere] = useState(false);
   // The app's own chats first; sessions begun in a terminal or by an agent's run are read only.
-  const mine = sessions.data?.sessions.filter((s) => s.resumable) ?? [];
+  const listed = sessions.data?.sessions.filter((s) => s.resumable) ?? [];
+  // A conversation just begun is not in the server's list yet: keep it on top so the list does not jump.
+  const mine = session?.resumable && !listed.some((s) => s.session_id === session.session_id) ? [session, ...listed] : listed;
   const others = sessions.data?.sessions.filter((s) => !s.resumable) ?? [];
 
   useEffect(() => {
@@ -35,6 +40,7 @@ export function Talk() {
   }, [messages]);
 
   const open = async (s: ChatSession | null) => {
+    setQuery("session", s?.session_id ?? "");
     setSession(s);
     setError(null);
     setMessages([]);
@@ -46,6 +52,12 @@ export function Talk() {
       setError(e as Error);
     }
   };
+
+  useEffect(() => {
+    if (!wanted || session?.session_id === wanted || !sessions.data) return;
+    const known = sessions.data.sessions.find((s) => s.session_id === wanted);
+    open(known ?? { session_id: wanted, summary: "Conversation", last_modified: Date.now(), created_at: null, git_branch: null, resumable: true });
+  }, [wanted, sessions.data]);
 
   const send = async () => {
     const said = text.trim();
@@ -62,8 +74,10 @@ export function Talk() {
         else if (l.type === "tool") add((last) => ({ ...last, tools: [...(last.tools ?? []), String(l.name)] }));
         else if (l.type === "done") id = String(l.session_id ?? "");
       });
-      if (id && id !== session?.session_id) setSession({ session_id: id, summary: said, last_modified: Date.now(), created_at: null, git_branch: null, resumable: true });
-      sessions.reload();
+      if (id && id !== session?.session_id) {
+        setQuery("session", id);
+        setSession({ session_id: id, summary: said, last_modified: Date.now(), created_at: null, git_branch: null, resumable: true });
+      }
     } catch (e) {
       setError(e as Error);
     } finally {
@@ -146,13 +160,13 @@ export function Talk() {
         </div>
       </div>
       <aside className="props" style={{ width: 280 }}>
-        <div className="seg" style={{ marginBottom: 12 }}>
+        <div className="seg" style={{ marginBottom: 12, maxWidth: "100%", overflowX: "auto" }}>
           {boards.map((b) => (
             <button
               key={b.workspace.path}
               className={workspace?.path === b.workspace.path ? "on" : ""}
               onClick={() => {
-                setProject(b.workspace.name);
+                setQuery("project", b.workspace.name);
                 open(null);
               }}
             >
@@ -173,11 +187,11 @@ export function Talk() {
             <SessionList sessions={mine} current={session} busy={busy} onOpen={open} />
             {!mine.length && <div className="faint" style={{ fontSize: 12.5 }}>Your conversations appear here once you send one.</div>}
             {others.length > 0 && (
-              <button className="link-btn faint" style={{ fontSize: 12, marginTop: 12 }} onClick={() => setElsewhere(!elsewhere)}>
-                {elsewhere ? "Hide" : "Show"} {others.length} begun elsewhere (read only)
+              <button className="link-btn faint" style={{ fontSize: 12, marginTop: 12 }} onClick={() => setElsewhere(!(elsewhere || readOnly))}>
+                {elsewhere || readOnly ? "Hide" : "Show"} {others.length} begun elsewhere (read only)
               </button>
             )}
-            {elsewhere && <SessionList sessions={others} current={session} busy={busy} onOpen={open} />}
+            {(elsewhere || readOnly) && <SessionList sessions={others} current={session} busy={busy} onOpen={open} />}
           </>
         )}
       </aside>

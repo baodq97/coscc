@@ -173,8 +173,9 @@ class ARunsEndIsOnItsFirstPage(unittest.TestCase):
         ws = core.ws.key(str(repo))
         journal = core.ws.journal()
         draft = {"why": "a reader", "process": {"name": "docs", "process": {}}}
-        journal.started(ws, "", "dagaz", "manual", run="r9")
+        journal.started(ws, "", "dagaz", "manual", run="r9", started_by="person")
         page = core.watch.events_page(str(repo), "r9")
+        self.assertEqual(page["started_by"], "person")
         self.assertNotIn("draft", page)
         journal.finished(ws, "", "dagaz", "done", run="r9", detail="", draft=draft)
         page = core.watch.events_page(str(repo), "r9")

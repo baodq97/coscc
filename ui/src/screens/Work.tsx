@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { api } from "../lib/api";
-import { allUnits, useBoards } from "../lib/boards";
+import { allUnits, useBoards, workspacesChanged } from "../lib/boards";
 import { FeatureSlots } from "../lib/feature";
 import { unitCode, unitTitle } from "../lib/format";
 import { GROUP_ORDER, unitState, type Workspace } from "../lib/model";
@@ -30,8 +30,8 @@ export function Work({ workspace }: { workspace?: string }) {
       {loading ? (
         <SkeletonRows rows={10} />
       ) : units.length === 0 ? (
-        <Empty icon="board" title="No work yet">
-          Hand over the first piece of work with <kbd>C</kbd>.
+        <Empty icon="board" title="No work yet" actions={<Button kind="primary" icon="plus" onClick={() => navigate("/new")}>New work</Button>}>
+          Hand over the first piece of work (key <kbd>C</kbd>).
         </Empty>
       ) : (
         GROUP_ORDER.map((group) => {
@@ -96,6 +96,7 @@ function ProjectBar({ workspace }: { workspace: Workspace }) {
           onClick={() =>
             act("remove", async () => {
               await api.post(`/api/workspaces/${name}/remove`, {});
+              workspacesChanged();
               navigate("/work");
             })
           }
@@ -136,6 +137,7 @@ function AddProject() {
     setError(null);
     try {
       await api.post("/api/workspaces", { name: name.trim(), repo_url: url.trim() || undefined, label: label.trim() });
+      workspacesChanged();
       navigate(`/work/${encodeURIComponent(name.trim())}`);
     } catch (e) {
       setError(e as Error);

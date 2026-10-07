@@ -7,7 +7,10 @@ import { matches } from "./stream";
 import { fill, readLines } from "./api";
 import { FEATURE_UIS } from "./feature";
 import { slugOf } from "../screens/NewWork";
-import { inUnit, merged, toolSummary } from "../screens/RunLog";
+import { inUnit, merged, runFacts, toolSummary } from "../screens/RunLog";
+import { shortcut } from "../shell/Shell";
+import { filterDecided } from "../screens/Decided";
+import { noRuns } from "../screens/Insights";
 import { moved } from "../screens/UpNext";
 import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
@@ -514,4 +517,35 @@ describe("process steps that ask", () => {
   it("says nowhere yet for an agent no state or trigger runs", () => {
     expect(triggerWords({ key: "mine", group: "engine", row: {} } as unknown as AgentRow)).toBe("nowhere yet");
   });
+});
+describe("shortcuts", () => {
+  it("goes to Leif on G then L, and does not toggle the panel", () => {
+    expect(shortcut("g", false)).toEqual({ act: "arm" });
+    expect(shortcut("l", true)).toEqual({ go: "/leif" });
+    expect(shortcut("l", false)).toEqual({ act: "leif" });
+    expect(shortcut("?", false)).toEqual({ act: "help" });
+  });
+});
+
+describe("a run's header", () => {
+  it("reads outcome, cost, turns, time, model and starter", () => {
+    const e = (o: object) => ({ run: "r", seq: 1, at: 0, ...o }) as never;
+    const facts = runFacts([e({ kind: "config", model: "claude-sonnet-4-5", effort: "high" }), e({ kind: "result", cost_usd: 1.5, num_turns: 12, duration_ms: 125000 })], { status: "ended", outcome: "done", started_by: "autopilot" });
+    expect(Object.fromEntries(facts.map((f) => [f.label, f.value]))).toMatchObject({ Outcome: "done", Cost: "$1.50", Turns: "12", Took: "2 min 5 s", "Started by": "autopilot" });
+    expect(runFacts([], { status: "running" })[0].value).toBe("running");
+  });
+});
+
+describe("the decisions filter", () => {
+  const row = (unit: string, text: string) => ({ unit, text, question: "", name: "Leif", artifact: "spec", n: 1, date: "" }) as never;
+  it("keeps the rows with every word", () => {
+    const rows = [row("0001_a", "use sqlite"), row("0002_b", "use postgres")];
+    expect(filterDecided(rows, "use SQLITE")).toHaveLength(1);
+    expect(filterDecided(rows, "  ")).toHaveLength(2);
+    expect(filterDecided(rows, "0002")).toHaveLength(1);
+  });
+});
+
+describe("by-agent rows with no run", () => {
+  it("say why", () => expect(noRuns({ steps: 3 })).toMatch(/3 of its steps.*no run to open/));
 });

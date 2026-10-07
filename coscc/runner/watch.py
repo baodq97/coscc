@@ -67,6 +67,8 @@ class EventsPage(TypedDict):
     last_at: int | None
     events_lost: int
     purged_at: str | None
+    # Who pressed it (`person`, `autopilot`, ...), from the run's `start`; on the first page.
+    started_by: NotRequired[str]
     # From the run's `end` in the run log, once it has one (on the first page): how it ended, why,
     # and a `draft` kind's object (Dagaz's), which nothing else keeps.
     outcome: NotRequired[str]
@@ -183,9 +185,22 @@ class Watch:
             found = []
         out["events"] = found
         out["first_seq"] = found[0]["seq"] if found else None
-        if recorder is None and before is None and seq is None:
-            out.update(self._ended(self.ws.key(cwd), run, unit))
+        if before is None and seq is None:
+            out["started_by"] = self._started_by(self.ws.key(cwd), run, unit)
+            if recorder is None:
+                out.update(self._ended(self.ws.key(cwd), run, unit))
         return out
+
+    def _started_by(self, workspace: str, run: str, unit: str) -> str:
+        journal = self.ws.journal()
+        if journal is None:
+            return ""
+        try:
+            starts = journal.records(workspace, unit, kinds=("start",))
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        start = next((r for r in reversed(starts) if r.get("run") == run), None)
+        return str(start.get("started_by") or "") if start else ""
 
     def _ended(self, workspace: str, run: str, unit: str) -> dict[str, Any]:
         """What the run's `end` says: `outcome`, `detail` and a `draft`; `{}` with no `end` yet."""

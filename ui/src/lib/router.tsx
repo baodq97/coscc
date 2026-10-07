@@ -34,6 +34,16 @@ export function useQuery(name: string): string {
   return value;
 }
 
+/** Put one parameter in the address, or take it out when empty, without adding a history entry. */
+export function setQuery(name: string, value: string): void {
+  const q = new URLSearchParams(location.search);
+  if (value) q.set(name, value);
+  else q.delete(name);
+  const rest = q.toString();
+  history.replaceState(null, "", location.pathname + (rest ? `?${rest}` : ""));
+  dispatchEvent(new PopStateEvent("popstate"));
+}
+
 /** `match("/unit/:ws/:n", "/unit/coscc/162")` gives `{ws: "coscc", n: "162"}`, or null. */
 export function match(pattern: string, path: string): Record<string, string> | null {
   const want = pattern.split("/").filter(Boolean);
