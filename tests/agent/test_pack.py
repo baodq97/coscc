@@ -583,10 +583,16 @@ class TriggersAreChecked(unittest.TestCase):
         with self.assertRaises(ValueError):
             pack.write("scan", "tools", {"Write": "allow"})
 
-    def test_with_no_catalog_only_known_reading_tools_pass(self):
-        row = _scan(tools={"Read": "allow", "vault": "allow"})
-        self.assertIn("not vault", "\n".join(pack.check(row)))
-        self.assertEqual(pack.check(_scan(tools={"Read": "allow", "Grep": "allow"})), [])
+    def test_with_no_catalog_claude_codes_own_tools_must_be_known_to_read(self):
+        """A feature's tool waits for the catalog: the run's check has it and refuses one that does
+        more than read."""
+        self.assertIn(
+            "not Bash", "\n".join(pack.check(_scan(tools={"Read": "allow", "Bash": "allow"})))
+        )
+        self.assertEqual(pack.check(_scan(tools={"Read": "allow", "codegraph": "allow"})), [])
+        catalog = {"Read": "read", "codegraph": "read", "vault": "external"}
+        self.assertIn("not vault", "\n".join(pack.check(_scan(tools={"vault": "allow"}), catalog)))
+        self.assertEqual(pack.check(_scan(tools={"codegraph": "allow"}), catalog), [])
 
     def test_a_schedule_needs_hours_and_a_default(self):
         row = _scan(trigger={"schedule": {"hours": 0}})

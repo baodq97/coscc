@@ -13,13 +13,18 @@ from unittest import mock
 
 from coscc.agent import pack
 from coscc.bus import Bus
-from coscc.kernel import Hooks, Run
+from coscc.kernel import Hooks, Parts, Run, Tool
 from coscc.runner import run as run_mod
 from coscc.runner import triggers
 from coscc.store.db import Busy, Data
 from coscc.store.journal import Intervention, Journal
 from coscc.units import Invalid, proposals
 from coscc.units.meta import UnitMeta
+
+# The app's catalog holds every feature's tool, on or off: the grader names the code index.
+HOOKS = Hooks(
+    parts=(("codegraph", Parts(tools=(Tool("codegraph", "read", "low", when=lambda f: False),))),)
+)
 
 PROBLEM = "Steps stop and a person runs them again by hand. " * 6
 
@@ -64,7 +69,7 @@ class _Core(unittest.IsolatedAsyncioTestCase):
             holds=SimpleNamespace(attempts=None),
             sessions=None,
             models=SimpleNamespace(agent=lambda key, row: run_mod.Agent(key, row)),
-            steps=SimpleNamespace(refuse_updating=lambda: None, hooks=Hooks()),
+            steps=SimpleNamespace(refuse_updating=lambda: None, hooks=HOOKS),
             autopilot=SimpleNamespace(today=lambda cwd: (0.0, 120.0)),
             updater=SimpleNamespace(job_ended=lambda: None),
             bus=Bus(),

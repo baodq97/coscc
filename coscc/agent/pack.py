@@ -94,7 +94,7 @@ CWDS = ("trunk",)
 THENS = ("proposal-if-no",)
 # A schedule's hours and an event's delay. Chosen: a year.
 HOURS_MAX = 8760
-# The tools known to only read, all a row checked with no catalog may hold (it fails closed).
+# Claude Code's tools known to only read, all of its own a row checked with no catalog may hold.
 KNOWN_READ = ("Read", "Glob", "Grep", "SendMessage", "peers")
 # What a process state may do in place of running an agent: the engine opens the pull request, or
 # merges it.
@@ -367,8 +367,13 @@ def _check_trigger(
         out += _check_event(row, trigger["event"])
     if any(k in trigger for k in TRIGGERS if k != "engine"):
         held = [t for t, p in (row.get("tools") or {}).items() if p != "off"]
-        reads = KNOWN_READ if catalog is None else [n for n, e in catalog.items() if e == "read"]
-        beyond = [t for t in held if t not in reads]
+        if catalog is None:
+            # No catalog at load: a feature's tool (lower case) waits for the run's check, which
+            # has the catalog and refuses one that does more than read; Claude Code's own must be
+            # known to read.
+            beyond = [t for t in held if t not in KNOWN_READ and not t.islower()]
+        else:
+            beyond = [t for t in held if catalog.get(t) != "read"]
         if beyond:
             out.append(f"a row a trigger starts holds only reading tools, not {', '.join(beyond)}")
     return out
