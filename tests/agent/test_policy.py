@@ -1044,6 +1044,32 @@ class ASecretIsOutOfEveryToolsReach(_Unit):
             with self.subTest(line=line):
                 self.assertIn(policy.SECRETS, self.bash(line))
 
+    def test_a_glob_a_recursive_read_or_an_inline_program_reaching_one_is_refused(self):
+        for line in (
+            "cat ~/.config/cos*/env",
+            "cat ~/.c?nfig/coscc/env",
+            "cat ~/.config/[c]oscc/env",
+            "grep -r token ~/.conf*",
+            "grep -rn token ~/.config",
+            "rg token ~/.config",
+            "tar czf x.tgz ~/.ss*",
+            f"""python3 -c "import glob; print(glob.glob('{self.home}/.ss*/id_*'))\"""",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.SECRETS, self.bash(line))
+
+    def test_a_glob_a_read_or_an_inline_program_near_one_runs(self):
+        for line in (
+            "ls ~",
+            "ls ~/.config",
+            "grep -r x .",
+            "rg x src/",
+            "cat ~/.config/other/x",
+            """python3 -c "import glob; glob.glob('src/*.py')\"""",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
     def test_a_relative_word_a_link_or_a_cd_reaching_one_is_refused(self):
         (self.tree / "k").symlink_to(self.home / ".ssh")
         for line in (
@@ -1727,6 +1753,48 @@ class TheHelperRulesHold(_Unit):
             with self.subTest(line=line):
                 self.assertIn(policy.HELPERS, self.bash(line, agent_id="a1"))
         for line in ("grep -rn git .", "echo git commit", "timeout 5 git log"):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line, agent_id="a1"), "")
+
+    # An interpreter's inline program that names `git` runs it as far as this guard knows.
+    INLINE_GIT = (
+        """python -c "import os; os.system('git commit -m x')\"""",
+        """python3 -c "import subprocess; subprocess.run(['git','commit','-m','x'])\"""",
+        """uv run python -c "import subprocess; subprocess.run(['git','add','.'])\"""",
+        """timeout 9 python3 -c "import os; os.system('git push')\"""",
+        "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['git','commit'])\nEOF",
+        """python3 <<< "import os; os.system('git commit')\"""",
+        """perl -e 'system("git commit -m x")'""",
+        """ruby -e 'system("git", "push")'""",
+        """node -e "require('child_process').execSync('git commit -m x')\"""",
+        """find . -exec python3 -c "import os; os.system('git add .')" ;""",
+    )
+
+    def test_a_helpers_inline_program_naming_git_is_refused(self):
+        for line in self.INLINE_GIT:
+            with self.subTest(line=line):
+                said = self.bash(line, agent_id="a1")
+                self.assertTrue(said.startswith(policy.HELPERS), said)
+                self.assertTrue(said.endswith("only the leading session commits"), said)
+
+    def test_the_leading_sessions_inline_program_passes_the_helper_guard(self):
+        for line in self.INLINE_GIT:
+            with self.subTest(line=line):
+                self.assertEqual(policy._helper_git(policy._read(line), None), "")
+
+    def test_a_helpers_inline_program_not_naming_git_runs(self):
+        for line in (
+            'python -c "print(1)"',
+            """python3 -c "open('.git/HEAD').read()\"""",
+            'python3 -c "import gitlab"',
+            "uv run python -m pytest tests/x.py",
+            "python3 script.py",
+            'node -e "console.log(1)"',
+            "grep -n git x.py",
+            "git diff",
+            "git status --porcelain",
+            "uv run git diff",
+        ):
             with self.subTest(line=line):
                 self.assertEqual(self.bash(line, agent_id="a1"), "")
 
