@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
+import { failureWords, until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
 import { match } from "./router";
 import { findUnit, needsYou, failedLink, proposalLink, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
@@ -818,5 +818,17 @@ describe("an agent's markdown and tool names", () => {
     expect(toolName("mcp__cos__proposals")).toBe("proposals");
     expect(toolName("mcp__code-graph__explore")).toBe("explore");
     expect(toolName("Read")).toBe("Read");
+  });
+});
+
+describe("failureWords", () => {
+  it("says a killed process plainly and keeps the raw text apart", () => {
+    const raw = "the session failed: Command failed with exit code 143 (exit code: 143) Error output: Check stderr output for details";
+    const got = failureWords(raw);
+    expect(got.plain).toBe("The agent's process was stopped (exit 143) before it finished");
+    expect(got.raw).toBe(raw);
+  });
+  it("leaves a detail with no exit code as it is", () => {
+    expect(failureWords("the ceiling was reached")).toEqual({ plain: "the ceiling was reached", raw: "" });
   });
 });

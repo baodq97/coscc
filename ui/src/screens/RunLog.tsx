@@ -7,7 +7,7 @@ import type { Asked, EventsPage, Followup, StepEvent } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { agentFace, stageLabel } from "../lib/pack";
 import { OUTCOME, resultWords, shallowWords } from "./AgentActivity";
-import { modelName, startedBy, money, toolName, unitCode, unitTitle } from "../lib/format";
+import { failureWords, modelName, startedBy, money, toolName, unitCode, unitTitle } from "../lib/format";
 import { Link, useQuery } from "../lib/router";
 import { Button, Chip, ErrorState, Markdown, PageHead, SkeletonRows } from "../components/ui";
 
@@ -138,13 +138,20 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
 function RunResult({ page }: { page: EventsPage }) {
   const made = resultWords({ made: page.made ?? null, verdict: page.verdict ?? "" });
   const thin = shallowWords({ refused: page.refused, verdict: page.verdict });
+  const said = failureWords(page.detail);
   return (
     <div className="row run-result" style={{ gap: 8, flexWrap: "wrap", marginTop: 10 }}>
       {page.outcome !== "done" && <Chip square tone={page.outcome === "failed" ? "red" : "amber"}>{OUTCOME[page.outcome ?? ""] ?? page.outcome}</Chip>}
       {made && <Chip square tone="accent">{made}</Chip>}
       {thin && <Chip square tone="amber">partly checked: {thin}</Chip>}
       {page.helpers ? <span className="faint">{page.helpers} helper{page.helpers === 1 ? "" : "s"}</span> : null}
-      {page.detail && <span className="faint">{page.detail}</span>}
+      {said.plain && <span className="faint">{said.plain}</span>}
+      {said.raw && (
+        <details className="faint" style={{ flexBasis: "100%" }}>
+          <summary>details</summary>
+          <pre className="rl-full">{said.raw}</pre>
+        </details>
+      )}
     </div>
   );
 }
@@ -355,7 +362,6 @@ export function RunLog({ cwd, run, live, whole = false, onEnd }: { cwd: string; 
           ))}
         </div>
       )}
-      {page.detail && whole && <div className="muted" style={{ fontSize: 12.5 }}>{page.detail}</div>}
     <div className="rl" ref={box} style={whole ? { maxHeight: "70vh" } : undefined}>
       {page.has_older && (
         <Button size="sm" kind="ghost" onClick={older}>
@@ -363,7 +369,7 @@ export function RunLog({ cwd, run, live, whole = false, onEnd }: { cwd: string; 
         </Button>
       )}
       {events.map((e) => (
-        <Line key={e.seq} event={e} unit={unit} />
+        <Line key={e.seq} event={e} unit={unit} whole={whole} />
       ))}
       {following && <div className="faint rl-note">Following…</div>}
       {page.events_lost > 0 && <div className="faint rl-note">{page.events_lost} events were not recorded.</div>}
@@ -399,7 +405,7 @@ function ToolUse({ event: e, unit, who }: { event: StepEvent; unit: string; who:
   );
 }
 
-function Line({ event: e, unit }: { event: StepEvent; unit: string }) {
+function Line({ event: e, unit, whole }: { event: StepEvent; unit: string; whole: boolean }) {
   // A helper's call reads as the helper's.
   const who = e.agent_id ? <span className="faint">helper · </span> : null;
   switch (e.kind) {
@@ -438,7 +444,7 @@ function Line({ event: e, unit }: { event: StepEvent; unit: string }) {
       return (
         <div className={`rl-l ${e.outcome === "done" ? "faint" : e.outcome === "paused-budget" ? "rl-warn" : "rl-bad"}`}>
           ended: {e.outcome === "paused-budget" ? "paused at its ceiling" : e.outcome}
-          {e.detail ? ` · ${e.detail}` : ""}
+          {e.detail && !whole ? ` · ${e.detail}` : ""}
         </div>
       );
     default:
