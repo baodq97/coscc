@@ -50,6 +50,9 @@ def gone(pid: int) -> bool:
         return True
     try:
         return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].startswith("Z")
+    except FileNotFoundError:
+        # Reaped between the two looks.
+        return True
     except OSError:
         return False
 
@@ -266,13 +269,16 @@ class ACancelledCallKillsItsChild(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(asyncio, "create_subprocess_exec", children):
             task = asyncio.ensure_future(call())
             await asyncio.wait_for(children.started.wait(), 5)
-            for _ in range(100):
-                if ready():
-                    break
+            deadline = asyncio.get_running_loop().time() + 30
+            while not ready() and asyncio.get_running_loop().time() < deadline:
                 await asyncio.sleep(0.05)
+            self.assertTrue(ready(), "the child never said what it started")
             task.cancel()
-            await asyncio.wait({task}, timeout=5)
-        self.assertTrue(task.cancelled())
+            # Waited on, not raced: the kill and the reap are real processes on a loop that a
+            # loaded machine may not run for seconds.
+            await asyncio.wait({task}, timeout=30)
+        self.assertTrue(task.done(), "the cancelled call never ended")
+        self.assertTrue(task.cancelled(), f"the call ended without being cancelled: {task!r}")
         [proc] = children.procs
         return proc
 
@@ -310,11 +316,10 @@ class ACancelledCallKillsItsChild(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertReaped(proc)
                 grandchild = int(said.read_text())
-                for _ in range(50):
-                    if gone(grandchild):
-                        break
-                    await asyncio.sleep(0.1)
-                self.assertTrue(gone(grandchild))
+                deadline = asyncio.get_running_loop().time() + 15
+                while not gone(grandchild) and asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(0.05)
+                self.assertTrue(gone(grandchild), f"pid {grandchild} outlived its parent's kill")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ def secret(**over) -> Secret:
         name="ws:db",
         workspace="/a",
         description="",
-        stages=("impl",),
+        agents=("impl",),
         modes=("env", "file"),
         broker=False,
         granted=(),
@@ -28,7 +28,7 @@ def secret(**over) -> Secret:
 class EveryRefusalHasItsOwnCode(unittest.TestCase):
     def test_a_use_that_breaks_no_rule_gets_no_code(self):
         self.assertEqual(policy(secret(), "/a", "impl", "env"), "")
-        self.assertEqual(policy(secret(stages=("impl", "spike")), "/a", "spike", "file"), "")
+        self.assertEqual(policy(secret(agents=("impl", "spike")), "/a", "spike", "file"), "")
 
     def test_a_secret_that_is_not_there_or_has_no_value_is_unknown(self):
         self.assertEqual(policy(None, "/a", "impl", "env"), "unknown-secret")
@@ -59,11 +59,16 @@ class EveryRefusalHasItsOwnCode(unittest.TestCase):
         cloud = secret(name="global:cloud", workspace="", granted=())
         self.assertEqual(policy(cloud, "/a", "spike", "env"), "not-granted")
 
-    def test_the_five_codes_are_the_closed_set_and_each_has_a_sentence_naming_what_it_is_about(
+    def test_a_secret_the_runs_grant_does_not_name_is_refused(self):
+        self.assertEqual(policy(secret(), "/a", "impl", "env", granted=set()), "not-in-grant")
+        self.assertEqual(policy(secret(), "/a", "impl", "env", granted={"ws:db"}), "")
+        self.assertEqual(policy(secret(), "/a", "spike", "env", set()), "stage-not-allowed")
+
+    def test_the_six_codes_are_the_closed_set_and_each_has_a_sentence_naming_what_it_is_about(
         self,
     ):
         self.assertEqual(sorted(REFUSALS), sorted(get_args(Refusal)))
-        self.assertEqual(len(REFUSALS), 5)
+        self.assertEqual(len(REFUSALS), 6)
         for code in REFUSALS:
             with self.subTest(code=code):
                 text = sentence(code, "ws:db", "/a", "spike", "file")

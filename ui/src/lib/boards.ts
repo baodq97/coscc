@@ -8,6 +8,11 @@ import type { Unit, Workspace } from "./model";
 
 export type WorkspaceBoard = { workspace: Workspace; board?: Cards; error?: Error };
 
+/** Tell every board in view that the list of projects changed (one added or unlisted). */
+export function workspacesChanged(): void {
+  dispatchEvent(new Event("cos-workspaces"));
+}
+
 // The stream carries what the app does; a pull request merged or CI finished on GitHub reaches
 // the board only through a slow refresh.
 export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading: boolean } {
@@ -35,6 +40,11 @@ export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading:
   }, [key, tick]);
 
   useChanges([""], () => setTick((t) => t + 1));
+  useEffect(() => {
+    const on = () => ws.reload();
+    addEventListener("cos-workspaces", on);
+    return () => removeEventListener("cos-workspaces", on);
+  }, [ws.reload]);
 
   useEffect(() => {
     const id = setInterval(() => document.visibilityState === "visible" && setTick((t) => t + 1), every);
@@ -48,4 +58,9 @@ export type PlacedUnit = Unit & { workspace: Workspace };
 
 export function allUnits(boards: WorkspaceBoard[]): PlacedUnit[] {
   return boards.flatMap((b) => (b.board?.units ?? []).map((u) => ({ ...u, workspace: b.workspace })));
+}
+
+/** The unit `/unit/<workspace>/<n>` names: `n` is its number (`162`, `0162`) or its full name. */
+export function findUnit(units: PlacedUnit[], workspace: string, n: string): PlacedUnit | undefined {
+  return units.find((u) => u.workspace.name === workspace && (u.name === n || (/^\d+$/.test(n) && u.number === Number(n))));
 }

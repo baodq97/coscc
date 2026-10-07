@@ -1,5 +1,5 @@
 """How the core hosts features: their state per workspace, the `Ctx` each gets, their tables,
-agent parts and schedules, and the Settings panel's view of them. A feature itself sees only
+agent parts, and the Settings panel's view of them. A feature itself sees only
 `coscc/kernel.py`.
 
 A feature's state per workspace, `off`, `pilot` or `on`, is the pref `features.state`,
@@ -10,25 +10,20 @@ next write for that pair moves it.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
-from coscc.agent import policy
-from coscc.agent.policy import is_prose_stage
-from coscc.bus import Name
-from coscc.agent.sessions import Suspended
+from coscc.agent import pack
 from coscc.git.gitops import GitError
 from coscc.github import integrate
 from coscc.store.db import Data
-from coscc.store.journal import Intervention
 from coscc.kernel import (
+    BUILTINS,
     STATES,
-    Agents,
     Arm,
     Ctx,
     Feature,
@@ -38,15 +33,12 @@ from coscc.kernel import (
     Runs,
     Settings,
     State,
-    Submitted,
     Units,
     arm_of,
 )
-from coscc.runner import queue
-from coscc.runner.interventions import interventions
 from coscc.update.updater import refuse_while_updating
 from coscc.units.workspaces import Workspaces
-from coscc.units import BadUnit, submit, worktrees
+from coscc.units import BadUnit, contracts, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable
 from coscc.units.read import Asked
@@ -56,9 +48,6 @@ if TYPE_CHECKING:
 
 OFF_PREF = "features.off"
 STATE_PREF = "features.state"
-SCHEDULE_PREF = "features.schedule"
-# How often the core asks each scheduled feature whether it is due. Chosen, not measured.
-TICK_SECONDS = 300.0
 CREATE_TABLE = re.compile(r"\s*CREATE TABLE IF NOT EXISTS\s+\w+", re.IGNORECASE)
 
 log = logging.getLogger(__name__)
@@ -74,9 +63,6 @@ class Shown:
     pilot: bool
     sentence: str
     locked: bool
-    # The hours of its schedule here and the choices, both empty for a feature with none.
-    schedule: int | None = None
-    hours: tuple[int, ...] = ()
     summary: str = ""
 
 
@@ -98,43 +84,35 @@ def create_tables(data: Data, tables: Sequence[str]) -> None:
             conn.execute(statement)
 
 
-def add_sessions(core: Core, features: Sequence[Feature]) -> None:
-    """Every feature's `sessions` into the core's tables: its grant (`policy`), its `submit`
-    schema, its attempt machine; and the updater hears each one end, as it hears the core's."""
-    for f in features:
-        for s in f.sessions:
-            policy.add_session(s.kind, s.grant, s.own_turns)
-            submit.add_session(s.kind, s.schema, s.purpose)
-            queue.add_session(s.kind)
-            for end in ("ended", "refused"):
-                core.bus.subscribe(
-                    cast(Name, f"{s.kind}.{end}"), lambda _: core.updater.job_ended()
-                )
+def check_declarations() -> None:
+    """Every declaration and every agent's input, the shipped ones: a broken one stops the build
+    with its `ContractError`."""
+    contracts.declarations()
+    contracts.input_of("")
 
 
 def hooks_of(features: Sequence[Feature], ctxs: dict[str, Ctx]) -> Hooks:
-    """Every feature's agent parts, tagged with its name; a clash or a tool on a prose stage is
-    a `ValueError` naming the feature."""
+    """Every feature's agent parts, tagged with its name; a clash is a `ValueError` naming the
+    feature, and so is an agent's row (`pack.check`) the catalog makes unusable: a tool it does not
+    hold, a tool beyond reading on a row whose artifact the app writes."""
     parts: list[tuple[str, Parts]] = []
     servers: dict[str, str] = {}
+    builtin = {t.name for t in BUILTINS} | {"cos"}
     names: dict[str, dict[str, str]] = {"guard": {}, "block": {}}
     for f in features:
         if f.agent is None:
             continue
         made = f.agent(ctxs[f.name])
         for tool in made.tools:
-            if tool.server in servers:
-                raise ValueError(
-                    f"{f.name}: the MCP server {tool.server!r} is also {servers[tool.server]}'s; "
-                    "rename it"
-                )
-            servers[tool.server] = f.name
-            prose = sorted(s for s in tool.stages if is_prose_stage(s))
-            if prose:
-                raise ValueError(
-                    f"{f.name}: the tool {tool.server!r} names prose stages "
-                    f"({', '.join(prose)}); a prose stage cannot carry a tool, so drop them"
-                )
+            for taken in (tool.server, tool.name):
+                if taken in servers or taken in builtin:
+                    raise ValueError(
+                        f"{f.name}: the tool {taken!r} is also "
+                        f"{servers.get(taken, 'the kernel')}'s; rename it"
+                    )
+            if not tool.server:
+                raise ValueError(f"{f.name}: the tool {tool.name!r} names no MCP server")
+            servers[tool.server] = servers[tool.name] = f.name
         for kind, named in (("guard", made.guards), ("block", made.blocks)):
             for part in named:
                 if part.name in names[kind]:
@@ -144,9 +122,18 @@ def hooks_of(features: Sequence[Feature], ctxs: dict[str, Ctx]) -> Hooks:
                     )
                 names[kind][part.name] = f.name
         parts.append((f.name, made))
-    return Hooks(
+    hooks = Hooks(
         parts=tuple(parts), enabled=lambda feature, cwd: ctxs[feature].settings.enabled(cwd)
     )
+    # The built-in rows: a bad one stops the build. A bad owner's file refuses its agent's runs.
+    effects = {n: t.effect for n, t in hooks.catalog().items()}
+    shipped = pack.manifest()["name"]
+    builtin = {k: r["builtin"] for k, r in pack.rows().items() if r["pack"] == shipped}
+    for key, row in builtin.items():
+        bad = pack.check(row, effects, builtin)
+        if bad:
+            raise ValueError(f"the row {key!r} cannot be used: {'; '.join(bad)}")
+    return hooks
 
 
 def _pref(data: Data, name: str) -> dict[str, Any]:
@@ -186,57 +173,8 @@ def ctx_of(core: Core, feature: Feature) -> Ctx:
         tree, sha = await worktrees.main_tree(core.ws.check(workspace), data.root)
         return str(tree), sha
 
-    def found(workspace: str, after: str, limit: int) -> list[Intervention]:
-        return interventions(
-            core.ws.journal(),
-            core.ws.unit_meta(),
-            core.holds.attempts,
-            workspace_key(workspace),
-            after,
-            limit,
-        )
-
-    async def session(workspace: str, kind: str, prompt: str) -> Submitted:
-        """The estimate's session (`Backlog.submitting`), held by an attempt of `kind`."""
-        key = workspace_key(workspace)
-        refuse_while_updating(core.updater)
-        journal = core.ws.journal()
-        if journal is None:
-            raise Invalid("no working folder is set, so a session cannot be recorded")
-        attempt = core.holds.attempts.open(kind, key, "", kind)["id"]
-        core.holds.attempts.move(attempt, "running")
-        outcome = "failed"
-        got = Submitted(None, {}, "", "the session ended before it handed anything back")
-        try:
-            stream = core.backlog.submitting(workspace, key, journal, kind, prompt)
-            try:
-                async for item, payload in stream:
-                    if item == "done":
-                        got = payload
-            finally:
-                await stream.aclose()
-            outcome = "done"
-        except Suspended:
-            # What it spent is read off its transcript only after this, and lands in the run
-            # log's `end` once the app is back (`Resume._end_unresumed`).
-            got = Submitted(
-                None, {}, "", "an update paused the session; what it spent is in the run log"
-            )
-        except asyncio.CancelledError:
-            outcome = "interrupted"
-            raise
-        finally:
-            core.holds.attempts.move(attempt, "ended", outcome)
-        return got
-
     async def create_unit(workspace: str, slug: str, brief: str) -> str:
         return str((await core.answers.create_unit(workspace, slug, brief))["unit"])
-
-    def schedule(workspace: str) -> int:
-        return schedule_of(data, feature, Workspaces.key(workspace))
-
-    def set_schedule(workspace: str, hours: int) -> None:
-        set_schedule_of(core, (feature,), feature.name, workspace, hours)
 
     return Ctx(
         Units(
@@ -247,11 +185,10 @@ def ctx_of(core: Core, feature: Feature) -> Ctx:
             lambda workspace, fresh: _open_prs(core, workspace, fresh),
             lambda workspace, name: _own_tree(core, workspace, name),
         ),
-        Runs(core.ws.journal, found),
-        Agents(session),
+        Runs(core.ws.journal),
         data,
         core.bus,
-        Settings(state, enabled, arm, schedule, set_schedule),
+        Settings(state, enabled, arm),
         lambda: refuse_while_updating(core.updater),
         core.asks.setdefault(feature.name, Asked(core.boards.changed)),
         _required_checks,
@@ -300,56 +237,6 @@ async def _required_checks(tree: str, number: int) -> list[dict[str, Any]] | str
         return str(e)
 
 
-def schedule_of(data: Data, plugin: Feature, key: str) -> int:
-    """The hours chosen for `(plugin, workspace key)`, else its schedule's `default`."""
-    if plugin.schedule is None:
-        return 0
-    got = _pref(data, SCHEDULE_PREF).get(plugin.name)
-    hours = got.get(key) if isinstance(got, dict) else None
-    if isinstance(hours, int) and hours in plugin.schedule.hours:
-        return hours
-    return plugin.schedule.default
-
-
-def set_schedule_of(
-    core: Core, features: Sequence[Feature], feature: str, cwd: str, hours: object
-) -> int:
-    """Set `feature`'s schedule for the workspace `cwd`. `Invalid`: a feature or workspace not
-    known, one without a schedule, or hours it does not offer."""
-    plugin = next((f for f in features if f.name == feature), None)
-    if plugin is None:
-        raise Invalid(f"not a feature: {feature}")
-    if plugin.schedule is None:
-        raise Invalid(f"{feature} has no schedule")
-    core.ws.check(cwd)
-    if not isinstance(hours, int) or isinstance(hours, bool) or hours not in plugin.schedule.hours:
-        offered = ", ".join(str(h) for h in plugin.schedule.hours)
-        raise Invalid(f"schedule must be one of {offered} hours")
-    data = Data(core.config.data_dir)
-    chosen = _pref(data, SCHEDULE_PREF)
-    mine = chosen.get(feature)
-    chosen[feature] = {**(mine if isinstance(mine, dict) else {}), Workspaces.key(cwd): hours}
-    data.set_pref(SCHEDULE_PREF, chosen)
-    return hours
-
-
-async def tick(core: Core, ctxs: dict[str, Ctx], features: Sequence[Feature]) -> None:
-    """One round of every scheduled feature, in each listed workspace where it is not `off` and
-    its schedule is not `0`. A tick that fails is logged and the next still runs."""
-    for f in features:
-        if f.schedule is None:
-            continue
-        for cwd in core.ws.all()["paths"]:
-            ctx = ctxs[f.name]
-            hours = ctx.settings.schedule(cwd)
-            if not hours or not ctx.settings.enabled(cwd):
-                continue
-            try:
-                await f.schedule.tick(ctx, cwd, hours)
-            except Exception:
-                log.exception("the scheduled run of %s in %s failed", f.name, cwd)
-
-
 def shown(ctxs: dict[str, Ctx], features: Sequence[Feature], cwd: str) -> list[Shown]:
     """Each feature for the workspace `cwd`; one whose `status` forbids choosing shows `off`."""
     out = []
@@ -359,20 +246,7 @@ def shown(ctxs: dict[str, Ctx], features: Sequence[Feature], cwd: str) -> list[S
         sentence, may = f.status(ctx, cwd) if f.status else ("", True)
         if not sentence:
             sentence = "Off in this workspace." if state == "off" else "On in this workspace."
-        hours = f.schedule.hours if f.schedule else ()
-        schedule = ctx.settings.schedule(cwd) if f.schedule else None
-        out.append(
-            Shown(
-                f.name,
-                state if may else "off",
-                f.pilot,
-                sentence,
-                not may,
-                schedule,
-                hours,
-                f.summary,
-            )
-        )
+        out.append(Shown(f.name, state if may else "off", f.pilot, sentence, not may, f.summary))
     return out
 
 

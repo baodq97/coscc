@@ -9,11 +9,10 @@ import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
-from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Iterable
 
 from coscc.leif import decide, guide
-from coscc.units import backlog, planmap, states
+from coscc.units import backlog
 from coscc.git import fetches
 from coscc.github import integrate, prmachine
 from coscc.git.gitops import GitError
@@ -23,6 +22,7 @@ from coscc.config import LOOPBACK, Config
 from coscc.store.db import Data
 from coscc.runner.queue import Refused
 from coscc.units.board import shown_state
+from coscc.units.contracts import ContractError
 from coscc.units.read import count, number
 from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK
 from coscc.kernel import Invalid
@@ -41,6 +41,8 @@ log = logging.getLogger(__name__)
 # the journal key; the cap is one for the whole app, since the quota is the machine's account.
 # Not in `PREFERENCES`: those are the page's.
 
+# How often the pull requests of a workspace are read, beside the 300-second pass.
+CI_POLL_SECONDS = 60.0
 SETTINGS = ("autopilot", "autopilot_may_ship", "max_parallel", "daily_cap_usd")
 CAP_PREF = "autopilot_daily_cap_usd"
 
@@ -119,8 +121,6 @@ class Autopilot:
         config: Config,
         ws: Workspaces,
         holds: Holds,
-        budget: Callable[[], Mapping[str, Any]],
-        agent_overrides: Callable[[], dict[str, Any]],
         steps: Steps,
         integration: Integration,
         boards: Board,
@@ -128,8 +128,6 @@ class Autopilot:
         self.config = config
         self.ws = ws
         self.holds = holds
-        self.budget = budget
-        self.agent_overrides = agent_overrides
         self.steps = steps
         self.integration = integration
         self.boards = boards
@@ -227,10 +225,10 @@ class Autopilot:
             await asyncio.sleep(decide.POLL_SECONDS)
 
     async def _pr_reader_loop(self, key: str) -> None:
-        """Every `ci_poll_seconds` of the lane config, one read of the workspace's pull requests. The
-        300-second pass goes on beside it as the net.
+        """Every `CI_POLL_SECONDS`, one read of the workspace's pull requests. The 300-second pass
+        goes on beside it as the net.
         """
-        poll = states.default_lanes().ci_poll_seconds
+        poll = CI_POLL_SECONDS
         while True:
             await asyncio.sleep(poll)
             try:
@@ -329,25 +327,25 @@ class Autopilot:
         return now.get("ci") == "red" and (not head or now.get("head") == head)
 
     def _files(self, cwd: str, unit: str) -> set[str] | None:
+        """The files the unit's plan record names; `None`, which overlaps with everything, when
+        it has no record, names none or cannot be read."""
         try:
-            return planmap.files_of(
-                (self.ws.unit_dir(cwd, unit) / "plan.md").read_text(encoding="utf-8")
-            )
-        except Invalid, OSError:
+            plan = self.ws.unit_meta().plan(self.ws.key(cwd), unit)
+        except Busy, ContractError:
             return None
+        return set(plan["files"]) or None if plan else None
 
     def cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:
         """The figures for a pass and for the board: every workspace, every starter."""
         now = datetime.now().astimezone()
-        budget = self.budget()
-        spent = decide.spent_today(records, now, budget)
+        spent = decide.spent_today(records, now)
         active = {
             (row["workspace"], row["unit"]): row["stage"] or row["machine"]
             for row in self.holds.attempts.unfinished()
             if row["unit"]
         }
         running = decide.reserved(
-            records, now, [(k, unit, stage) for (k, unit), stage in active.items()], budget
+            records, now, [(k, unit, stage) for (k, unit), stage in active.items()]
         )
         return {
             "limit": limit,
@@ -455,7 +453,9 @@ class Autopilot:
             at_ship = {
                 u["name"]
                 for u in data["units"]
-                if u["name"] in names and u.get("between_pr_and_ship") and u.get("at") == "ship"
+                if u["name"] in names
+                and u.get("between_pr_and_ship")
+                and decide.is_merge(u.get("at"))
             }
             unfetched: dict[str, Any] | None = None
             if at_ship:
@@ -469,13 +469,7 @@ class Autopilot:
                     data = await self.boards.read(cwd)
             last: dict[str, dict[str, Any]] = {}
             integrations: dict[str, dict[str, Any]] = {}
-            # The `start` of the step each unit's last `end` closed, the latest of that unit and stage
-            # before it, so a recording `ship` that ran out is told apart.
-            starts: dict[tuple[str, str], dict[str, Any]] = {}
-            began: dict[str, dict[str, Any] | None] = {}
             for r in records:
-                if r.get("workspace") == key and r.get("kind") == "start" and is_step(r):
-                    starts[(str(r.get("unit") or ""), str(r.get("stage") or ""))] = r
                 # A retake of the screenshots that failed is the unit's last word too, and so is a `pr` or
                 # `ship` the PR machine ran.
                 if (
@@ -486,10 +480,6 @@ class Autopilot:
                     last[str(r.get("unit") or "")] = r
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r
-                    if r.get("kind") == "end":
-                        began[str(r.get("unit") or "")] = starts.get(
-                            (str(r.get("unit") or ""), str(r.get("stage") or ""))
-                        )
 
             running = self._running(key)
             here = {r["unit"]: r["stage"] for r in running}
@@ -498,7 +488,6 @@ class Autopilot:
             board = {u["name"]: u for u in data["units"]}
             found: dict[str, dict[str, str]] = {}
             candidates: list[dict[str, Any]] = []
-            budget = self.budget()
             # Why each unit that is no candidate waits, for the units ranked below it.
             reasons: dict[str, tuple[str, str]] = {}
             # Every unit on the shortlist is asked, and no other.
@@ -531,22 +520,16 @@ class Autopilot:
                 ):
                     reasons[name] = ("ci", "")
                     continue
-                # A first `exhausted` step of a stage other than `ship` runs again once; so does a first prose
-                # step whose reply lacked its opening.
+                # A first prose step whose reply lacked its opening runs again once.
                 last_stage = str((last.get(name) or {}).get("stage") or "")
-                ran_out = decide.exhausted_of(records, key, name, last_stage)
                 unopened = decide.unopened_of(records, key, name, last_stage)
-                # No `start` found reads as no recording `ship`.
-                recorded = (began.get(name) or {}).get("ship_mode") == "record"
-                shipping = here.get(name) == "ship"
+                shipping = decide.is_merge(here.get(name))
                 stop = decide.stop_for(
                     u,
                     nxt,
                     last.get(name),
                     settings["autopilot_may_ship"],
-                    ran_out,
                     unopened,
-                    recorded,
                     shipping,
                 )
                 stage = nxt.get("stage") or ""
@@ -560,7 +543,6 @@ class Autopilot:
                         integrations.get(name),
                         decide.since_integration(records, key, name),
                         nxt,
-                        decide.exhausted_of(records, key, name, "impl"),
                     )
                 )
                 # A unit behind `main`, conflicting or red after integration is integrated first, also after a
@@ -585,7 +567,12 @@ class Autopilot:
                         stop, stage = None, "integrate"
                 # Once the `impl` pushed: the board no longer reads the head as the integrated one, and only
                 # `next`'s words say CI is still red.
-                if stop is None and stage == "impl" and own is not None and own[1] is not None:
+                if (
+                    stop is None
+                    and decide.is_coder(stage)
+                    and own is not None
+                    and own[1] is not None
+                ):
                     stage, stop = own
                 # A draft whose questions are all answered runs again, at most `MAX_RERUNS` times, and only on
                 # an answer given since its last run; with none, it is a stop. Before `reason`, which raises on
@@ -608,9 +595,7 @@ class Autopilot:
                             {**nxt, "rerun": ""},
                             last.get(name),
                             settings["autopilot_may_ship"],
-                            ran_out,
                             unopened,
-                            recorded,
                             shipping,
                         )
                     else:
@@ -623,18 +608,18 @@ class Autopilot:
                     head, _ = self._ci_read(key, name)
                     tries = decide.tries_on_head(records, key, name, head)
                     if tries >= decide.MAX_TRIES:
-                        stop = decide.tries_stop("impl", tries)
+                        stop = decide.tries_stop(str(nxt["continue"]), tries)
                     else:
                         stage, app_note, extra = (
-                            "impl",
+                            str(nxt["continue"]),
                             decide.CONTINUE_NOTE,
                             {"continued": True},
                         )
-                elif stop is None and stage == "impl" and decide.is_ci_red(nxt):
+                elif stop is None and decide.is_coder(stage) and decide.is_ci_red(nxt):
                     head, checks = self._ci_read(key, name)
                     tries = decide.tries_on_head(records, key, name, head)
                     if tries >= decide.MAX_TRIES:
-                        stop = decide.tries_stop("impl", tries)
+                        stop = decide.tries_stop(stage, tries)
                     else:
                         app_note = decide.ci_note(head, checks)
                         extra = {"ci_note": app_note}
@@ -660,26 +645,22 @@ class Autopilot:
                     continue
                 if not stage:
                     continue
-                files = self._files(cwd, name) if stage in decide.CODE_STAGES else None
-                # The exhausted `ship` this pick went past. Not once the stage became `integrate`, which
-                # skipped nothing.
-                skipped = stage == "ship" and decide.skips_exhausted(nxt, last.get(name), recorded)
+                files = self._files(cwd, name) if decide.is_code(stage) else None
                 candidates.append(
                     {
                         "unit": name,
                         "stage": stage,
                         "files": files,
                         "rank": rank,
-                        "need": decide.reservation(stage, budget),
+                        "need": decide.reservation(stage),
                         "rerun": rerun,
                         "note": app_note,
                         "extra": extra,
-                        "past_exhausted": {"at": last[name].get("at")} if skipped else None,
                     }
                 )
 
             for r in running:
-                if r["stage"] in decide.CODE_STAGES:
+                if decide.is_code(r["stage"]):
                     r["files"] = self._files(cwd, r["unit"])
             now = datetime.now().astimezone()
             # A `start` with no `end`, from a process before this one, counts against N for 24 hours.
@@ -744,11 +725,6 @@ class Autopilot:
                             "shortlist": shortlist,
                             "passed": over,
                             **c["extra"],
-                            **(
-                                {"past_exhausted": c["past_exhausted"]}
-                                if c.get("past_exhausted")
-                                else {}
-                            ),
                             # The transitions whose read scheduled this pass.
                             **({"woken_by": woken_by} if woken_by else {}),
                         }
@@ -802,8 +778,6 @@ class Autopilot:
             "stops": [],
             "refused_because": off_loopback(self.config) if on else "",
         }
-        if not on:
-            return block
         journal = self.ws.journal()
         if journal is not None:
             try:
@@ -812,6 +786,8 @@ class Autopilot:
                 )
             except Busy:
                 block["cap"] = None
+        if not on:
+            return block
         block["stops"] = sorted(
             (self.stops.get(key) or {}).values(),
             key=lambda s: (decide.unit_number(s["unit"]), s["unit"]),
@@ -838,7 +814,7 @@ class Autopilot:
         """
         if not autopilot_values(self.config, key)["autopilot"]:
             return {"on": False}
-        entries = self.boards.running_here(key, self.agent_overrides())
+        entries = self.boards.running_here(key)
         units = [
             {**u, "state": shown_state(u.get("state") or {}, entries.get(u.get("name")))}
             for u in units

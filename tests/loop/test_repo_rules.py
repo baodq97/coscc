@@ -16,12 +16,23 @@ from pathlib import Path
 import pytest
 
 from coscc.loop.repo_rules import branch_checks
-from tests.loop.conftest import UnitStore, entry, env, fake_gh, git, git_repo, header, expect
+from tests.loop.conftest import (
+    UnitStore,
+    entry,
+    env,
+    expect,
+    fake_gh,
+    finding_row,
+    git,
+    git_repo,
+    header,
+    pr_row,
+    round_row,
+)
 
 UNIT = "0040_widget"
 BRANCH = "feat/widget"
-TITLE = "feat(0040): add the widget"
-PR_URL = "https://github.com/o/r/pull/7"
+TITLE = "feat(0040): widget"
 STANDARD = ".claude/rules/ui-standard.md"
 STANDARD_TEXT = (
     "---\npaths:\n"
@@ -59,34 +70,32 @@ def view(head: str, state: str = "OPEN", title: str | None = TITLE, **over) -> s
     return json.dumps(body)
 
 
-def pr_text(title: str | None = TITLE, url: str | None = PR_URL) -> str:
-    first = "# PR:\n" if title == "" else f"# PR: {title}\n"
-    return (first if title is not None else "# PR\n") + (
-        "Author: test. Status: accepted.\n\n" + (f"PR: {url}\n" if url else "")
-    )
+def finding(
+    n: int,
+    label: str,
+    severity: str,
+    text: str = "the function is wrong",
+    fixed_in: str | None = None,
+) -> dict:
+    return finding_row(f"F{n}", label, severity, text, lines=str(n), fixed_in=fixed_in)
 
 
-def finding(n: int, label: str, severity: str, text: str = "the function is wrong") -> str:
-    return f"- F{n} [{label}] src/a.py:{n} — {severity} — {text}"
+def fixed(n: int, sha: str, severity: str = "high") -> dict:
+    return finding(n, "fixed", severity, fixed_in=sha[:7])
 
 
-def rnd(n: int, verdict: str, sha: str, *findings: str, screens: str = "") -> str:
-    body = f"## Round {n}\nReviewed: {sha}. Verdict: {verdict}.\n\n### Findings\n"
-    body += "".join(f"{f}\n" for f in findings)
-    if screens:
-        body += f"\n### Screens\n{screens}"
-    return body + "\n"
+rnd = round_row
 
 
-def review_text(status: str, *rounds: str, tail: str = "") -> str:
-    return header("Tiêu đề", status, "Review") + "\n" + "".join(rounds) + tail
-
-
-def shots(taken: str, by: str = "agent session s1", standard: str = STANDARD) -> str:
-    return (
-        f"Taken at: {taken}. Standard: {standard}. Looked at by: {by}, from screenshots.\n"
-        "- .screens/home.png — 800×600 — /home — ok\n"
-    )
+def shots(taken: str, by: str = "agent session s1", standard: str = STANDARD) -> dict:
+    return {
+        "taken": taken,
+        "standard": standard,
+        "by": by,
+        "shots": [
+            {"path": ".screens/home.png", "size": "800x600", "address": "/home", "result": "ok"}
+        ],
+    }
 
 
 def answered(r) -> dict:
@@ -149,23 +158,24 @@ class Scene:
 
     def unit(
         self,
-        review: str | None = None,
+        rounds: list | None = None,
         status: str = "accepted",
-        pr: str | None = None,
-        ship=None,
-        rows: list | None = None,
+        pr: bool = True,
+        ship: dict | None = None,
+        granted: int = 0,
     ):
+        """The unit's entry: `rounds` are the review's rows (none: no review.md), `pr` whether
+        the pull request is recorded, `ship` what ship.md's row says."""
         arts = {f: "accepted" for f in ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md")}
-        files = {f: header("Tiêu đề", "accepted", KIND[f]) for f in arts}
-        files["pr.md"] = pr if pr is not None else pr_text()
-        if review is not None:
-            files["review.md"] = review
+        fields = {"pr_md": pr_row(7)} if pr else {}
+        if rounds is not None:
             arts["review.md"] = status
+            fields["review_md"] = {"rounds": rounds}
         if ship is not None:
-            files["ship.md"] = ship
             arts["ship.md"] = "draft"
-        known = entry(arts, **({"review_md": {"rounds": rows}} if rows else {}))
-        self.store.unit(UNIT, files, known)
+            fields["ship_md"] = {"merge": ship}
+        files = {f: header("Tiêu đề", "accepted", KIND[f]) for f in arts}
+        self.store.unit(UNIT, files, entry(arts, rounds_granted=granted, **fields))
 
     def shim(self, *rules: dict) -> None:
         """A `git` first on `PATH` that answers `rules` — `match` words all in the argv, none of
@@ -187,11 +197,10 @@ class Scene:
         )
         script.chmod(0o755)
 
-    def passed(self, *extra: str, sha: str | None = None, screens: str = "") -> str:
+    def passed(self, *extra: dict, sha: str | None = None, screens: dict | None = None) -> list:
         """A review with one passing round that fixed."""
         sha = sha or self.reviewed
-        fixed = finding(1, f"fixed {sha[:7]}", "high")
-        return review_text("accepted", rnd(1, "pass", sha, fixed, *extra, screens=screens))
+        return [rnd(1, "pass", sha, fixed(1, sha), *extra, screens=screens)]
 
     def run(self, *words: str, gh: dict | None = None, repo: bool = True, **extra: str):
         argv = self.store.argv(*words)
@@ -361,18 +370,8 @@ def test_review_gate_reads_ci(sc, name):
 def test_review_gate_without_a_repo_or_a_pr(sc):
     sc.unit()
     assert "no repository given" in sc.run("gate", UNIT, "review", repo=False).err
-    sc.unit(pr=pr_text(url=None))
-    assert "names no pull request" in sc.run("gate", UNIT, "review", "--json").out
-
-
-@pytest.mark.parametrize(
-    "title",
-    ["", None, "feat(0040) add", "fix(0041): add", "feat(0040): wip", "feat(0040): café"],
-)  # fmt: skip
-def test_review_gate_checks_the_title_before_it_asks_gh(sc, title):
-    sc.unit(pr=pr_text(title))
-    sc.run("gate", UNIT, "review", "--json")
-    sc.run("gate", UNIT, "ship", "--json")
+    sc.unit(pr=False)
+    assert "no pull request is recorded" in sc.run("gate", UNIT, "review", "--json").out
 
 
 def test_review_gate_in_a_repository_that_is_not_there(sc):
@@ -382,11 +381,8 @@ def test_review_gate_in_a_repository_that_is_not_there(sc):
     assert "spawnSync gh ENOENT" in r.out
 
 
-def three_rounds(sc, verdict="changes-requested") -> str:
-    return review_text(
-        "changes-requested",
-        *(rnd(n, verdict, sc.reviewed, finding(1, "open", "high")) for n in (1, 2, 3)),
-    )
+def three_rounds(sc, verdict="changes-requested") -> list:
+    return [rnd(n, verdict, sc.reviewed, finding(1, "open", "high")) for n in (1, 2, 3)]
 
 
 @pytest.mark.parametrize("limit", [None, "5", "2"])
@@ -398,8 +394,7 @@ def test_review_gate_out_of_rounds(sc, limit):
 
 
 def test_review_gate_out_of_rounds_and_granted_more(sc):
-    more = "\n## Answers\n### More rounds\nDecided by: Phong. Date: 2026-10-01. Via: board.\nRounds: 2\n"
-    sc.unit(three_rounds(sc) + more, status="changes-requested")
+    sc.unit(three_rounds(sc), status="changes-requested", granted=2)
     r = sc.run("gate", UNIT, "review", "--json", gh={CHECKS: (0, GREEN, "")})
     assert answered(r)["ok"] is True
 
@@ -555,9 +550,9 @@ def test_ship_gate_no_branch_here_and_a_reviewed_commit_that_is_gone(sc):
 
 
 def test_ship_gate_a_unit_with_no_branch_or_no_pull_request(sc):
-    sc.unit(sc.passed(), pr=pr_text(url=None))
+    sc.unit(sc.passed(), pr=False)
     ship, _, _ = sc.three()
-    assert "names no pull request" in ship["lines"][1]
+    assert "no pull request is recorded" in ship["lines"][1]
     sc.store.unit(
         UNIT,
         {},
@@ -607,8 +602,8 @@ FINDINGS = {
     "renumbered": (
         "accepted",
         [
-            ("changes-requested", [finding(1, "fixed abcdef1", "low")]),
-            (3, [finding(1, "fixed abcdef1", "low")]),
+            ("changes-requested", [finding(1, "fixed", "low", fixed_in="abcdef1")]),
+            (3, [finding(1, "fixed", "low", fixed_in="abcdef1")]),
         ],
     ),
 }
@@ -621,21 +616,26 @@ def test_ship_gate_reads_the_last_round(sc, name):
     for i, (verdict, fs) in enumerate(rounds, start=1):
         n, verdict = (verdict, "pass") if isinstance(verdict, int) else (i, verdict)
         texts.append(rnd(n, verdict, sc.reviewed, *fs))
-    sc.unit(review_text(status, *texts) if texts else review_text(status))
+    sc.unit(texts, status=status)
     ship, _, _ = sc.three(open_pr(sc.reviewed))
     assert ship["ok"] is (name in ("low and open",))
     sc.run("gate", UNIT, "ship", gh=open_pr(sc.reviewed))
 
 
 def test_ship_gate_with_an_answer_that_closes_a_finding(sc):
-    answer = (
-        "\n## Answers\n### Answer F1\nAnswered by: Phong. Date: 2026-10-01. Via: board.\nKeep it.\n"
-    )
-    sc.unit(
-        review_text(
-            "accepted", rnd(1, "pass", sc.reviewed, finding(1, "answered", "high")), tail=answer
-        )
-    )
+    sc.unit([rnd(1, "pass", sc.reviewed, finding(1, "answered", "high"))])
+    known = sc.store.units[f"ws/{UNIT}"]
+    known["answers"] = [
+        {
+            "artifact": "review.md",
+            "n": None,
+            "id": "F1",
+            "text": "Keep it.",
+            "by": "Phong",
+            "date": "2026-10-01",
+            "via": "board",
+        }
+    ]
     sc.three(open_pr(sc.reviewed))
 
 
@@ -762,10 +762,7 @@ def test_ship_gate_merged_commit_is_not_on_origin_main(sc):
 
 def test_ship_gate_merged_with_a_draft_ship_md(sc):
     main, gh = merged_scene(sc)
-    sc.unit(
-        sc.passed(),
-        ship="# Ship: x\nAuthor: test. Status: draft. Round: 1.\n\n## What went out\nRefused: boom\n",
-    )
+    sc.unit(sc.passed(), ship={"round": 1, "refused": "boom"})
     sc.three(gh)
 
 
@@ -782,14 +779,11 @@ def ui_unit(tmp_path: Path, make_review):
 
 SCREEN_CASES = {
     "none": lambda s: s.passed(),
-    "header does not parse": lambda s: s.passed(
-        screens="Looked at it.\n- .screens/a.png — 8×6 — /x — ok\n"
-    ),
     "not an agent": lambda s: s.passed(screens=shots(s.reviewed, by="Phong")),
     "wrong standard": lambda s: s.passed(
         screens=shots(s.reviewed, standard=".claude/rules/other.md")
     ),
-    "no shot": lambda s: s.passed(screens=shots(s.reviewed).splitlines()[0] + "\n"),
+    "no shot": lambda s: s.passed(screens={**shots(s.reviewed), "shots": []}),
     "current": lambda s: s.passed(screens=shots(s.reviewed)),
     "taken off the branch": lambda s: s.passed(screens=shots(s.rev("main"))),
 }
@@ -830,11 +824,7 @@ def test_ship_gate_screens_that_fall_through_to_main(tmp_path):
 
 def test_ship_gate_two_passes_on_one_head_stop_for_a_person(tmp_path):
     def two(s):
-        return review_text(
-            "accepted",
-            rnd(1, "pass", s.reviewed, finding(1, f"fixed {s.reviewed[:7]}", "high")),
-            rnd(2, "pass", s.reviewed, finding(1, f"fixed {s.reviewed[:7]}", "high")),
-        )
+        return [rnd(n, "pass", s.reviewed, fixed(1, s.reviewed)) for n in (1, 2)]
 
     s = ui_unit(tmp_path, two)
     ship, _, nxt = s.three(open_pr(s.reviewed))
@@ -847,8 +837,8 @@ def test_ship_gate_two_passes_on_two_heads_go_to_one_more_round(tmp_path):
     first = s.commit({"src/ui/page.py": "p\n"}, "ui")
     s.reviewed = s.commit({"src/ui/page.py": "q\n"}, "ui again")
     git(s.repo, "update-ref", f"refs/remotes/origin/{BRANCH}", s.reviewed)
-    fixed = finding(1, f"fixed {first[:7]}", "high")
-    s.unit(review_text("accepted", rnd(1, "pass", first, fixed), rnd(2, "pass", s.reviewed, fixed)))
+    fix = fixed(1, first)
+    s.unit([rnd(1, "pass", first, fix), rnd(2, "pass", s.reviewed, fix)])
     s.three(open_pr(s.reviewed))
 
 
@@ -856,12 +846,8 @@ def test_ship_gate_a_pass_before_the_last_whose_commit_is_gone(tmp_path):
     s = ui_scene(tmp_path)
     s.reviewed = s.commit({"src/ui/page.py": "p\n"}, "ui")
     git(s.repo, "update-ref", f"refs/remotes/origin/{BRANCH}", s.reviewed)
-    fixed = finding(1, f"fixed {s.reviewed[:7]}", "high")
-    s.unit(
-        review_text(
-            "accepted", rnd(1, "pass", "abcdef1234", fixed), rnd(2, "pass", s.reviewed, fixed)
-        )
-    )
+    fix = fixed(1, s.reviewed)
+    s.unit([rnd(1, "pass", "abcdef1234", fix), rnd(2, "pass", s.reviewed, fix)])
     _, _, nxt = s.three(open_pr(s.reviewed))
     assert "is not in this repository;" in nxt
 
@@ -869,11 +855,8 @@ def test_ship_gate_a_pass_before_the_last_whose_commit_is_gone(tmp_path):
 # --- next ---------------------------------------------------------------------------------
 
 
-def cr(sc, sha=None) -> str:
-    return review_text(
-        "changes-requested",
-        rnd(1, "changes-requested", sha or sc.reviewed, finding(1, "open", "high")),
-    )
+def cr(sc, sha=None) -> list:
+    return [rnd(1, "changes-requested", sha or sc.reviewed, finding(1, "open", "high"))]
 
 
 def test_next_after_changes_were_asked_and_nothing_reached_the_branch(sc):
@@ -916,9 +899,8 @@ def test_next_after_the_branch_was_rewritten(sc, how):
 
 @pytest.mark.parametrize("what", ["no pr", "pr unreadable", "head gone", "no repo"])
 def test_next_after_changes_were_asked_and_git_cannot_say(sc, what):
-    pr = pr_text(url=None) if what == "no pr" else None
     review = cr(sc, "abcdef1234" if what == "sha gone" else None)
-    sc.unit(review, status="changes-requested", pr=pr)
+    sc.unit(review, status="changes-requested", pr=what != "no pr")
     gh = {
         "pr unreadable": {VIEW: (1, "", "HTTP 500")},
         "pr closed": open_pr(sc.reviewed, state="CLOSED"),
@@ -928,15 +910,15 @@ def test_next_after_changes_were_asked_and_git_cannot_say(sc, what):
 
 
 def test_next_after_a_pass_whose_ship_is_refused(sc):
-    ship = "# Ship: x\nAuthor: test. Status: draft. Round: 1.\n\n## What went out\nRefused: Pull request is not up to date\n"
+    ship = {"round": 1, "refused": "Pull request is not up to date"}
     sc.unit(sc.passed(), ship=ship)
     sc.three(open_pr(sc.reviewed))
     main = sc.advance_main()
     head = sc.rebase(main)
     sc.three(open_pr(head))
-    sc.unit(sc.passed(), ship=ship.replace("Round: 1", "Round: 0"))
+    sc.unit(sc.passed(), ship={**ship, "round": 0})
     sc.three(open_pr(sc.reviewed))
-    sc.unit(sc.passed(), ship=ship.replace("not up to date", "branch protection"))
+    sc.unit(sc.passed(), ship={**ship, "refused": "branch protection"})
     sc.three(open_pr(sc.reviewed))
 
 
@@ -994,19 +976,16 @@ def test_ship_gate_two_passes_whose_heads_git_cannot_compare(tmp_path):
     first = s.commit({"src/ui/page.py": "p\n"}, "ui")
     s.reviewed = s.commit({"src/ui/page.py": "q\n"}, "ui again")
     git(s.repo, "update-ref", f"refs/remotes/origin/{BRANCH}", s.reviewed)
-    one, two = (
-        finding(1, f"fixed {first[:7]}", "high"),
-        finding(1, f"fixed {s.reviewed[:7]}", "high"),
+    s.unit(
+        [rnd(1, "pass", first, fixed(1, first)), rnd(2, "pass", s.reviewed, fixed(1, s.reviewed))]
     )
-    s.unit(review_text("accepted", rnd(1, "pass", first, one), rnd(2, "pass", s.reviewed, two)))
     s.shim({"match": [*DIFF_NAMES, f"{first}..{s.reviewed}"], "code": 128, "err": "fatal: boom\n"})
     _, _, nxt = s.three(open_pr(s.reviewed))
     assert "not known to be one head" in nxt
 
 
 def test_ship_gate_a_round_the_app_keeps_without_its_commit(sc):
-    row = {"n": 1, "verdict": "pass", "reviewed": "", "findings": [], "screens": {}}
-    sc.unit(sc.passed(), rows=[row])
+    sc.unit([rnd(1, "pass", "")])
     ship, _, _ = sc.three(open_pr(sc.reviewed))
     assert "names no reviewed commit" in text_of(ship)
 
@@ -1041,13 +1020,8 @@ def test_ship_gate_a_second_pass_on_a_head_the_first_cannot_diff(tmp_path):
     s = ui_scene(tmp_path)
     s.reviewed = s.commit({"src/ui/page.py": "p\n"}, "ui")
     git(s.repo, "update-ref", f"refs/remotes/origin/{BRANCH}", s.reviewed)
-    fixed = finding(1, f"fixed {s.reviewed[:7]}", "high")
     git(s.repo, "tag", "t0", "main")
-    s.unit(
-        review_text(
-            "accepted", rnd(1, "pass", s.reviewed, fixed), rnd(2, "pass", s.reviewed, fixed)
-        )
-    )
+    s.unit([rnd(n, "pass", s.reviewed, fixed(1, s.reviewed)) for n in (1, 2)])
     s.three(open_pr(s.reviewed))
 
 

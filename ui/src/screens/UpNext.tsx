@@ -3,13 +3,13 @@
 // Every change saves the whole shortlist again with a reason, so the run log keeps who and why.
 
 import { useState, type ReactNode } from "react";
-import type { EstimateBrief } from "../api.gen";
+import type { EstimateBrief, Paused } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
-import { FeatureSlots } from "../lib/feature";
-import { unitCode, unitTitle } from "../lib/format";
+import { pausedAt, unitCode, unitTitle } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { Link } from "../lib/router";
+import { Proposals } from "../components/Proposals";
 import { Button, Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 const number = (unit: string) => Number(unit.slice(0, 4));
@@ -52,6 +52,9 @@ export function UpNext() {
 function Project({ workspace }: { workspace: Workspace }) {
   const cwd = workspace.path;
   const view = useResource("/api/backlog", { cwd }, { on: ["shortlist.", "estimate.", "step.", "hold."] });
+  // The units held at a ceiling, by name: a card says so wherever it is listed.
+  const { boards } = useBoards();
+  const paused = Object.fromEntries((boards.find((b) => b.workspace.path === cwd)?.board?.units ?? []).filter((u) => u.paused).map((u) => [u.name, u.paused as Paused]));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const v = view.data;
@@ -82,7 +85,7 @@ function Project({ workspace }: { workspace: Workspace }) {
       </div>
       <div className="card">
         {v.shortlist.map((s, i) => (
-          <Row key={s.unit} workspace={workspace.name} unit={s.unit} rank={String(s.rank)} estimate={s.estimate}>
+          <Row key={s.unit} workspace={workspace.name} unit={s.unit} rank={String(s.rank)} estimate={s.estimate} paused={paused[s.unit]}>
             {s.drift && s.computed && <div className="prov">Leif would put it {s.computed === 1 ? "first" : `at ${s.computed}`}</div>}
             {s.warnings.map((w) => (
               <div key={w} className="prov" style={{ color: "var(--amber)" }}>
@@ -117,7 +120,7 @@ function Project({ workspace }: { workspace: Workspace }) {
       </div>
       <div className="card">
         {v.order.map((o) => (
-          <Row key={o.unit} workspace={workspace.name} unit={o.unit} rank={String(o.computed)} estimate={o.estimate}>
+          <Row key={o.unit} workspace={workspace.name} unit={o.unit} rank={String(o.computed)} estimate={o.estimate} paused={paused[o.unit]}>
             {o.estimate.basis && <div className="muted ellipsis" style={{ fontSize: 12.5 }} title={o.estimate.basis}>{o.estimate.basis}</div>}
             {o.agent_differs && <div className="prov">An agent estimated {brief(o.agent_differs)}</div>}
             <Slot>
@@ -130,7 +133,7 @@ function Project({ workspace }: { workspace: Workspace }) {
         {!v.order.length && <div className="card-b faint">Nothing estimated waits outside the shortlist.</div>}
       </div>
 
-      <FeatureSlots at="backlog" workspace={workspace} />
+      <Proposals workspace={workspace} />
       {v.unestimated.length > 0 && (
         <>
           <div className="sec-h">
@@ -138,7 +141,7 @@ function Project({ workspace }: { workspace: Workspace }) {
           </div>
           <div className="card">
             {v.unestimated.map((u) => (
-              <Row key={u} workspace={workspace.name} unit={u} rank="–" estimate={null}>
+              <Row key={u} workspace={workspace.name} unit={u} rank="–" estimate={null} paused={paused[u]}>
                 <Estimate disabled={busy} onSave={(value, effort, basis) => save("/api/backlog/estimate", { unit: u, value, effort, basis })} />
               </Row>
             ))}
@@ -152,16 +155,21 @@ function Project({ workspace }: { workspace: Workspace }) {
 
 const brief = (e: EstimateBrief) => `value ${e.value ?? "?"} · ${e.effort ?? "?"}`;
 
-function Row({ workspace, unit, rank, estimate, children }: { workspace: string; unit: string; rank: string; estimate: EstimateBrief | null; children?: ReactNode }) {
+function Row({ workspace, unit, rank, estimate, paused, children }: { workspace: string; unit: string; rank: string; estimate: EstimateBrief | null; paused?: Paused; children?: ReactNode }) {
   return (
     <div className="ny">
       <span className="faint" style={{ width: 22, textAlign: "right", paddingTop: 1 }}>{rank}</span>
       <div className="grow" style={{ minWidth: 0 }}>
-        <div className="row" style={{ gap: 6 }}>
+        <div className="row ny-name" style={{ gap: 6 }}>
           <Link to={`/unit/${workspace}/${number(unit)}`} className="faint nowrap">
             {unitCode(workspace, number(unit))}
           </Link>
-          <span className="ellipsis" style={{ fontWeight: 500 }}>{unitTitle(unit)}</span>
+          <span className="ellipsis ny-title" style={{ fontWeight: 500 }}>{unitTitle(unit)}</span>
+          {paused && (
+            <span title="It stopped at its ceiling and kept its session. Raise it on the unit's page.">
+              <Chip square tone="amber">{pausedAt(paused)}</Chip>
+            </span>
+          )}
           {estimate && (
             <span title={estimate.effort_source === "measured" ? "Effort measured from similar units" : `Estimated by ${estimate.by}`}>
               <Chip square tone="plain">{brief(estimate)}</Chip>
@@ -177,7 +185,7 @@ function Row({ workspace, unit, rank, estimate, children }: { workspace: string;
 /** Buttons at the end of a row, beside the title. */
 function Slot({ children }: { children: ReactNode }) {
   return (
-    <div className="row" style={{ gap: 2, position: "absolute", right: 12, top: 10 }}>
+    <div className="row ny-slot" style={{ gap: 2 }}>
       {children}
     </div>
   );

@@ -8,7 +8,9 @@ read-modify-write rather than merely appearing to."""
 from __future__ import annotations
 
 import ast
+import json
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -20,10 +22,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc import features
 from coscc.config import PROTECTED_DB_VAR
+from coscc.http import plugin
+from coscc.store import db
 from coscc.store.db import SCHEMA_VERSION, Busy, Data, Incompatible, Protected
-from coscc.github import prmachine
-from coscc.units.history import History
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -59,141 +62,20 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertIn(str(SCHEMA_VERSION), message)
             self.assertIn(str(data.db_path), message)
 
-    def test_a_v5_database_rises_to_6_keeping_every_runs_and_transitions_row(self):
-        """6 adds the `unit_*` tables and `idea_meta`; the rows a v5 database already had in `runs`
-        and `transitions` are all still there after."""
-        new = {
-            "unit_meta",
-            "unit_links",
-            "idea_meta",
-            "unit_questions",
-            "unit_answers",
-            "unit_holds",
-            "unit_unknowns",
-            "unit_seen",
-        }
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            with data.connect() as conn:
-                conn.execute(
-                    "INSERT INTO runs (at, root, kind, record) VALUES ('t', '/w', 'start', '{}')"
-                )
-                conn.execute(
-                    "INSERT INTO transitions (at, root, workspace, unit, artifact, stage, "
-                    "from_state, to_state, actor, session, source, machine) VALUES "
-                    "('t', '/w', 'p', '0001_x', 'intent.md', 'intent', 'not started', 'draft', "
-                    "'a', 's', 'src', 'coscc-default')"
-                )
-                for table in new:
-                    conn.execute(f"DROP TABLE {table}")
-                conn.execute("PRAGMA user_version=5")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                tables = {
-                    row["name"]
-                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                }
-                runs = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
-                transitions = conn.execute("SELECT COUNT(*) FROM transitions").fetchone()[0]
-            self.assertEqual(new - tables, set())
-            self.assertEqual((runs, transitions), (1, 1))
-
-    def test_a_v6_database_rises_to_7_and_its_old_transitions_say_no_guard_is_known(self):
-        """7 adds four columns to `transitions`, two to `step_runs` and the tables a submitted
-        object lands in."""
-        new = {"stage_results", "review_rounds", "review_findings", "impl_claims", "pull_requests"}
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            with data.connect() as conn:
-                for table in new:
-                    conn.execute(f"DROP TABLE {table}")
-                for column in ("guard", "authority", "run", "inputs"):
-                    conn.execute(f"ALTER TABLE transitions DROP COLUMN {column}")
-                for column in ("head", "revisions"):
-                    conn.execute(f"ALTER TABLE step_runs DROP COLUMN {column}")
-                conn.execute(
-                    "INSERT INTO transitions (at, root, workspace, unit, artifact, stage, "
-                    "from_state, to_state, actor, session, source, machine) VALUES "
-                    "('t', '/w', 'p', '0001_x', 'intent.md', 'intent', 'not started', 'draft', "
-                    "'a', 's', 'src', 'coscc-default')"
-                )
-                conn.execute("PRAGMA user_version=6")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                tables = {
-                    row["name"]
-                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                }
-                row = conn.execute(
-                    "SELECT guard, authority, run, inputs FROM transitions"
-                ).fetchone()
-                runs = {r[1] for r in conn.execute("PRAGMA table_info(step_runs)")}
-            self.assertEqual(new - tables, set())
-            self.assertEqual(tuple(row), ("unknown", "unknown", "unknown", "{}"))
-            self.assertLessEqual({"head", "revisions"}, runs)
-
-    def test_a_v7_database_rises_to_8_and_its_pull_requests_gain_the_ci_columns(self):
-        """8 adds the four `ci` columns to `pull_requests`. They were added at 7 without moving the
-        number, so a database already at 7 never got them: `no such column: ci` on every read."""
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            history = History(Path(d) / "work", data)
-            with data.connect() as conn:
-                for column in ("ci", "ci_head", "ci_checks", "ci_at"):
-                    conn.execute(f"ALTER TABLE pull_requests DROP COLUMN {column}")
-                conn.execute(
-                    "INSERT INTO pull_requests (root, workspace, unit, number, head, files, "
-                    "merge_commit, at) VALUES (?, 'p', '0001_x', 7, 'abc', '[\"a.py\"]', '', 't')",
-                    (str(history.working_dir),),
-                )
-                conn.execute("PRAGMA user_version=7")
-
-            self.assertIsNone(prmachine.ci_held(history, "p", 7, "abc"))
-            # And on to the version of this build (9: the attempt tables; 10: `note_by`).
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                row = conn.execute(
-                    "SELECT unit, files, ci, ci_head, ci_checks, ci_at FROM pull_requests"
-                ).fetchall()
-            self.assertEqual(
-                [tuple(r) for r in row], [("0001_x", '["a.py"]', "pending", "", None, "")]
-            )
-
-    def test_a_version_10_database_loses_the_decisions_table_and_keeps_the_rest(self):
-        """11 drops `decisions`, which nothing read or wrote."""
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("density", "compact")
-            with data.connect() as conn:
-                conn.execute("CREATE TABLE decisions (id INTEGER PRIMARY KEY, text TEXT)")
-                conn.execute("PRAGMA user_version=10")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                gone = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE name = 'decisions'"
-                ).fetchone()
-            self.assertIsNone(gone)
-            self.assertEqual(data.pref("density"), "compact")
-
-    def test_a_version_11_database_loses_the_outputs_table_and_keeps_the_rest(self):
-        """12 drops `outputs`, which nothing read."""
-        with tempfile.TemporaryDirectory() as d:
-            data = Data(d)
-            data.set_pref("density", "compact")
-            with data.connect() as conn:
-                conn.execute("CREATE TABLE outputs (id INTEGER PRIMARY KEY, path TEXT)")
-                conn.execute("PRAGMA user_version=11")
-
-            self.assertEqual(data.version(), SCHEMA_VERSION)
-            with data.connect() as conn:
-                gone = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE name = 'outputs'"
-                ).fetchone()
-            self.assertIsNone(gone)
-            self.assertEqual(data.pref("density"), "compact")
+    def test_a_database_below_12_or_between_is_refused_by_name(self):
+        """Only 12, the last release's, takes the one step; the steps before and after it are gone."""
+        for found in (11, 18):
+            with tempfile.TemporaryDirectory() as d, self.subTest(found=found):
+                data = Data(d)
+                data.ensure_dir()
+                with sqlite3.connect(data.db_path) as conn:
+                    conn.execute("CREATE TABLE runs (id INTEGER PRIMARY KEY)")
+                    conn.execute(f"PRAGMA user_version={found}")
+                conn.close()
+                with self.assertRaises(Incompatible) as caught:
+                    data.version()
+                self.assertIn(f"schema {found}", str(caught.exception))
+                self.assertIn("upgrade through 0.15 first", str(caught.exception))
 
     def test_a_newer_database_is_still_refused(self):
         """Was `version_5`, then `version_6`: it follows `SCHEMA_VERSION`, so a newer number is
@@ -269,21 +151,6 @@ class AStepsEvents(unittest.TestCase):
         self.data.step_events_add("r", [self.ev("r", n, kind=k) for n, k in enumerate(kinds, 1)])
         self.assertEqual(self.data.step_turns("r"), 3)
         self.assertEqual(self.data.step_turns("nothing"), 0)
-
-    def test_tool_uses_are_that_runs_tool_use_events_in_order(self):
-        """Only `tool_use`, only this run, by `seq`."""
-        for run in ("r", "other"):
-            self.data.step_run_open(run, "/w", "/w/ws", "0001_a", "review", 1000)
-        kinds = ["turn", "tool_use", "tool_result", "tool_use", "text"]
-        self.data.step_events_add(
-            "r", [self.ev("r", n, kind=k, text=str(n)) for n, k in enumerate(kinds, 1)]
-        )
-        self.data.step_events_add("other", [self.ev("other", 1, kind="tool_use")])
-        self.assertEqual(
-            [(e["seq"], e["kind"]) for e in self.data.step_tool_uses("r")],
-            [(2, "tool_use"), (4, "tool_use")],
-        )
-        self.assertEqual(self.data.step_tool_uses("nothing"), [])
 
     def test_open_runs_leave_out_the_closed_and_the_purged(self):
         """Only a row nobody closed or purged, with its last event's `at`."""
@@ -594,6 +461,366 @@ class TheRunningAppsDatabaseIsNotOpened(unittest.TestCase):
         with mock.patch.dict(os.environ):
             os.environ.pop(PROTECTED_DB_VAR, None)
             self.assertEqual(Data(self.tmp / "app").version(), SCHEMA_VERSION)
+
+
+class DecisionsGetATable(unittest.TestCase):
+    def test_the_table_and_its_index_exist(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                names = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master")}
+            self.assertLessEqual({"unit_decisions", "unit_decisions_scope"}, names)
+
+    def test_an_unknown_kind_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            insert = (
+                "INSERT INTO unit_decisions (root, workspace, unit, kind, fields, decided_by, "
+                "date, via) VALUES ('/w', 'p', '0001_a', ?, '{}', 'o', 'd', 'v')"
+            )
+            with data.write() as conn:
+                for kind in ("rerun", "more-rounds", "outcome"):
+                    conn.execute(insert, (kind,))
+            with self.assertRaises(sqlite3.IntegrityError), data.write() as conn:
+                conn.execute(insert, ("approve",))
+
+
+# A database at 12, the real one's schema; `_from_12` is the one step from it.
+V12 = Path(__file__).resolve().parent / "fixtures" / "v12.sql"
+
+TWO_QUESTIONS = (
+    '{"judgement": "ready", "questions": [{"n": 1, "text": "a"}, {"n": 2, "text": "b"}]}'
+)
+
+
+def _shape(conn: sqlite3.Connection) -> dict[str, tuple]:
+    """Every table's columns, indexes, CHECKs and foreign keys: what a fresh and a migrated
+    database must agree on (their SQL text differs by comments and `ALTER`s)."""
+    out = {}
+    for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'"):
+        sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()[0]
+        indexes = sorted(
+            (r[1], r[2], r[4], tuple(i[2] for i in conn.execute(f"PRAGMA index_info('{r[1]}')")))
+            for r in conn.execute(f"PRAGMA index_list('{table}')")
+        )
+        out[table] = (
+            [tuple(r)[1:] for r in conn.execute(f"PRAGMA table_info('{table}')")],
+            indexes,
+            sorted(" ".join(c.split()) for c in re.findall(r"CHECK \((.*?\)?)\)", sql or "")),
+            [tuple(r) for r in conn.execute(f"PRAGMA foreign_key_list('{table}')")],
+        )
+    return out
+
+
+class TheOneStepFindsTodaysPack(unittest.TestCase):
+    def test_what_it_derives_from_the_built_in_pack(self):
+        """`_from_12` finds agents and states by what they declare; a pack that drifts fails here."""
+        states, rows = db._builtin()
+        self.assertEqual(db._with(rows, "type"), ["intent"])
+        self.assertEqual(db._with(rows, "rests_on"), ["plan"])
+        self.assertEqual(db._with(rows, "unmeasured"), ["spec"])
+        self.assertEqual(
+            sorted(db._with(rows, "questions")), ["idea", "impl", "intent", "plan", "spec", "spike"]
+        )
+        self.assertEqual(db._coders(rows), ["impl"])
+        self.assertEqual(db._scan_row(rows), "scan")
+        self.assertEqual([s for s, v in states.items() if v.get("action") == "merge"], ["ship"])
+
+
+class AV12DatabaseTakesOneStep(unittest.TestCase):
+    """0.15's database to this schema in one step; the end state is what each part proves."""
+
+    ANSWERS = (
+        ("person", "Leif (CoS), x"),
+        ("person", "Claude (CoS), y"),
+        ("person", "agent, z"),
+        ("person", "owner"),
+        ("person", "the originator (relayed by Leif)"),
+        ("agent", "Jera"),
+    )
+    OUTPUTS = (
+        ("0001_a", "intent", TWO_QUESTIONS),
+        ("0002_b", "intent", '{"stage": "intent", "judgement": "ready"}'),
+        ("0001_a", "impl", '{"stage": "impl", "needs_person": []}'),
+        ("0001_a", "spec", '{"unmeasured": ["U9"]}'),
+        ("0001_a", "spec", TWO_QUESTIONS.replace("{", '{"unmeasured": ["U1"], ', 1)),
+        ("0001_a", "plan", '{"judgement": "ready"}'),
+        ("0002_b", "plan", '{"judgement": "ready"}'),
+        ("0001_a", "spike", '{"judgement": "ready"}'),
+    )
+    RUNS = (
+        ("end", "scan", '{"kind": "end", "stage": "scan", "outcome": "done"}'),
+        ("end", "estimate", '{"kind": "end", "stage": "estimate", "outcome": "done"}'),
+        ("end", "impl", '{"kind": "end", "outcome": "exhausted", "status": "paused-budget"}'),
+        ("attempt", "", '{"kind": "attempt", "outcome": "exhausted"}'),
+        ("ship", "ship", '{"kind": "ship", "unit": "0001_a", "result": "shipped"}'),
+        (
+            "vault",
+            "",
+            '{"kind": "vault", "action": "policy", "stages": ["impl"], "modes": ["env"]}',
+        ),
+        ("vault", "", '{"kind": "vault", "action": "create"}'),
+    )
+    PREFS = {
+        "features.state": {"scan": {"/w": "on", "/v": "on"}, "release": {"/w": "on"}},
+        "features.schedule": {"scan": {"/w": 24, "/v": 0}},
+        "model:impl": "claude-sonnet-5",
+        "budget:review:novel": 9,
+        "density": "compact",
+    }
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.data = Data(Path(tmp.name) / "data")
+        self.data.ensure_dir()
+        with sqlite3.connect(self.data.db_path) as conn:
+            conn.executescript(V12.read_text(encoding="utf-8"))
+            self._rows(conn)
+            conn.execute("PRAGMA user_version=12")
+        conn.close()
+        self.assertEqual(self.data.version(), SCHEMA_VERSION)
+
+    def _rows(self, conn):
+        for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):
+            conn.execute(
+                "INSERT INTO unit_meta (root, workspace, unit, type, imported_at) "
+                "VALUES ('/w', 'p', ?, ?, 't')",
+                (unit, kind),
+            )
+        for unit, agent, obj in self.OUTPUTS:
+            conn.execute(
+                "INSERT INTO stage_results (at, root, workspace, unit, stage, run, revision, "
+                "judgement, object) VALUES ('t', '/w', 'p', ?, ?, 'r', 'h', 'ready', ?)",
+                (unit, agent, obj),
+            )
+        conn.execute("INSERT INTO idea_meta VALUES ('/w', 'p', '0001_x', '{}')")
+        for pos, (kind, ref) in enumerate(
+            [("idea", "p/ideas/0001_x.md"), ("repo", "p"), ("depends", "p/0002_b")]
+        ):
+            conn.execute(
+                "INSERT INTO unit_links VALUES ('/w', 'p', '0003_c', ?, ?, ?)", (kind, ref, pos)
+            )
+        conn.execute("INSERT INTO unit_seen VALUES ('/w', 'p', '0001_a', 'plan.md', 'x', 1)")
+        for field, raw in (("status", "approved"), ("ingest", None)):
+            conn.execute(
+                "INSERT INTO unit_unknowns VALUES ('/w', 'p', '0001_a', 'plan.md', ?, 'r', ?, 't')",
+                (field, raw),
+            )
+        for key in ("unit-meta:0135:/w/p", "unit-meta:0136-authority:/w/p", "keep"):
+            conn.execute("INSERT INTO migrations (key, at) VALUES (?, 't')", (key,))
+        for frm, to in (("not started", "done"), ("done", "accepted"), ("draft", "accepted")):
+            conn.execute(
+                "INSERT INTO transitions (at, root, workspace, unit, artifact, stage, "
+                "from_state, to_state, actor, session, source, machine) "
+                "VALUES ('t', '/w', 'p', '0001_a', 'plan.md', 'plan', ?, ?, 'a', 's', 'src', 'unit')",
+                (frm, to),
+            )
+        conn.execute("INSERT INTO unit_questions VALUES ('/w', 'p', '0001_a', 'spec.md', 1, 'q')")
+        for n, (authority, name) in enumerate(self.ANSWERS, 1):
+            conn.execute(
+                "INSERT INTO unit_answers (root, workspace, unit, artifact, ref, text, "
+                "answered_by, authority, date, via) VALUES ('/w', 'p', '0001_a', 'spec.md', "
+                "?, 't', ?, ?, 'd', 'v')",
+                (str(n), name, authority),
+            )
+        conn.execute(
+            "INSERT INTO unit_decisions (workspace, unit, text, authority, recorded_by, date) "
+            "VALUES ('p', '0001_a', 't', 'person', 'x', 'd')"
+        )
+        for kind, stage, record in self.RUNS:
+            conn.execute(
+                "INSERT INTO runs (at, root, workspace, stage, kind, record) "
+                "VALUES ('t', '/w', '/w', ?, ?, ?)",
+                (stage, kind, record),
+            )
+        conn.execute(
+            "INSERT INTO step_events VALUES ('r', 1, 1, 'end', '{\"outcome\": \"exhausted\"}', 1)"
+        )
+        conn.execute(
+            "INSERT INTO attempts (id, machine, workspace, unit) "
+            "VALUES (1, 'step', '/w', 'u'), (2, 'step', '/w', 'u')"
+        )
+        conn.execute(
+            "INSERT INTO attempt_moves (attempt, seq, moved_to, outcome, at) "
+            "VALUES (1, 1, 'ended', 'exhausted', 't'), (2, 1, 'ended', 'done', 't')"
+        )
+        for state, unit, reason in (("pending", "", ""), ("accepted", "0007_x", "")):
+            conn.execute(
+                "INSERT INTO scan_proposals (workspace, run, type, slug, title, problem, "
+                "sources, state, unit, by, at, decided, reason) VALUES ('/w', 1, 'fix', "
+                "'s', 't', 'p', '[]', ?, ?, 'owner', 'a', 'd', ?)",
+                (state, unit, reason),
+            )
+        conn.execute("INSERT INTO scan_cursor VALUES ('/w', '2026-10-05T17:14:13+00:00', '[]')")
+        for key, value in self.PREFS.items():
+            conn.execute("INSERT INTO prefs (key, value) VALUES (?, ?)", (key, json.dumps(value)))
+        conn.execute(
+            "INSERT INTO review_findings (round, finding, open, label, severity, rule, text) "
+            "VALUES (1, 'F1', 1, 'open', 'low', 'R2', 't')"
+        )
+        conn.execute(
+            "INSERT INTO vault_secrets VALUES ('ws:t', '/w', 'd', '[\"impl\"]', '[\"env\"]', 0, "
+            "'owner', 't', 0)"
+        )
+
+    def _all(self, sql):
+        with self.data.connect() as conn:
+            return [tuple(r) for r in conn.execute(sql)]
+
+    def _columns(self, table):
+        return {r[1] for r in self._all(f"PRAGMA table_info({table})")}
+
+    def test_the_schema_is_a_fresh_ones(self):
+        with tempfile.TemporaryDirectory() as d:
+            fresh = Data(d)
+            fresh.version()
+            with fresh.write() as conn:
+                for statement in plugin.tables_of(features.FEATURES):
+                    conn.execute(statement)
+            with fresh.connect() as conn:
+                want = _shape(conn)
+        with self.data.connect() as conn:
+            got = _shape(conn)
+        self.assertEqual(got, want)
+
+    def test_what_a_file_fed_and_the_old_tables_are_gone(self):
+        names = {r[0] for r in self._all("SELECT name FROM sqlite_master")}
+        gone = {"stage_results", "stage_results_scope", "idea_meta", "unit_seen"}
+        self.assertFalse((gone | {"scan_proposals", "scan_runs", "scan_cursor"}) & names)
+        self.assertLessEqual({"outputs_scope", "unit_links_scope", "unit_decisions_scope"}, names)
+        self.assertNotIn("lane", self._columns("unit_meta"))
+        self.assertNotIn("raw", self._columns("unit_unknowns"))
+        self.assertEqual(self._all("SELECT field FROM unit_unknowns"), [("ingest",)])
+        self.assertEqual(self._all("SELECT key FROM migrations"), [("keep",)])
+
+    def test_links_keep_their_order_without_repo_rows(self):
+        self.assertEqual(
+            self._all("SELECT kind, ref, pos FROM unit_links ORDER BY pos"),
+            [("idea", "p/ideas/0001_x.md", 0), ("depends", "p/0002_b", 2)],
+        )
+        with self.assertRaises(sqlite3.IntegrityError), self.data.connect() as conn:
+            conn.execute("INSERT INTO unit_links VALUES ('/w', 'p', 'u', 'repo', 'p', 0)")
+
+    def test_a_stored_done_is_accepted_and_an_exhausted_run_failed(self):
+        self.assertEqual(
+            self._all("SELECT from_state, to_state FROM transitions ORDER BY id"),
+            [("not started", "accepted"), ("accepted", "accepted"), ("draft", "accepted")],
+        )
+        self.assertEqual(
+            self._all(
+                "SELECT json_extract(record, '$.outcome'), json_extract(record, '$.status') "
+                "FROM runs WHERE id IN (3, 4) ORDER BY id"
+            ),
+            [("failed", "failed"), ("failed", "failed")],
+        )
+        self.assertEqual(
+            self._all("SELECT outcome FROM attempt_moves ORDER BY attempt"),
+            [("failed",), ("done",)],
+        )
+        self.assertEqual(
+            self._all("SELECT json_extract(event, '$.outcome') FROM step_events"), [("failed",)]
+        )
+
+    def test_records_rise_to_their_current_contract(self):
+        got = self._all(
+            "SELECT id, unit, agent, version, json_extract(object, '$.type'), "
+            "json_extract(object, '$.variant'), json_type(object, '$.files'), "
+            "json_type(object, '$.steps'), json_extract(object, '$.rests_on'), "
+            "json_extract(object, '$.questions[0].recommendation'), "
+            "json_extract(object, '$.questions[1].recommendation') FROM outputs ORDER BY id"
+        )
+        self.assertEqual(
+            got,
+            [
+                (1, "0001_a", "intent", 3, "fix", None, None, None, None, "", ""),
+                (2, "0002_b", "intent", 3, "feat", None, None, None, None, None, None),
+                (3, "0001_a", "impl", 3, None, None, None, None, None, None, None),
+                (4, "0001_a", "spec", 2, None, None, None, None, None, None, None),
+                (5, "0001_a", "spec", 2, None, None, None, None, None, "", ""),
+                (6, "0001_a", "plan", 4, None, "novel", "array", "array", '["U1"]', None, None),
+                (7, "0002_b", "plan", 4, None, "novel", "array", "array", "[]", None, None),
+                (8, "0001_a", "spike", 2, None, None, None, None, None, None, None),
+            ],
+        )
+        self.assertEqual(self._all("SELECT recommendation FROM unit_questions"), [("",)])
+        self.assertEqual(
+            self._all("SELECT COUNT(*) FROM outputs WHERE json_type(object, '$.impl')"), [(0,)]
+        )
+
+    def test_every_unit_walks_the_full_process_and_a_finding_keeps_its_criterion(self):
+        self.assertEqual(
+            self._all("SELECT unit, process FROM unit_meta ORDER BY unit"),
+            [("0001_a", "coscc-sdlc/full"), ("0002_b", "coscc-sdlc/full")],
+        )
+        self.assertEqual(self._all("SELECT criterion FROM review_findings"), [("R2",)])
+        self.assertIn("criteria", self._columns("review_rounds"))
+
+    def test_an_old_shaped_decisions_table_is_replaced_empty(self):
+        cols = self._columns("unit_decisions")
+        self.assertLessEqual({"kind", "fields", "decided_by", "root"}, cols)
+        self.assertFalse({"text", "authority", "recorded_by"} & cols)
+        self.assertEqual(self._all("SELECT COUNT(*) FROM unit_decisions"), [(0,)])
+
+    def test_answers_carry_by_from_the_name_rule_and_the_old_columns_are_gone(self):
+        cols = self._columns("unit_answers")
+        self.assertFalse({"answered_by", "authority"} & cols)
+        self.assertLessEqual({"name", "by"}, cols)
+        self.assertEqual(
+            self._all('SELECT name, "by" FROM unit_answers ORDER BY id'),
+            [
+                ("Leif (CoS), x", "delegated"),
+                ("Claude (CoS), y", "delegated"),
+                ("agent, z", "delegated"),
+                ("owner", "person"),
+                ("the originator (relayed by Leif)", "person"),
+                ("Jera", "delegated"),
+            ],
+        )
+        with self.assertRaises(sqlite3.IntegrityError), self.data.write() as conn:
+            conn.execute(
+                "INSERT INTO unit_answers (root, workspace, unit, artifact, ref, text, name, "
+                "date, via, \"by\") VALUES ('/w', 'p', '0001_a', 'spec.md', '9', 't', "
+                "'n', 'd', 'v', 'agent')"
+            )
+
+    def test_the_scan_features_proposals_state_and_cursor_are_its_rows(self):
+        self.assertEqual(
+            self._all("SELECT agent, decision, made FROM proposals ORDER BY id"),
+            [("scan", "pending", ""), ("scan", "accepted", "0007_x")],
+        )
+        self.assertEqual(
+            self._all("SELECT stage, json_extract(record, '$.data_until') FROM runs WHERE id < 3"),
+            [("scan", "2026-10-05T17:14:13+00:00"), ("estimate", None)],
+        )
+        self.assertEqual(self.data.pref("agents.state"), {"scan": {"/w": "on", "/v": "off"}})
+        self.assertEqual(self.data.pref("features.state"), {"release": {"/w": "on"}})
+        self.assertIsNone(self.data.pref("features.schedule"))
+        self.assertEqual(self.data.pref("density"), "compact")
+
+    def test_the_agent_prefs_are_the_owners_layer_and_gebo_keeps_the_coders_model(self):
+        agents = self.data.root / "packs" / "local" / "agents"
+        self.assertEqual(
+            sorted(p.name for p in agents.iterdir()), ["impl.md", "integrate.md", "review.md"]
+        )
+        self.assertIn('"claude-sonnet-5"', (agents / "integrate.md").read_text(encoding="utf-8"))
+        self.assertIn('"ceilings": {"usd": 9}', (agents / "review.md").read_text(encoding="utf-8"))
+        self.assertEqual(self._all("SELECT key FROM prefs WHERE key LIKE '%:%'"), [])
+
+    def test_a_merge_record_is_merge_and_a_secrets_list_is_agents(self):
+        self.assertEqual(
+            self._all("SELECT kind, json_extract(record, '$.kind') FROM runs WHERE id = 5"),
+            [("merge", "merge")],
+        )
+        self.assertEqual(
+            self._all(
+                "SELECT json_extract(record, '$.agents'), json_type(record, '$.stages') "
+                "FROM runs WHERE kind = 'vault' ORDER BY id"
+            ),
+            [('["impl"]', None), (None, None)],
+        )
+        self.assertEqual(self._all("SELECT agents FROM vault_secrets"), [('["impl"]',)])
 
 
 if __name__ == "__main__":

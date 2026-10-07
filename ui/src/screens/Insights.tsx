@@ -3,16 +3,17 @@
 // Every figure names the units behind it, so a number can be checked, not only read.
 
 import { useState } from "react";
-import type { Insights as View, Target } from "../api.gen";
+import type { AgentSpend, Outcomes, Insights as View, Target } from "../api.gen";
 import { useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
-import { STAGE_LABEL, money, unitCode, unitTitle } from "../lib/format";
+import { stageLabel } from "../lib/pack";
+import { ago, money, unitCode, unitTitle } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { Link } from "../lib/router";
-import { Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
+import { Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 const WASTE: Record<string, string> = {
-  "exhausted-or-failed": "Runs that failed or ran out",
+  failed: "Runs that failed",
   "run-again": "Stages run again",
   "changes-requested": "Review rounds that asked for changes",
   "integrate-conflict": "Integrations with a conflict",
@@ -41,7 +42,7 @@ export function Insights() {
   const workspace = boards.find((b) => b.workspace.name === project)?.workspace ?? boards[0]?.workspace;
   return (
     <div className="page mid">
-      <PageHead title="Insights" lede="The last 30 days against your targets: $15 a shipped unit and 1.5 review rounds. Every figure names its units." />
+      <PageHead title="Insights" lede="The last 30 days against your targets: $15 a shipped unit, 1.5 review rounds, every outcome graded and met. Every figure names its units." />
       {loading ? (
         <SkeletonRows rows={5} />
       ) : (
@@ -78,9 +79,12 @@ function Project({ workspace }: { workspace: Workspace }) {
           <TargetCard key={t.name} target={t} shipped={v.shipped.length} workspace={workspace.name} />
         ))}
       </div>
+      <OutcomeCards o={v.outcomes} workspace={workspace.name} />
       <Days view={v} />
-      <div className="sec-h">By agent</div>
-      <Bars rows={v.by_stage.map((s) => ({ key: s.stage, label: STAGE_LABEL[s.stage] ?? (s.stage || "no stage"), usd: s.usd ?? 0, note: `${s.steps} runs${s.unknown ? `, ${s.unknown} cost unknown` : ""}` }))} />
+      <div className="sec-h">
+        By agent <span className="faint">open one to see its runs</span>
+      </div>
+      <Agents rows={v.by_agent} workspace={workspace} />
       <div className="sec-h">Spent again</div>
       <div className="card">
         {v.waste.map((w) => (
@@ -103,6 +107,7 @@ function Project({ workspace }: { workspace: Workspace }) {
             <span className="id">{unitCode(workspace.name, number(s.unit))}</span>
             <span className="t">{unitTitle(s.unit)}</span>
             <span className="meta">
+              {s.outcome && <Chip square tone={s.outcome === "met" ? "green" : s.outcome === "not-met" ? "red" : "amber"}>{OUTCOME[s.outcome] ?? s.outcome}</Chip>}
               <span style={{ color: (s.usd ?? 0) > 15 ? "var(--amber)" : undefined }}>{money(s.usd)}</span> · {s.rounds} round{s.rounds === 1 ? "" : "s"}
             </span>
           </Link>
@@ -110,6 +115,59 @@ function Project({ workspace }: { workspace: Workspace }) {
         {!v.shipped.length && <div className="card-b faint">Nothing shipped in {v.days} days.</div>}
       </div>
     </>
+  );
+}
+
+const OUTCOME: Record<string, string> = { met: "met", "not-met": "not met", unclear: "unclear" };
+const pct = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : "—");
+
+/** The two outcome targets: every shipped unit graded within 7 days of its week of waiting, and
+ * most of those graded met. The units that missed are named. */
+function OutcomeCards({ o, workspace }: { o: Outcomes; workspace: string }) {
+  const late = o.due > o.on_time;
+  const short = o.graded > 0 && o.met / o.graded < o.target_met;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+      <div className="card card-b">
+        <div className="faint" style={{ fontSize: 12.5 }}>Outcome graded within 7 days</div>
+        <div className="row" style={{ alignItems: "baseline", gap: 8, marginTop: 4 }}>
+          <b style={{ fontSize: 22, color: late ? "var(--amber)" : undefined }}>{pct(o.on_time, o.due)}</b>
+          <span className="faint">
+            {o.on_time} of {o.due} due · target {pct(o.target_graded, 1)}
+          </span>
+        </div>
+        <div className="faint" style={{ fontSize: 12, marginTop: 8 }}>
+          {o.due ? (late ? "Grade the rest from each unit's page." : "Every unit due was graded in time.") : "No unit has waited its week yet."}
+        </div>
+      </div>
+      <div className="card card-b">
+        <div className="faint" style={{ fontSize: 12.5 }}>Outcome met</div>
+        <div className="row" style={{ alignItems: "baseline", gap: 8, marginTop: 4 }}>
+          <b style={{ fontSize: 22, color: short ? "var(--amber)" : undefined }}>{pct(o.met, o.graded)}</b>
+          <span className="faint">
+            {o.met} of {o.graded} graded · target {pct(o.target_met, 1)}
+          </span>
+        </div>
+        <div className="faint" style={{ fontSize: 12, marginTop: 8 }}>
+          {o.missed.length ? (
+            <>
+              {o.missed.length} short:{" "}
+              {o.missed.slice(0, WORST).map((u, i) => (
+                <span key={u}>
+                  {i > 0 && ", "}
+                  <Link to={`/unit/${workspace}/${number(u)}`}>{unitCode(workspace, number(u))}</Link>
+                </span>
+              ))}
+              {o.missed.length > WORST && "…"}
+            </>
+          ) : o.graded ? (
+            "Every graded unit met its outcome."
+          ) : (
+            "Nothing graded yet."
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -173,19 +231,47 @@ function Days({ view }: { view: View }) {
   );
 }
 
-function Bars({ rows }: { rows: { key: string; label: string; usd: number; note: string }[] }) {
-  const top = Math.max(1, ...rows.map((r) => r.usd));
+/** Why an agent's row lists no runs: its steps kept a cost but no run log to open. */
+export function noRuns(r: Pick<AgentSpend, "steps">): string {
+  return `${r.steps} of its steps recorded their cost but not what they did, so there is no run to open.`;
+}
+
+function Agents({ rows, workspace }: { rows: AgentSpend[]; workspace: Workspace }) {
+  const top = Math.max(1, ...rows.map((r) => r.usd ?? 0));
+  if (!rows.length) return <div className="card card-b faint">No agent has run in these days.</div>;
   return (
-    <div className="card card-b">
+    <div className="card">
       {rows.map((r) => (
-        <div key={r.key} className="row" style={{ gap: 10, padding: "5px 0" }}>
-          <span style={{ width: 96 }}>{r.label}</span>
-          <div className="grow" style={{ background: "var(--bg-sunk)", borderRadius: 3, height: 8 }}>
-            <div style={{ width: `${(r.usd / top) * 100}%`, background: "var(--accent)", height: 8, borderRadius: 3 }} />
+        <details key={r.agent} id={`agent-${r.agent}`} className="agent">
+          <summary className="lrow">
+            <span style={{ width: 96 }}>{stageLabel(r.agent)}</span>
+            <div className="grow" style={{ background: "var(--bg-sunk)", borderRadius: 3, height: 8 }}>
+              <div style={{ width: `${((r.usd ?? 0) / top) * 100}%`, background: "var(--accent)", height: 8, borderRadius: 3 }} />
+            </div>
+            <b className="nowrap" style={{ width: 72, textAlign: "right" }}>{money(r.usd ?? 0)}</b>
+            <span className="faint nowrap" style={{ width: 150, fontSize: 12 }}>
+              {r.steps} run{r.steps === 1 ? "" : "s"}{r.unknown ? `, ${r.unknown} cost unknown` : ""}
+            </span>
+          </summary>
+          <div className="agent-runs">
+            {r.runs.map((run) => (
+              <Link key={run.run} to={`/run/${workspace.name}/${run.run}`} className="lrow">
+                <span className="id">{run.unit ? unitCode(workspace.name, number(run.unit)) : "—"}</span>
+                <span className="t">{run.unit ? unitTitle(run.unit) : "No unit"}</span>
+                <span className="meta">
+                  {run.outcome !== "done" && (
+                    <Chip square tone="red">
+                      {run.outcome}
+                    </Chip>
+                  )}
+                  <span>{money(run.usd)}</span>
+                  <span title={run.at}>{ago(run.at)}</span>
+                </span>
+              </Link>
+            ))}
+            {!r.runs.length && <div className="card-b faint">{noRuns(r)}</div>}
           </div>
-          <b className="nowrap" style={{ width: 72, textAlign: "right" }}>{money(r.usd)}</b>
-          <span className="faint nowrap" style={{ width: 150, fontSize: 12 }}>{r.note}</span>
-        </div>
+        </details>
       ))}
     </div>
   );

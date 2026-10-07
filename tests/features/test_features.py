@@ -15,18 +15,10 @@ from starlette.routing import Route
 
 from coscc.store.db import Data
 from coscc import features
-from coscc.kernel import Block, Feature, Guard, Parts, Schedule, Tool
-from coscc.http.plugin import (
-    SCHEDULE_PREF,
-    create_tables,
-    hooks_of,
-    set_schedule_of,
-    set_state,
-    shown,
-    tick,
-)
+from coscc.kernel import Block, Feature, Guard, Parts, Tool
+from coscc.http.plugin import create_tables, hooks_of
 from coscc.http.app import build
-from tests.features.ctx import ctx_for
+from tests.features.ctx import ctx_for, rows_without_feature_tools
 from coscc.config import PROTECTED_DB_VAR, Config
 
 
@@ -49,7 +41,7 @@ class Setup(unittest.IsolatedAsyncioTestCase):
 
 class TakingTheLineOutRemovesTheFeature(Setup):
     async def test_with_no_features_there_is_no_route_and_the_rest_answers(self):
-        with mock.patch("coscc.features.FEATURES", ()):
+        with mock.patch("coscc.features.FEATURES", ()), rows_without_feature_tools():
             async with self.client() as client:
                 self.assertEqual((await client.get("/api/notices/follow")).status_code, 404)
                 self.assertEqual((await client.get("/api/health")).status_code, 200)
@@ -81,7 +73,7 @@ class ATableIsCreatedAtStartup(Setup):
     def test_build_opens_no_database_and_startup_makes_the_table_twice_harmlessly(self):
         fake = self.fake("CREATE TABLE IF NOT EXISTS fake_things (id INTEGER PRIMARY KEY)")
         db = str((Path(self.config.data_dir) / "cos.db").resolve())
-        with mock.patch("coscc.features.FEATURES", (fake,)):
+        with mock.patch("coscc.features.FEATURES", (fake,)), rows_without_feature_tools():
             with mock.patch.dict(os.environ, {PROTECTED_DB_VAR: db}):
                 api = build(self.config)
             start(api)
@@ -90,7 +82,10 @@ class ATableIsCreatedAtStartup(Setup):
 
     def test_a_statement_that_is_not_a_create_table_raises_at_build(self):
         for bad in ("DROP TABLE prefs", "CREATE TABLE t (a INTEGER)", "SELECT 1"):
-            with mock.patch("coscc.features.FEATURES", (self.fake(bad),)):
+            with (
+                mock.patch("coscc.features.FEATURES", (self.fake(bad),)),
+                rows_without_feature_tools(),
+            ):
                 with self.assertRaises(ValueError):
                     build(self.config)
 
@@ -156,14 +151,14 @@ class TurningAFeatureOffForAWorkspace(Setup):
             got = await client.get("/api/features", params={"cwd": str(self.ws), "detail": "1"})
         rows = got.json()
         self.assertEqual(set(rows), {f.name for f in features.FEATURES})
-        self.assertEqual(len(rows), 7)
+        self.assertEqual(len(rows), 6)
         for name, row in rows.items():
             with self.subTest(feature=name):
                 self.assertTrue(row["summary"])
                 self.assertLessEqual(len(row["summary"]), 100)
                 self.assertEqual(
                     set(row),
-                    {"state", "pilot", "sentence", "locked", "schedule", "hours", "summary"},
+                    {"state", "pilot", "sentence", "locked", "summary"},
                 )
         self.assertEqual(rows["notices"]["state"], "on")
 
@@ -179,9 +174,7 @@ def _server(_facts):
     return {"type": "stdio", "command": "true"}
 
 
-def fake_feature(
-    name="fake", server="fake", stages=("impl",), guard="g", block="b", route=True
-) -> Feature:
+def fake_feature(name="fake", server="fake", guard="g", block="b", route=True) -> Feature:
     async def ping(_request):
         return PlainTextResponse("pong")
 
@@ -190,7 +183,7 @@ def fake_feature(
         lambda _ctx: [Route(f"/api/{name}/ping", ping)] if route else [],
         tables=(f"CREATE TABLE IF NOT EXISTS {name}_things (id INTEGER PRIMARY KEY)",),
         agent=lambda _ctx: Parts(
-            tools=(Tool(server, ("ping",), stages, _server),),
+            tools=(Tool(server, "read", "low", server, ("ping",), _server),),
             guards=(Guard(guard, lambda _f: None),),
             blocks=(Block(block, lambda _f: "hello"),),
         ),
@@ -200,95 +193,60 @@ def fake_feature(
 class AFeatureHandsTheAgentItsParts(Setup):
     async def test_route_table_and_parts_are_there_and_the_switch_empties_them(self):
         fake = fake_feature()
-        with mock.patch("coscc.features.FEATURES", (fake,)):
+        with mock.patch("coscc.features.FEATURES", (fake,)), rows_without_feature_tools():
             async with self.client() as client:
                 self.assertEqual((await client.get("/api/fake/ping")).text, "pong")
                 api = client._transport.app
                 hooks = api.state.core.steps.hooks
-                held = hooks.for_step("impl", str(self.ws))
+                held = hooks.on(str(self.ws))
                 self.assertEqual([t.server for t in held.tools], ["fake"])
                 self.assertEqual([g.name for g in held.guards], ["g"])
                 self.assertEqual([b.name for b in held.blocks], ["b"])
-                self.assertEqual(hooks.for_step("plan", str(self.ws)).tools, ())
+                self.assertIn("fake", hooks.catalog())
                 off = await client.post(
                     "/api/features", json={"cwd": str(self.ws), "name": "fake", "state": "off"}
                 )
                 self.assertEqual(off.status_code, 200)
-                self.assertEqual(hooks.for_step("impl", str(self.ws)), Parts())
+                self.assertEqual(hooks.on(str(self.ws)), Parts())
                 start(api)
         self.assertTrue(table_exists(self.config, "fake_things"))
 
     async def test_with_no_features_none_of_it_remains(self):
-        with mock.patch("coscc.features.FEATURES", ()):
+        with mock.patch("coscc.features.FEATURES", ()), rows_without_feature_tools():
             async with self.client() as client:
                 self.assertEqual((await client.get("/api/fake/ping")).status_code, 404)
                 hooks = client._transport.app.state.core.steps.hooks
-        self.assertEqual(hooks.for_step("impl", str(self.ws)), Parts())
+        self.assertEqual(hooks.on(str(self.ws)), Parts())
 
-    def test_a_clash_or_a_tool_on_a_prose_stage_is_refused_naming_the_feature(self):
+    def test_a_clash_is_refused_naming_the_feature(self):
         ctx = {n: ctx_for() for n in ("a", "b", "fake")}
-        with self.assertRaisesRegex(ValueError, "b: the MCP server 'fake' is also a's"):
-            hooks_of([fake_feature("a"), fake_feature("b", guard="g2", block="b2")], ctx)
-        with self.assertRaisesRegex(ValueError, "b: the guard 'g' is also a's"):
-            hooks_of([fake_feature("a"), fake_feature("b", server="other", block="b2")], ctx)
-        with self.assertRaisesRegex(ValueError, "b: the block 'b' is also a's"):
-            hooks_of([fake_feature("a"), fake_feature("b", server="other", guard="g2")], ctx)
-        with self.assertRaisesRegex(ValueError, "fake: .*prose stages \\(plan\\)"):
-            hooks_of([fake_feature(stages=("impl", "plan"))], ctx)
+        with rows_without_feature_tools():
+            with self.assertRaisesRegex(ValueError, "b: the tool 'fake' is also a's"):
+                hooks_of([fake_feature("a"), fake_feature("b", guard="g2", block="b2")], ctx)
+            with self.assertRaisesRegex(ValueError, "b: the guard 'g' is also a's"):
+                hooks_of([fake_feature("a"), fake_feature("b", server="other", block="b2")], ctx)
+            with self.assertRaisesRegex(ValueError, "b: the block 'b' is also a's"):
+                hooks_of([fake_feature("a"), fake_feature("b", server="other", guard="g2")], ctx)
+            with self.assertRaisesRegex(ValueError, "a: the tool 'Bash' is also the kernel's"):
+                hooks_of([_named("a", "Bash")], ctx)
+
+    def test_a_row_naming_a_tool_no_catalog_holds_stops_the_build(self):
+        ctx = {"fake": ctx_for()}
+        with self.assertRaisesRegex(
+            ValueError, "the row 'spike' cannot be used: tools.vault: no such tool in the catalog"
+        ):
+            hooks_of([fake_feature()], ctx)
+        with rows_without_feature_tools():
+            hooks_of([fake_feature()], ctx)
 
 
-class AScheduledFeatureRunsOnItsOwn(Setup):
-    """The pref `features.schedule`, its door, and the core's tick."""
-
-    def scheduled(self, ticked: list) -> Feature:
-        async def tick(_ctx, cwd: str, hours: int) -> None:
-            ticked.append((cwd, hours))
-
-        return Feature("timed", lambda _ctx: [], schedule=Schedule((0, 12, 24), 24, tick))
-
-    async def test_the_door_writes_the_pref_and_settings_reads_it_back(self):
-        timed = self.scheduled([])
-        with mock.patch("coscc.features.FEATURES", (*features.FEATURES, timed)):
-            async with self.client() as client:
-                api = client._transport.app
-                listed = {f.name: f for f in shown(api.state.ctxs, api.state.plugins, str(self.ws))}
-                self.assertEqual(
-                    (listed["timed"].schedule, listed["timed"].hours), (24, (0, 12, 24))
-                )
-                self.assertIsNone(listed["notices"].schedule)
-                good = {"cwd": str(self.ws), "name": "timed", "schedule": 12}
-                r = await client.post("/api/features", json=good)
-                self.assertEqual(
-                    (r.status_code, r.json()), (200, {"name": "timed", "schedule": 12})
-                )
-                self.assertEqual(api.state.ctxs["timed"].settings.schedule(str(self.ws)), 12)
-                stored = Data(self.config.data_dir).pref(SCHEDULE_PREF, {})
-                self.assertEqual(stored, {"timed": {str(self.ws.resolve()): 12}})
-                for bad in (
-                    {**good, "schedule": 6},
-                    {**good, "schedule": True},
-                    {**good, "name": "notices"},
-                    {**good, "cwd": "/etc"},
-                ):
-                    r = await client.post("/api/features", json=bad)
-                    self.assertEqual(r.status_code, 400, bad)
-                self.assertEqual(api.state.ctxs["timed"].settings.schedule(str(self.ws)), 12)
-
-    async def test_a_tick_asks_only_where_it_is_on_and_scheduled(self):
-        ticked: list = []
-        timed = self.scheduled(ticked)
-        with mock.patch("coscc.features.FEATURES", (timed,)):
-            api = build(self.config)
-        ctx, core = api.state.ctxs, api.state.core
-        await tick(core, ctx, (timed,))
-        self.assertEqual(ticked, [(str(self.ws), 24)])
-        set_schedule_of(core, (timed,), "timed", str(self.ws), 0)
-        await tick(core, ctx, (timed,))
-        self.assertEqual(len(ticked), 1)
-        set_schedule_of(core, (timed,), "timed", str(self.ws), 12)
-        set_state(core, ctx, (timed,), "timed", str(self.ws), "off")
-        await tick(core, ctx, (timed,))
-        self.assertEqual(len(ticked), 1)
+def _named(feature: str, name: str) -> Feature:
+    """A feature whose tool takes a catalog name the kernel holds."""
+    return Feature(
+        feature,
+        lambda _ctx: [],
+        agent=lambda _ctx: Parts(tools=(Tool(name, "read", "low", "own", ("ping",), _server),)),
+    )
 
 
 def _names(source: str) -> set[str]:
@@ -342,7 +300,6 @@ class OnlyReleaseWritesGit(unittest.TestCase):
         for feature in features.FEATURES:
             if feature.name in writing:
                 self.assertIsNone(feature.agent, feature.name)
-                self.assertEqual(feature.sessions, (), feature.name)
 
     def test_a_writer_named_only_in_words_is_not_a_use(self):
         self.assertEqual(_names('"""`gh` merges."""\n# create_branch\n') & self.WRITERS, set())

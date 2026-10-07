@@ -1,44 +1,70 @@
-"""The helpers one run started, and the hooks that hold what the agents of that run may do.
+"""The gate every session's tool calls go through, and the helpers one run started.
 
-`Agent`, `SendMessage` and `ListAgents` never reach `can_use_tool` in the `default` mode, so the
-`PreToolUse` hook here is what refuses them: a helper `policy.SUBAGENTS` does not name, one in
-the background, a helper starting a helper, `ListAgents` (it lists every Claude session on the
-machine) and a message to anyone but `"main"` or a helper of this run. `decide` still asks every
-other call, with the helper's `agent_id`.
+Every session runs Claude Code's `auto` mode. `Gate` is what the app puts in front of it:
 
-`Helpers` is one run's ledger, fed by `SubagentStart`/`SubagentStop` and the stream's `task_*`
-system messages; it backs `peers`, the message filter and what `tell` hands the recorder
-(`worker_start`, `worker_end`, `worker_write`). It is dropped with the run.
+- its `PreToolUse` hook asks `Helpers.refused` (where a `SendMessage` may go, and that it keeps
+  `PROTOCOL`'s shape) and then
+  `policy.critical` before `auto` sees a call, and turns any error of its own into a refusal: the
+  CLI reads a hook that raised as having no opinion and runs the call;
+- `can_use_tool`, which `auto` asks only after its classifier refused several times running,
+  always refuses;
+- `system` records the classifier's refusals, which reach neither of the two.
+
+All three go into the run's `Denials`. `Helpers` is one run's ledger, fed by
+`SubagentStart`/`SubagentStop` and the stream's `task_*` system messages; it backs `peers`, the
+message filter and what `tell` hands the recorder (`worker_start`, `worker_end`,
+`worker_write`). It is dropped with the run.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
+import claude_agent_sdk as sdk
 from claude_agent_sdk import HookMatcher, tool
 from claude_agent_sdk.types import HookEvent, SyncHookJSONOutput
 
-from coscc.agent.policy import AGENT_TOOL, PEERS_TOOL, SEND_MESSAGE, SUBAGENTS, WRITE_TOOLS
+from coscc.agent import pack
+from coscc.agent.policy import (
+    BACKGROUND_REFUSAL,
+    PEERS_TOOL,
+    SEND_MESSAGE,
+    GUARDED,
+    WRITE_TOOLS,
+    Grant,
+    classified,
+    critical,
+    lacked,
+    pushes,
+)
 
 log = logging.getLogger(__name__)
 
-LIST_AGENTS = "ListAgents"
 # The leading session, as `SendMessage` names it.
 MAIN = "main"
+# What the fallback answers: `auto` asks it only once its classifier stopped deciding.
+NOT_APPROVED = "auto mode did not approve"
 # `PEERS_TOOL` without its server's prefix.
 PEERS = PEERS_TOOL.rsplit("__", 1)[-1]
 # The first word of every message between the agents of a step.
 KINDS = ("need", "changed", "done", "blocked")
+# The kinds that point at code, each naming the files it means (`path:line` when it can).
+POINTING = ("changed", "done")
+# A message's most lines: the longest of 100 real ones ran 33, and 14 ran over 20.
+MESSAGE_LINES = 40
+_KIND = re.compile(r"\s*(\w+):")
+_PATH = re.compile(r"[\w~-]*[/.][\w.~/-]*\w")
 
 # In the leading session's prompt and in every `worker`'s, the same words.
 PROTOCOL = """# Working with helpers
 
-When the plan's `## Parallelization` names two or more steps, finish and commit the steps of
-`## Order of work` first. Then start one `worker` per parallel step with `Agent`, all in the same
+When the prompt's `# The plan's parallel steps` names two or more steps, first finish and commit
+the plan's files no step names. Then start one `worker` per parallel step with `Agent`, all in the same
 turn and never with `run_in_background`: the step's name as `description`, its paths and what it
 reports in the prompt. Once all are done, read each one's diff, commit, and run
 `## Verification` once on the whole worktree. Only the leading session commits: a helper runs
@@ -48,19 +74,49 @@ The agents of this step talk through `SendMessage`, to `"main"` (the leading ses
 `mcp__cos__peers` lists; any other address is refused.
 - A worker sends a message only when it needs something outside its own paths, changes an
   interface another step uses, or is done or blocked.
-- A message is 1 to 20 lines. Its first line opens with one of `need:`, `changed:`, `done:`,
-  `blocked:`; a `changed:` or `done:` names each `path:line` it means.
+- A message is 1 to 40 lines. Its first line opens with one of `need:`, `changed:`, `done:`,
+  `blocked:`; a `changed:` or `done:` names each file it means, as `path:line` when it can.
 - No message for courtesy or to say one arrived. When agents disagree, the leading session
   decides.
 - Every worker ends with exactly one `done:` or `blocked:` to `"main"`: that is the report its
   step names."""
 
 
-# `policy.SUBAGENTS` as the session gets them: `worker`'s prompt carries `PROTOCOL`.
-DEFINITIONS = {
-    **SUBAGENTS,
-    "worker": {**SUBAGENTS["worker"], "prompt": f"{SUBAGENTS['worker']['prompt']}\n\n{PROTOCOL}"},
-}
+def definitions(keys: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    """The helper rows `keys` as the session gets them (`AgentDefinition`): the row's body is its
+    prompt, and a helper that holds `SendMessage` is told `PROTOCOL` and handed `peers`."""
+    out: dict[str, dict[str, Any]] = {}
+    for key in keys:
+        found = pack.row(key) or {}
+        tools = list(pack.tools(found))
+        talks = SEND_MESSAGE in tools
+        out[key] = {
+            "description": str(found.get("description") or ""),
+            "prompt": str(found.get(pack.BODY) or "") + (f"\n\n{PROTOCOL}" if talks else ""),
+            "tools": tools + ([PEERS_TOOL] if talks else []),
+            "model": (found.get("model") or {}).get("id"),
+        }
+    return out
+
+
+def malformed(message: object) -> str:
+    """Why a message between the agents of a step breaks `PROTOCOL`, or ""."""
+    if not isinstance(message, str) or not message.strip():
+        return "SendMessage takes its message as text"
+    found = _KIND.match(message)
+    kind = found.group(1) if found else ""
+    if kind not in KINDS:
+        opens = ", ".join(f"`{k}:`" for k in KINDS)
+        return f"a message's first line opens with one of {opens}; this one opens {message.strip()[:30]!r}"
+    lines = len(message.strip().splitlines())
+    if lines > MESSAGE_LINES:
+        return (
+            f"a message is at most {MESSAGE_LINES} lines; this one is {lines}: keep what the "
+            "receiver acts on and point at `path:line` for the rest"
+        )
+    if kind in POINTING and not _PATH.search(message.split(":", 1)[1]):
+        return f"a `{kind}:` names each file it means (as `coscc/bus.py:42`); this one names none"
+    return ""
 
 
 class Told(TypedDict, total=False):
@@ -95,16 +151,6 @@ class Helper:
     status: str = ""
     told_start: bool = False
     told_end: bool = False
-
-
-def _deny(reason: str) -> SyncHookJSONOutput:
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }
-    }
 
 
 class Helpers:
@@ -161,45 +207,24 @@ class Helpers:
             },
         )
 
-    def refused(
-        self, tool_name: str, tool_input: Mapping[str, object], agent_id: str | None
-    ) -> str:
-        """Why the hook denies this call, or ""."""
-        if tool_name == AGENT_TOOL:
-            if agent_id is not None:
-                return "a helper may not start another helper"
-            if tool_input.get("subagent_type") not in SUBAGENTS:
-                return f"only these helpers may be started: {', '.join(SUBAGENTS)}"
-            if tool_input.get("run_in_background"):
-                return "a helper runs in the foreground: this session ends when its turn ends"
-        if tool_name == LIST_AGENTS:
-            return f"ListAgents lists sessions outside this step; call {PEERS_TOOL}"
-        if tool_name == SEND_MESSAGE:
-            to = tool_input.get("to")
-            if to != MAIN and to not in {h.id for h in self.helpers()}:
-                return (
-                    f'SendMessage goes only to "{MAIN}" or to a helper {PEERS_TOOL} lists: {to!r}'
-                )
-        return ""
+    def refused(self, tool_name: str, tool_input: Mapping[str, object]) -> str:
+        """Why a `SendMessage` is refused, or "": it goes to `"main"` or to a helper of this run,
+        in `PROTOCOL`'s shape."""
+        if tool_name != SEND_MESSAGE:
+            return ""
+        to = tool_input.get("to")
+        if to != MAIN and to not in {h.id for h in self.helpers()}:
+            return f'SendMessage goes only to "{MAIN}" or to a helper {PEERS_TOOL} lists: {to!r}'
+        return malformed(tool_input.get("message"))
 
-    async def pre_tool_use(
-        self, hook_input: Any, _tool_use_id: str | None, _context: Any
-    ) -> SyncHookJSONOutput:
-        tool_name = str(hook_input.get("tool_name") or "")
-        tool_input = hook_input.get("tool_input") or {}
-        agent_id = hook_input.get("agent_id")
-        reason = self.refused(tool_name, tool_input, agent_id)
-        if reason:
-            return _deny(reason)
-        if agent_id is not None and tool_name in WRITE_TOOLS:
-            h = self._of(agent_id)
-            path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
-            self._tell(
-                "worker_write",
-                {**self._fields(h), "tool": tool_name, "path": str(path), "at_ms": _now_ms()},
-            )
-        # No opinion: `can_use_tool` still decides.
-        return {}
+    def wrote(self, agent_id: str, tool_name: str, tool_input: Mapping[str, object]) -> None:
+        """A helper's write the gate let through, told as `worker_write`."""
+        h = self._of(agent_id)
+        path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+        self._tell(
+            "worker_write",
+            {**self._fields(h), "tool": tool_name, "path": str(path), "at_ms": _now_ms()},
+        )
 
     async def subagent_start(
         self, hook_input: Any, _tool_use_id: str | None, _context: Any
@@ -268,10 +293,143 @@ class Helpers:
             {},
         )(self._peers)
 
-    def hooks(self) -> dict[HookEvent, list[HookMatcher]]:
-        """For `ClaudeAgentOptions.hooks`: every tool call, and each helper's start and stop."""
+
+class Denials:
+    """Counts what a run was refused, keeps the first few reasons, and counts the calls `auto`
+    is estimated to have sent to its classifier (`policy.classified`).
+
+    The count matters: a step told no fifty times worked around it, and the journal is the
+    only place that shows it.
+    """
+
+    KEEP = 5
+
+    def __init__(self) -> None:
+        self.count = 0
+        # Of `count`, the refusals of a run in the background.
+        self.background = 0
+        self.reasons: list[str] = []
+        # The calls let through that `auto` is estimated to have classified: a time signal.
+        self.classified = 0
+        # Told of every refusal, with what was asked, when a step has a recorder. `KEEP` bounds only
+        # `reasons`.
+        self.listener: Any = None
+
+    def record(self, tool: str, reason: str, tool_input: Any = None) -> None:
+        self.count += 1
+        if BACKGROUND_REFUSAL in reason:
+            self.background += 1
+        if len(self.reasons) < self.KEEP:
+            self.reasons.append(f"{tool}: {reason}")
+        if self.listener is not None:
+            try:
+                self.listener(tool, tool_input, reason, lacked(reason))
+            except Exception:
+                # The recorder never reaches the gate.
+                log.exception("a refused tool was not recorded")
+
+
+class Gate:
+    """What stands in front of one session's `auto` mode: the grant issued for its run, the run's
+    `Denials`, and the run's `Helpers` when it may start them. Built by the app before the
+    session opens, and dropped with it; a grant without its secrets is refused here.
+    `before_push` is the features' guards (`kernel.Hooks.refusal`), asked again before a `git push`
+    the grant lets through: its words refuse the push."""
+
+    def __init__(
+        self,
+        grant: Grant,
+        denials: Denials | None = None,
+        helpers: Helpers | None = None,
+        before_push: Callable[[], str] | None = None,
+    ):
+        if not grant.secrets:
+            raise ValueError("a gate needs a grant that names the secrets it denies")
+        self.grant = grant
+        self.denials = denials if denials is not None else Denials()
+        self.helpers = helpers
+        self.before_push = before_push
+
+    def refused(
+        self, tool_name: str, tool_input: dict, agent_id: str | None, kind: str = ""
+    ) -> str:
+        """Why the hook denies this call, or "". `kind` is the helper's type as the call names it,
+        else as the run's helpers learnt it."""
+        if agent_id is not None and not kind and self.helpers is not None:
+            seen = self.helpers.seen.get(agent_id)
+            kind = seen.kind if seen is not None else ""
+        reason = (self.helpers or Helpers()).refused(tool_name, tool_input) or critical(
+            self.grant, tool_name, tool_input, agent_id, kind
+        )
+        if reason or self.before_push is None or not pushes(self.grant, tool_name, tool_input):
+            return reason
+        said = self.before_push()
+        return f"{GUARDED}: {said}" if said else ""
+
+    async def pre_tool_use(
+        self, hook_input: Any, _tool_use_id: str | None, _context: Any
+    ) -> SyncHookJSONOutput:
+        """Asked before every call, a helper's included. Anything this raises is a refusal."""
+        tool_name, tool_input = "", {}
+        try:
+            tool_name = str(hook_input.get("tool_name") or "")
+            tool_input = hook_input.get("tool_input") or {}
+            agent_id = hook_input.get("agent_id")
+            kind = str(hook_input.get("agent_type") or "")
+            reason = self.refused(tool_name, tool_input, agent_id, kind)
+            if not reason:
+                self._let_through(tool_name, tool_input, agent_id)
+        except Exception as e:
+            log.exception("the gate failed on a call to %s", tool_name or "a tool")
+            reason = f"the app's own check failed, so the call is refused: {type(e).__name__}: {e}"
+        if not reason:
+            # No opinion: `auto` decides.
+            return {}
+        self.denials.record(tool_name, reason, tool_input)
         return {
-            "PreToolUse": [HookMatcher(hooks=[self.pre_tool_use])],
-            "SubagentStart": [HookMatcher(hooks=[self.subagent_start])],
-            "SubagentStop": [HookMatcher(hooks=[self.subagent_stop])],
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
         }
+
+    def _let_through(self, tool_name: str, tool_input: dict, agent_id: str | None) -> None:
+        if classified(self.grant, tool_name, tool_input):
+            self.denials.classified += 1
+        if self.helpers is not None and agent_id is not None and tool_name in WRITE_TOOLS:
+            self.helpers.wrote(agent_id, tool_name, tool_input)
+
+    async def can_use_tool(self, tool_name: str, tool_input: dict, context: Any):
+        """`auto`'s fallback once its classifier stopped deciding: always a refusal."""
+        why = getattr(context, "decision_reason", None)
+        self.denials.record(tool_name, f"{NOT_APPROVED}{f' ({why})' if why else ''}", tool_input)
+        return sdk.PermissionResultDeny(message=NOT_APPROVED)
+
+    def system(self, message: Any) -> None:
+        """One of the stream's `SystemMessage`s: a refusal `auto` made itself is recorded, and the
+        rest goes to the run's helpers."""
+        if getattr(message, "subtype", "") == "permission_denied":
+            data = getattr(message, "data", None) or {}
+            kind = str(data.get("decision_reason_type") or "")
+            said = str(data.get("decision_reason") or data.get("message") or "")
+            who = "the auto mode classifier" if kind == "classifier" else f"auto mode ({kind})"
+            self.denials.record(str(data.get("tool_name") or ""), f"{who} refused it: {said}")
+            return
+        if self.helpers is not None:
+            self.helpers.system(message)
+
+    def allowed(self) -> list[str]:
+        """The app's own MCP tools this session holds, allowed by name so they skip the classifier."""
+        return list(self.grant.mcp)
+
+    def hooks(self) -> dict[HookEvent, list[HookMatcher]]:
+        """For `ClaudeAgentOptions.hooks`: every tool call and, with helpers, each one's start and
+        stop."""
+        out: dict[HookEvent, list[HookMatcher]] = {
+            "PreToolUse": [HookMatcher(hooks=[self.pre_tool_use])]
+        }
+        if self.helpers is not None:
+            out["SubagentStart"] = [HookMatcher(hooks=[self.helpers.subagent_start])]
+            out["SubagentStop"] = [HookMatcher(hooks=[self.helpers.subagent_stop])]
+        return out

@@ -1,8 +1,8 @@
-"""The loop's reading of `pr.md` and `review.md`, and the ship gate over them, held to fixed values.
+"""The loop's gates over a review's rounds and a pull request, held to fixed values.
 
-A sequel of `tests/loop/test_model.py`, whose helpers it reuses: the title and
-body of a pull request, the scope it states, the screens a unit changes, a review that ran out of
-turns and a round that drops a finding an earlier one raised.
+A sequel of `tests/loop/test_model.py`, whose helpers it reuses: the screens a unit changes, a review
+that ran out of turns and a round that drops a finding an earlier one raised. Every round, finding
+and screen is a row of the app's snapshot.
 """
 
 from __future__ import annotations
@@ -15,227 +15,106 @@ from pathlib import Path
 import pytest
 
 from coscc.loop import REVIEW_ROUNDS
-from coscc.loop.model import (
-    non_blocking,
-    parse_review,
-    pr_scope,
-    pr_text,
-)
+from coscc.loop.model import non_blocking, review_from
 from coscc.loop.probe import UI_STANDARD, glob_match, make_probe, parse_standard, ui_files
-from tests.loop.conftest import REPO, env, python
+from tests.loop.conftest import REPO, env, pr_row, python
 from tests.loop.test_model import (
-    cli,
-    check_gate,
-    next_action,
-    next_step,
     CHAIN,
-    FIX,
+    R12,
+    ROUND1,
     SHA,
     asked,
     branched,
+    check_gate,
+    fr,
+    fx,
     green_probe,
-    impl_text,
+    known,
     low,
+    next_action,
+    next_step,
     ok,
     review_art,
     round3,
     round_,
     state_of_root,
     tree_after_round_two,
-    REVIEW_HEAD,
-    ROUND1,
-    ROUND2,
 )
 
 # --- the open lows and the findings not fixed -------------------------------------------
 
 
-def ship_gate(text, **kw):
-    """The ship gate of a unit whose accepted `review.md` holds `text`, on a green probe."""
-    u = branched({**CHAIN, "review.md": review_art("accepted", text)})
+def ship_gate(*rounds, **kw):
+    """The ship gate of a unit whose accepted `review.md` holds `rounds`, on a green probe."""
+    u = branched({**CHAIN, "review.md": review_art("accepted", rounds)})
     return check_gate(u, "ship", green_probe(), kw.get("limit", REVIEW_ROUNDS))
 
 
 def test_a_pass_round_with_one_open_low_among_fixed_findings_opens_ship():
-    text = round_(
+    r = round_(
         1,
         "pass",
         [
-            f"- F1 [fixed {FIX}] a.py:3 — low — x",
-            f"- F2 [fixed {FIX}] a.py:3 — medium — x",
-            f"- F3 [fixed {FIX}] a.py:3 — low — x",
-            "- F4 [open] coscc/screens.py:646 — low — Còn hai docstring thuộc cùng loại với F3 mà "
-            "`9243b7b` chưa sửa, vì vòng 3 không nêu tên chúng.",
+            fx("F1", "x", "low"),
+            fx("F2", "x", "medium"),
+            fx("F3", "x", "low"),
+            fr(
+                "F4",
+                "open",
+                "Còn hai docstring thuộc cùng loại với F3 mà `9243b7b` chưa sửa, vì vòng 3 không "
+                "nêu tên chúng.",
+                "low",
+                path="coscc/screens.py",
+                lines="646",
+            ),
         ],
     )
-    u = branched({**CHAIN, "review.md": review_art("accepted", text)})
+    u = branched({**CHAIN, "review.md": review_art("accepted", [r])})
     g = check_gate(u, "ship", green_probe())
     assert g["ok"] is True, g["need"]
     assert g["need"] == []
     assert [f["id"] for f in non_blocking(u)] == ["F4"]
 
 
-def test_three_counted_rounds_of_prose_severities_then_a_pass_of_lows_opens_ship():
-    prose = ["- F1 [open] a.py:3 — Mức thấp — biên regex", "- F2 [open] a.py:9 — Mức thấp — y"]
-    counted = [round_(n, "changes-requested", prose) for n in (1, 2, 3)]
-    text = "\n".join(counted) + "\n" + round_(4, "pass", [low("F1"), low("F2")])
-    g = ship_gate(text, limit=REVIEW_ROUNDS)
+def test_three_counted_rounds_of_unrated_findings_then_a_pass_of_lows_opens_ship():
+    unrated = [
+        fr("F1", "open", "biên regex", "", lines="3"),
+        fr("F2", "open", "y", "", lines="9"),
+    ]
+    counted = [round_(n, "changes-requested", unrated) for n in (1, 2, 3)]
+    g = ship_gate(*counted, round_(4, "pass", [low("F1"), low("F2")]), limit=REVIEW_ROUNDS)
     assert g["ok"] is True, g["need"]
 
 
 def test_a_needs_person_round_beside_an_open_low_is_still_a_wait_for_a_person(tmp_path):
-    review = f"{REVIEW_HEAD}{ROUND1}\n{ROUND2}\n{round3('needs-person', [low('F4')])}"
-    u = tree_after_round_two(tmp_path, review)
+    u = tree_after_round_two(tmp_path, [*R12, round3("needs-person", [low("F4")])])
     n = next_action(u)
     assert n["waiting"] == ["F2", "F3"]
-    assert re.search(
-        r"^needs a person — F2: the grant holds no budget for --paid; F3: the grant holds no gh",
-        n["action"],
-    )
+    # Each claim with what its finding says in the last round.
+    assert re.search(r"^needs a person — F2: a.py:3 — high — b; F3: a.py:3 — high — c", n["action"])
     assert [p["id"] for p in u["personFindings"]] == ["F2", "F3"]
     assert [f["id"] for f in u["nonBlocking"]] == ["F4"]
 
 
 def test_every_blocking_finding_claimed_and_one_low_unclaimed_is_review_not_impl(tmp_path):
-    claimed = [f"- F1 [fixed {FIX}] a", "- F2 [open] b", "- F3 [open] c", low("F4")]
+    claimed = [fx("F1", "a"), fr("F2", "open", "b"), fr("F3", "open", "c"), low("F4")]
     r2 = round_(2, "changes-requested", claimed)
-    u = tree_after_round_two(tmp_path, f"{REVIEW_HEAD}{ROUND1}\n{r2}")
+    u = tree_after_round_two(tmp_path, [ROUND1, r2])
     assert next_step(u, green_probe())["stage"] == "review"
     only_low = round_(1, "changes-requested", [low("F1")])
-    impl = impl_text("## Needs a person\n\n- F1: the grant holds no gh\n")
-    u = tree_after_round_two(tmp_path, f"{REVIEW_HEAD}{only_low}", impl)
+    u = tree_after_round_two(tmp_path, [only_low], claims=("F1",))
     assert next_step(u, green_probe())["stage"] == "impl"
 
 
 def test_a_pass_that_leaves_lows_open_costs_no_round():
     first = round_(1, "pass", [low("F1")])
-    cr = [round_(n, "changes-requested", [low("F1"), "- F2 [open] b.py:1 y"]) for n in (2, 3, 4)]
-    spent = next_action(asked("\n".join([first, *cr])))["action"]
-    assert "needs a person — review used 3 of 3 rounds" in spent
-    assert "(2 of 3 rounds used)" in next_action(asked("\n".join([first, *cr[:2]])))["action"]
-
-
-# --- the title and body pr.md puts on its pull request ------------------------------------
-
-PR_MD = "\n".join(
-    [
-        "# PR: the pr body is taken from pr.md",
-        "Intent: intent.md. Impl: impl.md. PR: https://github.com/o/r/pull/7. Author: a. "
-        "Status: accepted.",
-        "",
-        "## Where",
-        "",
-        "https://github.com/o/r/pull/7, branch fix/x, checks pending.",
-        "",
-        "## Scope of the diff",
-        "",
-        "## What a reviewer should look at first",
-        "",
+    cr = [
+        round_(n, "changes-requested", [low("F1"), fr("F2", "open", "y", path="b.py", lines="1")])
+        for n in (2, 3, 4)
     ]
-)
-PR_BODY = (
-    "## Where\n\nhttps://github.com/o/r/pull/7, branch fix/x, checks pending.\n\n"
-    "## Scope of the diff\n\n## What a reviewer should look at first\n"
-)
-TITLE = "the pr body is taken from pr.md"
-
-
-def test_the_template_gives_a_body_without_the_header_or_the_title_line():
-    t = pr_text(PR_MD)
-    assert t["title"] == TITLE
-    assert t["url"] == "https://github.com/o/r/pull/7"
-    assert "Status:" not in t["body"]
-    assert "PR: https://" not in t["body"]
-    assert "# PR:" not in t["body"]
-    assert t["body"].startswith("## Where\n")
-    assert t["body"] == PR_BODY
-
-
-def test_a_later_status_in_the_body_stays_in_the_body():
-    text = f"{PR_MD}Status: pending is what gh said.\n"
-    assert pr_text(text)["body"].endswith("Status: pending is what gh said.\n")
-
-
-def test_no_title_line_or_an_empty_one_is_a_null_title():
-    without = "\n".join(PR_MD.split("\n")[1:])
-    assert pr_text(without)["title"] is None
-    assert pr_text(without)["body"].startswith("## Where")
-    empty = pr_text(PR_MD.replace(f"# PR: {TITLE}", "# PR:   "))
-    assert empty["title"] is None
-    assert empty["body"] == PR_BODY
-
-
-def test_a_header_on_the_title_line_itself_drops_only_that_one_line():
-    assert pr_text("# PR: x Status: accepted.\n\nbody\n")["body"] == "body\n"
-
-
-def pr_tree(tmp_path: Path, files: dict[str, str | None]) -> Path:
-    """A `--root` with one unit per key, each with an `intent.md` and `pr.md` when text is given."""
-    root = tmp_path / f"pr{len(list(tmp_path.iterdir()))}"
-    for name, text in files.items():
-        d = root / ".cos" / name
-        d.mkdir(parents=True)
-        (d / "intent.md").write_text("# Intent: x\nAuthor: a. Type: fix. Status: accepted.\n")
-        if text is not None:
-            (d / "pr.md").write_text(text)
-    return root
-
-
-def listing(root: Path) -> list[tuple[str, int]]:
-    """Every path under `<root>/.cos`, sorted, with its modification time."""
-    base = root / ".cos"
-    return sorted((str(p.relative_to(base)), p.stat().st_mtime_ns) for p in base.rglob("*"))
-
-
-# --- the scope pr.md states, read beside its title and body -------------------------------
-
-SCOPED = PR_MD.replace(
-    "## Scope of the diff\n\n",
-    "## Scope of the diff\n\n3 files, +120/-7\n- `a.py`\n- `docs/b c.md`\n- `.claude/x.mjs`\n\n"
-    "Counted by gh pr view.\n\n",
-)
-SCOPED_PATHS = ["a.py", "docs/b c.md", ".claude/x.mjs"]
-SCOPED_BODY = PR_BODY.replace(
-    "## Scope of the diff\n\n",
-    "## Scope of the diff\n\n3 files, +120/-7\n- `a.py`\n- `docs/b c.md`\n- `.claude/x.mjs`\n\n"
-    "Counted by gh pr view.\n\n",
-)
-
-
-def test_a_scope_written_to_its_grammar_is_read_as_counts_and_paths():
-    assert pr_text(SCOPED)["scope"] == {
-        "files": 3,
-        "additions": 120,
-        "deletions": 7,
-        "paths": SCOPED_PATHS,
-    }
-    assert pr_scope("## Scope of the diff\n1 files, +0/-0\n") == {
-        "files": 1,
-        "additions": 0,
-        "deletions": 0,
-        "paths": [],
-    }
-
-
-def test_no_scope_heading_is_a_null_scope():
-    assert pr_scope("") is None
-    assert pr_scope("# PR: x\nStatus: accepted.\n\n## Where\n\n3 files, +1/-1\n") is None
-    assert pr_scope("### Scope of the diff\n\n3 files, +1/-1\n") is None
-    assert pr_text(PR_MD)["scope"] is None
-    assert pr_scope("x\n## Scope of the diff") is None
-
-
-def test_a_path_listed_twice_is_a_null_scope():
-    text = "## Scope of the diff\n\n2 files, +1/-1\n- `a.py`\n- `b.py`\n- `a.py`\n"
-    assert pr_scope(text) is None
-
-
-def test_prose_after_the_list_is_not_a_path_and_the_body_is_kept_byte_for_byte():
-    text = SCOPED.replace("Counted by gh pr view.", "Counted by gh pr view.\n- `z.py`")
-    assert pr_scope(text)["paths"] == SCOPED_PATHS
-    nxt = "## Scope of the diff\n\n1 files, +1/-1\n- `a.py`\n## Next\n- `b.py`\n"
-    assert pr_scope(nxt)["paths"] == ["a.py"]
-    assert pr_text(SCOPED)["body"] == SCOPED_BODY
+    spent = next_action(asked(first, *cr))["action"]
+    assert "needs a person — review used 3 of 3 rounds" in spent
+    assert "(2 of 3 rounds used)" in next_action(asked(first, *cr[:2]))["action"]
 
 
 # --- a UI unit ships only with screenshots a review looked at ------------------------------
@@ -290,71 +169,33 @@ def test_every_glob_of_this_checkouts_standard_names_a_file_git_tracks(tmp_path)
     assert make_probe(str(tmp_path)).ui() is None
 
 
-SHOT = "- .screens/board-1440x900.png — 1440×900 — /board — no violation"
+SHOT = {
+    "path": ".screens/board-1440x900.png",
+    "size": "1440x900",
+    "address": "/board",
+    "result": "no violation",
+}
 
 
-def screens(
-    taken=SHA, by="an agent session (write-review)", standard=UI_STANDARD, shots=None, head=None
-):
+def screens(taken=SHA, by="agent session s1", standard=UI_STANDARD, shots=None):
+    """A round's screens as the snapshot carries them."""
     shots = [SHOT] if shots is None else shots
-    line = head or (
-        f"Taken at: {taken}. Standard: `{standard}`. Looked at by: {by}, from screenshots."
-    )
-    return f"\n### Screens\n\n{line}\n\n" + "\n".join(shots) + "\n"
-
-
-def test_parse_review_reads_screens_and_a_round_without_one_reads_none():
-    shots = [
-        SHOT,
-        "- `.screens/board-390x844.png` — 390x844 — `/unit?ws=proj&id=0002_open-question"
-        "&tab=questions` — S3: a /tmp path",
-        "prose between lines",
-    ]
-    text = (
-        f"{round_(1, 'changes-requested', ['- F1 [open] x'])}\n"
-        f"{round_(2, 'pass', [f'- F1 [fixed {FIX}] x'])}{screens(shots=shots)}"
-    )
-    one, two = parse_review(text)["rounds"]
-    assert one["screens"] is None
-    assert two["screens"] == {
-        "taken": SHA,
-        "standard": UI_STANDARD,
-        "by": "an agent session (write-review)",
-        "header": f"Taken at: {SHA}. Standard: `{UI_STANDARD}`. Looked at by: an agent session "
-        "(write-review), from screenshots.",
-        "shots": [
-            {
-                "path": ".screens/board-1440x900.png",
-                "size": "1440x900",
-                "address": "/board",
-                "result": "no violation",
-            },
-            {
-                "path": ".screens/board-390x844.png",
-                "size": "390x844",
-                "address": "/unit?ws=proj&id=0002_open-question&tab=questions",
-                "result": "S3: a /tmp path",
-            },
-        ],
-    }
-    assert [f["id"] for f in two["findings"]] == ["F1"]
-    assert "### Screens" in two["text"]
-    bad = parse_review(f"{round_(1, 'pass')}{screens(head='Looked at it.')}")["rounds"][0][
-        "screens"
-    ]
-    assert [bad["taken"], bad["standard"], bad["by"], bad["header"]] == [
-        None,
-        None,
-        None,
-        "Looked at it.",
-    ]
+    return {"taken": taken, "standard": standard, "by": by, "shots": shots}
 
 
 def test_an_open_low_against_the_standard_blocks_and_one_that_is_not_still_does_not():
     findings = [
-        "- F1 [open] coscc/screens.py:10 — low — S3 shows a full sha",
+        fr(
+            "F1",
+            "open",
+            "shows a full sha",
+            "low",
+            path="coscc/screens.py",
+            lines="10",
+            rule="S3",
+        ),
         low("F2"),
-        "- F3 [open] a.py:3 — low — Sx is not a rule id",
+        fr("F3", "open", "Sx is not a rule id", "low"),
     ]
     assert [f["id"] for f in non_blocking(asked(round_(1, "pass", findings)))] == ["F2", "F3"]
     g = ship_gate(round_(1, "pass", findings[:1]))
@@ -374,9 +215,9 @@ def ui_probe(files, extra=None, ui=UI):
     return probe
 
 
-def passed_with(tail=""):
-    text = f"{round_(1, 'pass')}{tail}"
-    return branched({**CHAIN, "review.md": review_art("accepted", text)})
+def passed_with(shots_of=None):
+    rounds = [round_(1, "pass", screens=shots_of)]
+    return branched({**CHAIN, "review.md": review_art("accepted", rounds)})
 
 
 def test_a_ui_unit_whose_pass_has_no_screens_cannot_ship_and_next_offers_review():
@@ -421,15 +262,14 @@ def test_a_file_that_draws_no_page_reads_exactly_as_with_no_standard(path):
 def test_each_condition_broken_once_closes_ship_and_says_which():
     ui = ["coscc/screens.py"]
 
-    def closed(tail, extra=None):
-        g = check_gate(passed_with(tail), "ship", ui_probe(ui, extra))
+    def closed(shots_of, extra=None):
+        g = check_gate(passed_with(shots_of), "ship", ui_probe(ui, extra))
         assert g["ok"] is False
-        assert next_step(passed_with(tail), ui_probe(ui, extra))["stage"] == "review"
+        assert next_step(passed_with(shots_of), ui_probe(ui, extra))["stage"] == "review"
         return "\n".join(g["need"])
 
     assert "does not say it was an agent" in closed(screens(by="Bao"))
     assert "names the standard STANDARD.md" in closed(screens(standard="STANDARD.md"))
-    assert "lists no screenshot" in closed(screens(shots=[]))
     taken = "e" * 40
     not_ancestor = {f"merge-base --is-ancestor {taken} {SHA}": {"code": 1, "out": "", "err": ""}}
     assert f"taken at {taken}, which is not an ancestor of the reviewed commit {SHA}" in closed(
@@ -476,25 +316,15 @@ def test_neither_origin_main_nor_main_readable_closes_ship_and_no_round_is_offer
 
 
 def incomplete_round(n):
-    return (
-        f"## Round {n}\n\nReviewed: {SHA}. Verdict: incomplete.\n\n### Reviewed so far\n\n- a.py\n\n"
-        "### Findings\n\n- F1 [open] a.py:3 — high — x\n\n### What was not reviewed\n\n- b.py\n"
-    )
+    return round_(n, "incomplete", [fr("F1", "open", "x")])
 
 
 def review_of_rounds(status, rounds):
-    text = f"# Review: x\nStatus: {status}.\n\n" + "\n".join(rounds)
-    return branched({**CHAIN, "review.md": review_art(status, text)})
+    return branched({**CHAIN, "review.md": review_art(status, rounds)})
 
 
 def cr(n):
-    return round_(n, "changes-requested", ["- F1 [open] x"])
-
-
-def test_an_incomplete_round_is_read_as_one_with_its_verdict():
-    rounds = parse_review(f"# Review\nStatus: draft.\n\n{incomplete_round(1)}")["rounds"]
-    assert [[r["n"], r["verdict"], r["reviewed"]] for r in rounds] == [[1, "incomplete", SHA]]
-    assert [[f["id"], f["label"]] for f in rounds[0]["findings"]] == [["F1", "open"]]
+    return round_(n, "changes-requested", [fr("F1", "open", "x")])
 
 
 def test_draft_over_an_incomplete_round_offers_review_on_green_and_impl_on_red():
@@ -520,7 +350,7 @@ def test_draft_over_an_incomplete_round_offers_review_on_green_and_impl_on_red()
     assert 'verdict "incomplete", not pass' in need
 
 
-UNREAD = "## Round 1\n\nReviewed: somewhere. Verdict: maybe.\n\n### Findings\n\n- F1 [open] x\n"
+UNREAD = round_(1, None, [fr("F1", "open", "x")], reviewed="somewhere")
 
 
 def used(rounds, limit=3, status="changes-requested"):
@@ -545,7 +375,7 @@ def test_an_incomplete_round_never_changes_how_many_rounds_are_used():
 
 def test_a_draft_whose_last_round_is_not_incomplete_is_still_finished_by_hand():
     for verdict in ["changes-requested", "pass"]:
-        u = review_of_rounds("draft", [round_(1, verdict, ["- F1 [open] x"])])
+        u = review_of_rounds("draft", [round_(1, verdict, [fr("F1", "open", "x")])])
         n = next_step(u, green_probe())
         assert n["stage"] == ""
         assert "finish and accept review.md" in n["action"]
@@ -556,49 +386,33 @@ def test_a_draft_whose_last_round_is_not_incomplete_is_still_finished_by_hand():
 
 # --- a round that drops a finding an earlier one raised -----------------------------------
 
-FIXTURE = (Path(__file__).parent / "testdata" / "0017-review-rounds-1-2.md").read_bytes().decode()
-ROUND1_FIXTURE = FIXTURE[: FIXTURE.index("\n## Round 2\n") + 1]
-TWO = ["- F1 [open] a.py:1 — high — x", "- F2 [open] b.py:2 — high — y"]
-
-
-def under_changes(text):
-    return text.replace("Status: accepted.", "Status: changes-requested.")
+TWO = [
+    fr("F1", "open", "x", path="a.py", lines="1"),
+    fr("F2", "open", "y", path="b.py", lines="2"),
+]
 
 
 def dropped_of(*rounds):
-    text = "# Review: x\nStatus: changes-requested.\n\n" + "\n".join(rounds)
-    return [[r["n"], r["dropped"], r["unfinished"]] for r in parse_review(text)["rounds"]]
+    return [[r["n"], r["dropped"], r["unfinished"]] for r in review_from(list(rounds))["rounds"]]
 
 
 def test_a_round_that_omits_an_earlier_id_is_unfinished_only_under_changes_requested():
     assert dropped_of(round_(1, "changes-requested", TWO)) == [[1, [], False]]
-    carried = round_(2, "changes-requested", [f"- F1 [fixed {FIX}] a.py:1 — high — x", TWO[1]])
+    carried = round_(2, "changes-requested", [fx("F1", "x"), TWO[1]])
     assert dropped_of(round_(1, "changes-requested", TWO), carried)[-1] == [2, [], False]
     assert dropped_of(round_(1, "changes-requested", TWO), cr(2))[-1] == [2, ["F2"], True]
-    three = [*TWO, "- F3 [open] c.py:3 — low — z"]
+    three = [*TWO, fr("F3", "open", "z", "low", path="c.py")]
     got = dropped_of(
         round_(1, "changes-requested", TWO), round_(2, "changes-requested", three), cr(3)
     )
     assert got[-1] == [3, ["F2", "F3"], True]
-    got = dropped_of(incomplete_round(1), round_(2, "changes-requested", ["- F2 [open] y"]))
+    got = dropped_of(incomplete_round(1), round_(2, "changes-requested", [fr("F2", "open", "y")]))
     assert got[-1] == [2, ["F1"], True]
-    got = dropped_of(UNREAD, round_(2, "changes-requested", ["- F2 [open] y"]))
+    got = dropped_of(UNREAD, round_(2, "changes-requested", [fr("F2", "open", "y")]))
     assert got[-1] == [2, ["F1"], True]
     for verdict in ["pass", "needs-person"]:
-        got = dropped_of(
-            round_(1, "changes-requested", TWO), round_(2, verdict, [f"- F1 [fixed {FIX}] x"])
-        )
+        got = dropped_of(round_(1, "changes-requested", TWO), round_(2, verdict, [fx("F1", "x")]))
         assert got[-1] == [2, ["F2"], False]
-    prose = (
-        f"## Round 2\n\nReviewed: {SHA}. Verdict: changes-requested.\n\nF2 is still open.\n\n"
-        "### Findings\n\n- F1 [open] x\n\n### What was not reviewed\n\n- F2 [open] y\n"
-    )
-    assert dropped_of(round_(1, "changes-requested", TWO), prose)[-1] == [2, ["F2"], True]
-    rounds = parse_review(FIXTURE)["rounds"]
-    assert [[r["n"], r["verdict"], r["dropped"], r["unfinished"]] for r in rounds] == [
-        [1, "changes-requested", [], False],
-        [2, "changes-requested", ["F2", "F3", "F4", "F5"], True],
-    ]
 
 
 def test_a_changes_requested_round_that_carries_every_earlier_id_counts_exactly_one_more():
@@ -650,14 +464,14 @@ def test_an_unfinished_round_at_the_limit_still_stops_at_needs_a_person():
 
 
 def test_an_incomplete_first_round_then_an_unfinished_second_uses_no_round():
-    rounds = [incomplete_round(1), round_(2, "changes-requested", ["- F2 [open] y"])]
+    rounds = [incomplete_round(1), round_(2, "changes-requested", [fr("F2", "open", "y")])]
     u = review_of_rounds("changes-requested", rounds)
     n = next_step(u, green_probe(), 1)
     assert n["stage"] == "review"
     assert re.search(r"left out findings .*\(0 of 1 rounds used\)", n["action"])
     assert n["dropped"] == ["F1"]
     floor = review_of_rounds(
-        "changes-requested", [UNREAD, round_(2, "changes-requested", ["- F2 [open] y"])]
+        "changes-requested", [UNREAD, round_(2, "changes-requested", [fr("F2", "open", "y")])]
     )
     assert next_step(floor, green_probe(), 1)["action"].startswith(
         "needs a person — review used 1 of 1 rounds"
@@ -665,30 +479,30 @@ def test_an_incomplete_first_round_then_an_unfinished_second_uses_no_round():
 
 
 class Tree17:
-    """A unit whose `review.md` is `text`, asked through the command the way the board asks it."""
+    """A unit whose review holds `rounds`, asked through the command the way the board asks it."""
 
     name = "0017_units-share-one-working-tree"
 
-    def __init__(self, tmp_path: Path, text: str):
+    def __init__(self, tmp_path: Path, rounds: list[dict]):
         self.root = tmp_path / f"t{len(list(tmp_path.iterdir()))}"
         self.dir = self.root / ".cos" / self.name
         self.dir.mkdir(parents=True)
-        files = {
-            "intent.md": "# Intent: x\nType: feat. Status: accepted.\n\n## Open questions\n\n"
-            "1. Một?\n",
-            "spec.md": "# Spec: x\nIntent: intent.md. Status: accepted.\n\nR1.\n",
-            "plan.md": "# Plan: x\nStatus: accepted.\n\n1. build it\n",
-            "impl.md": "# Impl: x\nStatus: accepted.\n\nbuilt\n",
-            "pr.md": "# PR: feat(0003): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\n"
-            "body\n",
-            "review.md": text,
-        }
-        for f, body in files.items():
-            (self.dir / f).write_text(body)
+        self.entry = known(
+            {
+                **dict.fromkeys(
+                    ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md"), "accepted"
+                ),
+                "review.md": "changes-requested",
+            },
+            questions={"intent.md": ["Một?"]},
+            records={"pr.md": pr_row(7), "review.md": {"rounds": rounds}},
+        )
+        for f in ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md", "review.md"):
+            (self.dir / f).write_text(f"# {f}\n")
 
     def run(self, limit, *args):
         argv = [*args, "--root", str(self.root), "--state", "-"]
-        state = json.dumps(state_of_root(self.root))
+        state = json.dumps(state_of_root(self.root, {self.name: self.entry}))
         return python(argv, stdin=state, environ=env(COS_REVIEW_ROUNDS=str(limit)))
 
     def used(self, limit):
@@ -700,13 +514,14 @@ class Tree17:
         return int(m[1])
 
 
-def test_the_dropped_round_of_the_old_review_adds_no_round_to_the_count(tmp_path):
-    both = Tree17(tmp_path, under_changes(FIXTURE))
-    one = Tree17(tmp_path, under_changes(ROUND1_FIXTURE))
-    ids = [f["id"] for f in parse_review(ROUND1_FIXTURE)["rounds"][0]["findings"]]
-    assert ids == ["F1", "F2", "F3", "F4", "F5"]
-    again = round_(2, "changes-requested", [f"- {i} [open] x" for i in ids])
-    full = Tree17(tmp_path, under_changes(ROUND1_FIXTURE) + "\n" + again)
+def test_a_round_that_drops_findings_adds_no_round_to_the_count(tmp_path):
+    ids = ["F1", "F2", "F3", "F4", "F5"]
+    first = round_(1, "changes-requested", [fr(i, "open", "x") for i in ids])
+    thin = round_(2, "changes-requested", [fr("F1", "open", "x")])
+    both = Tree17(tmp_path, [first, thin])
+    one = Tree17(tmp_path, [first])
+    again = round_(2, "changes-requested", [fr(i, "open", "x") for i in ids])
+    full = Tree17(tmp_path, [first, again])
     for limit in (1, 2, 3):
         assert both.used(limit) == one.used(limit), limit
         assert full.used(limit) == one.used(limit) + 1, limit
@@ -721,10 +536,3 @@ def test_the_dropped_round_of_the_old_review_adds_no_round_to_the_count(tmp_path
     assert nxt["dropped"] == ["F2", "F3", "F4", "F5"]
     assert not re.search(r"F\d", nxt["action"])
     assert "dropped" not in json.loads(one.run(3, "next", one.name).out)
-
-
-def test_pr_text_writes_nothing_and_leaves_status_as_it_was(tmp_path):
-    root = pr_tree(tmp_path, {"0001_a": PR_MD, "0002_b": None})
-    before = [cli("--root", str(root), "status", "--json").out, listing(root)]
-    assert cli("--root", str(root), "pr-text", "0001_a").code == 0
-    assert [cli("--root", str(root), "status", "--json").out, listing(root)] == before

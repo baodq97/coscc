@@ -5,7 +5,8 @@ transition through `transitions.apply`, on the artifact the loop already reads i
 
 - `open` is `pr.md: accepted`, guard `branch-named`;
 - `merge-requested` is `ship.md: draft`, guard `ship-ready`;
-- `merged` is `ship.md: accepted`, guard `merge-read`.
+- `refused`, a merge GitHub did not make, is `ship.md: draft`, guard `merge-refused`;
+- `merged` is `ship.md: accepted`, guard `merge-read`; the bus then hears `unit.shipped`.
 
 Where the machine stands is a fold over those rows (`state`), never a column. `pr.md` and
 `ship.md` are written by the app from the same values after the transition; nothing reads
@@ -26,23 +27,23 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, TypedDict, get_args
+from typing import Any, TypedDict
 
+from coscc.bus import Bus
 from coscc.store.db import now as _now
 from coscc.git import gh, gitops
 from coscc.store.journal import Journal
-from coscc.units import transitions
+from coscc.units import pr_title, states, transitions
 from coscc.units.history import History
 
-PR_FILE = "pr.md"
-SHIP_FILE = "ship.md"
+# The artifacts of the process's two engine actions: the state that opens the pull request and
+# the one that merges it.
+PR_FILE = states.files_where(action="open-pr")[0]
+SHIP_FILE = states.files_where(action="merge")[0]
 MACHINE = "pr"
 # The run-log record a `pr` or `ship` the PR machine ran leaves in place of an `end`: `outcome`
 # `done` or `failed`, and the machine's `result`, `reasons` and `detail`.
 RECORD_KIND = "prmachine"
-# The stages the board runs through this module rather than a session.
-Stage = Literal["pr", "ship"]
-STAGES: tuple[Stage, ...] = get_args(Stage)
 # What `state` answers. `none` is a unit whose pull request the app never opened: `ship` then
 # finds it by its branch.
 STATES = ("none", "open", "merge-requested", "merged", "closed")
@@ -106,14 +107,6 @@ class Outcome:
         }
 
 
-def title_of(name: str, type_: str | None) -> str:
-    """`<type>(<NNNN>): <slug, hyphens as spaces>`, the grammar the loop's `title_problem` holds a
-    title to. The slug is English by the grammar of `new-path`.
-    """
-    number, _, slug = name.partition("_")
-    return f"{type_ or 'chore'}({number}): {slug.replace('-', ' ')}"
-
-
 def body_of(name: str) -> str:
     """From the unit's metadata, never from a commit."""
     return (
@@ -124,12 +117,10 @@ def body_of(name: str) -> str:
 
 
 def render_pr(u: Unit, title: str, url: str, head: str, at: str = "") -> str:
-    """`at` is when the app wrote it: a `pr` run again writes other bytes, so the artifact it made
-    stale is not stale any more (the loop compares hashes).
-    """
+    """Prose for a person: nothing reads it back. The pull request is the `open` row."""
     return (
         f"# PR: {title}\n"
-        f"Author: coscc (code, pr). Status: accepted. PR: {url}\n\n"
+        f"Author: coscc (code, pr). PR: {url}\n\n"
         f"{body_of(u.name)}\n"
         f"Opened from `{u.branch}` at `{head}`, the head the app pushed. Written {at or _now()}.\n"
     )
@@ -148,20 +139,16 @@ def _write_keeping_answers(path: Path, text: str) -> None:
 def render_ship(
     u: Unit,
     *,
-    status: str,
     round_n: int | None,
     number: int,
     head: str,
     merge_commit: str = "",
     refused: str = "",
 ) -> str:
-    """`Round:` on the header line and `Refused:` under `## What went out` are what the loop's
-    `parse_ship` reads.
-    """
+    """Prose for a person: nothing reads it back. The round and a refusal are the rows'."""
     lines = [
         f"# Ship: {u.name}",
-        f"Author: coscc (code, ship). Status: {status}."
-        + (f" Round: {round_n}" if round_n is not None else ""),
+        "Author: coscc (code, ship)." + (f" Round: {round_n}." if round_n is not None else ""),
         "",
         "## What went out",
         "",
@@ -329,7 +316,7 @@ def ci_held(history: History, workspace: str, number: int, head: str) -> dict[st
 
 def open_prs(history: History, workspace: str) -> list[dict[str, Any]]:
     """`{unit, number, files}` for `autopilot.pick`, from the machine's own rows; `files` a set, as
-    `planmap.files_of` gives a plan's.
+    the autopilot reads a plan record's.
     """
     out = []
     for name, now in watched(history, workspace):
@@ -396,7 +383,7 @@ class Machine:
     """`pr`, `ship` and the reconcile after a restart, for one working folder.
 
     `gh`, `push` and `head` default to the real calls and are looked up at call time, so a test
-    hands in fakes; `notify` goes to `transitions.apply`.
+    hands in fakes; `notify` goes to `transitions.apply`; `bus` hears each merge recorded.
     """
 
     def __init__(
@@ -409,6 +396,7 @@ class Machine:
         head: Head | None = None,
         notify: Callable[[transitions.Applied], None] | None = None,
         files: Callable[[str, str], Awaitable[list[str] | None]] | None = None,
+        bus: Bus | None = None,
     ):
         self.history = history
         self.journal = journal
@@ -417,6 +405,7 @@ class Machine:
         self._head_of = head
         self._files = files
         self.notify = notify
+        self.bus = bus
 
     async def gh(self, argv: list[str], cwd: str) -> tuple[int, str, str]:
         got = await gh.call(self._gh or gh.run, argv, cwd)
@@ -643,19 +632,45 @@ class Machine:
     async def open_pr(self, u: Unit, again: bool = False) -> Outcome:
         """Push the branch, take the open pull request it already has or create one, and record `open`.
         A second press finds the first one's row and creates nothing; one run `again` from the board
-        writes `pr.md` again from the same row.
+        on an open pull request records `open` again with the same number, url and head, through
+        guard `branch-named`, so the rerun's record of `pr.md` is a new one.
         """
         now = state(self.history, u.workspace, u.name)
+        branch_ok = bool(u.branch) and u.branch == u.expected
         if now["state"] in ("open", "merge-requested", "merged"):
             out = Outcome(
                 "already", now.get("number"), str(now.get("url") or ""), str(now.get("head") or "")
             )
+            if again and now["state"] == "open":
+                applied = self._apply(
+                    u,
+                    "open",
+                    PR_FILE,
+                    "accepted",
+                    {
+                        "branch": u.branch,
+                        "expected": u.expected,
+                        "branch_ok": branch_ok,
+                        "number": out.number,
+                        "url": out.url,
+                        "head": out.head,
+                    },
+                    "code",
+                )
+                if not applied.open:
+                    return Outcome(
+                        "refused",
+                        out.number,
+                        out.url,
+                        out.head,
+                        reasons=applied.reasons,
+                        guard=applied.guard,
+                    )
             if again:
                 _write_keeping_answers(
-                    u.directory / PR_FILE, render_pr(u, title_of(u.name, u.type), out.url, out.head)
+                    u.directory / PR_FILE, render_pr(u, pr_title(u.name, u.type), out.url, out.head)
                 )
             return out
-        branch_ok = bool(u.branch) and u.branch == u.expected
         if not branch_ok:
             # Asked before anything is pushed: the guard would refuse the row anyway.
             return Outcome(
@@ -671,7 +686,7 @@ class Machine:
             if found is not None:
                 number, url, result = int(found["number"]), str(found.get("url") or ""), "found"
             else:
-                title = title_of(u.name, u.type)
+                title = pr_title(u.name, u.type)
                 code, out, err = await self.gh(
                     [
                         "pr",
@@ -718,7 +733,7 @@ class Machine:
                 "refused", number, url, head, reasons=applied.reasons, guard=applied.guard
             )
         _write_keeping_answers(
-            u.directory / PR_FILE, render_pr(u, title_of(u.name, u.type), url, head)
+            u.directory / PR_FILE, render_pr(u, pr_title(u.name, u.type), url, head)
         )
         return Outcome(result, number, url, head, guard=applied.guard)
 
@@ -759,11 +774,14 @@ class Machine:
                 detail="the merge commit could not be read",
             )
         (u.directory / SHIP_FILE).write_text(
-            render_ship(
-                u, status="accepted", round_n=round_n, number=number, head=head, merge_commit=commit
-            ),
+            render_ship(u, round_n=round_n, number=number, head=head, merge_commit=commit),
             encoding="utf-8",
         )
+        if self.bus is not None:
+            self.bus.publish(
+                "unit.shipped",
+                {"workspace": u.workspace, "unit": u.name, "sha": commit, "at": _now()},
+            )
         return Outcome(
             result,
             number,
@@ -823,7 +841,7 @@ class Machine:
                 "refused", number, head=head, reasons=applied.reasons, guard=applied.guard
             )
         (u.directory / SHIP_FILE).write_text(
-            render_ship(u, status="draft", round_n=round_n, number=number, head=head),
+            render_ship(u, round_n=round_n, number=number, head=head),
             encoding="utf-8",
         )
         return await self._merge(u, number, head, round_n)
@@ -865,10 +883,16 @@ class Machine:
         if view.get("state") == "MERGED":
             return await self._record_merged(u, number, view, round_n, "merged")
         refused = said or f"#{number} is {view.get('state') or 'unread'} after the merge"
+        self._apply(
+            u,
+            "refused",
+            SHIP_FILE,
+            "draft",
+            {"number": number, "head": head, "round": round_n, "refused": refused},
+            "code",
+        )
         (u.directory / SHIP_FILE).write_text(
-            render_ship(
-                u, status="draft", round_n=round_n, number=number, head=head, refused=refused
-            ),
+            render_ship(u, round_n=round_n, number=number, head=head, refused=refused),
             encoding="utf-8",
         )
         return Outcome("failed", number, head=head, detail=refused)

@@ -10,35 +10,35 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-import uuid
-from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from coscc import units
-from coscc.agent import agents, harness
+from coscc.agent import agents, pack
 from coscc.agent import steps as steps_mod
-from coscc.agent.policy import grant_for, protected_paths
-from coscc.agent.sessions import Sessions, Suspended
-from coscc.bus import Bus, Event
+from coscc.agent.policy import row_for
+from coscc.agent.sessions import Sessions
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.git import fetches, gitops
 from coscc.git.gitops import GitError
 from coscc.github import integrate, prmachine
 from coscc.github.integrate import open_prs_once
-from coscc.kernel import Invalid, facts as facts_of
-from coscc.runlog import events
+from coscc.kernel import Grant, Invalid, facts as facts_of
 from coscc.runner.queue import Attempt, Holds, Refused
-from coscc.runner.step import check_started_by, config_sources, tell_config, with_ceilings
+from coscc.kernel import Run
+from coscc.runner import run as run_mod
+from coscc.runner.run import NO_SUBMISSION
+from coscc.runner.step import check_started_by, config_sources, with_ceilings
 from coscc.runner.steps import Steps
-from coscc.store.db import Busy, Data, now as _now
-from coscc.store.journal import BadRecord, Journal
-from coscc.units import submit as submit_mod, worktrees
+from coscc.store.db import Busy, now as _now
+from coscc.store.journal import MERGE_RECORD, BadRecord, Journal
+from coscc.units import states, submit as submit_mod, worktrees
 from coscc.units import board as board_reader
 from coscc.units import BadUnit, CannotCreate
-from coscc.units.board import CONSEQUENCE, Unavailable
+from coscc.units.board import Unavailable
 from coscc.units.read import younger_than
 from coscc.units.workspaces import Workspaces
 from coscc.units.worktrees import BRANCH_REMOTE, BRANCH_TRUNK
@@ -67,7 +67,7 @@ def integration_since_review(journal: Journal, key: str, unit: str) -> dict[str,
             found = rec
         elif (
             rec.get("kind") == "end"
-            and rec.get("stage") == "review"
+            and states.is_review(rec.get("stage"))
             and rec.get("outcome") == "done"
         ):
             found = None
@@ -84,8 +84,6 @@ class Integration:
         steps: Steps,
         bus: Bus,
         *,
-        agent_overrides: Callable[[], dict[str, dict[str, str]]],
-        config_overrides: Callable[[], tuple[dict[str, dict[str, Any]], list[str]]],
         config_for: Callable[[str], tuple[str | None, str, str | None, str]],
     ) -> None:
         self.config = config
@@ -94,8 +92,6 @@ class Integration:
         self.sessions = sessions
         self.steps = steps
         self.bus = bus
-        self.agent_overrides = agent_overrides
-        self.config_overrides = config_overrides
         self.config_for = config_for
         # One lock per workspace held across an integration's check-and-mark.
         self._integrate_locks: dict[str, asyncio.Lock] = {}
@@ -113,7 +109,7 @@ class Integration:
         since = integration_since_review(journal, key, unit)
         if not since:
             return ""
-        return integrate.describe_for_review(since, self.agent_overrides())
+        return integrate.describe_for_review(since)
 
     async def attach_integration(
         self,
@@ -317,7 +313,12 @@ class Integration:
         verdict = integrate.classify(pr_row, missing, origin_sha, last_record, checks)
         state = verdict["state"]
         review_status = next(
-            (r.get("status") or "" for r in u.get("stages") or [] if r.get("stage") == "review"), ""
+            (
+                r.get("status") or ""
+                for r in u.get("stages") or []
+                if states.is_review(r.get("stage"))
+            ),
+            "",
         )
         gebo = state in integrate.GEBO_STATES
         # A `current` unit also has the button, since the count may be against a
@@ -339,11 +340,11 @@ class Integration:
                 u.get("rounds") or [],
                 review_status,
                 gebo or fallback,
-                grant_for("integrate").warning,
+                row_for("integrate").warning,
                 fallback=fallback,
                 name=(self.steps.agent_of("integrate") or {}).get("name", ""),
             ),
-            "consequence": CONSEQUENCE["integrate"],
+            "consequence": str((pack.row("integrate") or {}).get("consequence") or ""),
         }
 
     async def integrate(
@@ -625,13 +626,14 @@ class Integration:
                     workspace=cwd,
                     workspace_key=key,
                     unit=unit,
-                    stage="integrate",
+                    agent="integrate",
                     run="",
                     cwd=str(tree or root),
                     watch=None,
                     directory=directory,
-                    commands=(),
                     resumed=False,
+                    # Gebo, and a mechanical rebase, push the unit's branch.
+                    grant=Grant(branch=branch),
                 )
             )
             if refusal:
@@ -670,7 +672,7 @@ class Integration:
             self.holds.attempts.set_road(running.attempt, "gebo")
             # An update waits for a mechanical integration, and a Gebo session is
             # paused instead, so one waiting on this can go ahead.
-            self.bus.publish(Event("integration.escalated", key, unit))
+            self.bus.publish("integration.escalated", {"workspace": key, "unit": unit})
         async for item in self.integrate_gebo(
             cwd,
             key,
@@ -774,7 +776,7 @@ class Integration:
             detail = f"pushed on GitHub, but the local branch was not moved: {e}"
         return record(head_after=head_after, outcome="pushed", detail=detail), None
 
-    async def integrate_gebo(  # noqa: PLR0915 - still to split
+    async def integrate_gebo(
         self,
         cwd: str,
         key: str,
@@ -816,46 +818,25 @@ class Integration:
         # The `integrate` row, read once for the prompt, the records and
         # the session's commit attribution.
         agent = self.steps.agent_of("integrate")
-        # Gebo runs no `Runner`, so its grant takes the protected paths and its two ceilings here,
+        # Gebo runs no `Runner`, so its row takes its two ceilings here,
         # the ceilings by the function the runner asks: one taken up again keeps its owner's.
-        overrides, _ = self.config_overrides()
-        grant, ceilings = with_ceilings(
-            replace(
-                grant_for("integrate"),
-                protected=protected_paths(
-                    str(Data(self.config.data_dir).root), self.config.config_home, self.config.home
-                ),
-            ),
-            "integrate",
-            None,
-            overrides["turns"],
-            overrides["budget"],
-            was,
-        )
+        row, ceilings = with_ceilings(row_for("integrate"), "integrate", None, was)
         name = agent["name"] if agent is not None else ""
-        # This session's own run: what is stored of it is its `config` event and its `end`, since
-        # Gebo's messages are not recorded.
-        recorder = events.Recorder(
-            uuid.uuid4().hex,
-            Data(self.config.data_dir),
-            str(journal.working_dir),
-            key,
-            unit,
-            "integrate",
-        )
-        start_at = was.get("start_at")
+        start: dict[str, Any] = {}
         if resume is None:
             assert directory is not None
             assert info is not None
-            # By path; Gebo reads what it needs of them (`integrate.read_paths`).
+            # By path; Gebo reads what it needs of them.
             own = {}
-            for artifact in ("intent.md", "spec.md", "plan.md", "impl.md"):
+            for artifact in states.files_where(kind="artifact"):
                 path = Path(directory).resolve() / artifact
                 if path.exists():
                     own[artifact] = path
             try:
-                skill = harness.read_skill("integrate")
-            except harness.MissingRules as e:
+                skill = "\n\n".join(
+                    pack.skill(n) for n in (pack.row("integrate") or {}).get("skills") or []
+                )
+            except LookupError as e:
                 raise Invalid(f"the integrate skill could not be read: {e}") from e
             prompt = integrate.build_prompt(
                 skill=skill,
@@ -874,103 +855,113 @@ class Integration:
                 agent=agent,
             )
             model, model_source, effort, effort_source = self.config_for("integrate")
-            app = self.steps.identity()
-            try:
-                start_at = journal.started(
-                    key,
-                    unit,
-                    "integrate",
-                    "manual",
-                    started_by=seen["started_by"],
-                    prompt_chars=len(prompt),
-                    granted=list(grant.tools),
-                    max_turns=grant.max_turns,
-                    head=head_before,
-                    model=model,
-                    model_source=model_source,
-                    effort=effort,
-                    effort_source=effort_source,
-                    run=recorder.run,
-                    pointed=list(own),
-                    app_version=app["version"],
-                    app_commit=app["commit"],
-                    # What opened this session, for *Integrate for a conflict*.
-                    integrate_state=info["state"],
-                    **({"agent": name} if name else {}),
-                ).get("at")
-            except BadRecord, Busy:
-                pass
+            # What opened this session, for *Integrate for a conflict*.
+            start = {"head": head_before, "pointed": list(own), "integrate_state": info["state"]}
         else:
-            prompt, model = str(resume.get("message") or ""), resume.get("model")
+            prompt, model = "", resume.get("model")
             effort = was.get("effort")
             # Where they came from is in the owner.
             model_source = effort_source = ""
-        sources = config_sources(ceilings, model_source, effort_source, was)
-        # All `resume_integration` needs to take this session up again, no git read.
-        owner = {
-            "kind": "integrate",
-            "workspace": key,
-            "workspace_dir": cwd,
-            "unit": unit,
-            "stage": "integrate",
-            "start_at": start_at,
-            "max_turns": grant.max_turns,
-            "max_budget_usd": grant.max_budget_usd,
-            "effort": effort,
-            # Where each came from, for the `config` of the segment that takes it up.
-            **sources,
-            "run": recorder.run,
-            "pr": pr,
-            "tree": str(tree),
-            "branch": branch,
-            "head_before": head_before,
-            "origin_sha": origin_sha,
-            "seen": seen,
-            "refused_update": refused_update,
-            "completion": completion,
-            "rel": rel,
-        }
-        end: dict[str, Any] = {}
-        failure = ""
         # What Gebo says needs a person is the object it hands back, not its words.
         collector = submit_mod.Collector("integrate")
-        recorder.start()
-        try:
-            async for kind, payload in integrate.run_gebo(
-                self.sessions,
-                tree=str(tree),
-                workspace=cwd,
-                prompt=prompt,
-                grant=grant,
-                read_also=integrate.read_paths(units_root, unit, rel),
-                lease=(branch, head_before),
+        reply: list[str] = []
+        # What the session's end reads of GitHub and the tree: the outcome and why.
+        seen_after: dict[str, Any] = {"head_now": head_before, "outcome": "failed", "details": []}
+
+        async def finish(got: Run) -> Mapping[str, Any]:
+            seen_after.update(
+                await self._after_gebo(got, tree, pr, branch, head_before, completion, collector)
+            )
+            if seen_after["outcome"] in ("pushed", "needs-person"):
+                got.status = "done"
+            elif got.status == "done":
+                got.status = "failed"
+            got.detail = "; ".join(seen_after["details"])
+            return {}
+
+        stream = run_mod.run(
+            run_mod.Agent(
+                "integrate",
+                row,
                 model=model,
                 effort=effort,
+                sources=config_sources(ceilings, model_source, effort_source, was),
+                name=name,
                 settings=agents.settings_json(agent) if agent is not None else None,
-                owner=owner,
-                resume=resume,
+                preset=True,
+                system=str((pack.row("integrate") or {}).get(pack.BODY) or ""),
+            ),
+            run_mod.Input(
+                str(tree),
+                prompt,
+                key,
+                workspace_dir=cwd,
+                unit=unit,
+                started_by=seen["started_by"],
+                start=start,
+                # All `resume_integration` needs to take this session up again, no git read.
+                owner={
+                    "pr": pr,
+                    "tree": str(tree),
+                    "branch": branch,
+                    "head_before": head_before,
+                    "origin_sha": origin_sha,
+                    "seen": seen,
+                    "refused_update": refused_update,
+                    "completion": completion,
+                    "rel": rel,
+                },
+                # Gebo's grant: it writes only its `tree` (its `cwd`) and pushes only `branch`,
+                # with a lease bound to its head.
+                branch=branch,
+                lease=head_before,
                 channel=collector,
-                on_open=functools.partial(tell_config, recorder, model, effort, sources),
-            ):
-                if kind == "chunk":
-                    yield ("chunk", payload)
-                else:
-                    end = payload
-        except Suspended, asyncio.CancelledError:
-            # Paused by an update, with its `suspend` row, or the app going down. No `end` and no
-            # record; what can be written of the run is, its row stays open and the next start
-            # closes it, the owner naming the run.
-            await recorder.abandon()
-            raise
-        except Exception as e:
-            # Recorded, never swallowed silently.
-            log.exception("the integration session of %s failed", unit)
-            failure = f"the session failed: {e}"
-        run_fields = {
-            "run": recorder.run,
-            "events_lost": await recorder.close("failed" if failure else "done", failure),
-        }
-        details = [failure] if failure else []
+                resume=resume,
+            ),
+            ctx=run_mod.Ctx(self.sessions, journal, self.config.data_dir, self.steps.identity()),
+            finish=finish,
+        )
+        async for kind, payload in stream:
+            if kind == "chunk":
+                reply.append(payload)
+                yield ("chunk", payload)
+        head_now, outcome = seen_after["head_now"], seen_after["outcome"]
+        needs_person = integrate.needs_person_of(collector.object())
+        rec = write(
+            integrate.record(
+                workspace=key,
+                unit=unit,
+                pr=pr,
+                mode="agent",
+                head_before=head_before,
+                head_after=head_now,
+                origin_sha=origin_sha,
+                outcome=outcome,
+                related_=rel,
+                report="".join(reply),
+                needs_person=needs_person,
+                detail="; ".join(seen_after["details"]),
+                update_branch=refused_update,
+                agent=name,
+                **seen,
+            )
+        )
+        yield ("done", {"integration": rec})
+
+    async def _after_gebo(
+        self,
+        got: Run,
+        tree: Path,
+        pr: int,
+        branch: str,
+        head_before: str,
+        completion: dict[str, Any] | None,
+        collector: submit_mod.Collector,
+    ) -> dict[str, Any]:
+        """What a Gebo session left, read from GitHub and its tree before its `end`:
+        `{head_now, outcome, details}`. A rebase it left open is aborted."""
+        failed = got.status in ("failed", "refused") and not got.detail.startswith(NO_SUBMISSION)
+        details = [got.detail] if failed and got.detail else []
         try:
             if await gitops.rebase_in_progress(tree):
                 await gitops.abort_rebase(tree)
@@ -982,7 +973,6 @@ class Integration:
         except integrate.IntegrateError as e:
             head_now = head_before
             details.append(f"could not read the pull request's head afterwards: {e}")
-        reply = str(end.get("reply") or "")
         needs_person = integrate.needs_person_of(collector.object())
         outcome = integrate.outcome_of_session(head_before, head_now, needs_person)
         if outcome == "failed" and not submit_mod.submitted(collector):
@@ -1014,43 +1004,7 @@ class Integration:
                 f"the pull request's head moved to {head_now[:7]}, not to the local head "
                 f"{str(completion['local_head'])[:7]} this completion was to push"
             )
-        try:
-            journal.finished(
-                key,
-                unit,
-                "integrate",
-                "done" if outcome in ("pushed", "needs-person") else "failed",
-                session_id=end.get("session_id", ""),
-                detail="; ".join(details) or None,
-                denials=end.get("denials", 0),
-                denied=end.get("denied"),
-                background=end.get("background", 0),
-                models_used=end.get("models_used") or None,
-                **run_fields,
-                **(end.get("cost") or {}),
-            )
-        except BadRecord, Busy:
-            pass
-        rec = write(
-            integrate.record(
-                workspace=key,
-                unit=unit,
-                pr=pr,
-                mode="agent",
-                head_before=head_before,
-                head_after=head_now,
-                origin_sha=origin_sha,
-                outcome=outcome,
-                related_=rel,
-                report=reply,
-                needs_person=needs_person,
-                detail="; ".join(details),
-                update_branch=refused_update,
-                agent=name,
-                **seen,
-            )
-        )
-        yield ("done", {"integration": rec})
+        return {"head_now": head_now, "outcome": outcome, "details": details}
 
     async def _related(
         self, root: Path, unit: str, data: dict[str, Any], head: str, origin_sha: str
@@ -1110,7 +1064,9 @@ class Integration:
         """The PR machine over the same history and run log as every other transition."""
         meta = self.ws.unit_meta()
         return prmachine.Machine(
-            meta.history, self.ws.journal() or Journal(meta.root, self.config.data_dir)
+            meta.history,
+            self.ws.journal() or Journal(meta.root, self.config.data_dir),
+            bus=self.bus,
         )
 
     async def mechanical(
@@ -1123,8 +1079,9 @@ class Integration:
         started_by: str,
         again: bool = False,
         rebased: dict[str, str] | None = None,
+        process: str | None = None,
     ) -> dict[str, Any]:
-        """One `pr` or `ship`, with no session, no `start` and no `end` row;
+        """One `open-pr` or `merge` state, with no session, no `start` and no `end` row;
         what it did is its transitions and, for `ship`, the `ship` row notices read.
         Returns the `done` item a session's step would have ended with. `rebased` is the
         `ship` gate's clean-rebase read, which guard `ship-ready` takes."""
@@ -1150,13 +1107,13 @@ class Integration:
             expected.partition("/")[0] or None,
         )
         machine = self.pr_machine()
-        if stage == "pr":
+        if states.action_of(process, stage) == "open-pr":
             out = await machine.open_pr(u, again=again)
         else:
             out = await machine.ship(
                 u, authority="code" if started_by == "autopilot" else "person", rebased=rebased
             )
-        artifact = prmachine.PR_FILE if stage == "pr" else prmachine.SHIP_FILE
+        artifact = f"{stage}.md"
         done: dict[str, Any] = {
             "unit": unit,
             "stage": stage,
@@ -1170,14 +1127,14 @@ class Integration:
             "model_source": None,
             "mechanical": out.as_dict(),
         }
-        if stage == "pr" and out.ok:
+        if states.action_of(process, stage) == "open-pr" and out.ok:
             # The title and body the app wrote go onto a pull request it
             # found open rather than created, and the scope is read once, as after a session.
             done["pr_sync"] = await self.steps.sync_pr(
                 cwd, unit, out.url if out.result in ("found", "already") else ""
             )
         refused = False
-        if stage == "ship":
+        if states.action_of(process, stage) == "merge":
             merged = out.result in ("merged", "recorded", "already")
             refused = (
                 not merged
@@ -1213,17 +1170,17 @@ class Integration:
         return done
 
     async def shipped(self, cwd: str, key: str, unit: str, result: str) -> dict[str, Any] | None:
-        """The `ship` row notices read, and after a merge the cleanup. From `mechanical`, and from the PR reader and the start-up reconcile
-        when they record a merge no `ship` step follows any more. Never raises; the cleanup's answer after a merge, else `None`."""
+        """The `merge` record notices read, and after a merge the cleanup. From `mechanical`, and from the PR reader and the start-up reconcile
+        when they record a merge no step follows. Never raises; the cleanup's answer after a merge, else `None`."""
         journal = self.ws.journal()
         if journal is not None:
             try:
                 journal.append(
                     {
-                        "kind": "ship",
+                        "kind": MERGE_RECORD,
                         "workspace": key,
                         "unit": unit,
-                        "stage": "ship",
+                        "stage": states.states_where(action="merge")[0],
                         "result": result,
                     }
                 )

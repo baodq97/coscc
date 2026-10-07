@@ -2,10 +2,12 @@
 module it imports.
 
 A feature ends in one `FEATURE`, a `Feature`. The core hands it a `Ctx` and asks it for its
-routes, tables, schedule and agent parts. For each run, the kernel builds one `Facts` and asks
-each part what it makes of it. A feature never writes a granted tool name: `granted` derives
-`mcp__<server>__<name>`, and `Grant` refuses any other spelling. How the core hosts features is
-in `coscc/http/plugin.py`.
+routes, tables and agent parts. One catalog names every tool an agent may hold
+(`BUILTINS`, and each feature's `Tool`); an agent's row names catalog entries, and a run gets
+only what its grant holds. For each run, the kernel builds one `Facts` (its agent and grant) and
+asks each part what it makes of it. A feature never writes a granted tool name: `granted`
+derives `mcp__<server>__<name>`, and `Grant` refuses any other spelling. How the core hosts
+features is in `coscc/http/plugin.py`.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, get_args
 
@@ -24,9 +26,10 @@ from fastapi.responses import StreamingResponse
 from starlette.routing import BaseRoute
 
 from coscc.agent.harness import child_env as child_env
+from coscc.agent import policy
 from coscc.agent.policy import Grant as Grant
-from coscc.agent.policy import check_command as check_command
-from coscc.agent.policy import grant_for as grant_for
+from coscc.agent.policy import Row as Row
+from coscc.agent.policy import bash_refused as bash_refused
 from coscc.bus import Bus
 from coscc.bus import Event as Event
 from coscc.git import gh as gh
@@ -55,12 +58,12 @@ from coscc.store.db import Data
 from coscc.store.db import now as now
 from coscc.store.journal import BELL as BELL
 from coscc.store.journal import BadRecord as BadRecord
-from coscc.store.journal import Intervention
 from coscc.store.journal import Journal as Journal
 from coscc.units import Invalid as Invalid
 from coscc.units import cos_dir as cos_dir
+from coscc.units.contracts import Plan as Plan
+from coscc.units.contracts import PlanStep as PlanStep
 from coscc.store.journal import is_step as is_step
-from coscc.units.planmap import files_of as files_of
 from coscc.units.read import Asked as Asked
 from coscc.units.scratch import RAM_CAP
 
@@ -79,16 +82,26 @@ STREAM_SECONDS = 30.0
 OWNER = "owner"
 
 
-@dataclass(frozen=True)
-class Submitted:
-    """What one session that hands back an object left: the object, or `None` and `failure`
-    saying why there is none; what it cost (`journal.COST_FIELDS` and `cost_usd`); and its
-    session id, `run`."""
+# How a run of an agent ended (`coscc/runner/run.py`). `paused-budget`: it stopped at one of its
+# two ceilings.
+Status = Literal["done", "paused-budget", "failed", "refused", "cancelled"]
+STATUSES: tuple[Status, ...] = get_args(Status)
 
-    object: dict[str, Any] | None
-    cost: dict[str, Any]
-    run: str
-    failure: str = ""
+
+@dataclass
+class Run:
+    """What one run of an agent left (`coscc/runner/run.py`): how it ended; its output (the object
+    it handed back through `submit`, or chat's reply), `None` unless `done`; what it cost
+    (`journal.COST_FIELDS` and `cost_usd`, `{}` when unknown); its turns; its session id; why, when
+    it is not `done`; and its id in the run log (`run`), what `/api/runs/{run}` opens."""
+
+    status: Status
+    output: Any = None
+    cost: dict[str, Any] = field(default_factory=dict)
+    turns: int | None = None
+    session: str = ""
+    detail: str = ""
+    run: str = ""
 
 
 SERVER = re.compile(r"[a-z][a-z0-9-]*")
@@ -99,46 +112,85 @@ KERNEL_SERVER = "cos"
 
 @dataclass(frozen=True)
 class Facts:
-    """One run, as the kernel knows it."""
+    """One run, as the kernel knows it: its agent's key and, once issued, its grant. A part reads
+    the grant, never the agent's name, to know what the run may do."""
 
     workspace: str
     workspace_key: str
     unit: str
-    stage: str
+    agent: str
     run: str
     # The unit's worktree; for a spike, the worktree it watches.
     tree: str
     directory: Path
     # A spike's throwaway directory, else `None`.
     scratch: str | None
-    # The effective `grant.commands`.
-    commands: tuple[str, ...]
     resumed: bool
+    # The engine action the run is (`open-pr`, `merge`), `""` for an agent's session.
+    action: str = ""
+    # The unit's plan record, handed to a board step's features; `None` elsewhere or with none.
+    plan: Plan | None = None
+    # What the run was issued (`coscc/runner/run.py`'s `issue`); the locked `Grant()` while a
+    # catalog entry is asked whether it admits the run, and for a guard asked before a step that
+    # pushes nothing.
+    grant: Grant = field(default_factory=Grant)
 
 
 def _any_run(_facts: Facts) -> bool:
     return True
 
 
+# What a tool does: reads; writes the worktree; writes the app's own records; or reaches outside.
+Effect = Literal["read", "write-worktree", "write-app", "external"]
+# How much a call can cost when it goes wrong: `low` nothing, `medium` the run's own work, `high`
+# beyond it.
+Tier = Literal["low", "medium", "high"]
+
+
 @dataclass(frozen=True)
 class Tool:
-    """MCP tools of one server. `make` is called once per run, so a server is never shared;
-    `when` is asked first, and a run it says no to gets neither the server nor its names."""
+    """One catalog entry: a tool an agent's row may name. A built-in has no `server`; a feature's
+    is one MCP server of `names`, made by `make` once per run, so a server is never shared. `when`
+    is asked first, and a run it says no to gets neither the server nor its names. `uses` says
+    what the run may use through it (`Grant.use`, as `(name, resource)`), asked with `when`."""
 
-    server: str
-    names: tuple[str, ...]
-    stages: tuple[str, ...]
-    make: Callable[[Facts], McpServerConfig]
+    name: str
+    effect: Effect
+    tier: Tier
+    server: str = ""
+    names: tuple[str, ...] = ()
+    make: Callable[[Facts], McpServerConfig] | None = None
     when: Callable[[Facts], bool] = _any_run
+    uses: Callable[[Facts], tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
+        if not self.server:
+            return
         if not SERVER.fullmatch(self.server) or self.server == KERNEL_SERVER:
             raise ValueError(
                 f"an MCP server name is [a-z][a-z0-9-]* and not 'cos': {self.server!r}"
             )
+        if self.make is None or not self.names:
+            raise ValueError(f"the tool {self.name!r} names its server's tools and makes it")
         for name in self.names:
             if not LOCAL.fullmatch(name) or "__" in name:
                 raise ValueError(f"an MCP tool name is [a-z][a-z0-9_]* without '__': {name!r}")
+
+
+# The catalog's built-in entries: Claude Code's own tools and the kernel's `submit`, `peers` and
+# `run_agent`, which the engine issues with the grant (`submit` to every agent with an output,
+# `peers` with helpers, `run_agent` to Leif's chat) and no row names.
+BUILTINS: tuple[Tool, ...] = (
+    *(Tool(t, "read", "low") for t in policy.READ_TOOLS),
+    *(Tool(t, "write-worktree", "medium") for t in policy.WRITE_TOOLS),
+    Tool("Bash", "external", "high"),
+    Tool(policy.AGENT_TOOL, "write-worktree", "medium"),
+    Tool(policy.SEND_MESSAGE, "read", "low"),
+    Tool("submit", "write-app", "low"),
+    Tool("peers", "read", "low"),
+    # Leif's: starts a triggered row's run, paid and read-only (`coscc/runner/triggers.py`).
+    Tool("run_agent", "write-app", "medium"),
+)
 
 
 @dataclass(frozen=True)
@@ -152,10 +204,12 @@ class Guard:
 @dataclass(frozen=True)
 class Block:
     """A named block of the prompt. An empty string adds nothing. A render that waits on
-    something is a coroutine, awaited before the session starts."""
+    something is a coroutine, awaited before the session starts. `tool` names the catalog entry
+    it teaches: the block is shown only to a run whose grant holds it ("" for every run)."""
 
     name: str
     render: Callable[[Facts], str | Awaitable[str]]
+    tool: str = ""
 
 
 @dataclass(frozen=True)
@@ -176,18 +230,49 @@ class Hooks:
     parts: tuple[tuple[str, Parts], ...] = ()
     enabled: Callable[[str, str], bool] = _always
 
-    def for_step(self, stage: str, workspace: str) -> Parts:
-        """Only what is on for this workspace; a tool only for the stages it names."""
+    def catalog(self) -> dict[str, Tool]:
+        """Every tool a row may name: `BUILTINS` and each feature's, on or off."""
+        return {t.name: t for t in (*BUILTINS, *(t for _, p in self.parts for t in p.tools))}
+
+    def reads(self) -> tuple[str, ...]:
+        """The catalog names whose effect is `read`."""
+        return tuple(n for n, t in self.catalog().items() if t.effect == "read")
+
+    def on(self, workspace: str) -> Parts:
+        """Only what is on for this workspace."""
         on = [p for feature, p in self.parts if self.enabled(feature, workspace)]
         return Parts(
-            tools=tuple(t for p in on for t in p.tools if stage in t.stages),
+            tools=tuple(t for p in on for t in p.tools),
             guards=tuple(g for p in on for g in p.guards),
             blocks=tuple(b for p in on for b in p.blocks),
         )
 
-    def tools_for(self, facts: Facts) -> tuple[Tool, ...]:
-        """`for_step`'s tools that this run's `when` lets through."""
-        return tuple(t for t in self.for_step(facts.stage, facts.workspace).tools if t.when(facts))
+    def held(self, row: Row, workspace: str) -> tuple[Tool, ...]:
+        """The features' tools `row` names that are on for this workspace."""
+        return tuple(t for t in self.on(workspace).tools if t.name in row.tools)
+
+    def tools_for(self, facts: Facts, row: Row) -> tuple[Tool, ...]:
+        """`held`'s tools that this run's `when` lets through."""
+        return tuple(t for t in self.held(row, facts.workspace) if t.when(facts))
+
+    def refusal(self, facts: Facts) -> str:
+        """The words of the first guard on for the run's workspace that denies it, or `""` when
+        all abstain. A guard that raises denies: a run is never let through by a check that could
+        not be made."""
+        for guard in self.on(facts.workspace).guards:
+            try:
+                words = guard.check(facts)
+            except Exception as e:
+                log.exception("guard %s of a feature failed", guard.name)
+                return f"{guard.name}: failed ({type(e).__name__})"
+            if words is not None:
+                return f"{guard.name}: {words}"
+        return ""
+
+    def blocks_for(self, facts: Facts) -> tuple[Block, ...]:
+        """The blocks on for the run's workspace whose tool its grant holds."""
+        held = (*facts.grant.tools, *facts.grant.held)
+        return tuple(b for b in self.on(facts.workspace).blocks if not b.tool or b.tool in held)
 
 
 def granted(tools: tuple[Tool, ...]) -> tuple[str, ...]:
@@ -200,26 +285,30 @@ def facts(
     workspace: str,
     workspace_key: str,
     unit: str,
-    stage: str,
+    agent: str,
     run: str,
     cwd: str,
     watch: str | None,
     directory: Path,
-    commands: tuple[str, ...],
     resumed: bool,
+    plan: Plan | None = None,
+    grant: Grant | None = None,
+    action: str = "",
 ) -> Facts:
     """`watch` is set when the run is a spike, whose `cwd` is its throwaway directory."""
     return Facts(
         workspace=workspace,
         workspace_key=workspace_key,
         unit=unit,
-        stage=stage,
+        agent=agent,
         run=run,
         tree=watch or cwd,
         directory=directory,
         scratch=cwd if watch else None,
-        commands=commands,
         resumed=resumed,
+        action=action,
+        plan=plan,
+        grant=grant if grant is not None else Grant(),
     )
 
 
@@ -268,18 +357,6 @@ class Runs:
     """The run log."""
 
     journal: Callable[[], Journal | None]
-    # `(workspace path, after, limit)`: every time a person stepped in there past the time
-    # `after` (`""`: from the first), oldest first (`coscc/runner/interventions.py`). Blocking.
-    interventions: Callable[[str, str, int], list[Intervention]]
-
-
-@dataclass(frozen=True)
-class Agents:
-    # `(workspace path, kind, prompt)`: one paid session under the grant `kind` that hands its
-    # object back through `submit`, recorded in the run log as the estimate is. `Invalid` while
-    # another such session of the workspace runs or an update is under way. One an update
-    # paused hands back no cost: the run log's `end` holds it.
-    session: Callable[[str, str, str], Awaitable[Submitted]]
 
 
 @dataclass(frozen=True)
@@ -293,10 +370,6 @@ class Settings:
     enabled: Callable[[str], bool]
     # `(workspace path, unit)`: `arm_of` the state now.
     arm: Callable[[str, str], Arm | None]
-    # The hours of its `schedule` there, `0` for off.
-    schedule: Callable[[str], int]
-    # `(workspace path, hours)`: set them, one of its `schedule.hours`.
-    set_schedule: Callable[[str, int], None]
 
 
 @dataclass(frozen=True)
@@ -305,7 +378,6 @@ class Ctx:
 
     units: Units
     runs: Runs
-    agents: Agents
     store: Data
     bus: Bus
     settings: Settings
@@ -317,37 +389,6 @@ class Ctx:
     # `(tree, pull request)`: its required checks as `gh pr checks --required` says, or `gh`'s
     # error as a string.
     required_checks: Callable[[str, int], Awaitable[list[dict[str, Any]] | str]]
-
-
-@dataclass(frozen=True)
-class Schedule:
-    """How often the core asks a feature to run on its own in a workspace where it is not `off`."""
-
-    # What Settings offers, in hours, `0` being off. Each workspace's choice is the pref
-    # `features.schedule`, `{feature: {workspace key: hours}}`.
-    hours: tuple[int, ...]
-    # The choice of a workspace nobody chose one for.
-    default: int
-    # `(ctx, workspace path, hours)`: asked every `TICK_SECONDS` while the choice is not `0`;
-    # the feature decides whether that many hours passed since its last run.
-    tick: Callable[[Ctx, str, int], Awaitable[None]]
-
-
-@dataclass(frozen=True)
-class Session:
-    """A paid session a feature runs through `Ctx.agents.session`: no stage, and it hands one object
-    back through `submit`. `kind` names its grant, its attempts and their bus events
-    (`<kind>.queued`, `.running`, `.ended`, `.refused`)."""
-
-    kind: str
-    grant: Grant
-    # The JSON Schema of the object it hands back.
-    schema: dict[str, Any]
-    # What the `submit` tool tells the session it is for.
-    purpose: str
-    # Whether `grant.max_turns` holds below the floor a submitting session gets, because one
-    # more turn could pass its budget; a refused object is then not submitted again.
-    own_turns: bool = False
 
 
 @dataclass(frozen=True)
@@ -368,8 +409,6 @@ class Feature:
     # `(ctx, workspace path, state)`: told once a person set a state. Quick: it schedules long
     # work and returns.
     on_set: Callable[[Ctx, str, State], None] | None = None
-    schedule: Schedule | None = None
-    sessions: tuple[Session, ...] = ()
     # One fixed sentence, 100 characters at most: what the feature does, shown under its name.
     summary: str = ""
 

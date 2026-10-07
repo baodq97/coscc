@@ -4,7 +4,7 @@ A child, not a call, so a hung answer is bounded and killed with all it started,
 state (`model.LINKS`) lives on between two questions. The interpreter is this process's own and
 `-P` keeps the cwd off `sys.path`: a workspace's `coscc/` is never what runs, even with `cwd` in
 it. The env is `harness.child_env()`, which carries no secret. `ask` is for the board and a
-release, `ask_sync` for `units` and `meta`; both raise `TimeoutError` past `timeout` and `OSError`
+release, `ask_sync` for `units`; both raise `TimeoutError` past `timeout` and `OSError`
 when the child cannot start, and leave the exit code to the caller.
 """
 

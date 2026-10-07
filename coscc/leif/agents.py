@@ -1,35 +1,43 @@
-"""The eight agents: who each is, what it runs on, what it may do and how its runs went.
+"""The agents: who each is, what it runs on, what it may do and how its runs went.
 
-The resolving is `coscc/agent/agents.py` (who) and `coscc/agent/models.py` (model, effort and
-the two ceilings); this is where the overrides are read from `prefs` and written back, and
-where the run log's `end` records are added up for the Agents page. `Models` gathers the
-inputs for which model and effort each stage runs on.
+The rows are `coscc/agent/pack.py`'s, resolved by `coscc/agent/agents.py` (who) and
+`coscc/agent/models.py` (model, effort and the two ceilings); this is where a field the page
+sets is written into the owner's layer and logged, and where the run log's `end` records are
+added up and grouped by the definition they ran for the Agents page. `Models` gathers the inputs for which model and effort each run
+gets.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any, TypedDict
+from collections.abc import Callable
+from typing import Any, Literal, TypedDict
 
-from coscc.agent import agents, labels, models, modeltrial, policy
+from coscc import bus, vault
+from coscc.agent import agents, models, modeltrial, pack, policy
 from coscc.config import Config
-from coscc.kernel import OWNER, Invalid
+from coscc.kernel import OWNER, Hooks, Invalid
 from coscc.leif import decide
+from coscc.runner import run as run_mod
+from coscc.runner import triggers
 from coscc.store.db import Busy, Data, Unusable
 from coscc.store.journal import BadRecord, Journal
 from coscc.units import board as board_reader
+from coscc.units import contracts, proposals, states
+from coscc.units.contracts import Plan
 from coscc.units.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
 
 # The `runs` kind of one saved or reset field: the trace of who moved what.
 SETTING_KIND = "agent-setting"
-# How far back the page adds up cost and looks for a run; how many runs a drawer lists.
+# The `runs` kind of a pack the owner imported, removed, or whose process they set.
+PACK_KIND = "pack-setting"
+# How far back the page adds up cost and lists runs.
 WINDOW_DAYS = 30
-RECENT = 5
 # A last run that spent this share of its budget or more is `costly`. Chosen, not measured.
 COSTLY_SHARE = 0.8
 # The chips, worst first: a row with one of `ATTENTION` is listed before the rest.
@@ -37,15 +45,11 @@ CHIPS = ("failed", "costly", "idle", "ok")
 ATTENTION = ("failed", "costly")
 
 
-def skill_of(key: str) -> str:
-    """The skill a step of `key` loads: `write-<stage>` (`coscc/runner/prompt.py`), and Gebo's
-    own `integrate` (`coscc/github/integration.py`)."""
-    return key if key == "integrate" else f"write-{key}"
-
-
 class RunView(TypedDict):
-    """One `end` record of a stage, as the page shows it; `workspace` is the run-log key, the
-    workspace's resolved path."""
+    """One `end` record of an agent, as the page shows it; `workspace` is the run-log key, the
+    workspace's resolved path; `row_hash` the definition its `start` ran (`""` before rows had
+    one). `run` is the run-log id its events were kept under (`""` when none); `skipped` and
+    `detail` say a run that spent nothing and why; `started_by` is who started it."""
 
     workspace: str
     unit: str
@@ -53,45 +57,160 @@ class RunView(TypedDict):
     at: str
     turns: int | None
     cost_usd: float | None
+    row_hash: str
+    run: str
+    skipped: bool
+    detail: str
+    started_by: str
 
 
-class GrantView(TypedDict):
-    """What `grant_for` gives a step, to be read and never written: changing one widens what a step may do."""
+class Setting(TypedDict):
+    """One `agent-setting` record: a field the owner saved or reset."""
 
-    tools: list[str]
-    commands: list[str]
-    mcp: list[str]
-    submits: bool
+    at: str
+    field: str
+    old: Any
+    new: Any
+    by: str
+
+
+class RunGroup(TypedDict):
+    """The runs of one definition of an agent (`row_hash`) in a row, newest first, headed by the
+    settings saved since the group before it; a group with no run yet is the edits waiting for the
+    next run."""
+
+    row_hash: str
+    settings: list[Setting]
+    runs: list[RunView]
+    cost_usd: float
+    turns: int
+
+
+class CatalogTool(TypedDict):
+    """One tool a row may name (`kernel.Hooks.catalog`): what it does, how much a wrong call
+    costs, its MCP server and feature (`""` for Claude Code's own), and whether that feature is on
+    in the workspace asked about."""
+
+    name: str
+    effect: str
+    tier: str
+    server: str
+    feature: str
+    on: bool
+
+
+class SkillText(TypedDict):
+    """A skill a row names: the text a run is given, the built-in's, whether the owner's differs."""
+
+    name: str
+    text: str
+    builtin: str
+    edited: bool
+
+
+class Schedule(TypedDict):
+    hours: int
+
+
+class TriggerEvent(TypedDict, total=False):
+    name: str
+    after_hours: int
+
+
+class TriggerFields(TypedDict, total=False):
+    """A row's `trigger` (`pack.TRIGGERS`), or `state` for a row a process state runs."""
+
+    state: str
+    engine: str
+    event: TriggerEvent
+    schedule: Schedule
+    manual: bool
+    leif: bool
+
+
+class RowFields(TypedDict, total=False):
+    """A row's frontmatter and body (`pack.KEYS`, `pack.BODY`); a value of the wrong type (a
+    hand-edited file) is left out, and the row's `problems` say why."""
+
+    name: str
+    glyph: str
+    description: str
+    model: dict[str, Any]
+    variants: dict[str, Any]
+    skills: list[str]
+    tools: dict[str, Any]
+    helpers: list[str]
+    input: dict[str, Any]
+    output: dict[str, Any]
+    trigger: TriggerFields
+    default: str
+    ceilings: dict[str, Any]
     warning: str
+    consequence: str
+    body: str
+
+
+Group = Literal["stage", "engine", "helper", "triggered"]
 
 
 class AgentRow(TypedDict):
     key: str
-    glyph: str
-    name: str
-    meaning: str
-    role: str
-    # Per identity field, `default` or `override`.
-    identity_source: dict[str, str]
+    # The pack the row comes from: `coscc-sdlc`, `local` or an imported pack's name.
+    pack: str
+    # A whole row of the owner's own pack (`local`): they may delete it.
+    own: bool
+    # Opened on a unit's state, by the engine (Gebo, the estimate, Leif), as another's helper, or by
+    # its own trigger (an event, a schedule, a press, Leif: `coscc/runner/triggers.py`).
+    group: Group
+    row: RowFields
+    builtin: RowFields
+    # The keys the owner's layer sets (`skill:<name>` for a skill's text).
+    edited: list[str]
+    # Why the row cannot run now; its runs are refused `agent-invalid` while there is one.
+    problems: list[str]
+    editable: bool
+    skills: list[SkillText]
+    # What a run of the row as it stands records (`pack.hash_of`).
+    row_hash: str
+    # What a run gets, resolved; `novel` under its `novel` variant, where it has one.
     config: models.ConfigRow
-    # The `:novel` rows of this agent's stage, edited in its drawer.
-    variants: list[models.ConfigRow]
-    skill: str
-    grant: GrantView
+    novel: models.ConfigRow | None
     last: RunView | None
-    # The last `RECENT`, newest first.
-    runs: list[RunView]
     runs_30d: int
     cost_30d: float
     chip: str
+    # The last `WINDOW_DAYS`, newest first.
+    groups: list[RunGroup]
+    # Whether its event or schedule runs it in the workspace asked about; `None` for a row with
+    # neither, or no workspace.
+    on: bool | None
+
+
+class ProposingAgent(TypedDict):
+    key: str
+    name: str
+    on: bool | None
+
+
+class ProposalRow(proposals.Proposal):
+    # The name of the agent that proposed it.
+    agent_name: str
+
+
+class ProposalsView(TypedDict):
+    """Up next's Proposals: every agent's, newest first, and the agents that propose."""
+
+    proposals: list[ProposalRow]
+    agents: list[ProposingAgent]
 
 
 class AgentPage(TypedDict):
     rows: list[AgentRow]
-    # `estimate` and `chat`.
-    others: list[models.ConfigRow]
+    catalog: list[CatalogTool]
     problems: list[str]
     cos_model: str | None
+    # Whose runs the counts and costs add up: `workspace` (the page has a `cwd`) or `all`.
+    scope: Literal["workspace", "all"]
 
 
 def chip_of(last: RunView | None, budget: float | None, runs_in_window: int) -> str:
@@ -107,17 +226,6 @@ def chip_of(last: RunView | None, budget: float | None, runs_in_window: int) -> 
     return "ok"
 
 
-def _grant_view(key: str) -> GrantView:
-    grant = policy.grant_for(key)
-    return GrantView(
-        tools=list(grant.tools),
-        commands=list(grant.commands),
-        mcp=list(grant.mcp),
-        submits=grant.submits,
-        warning=grant.warning,
-    )
-
-
 def _run_view(record: dict[str, Any]) -> RunView:
     cost = record.get("cost_usd")
     turns = record.get("turns")
@@ -128,175 +236,398 @@ def _run_view(record: dict[str, Any]) -> RunView:
         at=str(record.get("at") or ""),
         turns=turns if isinstance(turns, int) else None,
         cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
+        row_hash=str(record.get("row_hash") or ""),
+        run=str(record.get("run") or ""),
+        skipped=bool(record.get("skipped")),
+        detail=str(record.get("detail") or ""),
+        started_by=str(record.get("started_by") or ""),
     )
 
 
+def groups_of(runs: list[RunView], settings: list[Setting]) -> list[RunGroup]:
+    """`runs` and `settings` (each oldest first) as `RunGroup`s, newest first: a run on another
+    `row_hash` than the one before it, or after a setting, opens a group headed by the settings
+    saved since."""
+    out: list[RunGroup] = []
+    waiting = list(settings)
+    for run in runs:
+        since = [s for s in waiting if s["at"] <= run["at"]]
+        waiting = waiting[len(since) :]
+        if since or not out or out[-1]["row_hash"] != run["row_hash"]:
+            out.append(
+                RunGroup(row_hash=run["row_hash"], settings=since, runs=[], cost_usd=0.0, turns=0)
+            )
+        group = out[-1]
+        group["runs"].insert(0, run)
+        group["cost_usd"] = round(group["cost_usd"] + (run["cost_usd"] or 0.0), 6)
+        group["turns"] += run["turns"] or 0
+    if waiting:
+        out.append(RunGroup(row_hash="", settings=waiting, runs=[], cost_usd=0.0, turns=0))
+    return out[::-1]
+
+
+_TYPES: dict[str, type | tuple[type, ...]] = {
+    "model": dict,
+    "variants": dict,
+    "tools": dict,
+    "input": dict,
+    "output": dict,
+    "trigger": dict,
+    "ceilings": dict,
+    "skills": list,
+    "helpers": list,
+}
+
+
+def _fields_of(found: dict[str, Any]) -> RowFields:
+    """`found`'s frontmatter and body, each value of the type `RowFields` gives it. A row a process
+    state runs shows where as its trigger, `{state: "impl in full, short"}`: the process binds
+    it, the row names no state."""
+    out: dict[str, Any] = {}
+    for k in (*pack.KEYS, pack.BODY):
+        if k in found and isinstance(found[k], _TYPES.get(k, str)):
+            out[k] = found[k]
+    where = pack.states_of(str(found.get("key") or ""))
+    if where and "trigger" not in out:
+        out["trigger"] = {"state": where}
+    return RowFields(**out)
+
+
+def _group_of(found: dict[str, Any]) -> Group:
+    """Read from the built-in row: an edit moves no agent between groups."""
+    base = found.get("builtin") or found
+    if (base.get("output") or {}).get("kind") == "helper":
+        return "helper"
+    if pack.states_of(str(found.get("key") or "")):
+        return "stage"
+    return "triggered" if pack.triggered(base) else "engine"
+
+
+def _skills(found: dict[str, Any]) -> list[SkillText]:
+    out = []
+    for name in found.get("skills") or []:
+        base = pack.skill_base(name)
+        try:
+            text = pack.skill(name)
+        except LookupError:
+            text = ""
+        out.append(SkillText(name=name, text=text, builtin=base, edited=text != base))
+    return out
+
+
 class Agents:
-    def __init__(self, config: Config, ws: Workspaces) -> None:
+    def __init__(self, config: Config, ws: Workspaces, hooks: Callable[[], Hooks] = Hooks) -> None:
         self.config = config
         self.ws = ws
-
-    def agent_overrides(self) -> tuple[dict[str, dict[str, str]], list[str]]:
-        """The stored overrides, or none and why when `cos.db` cannot be read: a name is
-        never a reason to refuse a step or a board read."""
-        try:
-            rows = Data(self.config.data_dir).pref_rows(agents.PREFIX)
-        except (Unusable, sqlite3.Error, OSError) as e:
-            return {}, [f"the agent overrides could not be read, so the defaults apply: {e}"]
-        return agents.overrides_from(rows)
+        # The app's catalog, asked when the page is read or a field saved: set once the features
+        # are built, after this.
+        self.hooks = hooks
 
     def agent(self, key: str) -> dict[str, Any] | None:
-        """The resolved row for `key`, overrides included, or `None`. Every place in the
-        service that shows or writes an agent's name asks this. Never raises on bad data."""
-        return agents.agent_for(key, self.agent_overrides()[0])
+        """The resolved identity of `key`, or `None`. Every place in the service that shows or
+        writes an agent's name asks this. Never raises on bad data."""
+        return agents.agent_for(key)
 
-    def agent_table(self) -> dict[str, Any]:
-        """Every agent's identity, each with `overridden`, and what was wrong."""
-        overrides, bad = self.agent_overrides()
-        found = agents.table(overrides)
-        for row in found["rows"]:
-            row["overridden"] = row["key"] in overrides
-        found["problems"] = bad + found["problems"]
-        return found
+    def catalog(self, cwd: str = "") -> list[CatalogTool]:
+        """Every tool a row may name, with whether its feature is on for `cwd` (`""`: the
+        features' own default)."""
+        hooks = self.hooks()
+        feature = {t.name: f for f, p in hooks.parts for t in p.tools}
+        return [
+            CatalogTool(
+                name=t.name,
+                effect=t.effect,
+                tier=t.tier,
+                server=t.server,
+                feature=feature.get(t.name, ""),
+                on=t.name not in feature or hooks.enabled(feature[t.name], cwd),
+            )
+            for t in hooks.catalog().values()
+            if t.name not in pack.ENGINE_TOOLS
+        ]
 
-    def config_overrides(self) -> tuple[dict[str, dict[str, models.Value]], list[str]]:
-        """`{field: {row: value}}` for model, effort, turns and budget, and what was wrong. A
-        store that cannot be read is no override at all, said in the problems: never a reason
-        to refuse a step or the page."""
-        found: dict[str, dict[str, models.Value]] = {}
-        problems: list[str] = []
-        try:
-            data = Data(self.config.data_dir)
-            for field, prefix in models.FIELD_PREFIX.items():
-                found[field], bad = models.overrides_from(data.pref_rows(prefix), prefix)
-                problems += bad
-        except (Unusable, sqlite3.Error, OSError) as e:
-            found = {field: {} for field in models.FIELD_PREFIX}
-            problems = [
-                f"the model and ceiling overrides could not be read, so the defaults apply: {e}"
-            ]
-        return found, problems
+    def catalog_block(self, cwd: str = "") -> str:
+        """Everything a row or a process may be composed from, as one JSON text: the `catalog`
+        data source (`contracts.DATA`) Dagaz reads. The tools (`catalog`), the data sources, the
+        output kinds with the fields the engine reads of each, the triggers and the bus events a
+        row may wait on, the process guards and actions, the bounds a row keeps, the skills, every
+        row (its parts a composition names) and every process. Read only."""
+        rows = pack.rows()
+        events = {}
+        for name in bus.NAMES:
+            fields = sorted(bus.fields_of(name))
+            if "workspace" in fields:
+                events[name] = fields
+        said = {
+            "tools": [
+                {"name": t["name"], "effect": t["effect"], "tier": t["tier"], "on": t["on"]}
+                for t in self.catalog(cwd)
+            ],
+            "data": list(contracts.DATA),
+            "outputs": {
+                k: {f: t for f, (_, t) in contracts.READS.get(k, {}).items()}
+                for k in pack.OUTPUT_KINDS
+                if k not in ("helper", "draft")
+            },
+            "triggers": [t for t in pack.TRIGGERS if t != "engine"],
+            "sandbox": (
+                'A triggered row may hold Bash as {"Bash": {"sandbox": {"network": '
+                '["127.0.0.1:<port>"]}}}: its commands run in an OS sandbox that writes only its '
+                "scratch folder, reads none of the app's secrets and reaches only those loopback "
+                "hosts (127.0.0.1, localhost or [::1], each with its port)."
+            ),
+            "events": events,
+            "guards": list(pack.PROCESS_GUARDS),
+            "actions": list(pack.ACTIONS),
+            "bounds": {
+                "efforts": list(pack.EFFORTS),
+                "turns": [pack.TURNS_MIN, pack.TURNS_MAX],
+                "usd": [pack.BUDGET_MIN, pack.BUDGET_MAX],
+                "name_max": pack.NAME_MAX,
+                "key_max": pack.KEY_MAX,
+            },
+            "skills": sorted({s for r in rows.values() for s in r.get("skills") or []}),
+            "rows": [
+                {
+                    "key": k,
+                    "pack": r.get("pack"),
+                    **{
+                        f: r[f]
+                        for f in (
+                            "name",
+                            "description",
+                            "model",
+                            "input",
+                            "output",
+                            "trigger",
+                            "tools",
+                        )
+                        if f in r
+                    },
+                }
+                for k, r in rows.items()
+                if not r.get("problems")
+            ],
+            "processes": pack.processes(),
+        }
+        return json.dumps(said, ensure_ascii=False, indent=1)
 
-    def _ends(self, workspace: str | None) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
-        """Every `end` record by stage, newest first, from one read of the run log, each with
-        the `label` of the `start` it closes, so a run is measured against its own ceiling."""
+    def _effects(self) -> dict[str, str] | None:
+        """Each catalog tool's effect, for `pack.check`; `None` for a core built with no feature
+        (a test's), whose catalog lacks the tools the built-in rows name."""
+        hooks = self.hooks()
+        return triggers.effects(hooks) if hooks.parts else None
+
+    def _records(
+        self, workspace: str | None
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[Setting]], list[str]]:
+        """Every `end` by agent, oldest first, each with the `label` and `row_hash` of the `start`
+        it closes (a run is measured against its own ceiling, grouped by its own definition); every
+        `agent-setting` by agent, oldest first. One read of the run log."""
         journal = self.ws.journal()
         if journal is None:
-            return {}, []
+            return {}, {}, []
         try:
-            records = journal.records(workspace, kinds=("start", "end"))
+            records = journal.records(None, kinds=("start", "end", SETTING_KIND))
         except (Unusable, Busy, sqlite3.Error, OSError) as e:
-            return {}, [f"the run log could not be read, so no run is shown: {e}"]
-        step_labels: dict[tuple[str, str, str], Any] = {}
-        ends: list[dict[str, Any]] = []
+            return {}, {}, [f"the run log could not be read, so no run is shown: {e}"]
+        starts: dict[tuple[str, str, str], dict[str, Any]] = {}
+        ends: dict[str, list[dict[str, Any]]] = {}
+        settings: dict[str, list[Setting]] = {}
         for record in records:
+            if record.get("kind") == SETTING_KIND:
+                settings.setdefault(str(record.get("agent") or ""), []).append(
+                    Setting(
+                        at=str(record.get("at") or ""),
+                        field=str(record.get("field") or ""),
+                        old=record.get("old"),
+                        new=record.get("new"),
+                        by=str(record.get("by") or ""),
+                    )
+                )
+                continue
+            if workspace is not None and record.get("workspace") != workspace:
+                continue
             step = (str(record.get("workspace")), str(record.get("unit")), str(record.get("stage")))
             if record.get("kind") == "start":
-                step_labels[step] = record.get("label")
+                starts[step] = record
             else:
-                ends.append({**record, "label": step_labels.pop(step, None)})
-        by_stage: dict[str, list[dict[str, Any]]] = {}
-        for record in reversed(ends):
-            by_stage.setdefault(str(record.get("stage") or ""), []).append(record)
-        return by_stage, []
+                start = starts.pop(step, {})
+                ends.setdefault(step[2], []).append(
+                    {
+                        "started_by": start.get("started_by"),
+                        **record,
+                        "label": start.get("label"),
+                        "row_hash": start.get("row_hash"),
+                    }
+                )
+        return ends, settings, []
 
-    def agent_page(self, workspace: str | None = None, now: datetime | None = None) -> AgentPage:
-        """Everything the Agents page shows, in one call: the run log is read once, not per stage.
+    def agent_page(
+        self, workspace: str | None = None, now: datetime | None = None, cwd: str = ""
+    ) -> AgentPage:
+        """Everything the Agents page shows, in one call: the run log is read once.
 
-        `rows`, one per agent, failed and costly first and otherwise in `agents.json`'s order:
-        identity, model, effort and the two ceilings each with its source, its `:novel` rows
-        under `variants`, the grant (read only), the skill, the last run, the last `RECENT`,
-        the cost and count of the last `WINDOW_DAYS`, and the chip. `others`: `estimate` and
-        `chat`. `problems`: every override, default or record that was skipped.
+        `rows`, one per agent in the pack's order: its row as it stands and as built in, the keys the owner set, its problems, its skills' texts, its hash,
+        what a run gets (resolved), the last run, the cost and count of the last `WINDOW_DAYS`, the
+        chip and the runs of that window grouped by definition. `catalog`: every tool a row may
+        name, its feature on or off for `cwd`. `problems`: every row or record that cannot be used.
 
         `workspace` is a run-log key; `None` adds up every workspace of the working folder.
         """
         now = now or datetime.now(timezone.utc)
         since = (now - timedelta(days=WINDOW_DAYS)).isoformat(timespec="seconds")
-        identity = self.agent_table()
-        overrides, bad_overrides = self.config_overrides()
-        defaults, bad_defaults = models.load_defaults()
-        keys = [r["key"] for r in identity["rows"]]
-        config = models.agent_config(keys, overrides, defaults, self.config.model)
-        by_key = {r["key"]: r for r in config["rows"]}
-        ends, bad_runs = self._ends(workspace)
-
+        ends, settings, bad_runs = self._records(workspace)
+        effects = self._effects()
+        data = Data(self.config.data_dir)
         rows: list[AgentRow] = []
-        for who in identity["rows"]:
-            key = str(who["key"])
-            mine = ends.get(key, [])
-            recent = [r for r in mine if str(r.get("at") or "") >= since]
-            last = _run_view(mine[0]) if mine else None
-            config_row = by_key[key]
-            variants = [r for k, r in by_key.items() if k == key + models.NOVEL_SUFFIX]
-            # A `novel` run is held to the `:novel` row's dollar ceiling where it has one.
-            ran_under = next(
-                (
-                    v["ceilings"]["max_budget_usd"]
-                    for v in variants
-                    if mine and mine[0].get("label") == models.NOVEL
-                    if v["ceilings"]["max_budget_usd"]
-                ),
-                config_row["ceilings"]["max_budget_usd"],
-            )
-            cost = sum(
-                float(r["cost_usd"]) for r in recent if isinstance(r.get("cost_usd"), (int, float))
-            )
+        for key, found in pack.rows().items():
+            config = models.config_row(key, self.config.model)
+            variants = found.get("variants")
+            has_novel = isinstance(variants, dict) and policy.NOVEL in variants
+            novel = models.config_row(key, self.config.model, policy.NOVEL) if has_novel else None
             rows.append(
-                AgentRow(
-                    key=key,
-                    glyph=str(who["glyph"]),
-                    name=str(who["name"]),
-                    meaning=str(who["meaning"]),
-                    role=str(who["role"]),
-                    identity_source=dict(who["source"]),
-                    config=config_row,
-                    variants=variants,
-                    skill=skill_of(key),
-                    grant=_grant_view(key),
-                    last=last,
-                    runs=[_run_view(r) for r in mine[:RECENT]],
-                    runs_30d=len(recent),
-                    cost_30d=round(cost, 6),
-                    chip=chip_of(last, ran_under, len(recent)),
-                )
+                self._row(key, found, _group_of(found), config, novel, ends, settings, since)
             )
-        rows.sort(key=lambda r: r["chip"] not in ATTENTION)
+            rows[-1]["problems"] = pack.problems(key, effects)
+            rows[-1]["on"] = self._on(data, key, workspace)
+        table = agents.table()
         return AgentPage(
             rows=rows,
-            others=[by_key[k] for k in (models.ESTIMATE, models.CHAT) if k in by_key],
-            problems=identity["problems"]
-            + bad_defaults
-            + bad_overrides
-            + config["problems"]
-            + bad_runs,
+            catalog=self.catalog(cwd),
+            problems=table["problems"] + bad_runs,
             cos_model=self.config.model,
+            scope="all" if workspace is None else "workspace",
+        )
+
+    def _row(
+        self,
+        key: str,
+        found: dict[str, Any],
+        group: Group,
+        config: models.ConfigRow,
+        novel: models.ConfigRow | None,
+        ends: dict[str, list[dict[str, Any]]],
+        settings: dict[str, list[Setting]],
+        since: str,
+    ) -> AgentRow:
+        mine = ends.get(key, [])
+        recent = [r for r in mine if str(r.get("at") or "") >= since]
+        last = _run_view(mine[-1]) if mine else None
+        budget = config["ceilings"]["max_budget_usd"]
+        if mine and mine[-1].get("label") == policy.NOVEL and novel is not None:
+            budget = novel["ceilings"]["max_budget_usd"] or budget
+        views = [_run_view(r) for r in recent]
+        return AgentRow(
+            key=key,
+            pack=str(found.get("pack") or ""),
+            own=bool(found.get("own")),
+            group=group,
+            row=_fields_of(found),
+            builtin=_fields_of(found.get("builtin") or found),
+            edited=list(found.get("edited") or []),
+            problems=[],
+            editable=True,
+            skills=_skills(found),
+            row_hash=pack.hash_of(found),
+            config=config,
+            novel=novel,
+            last=last,
+            runs_30d=len(recent),
+            cost_30d=round(sum(r["cost_usd"] or 0.0 for r in views), 6),
+            chip=chip_of(last, budget, len(recent)),
+            groups=groups_of(views, [s for s in settings.get(key, []) if s["at"] >= since]),
+            on=None,
+        )
+
+    @staticmethod
+    def _on(data: Data, key: str, workspace: str | None) -> bool | None:
+        found = pack.row(key)
+        timed = pack.triggered(found, "event") or pack.triggered(found, "schedule")
+        return pack.agent_on(data, key, workspace) if timed and workspace else None
+
+    def set_state(self, cwd: str, key: object, on: object) -> AgentPage:
+        """Turn `key`'s event or schedule on or off in the workspace `cwd`: the pref
+        `agents.state`, logged as an `agent-state` row `by: owner`. A press and Leif run it
+        either way. **Behind the password**: whoever holds it can make a read-only row run on its
+        own there, under its ceilings and the daily cap."""
+        ws = self.ws.key(self.ws.check(cwd))
+        if not isinstance(key, str) or not isinstance(on, bool):
+            raise Invalid("send {cwd, key, on}: on is true or false")
+        try:
+            pack.set_agent_on(Data(self.config.data_dir), key, ws, on)
+        except pack.PackError as e:
+            raise Invalid(str(e)) from e
+        journal = self.ws.journal()
+        if journal is not None:
+            try:
+                journal.append(dict(triggers.state_record(ws, key, on, OWNER)))
+            except (BadRecord, Busy) as e:
+                raise Invalid(f"the setting was saved but not logged: {e}") from e
+        return self.agent_page(ws, cwd=cwd)
+
+    def proposals_view(self, cwd: str) -> ProposalsView:
+        """Every agent's proposals in the workspace `cwd`, newest first, each naming its agent, and
+        the rows that propose, on or off there."""
+        ws = self.ws.key(self.ws.check(cwd))
+        data = Data(self.config.data_dir)
+        rows = pack.rows()
+
+        def name(key: str) -> str:
+            return str((rows.get(key) or {}).get("name") or key)
+
+        return ProposalsView(
+            proposals=[
+                ProposalRow(**p, agent_name=name(p["agent"])) for p in proposals.listed(data, ws)
+            ],
+            agents=[
+                ProposingAgent(key=k, name=name(k), on=self._on(data, k, ws))
+                for k, r in rows.items()
+                if (r.get("output") or {}).get("kind") == "proposal"
+            ],
         )
 
     def set_agent_field(
-        self, key: object, field: object, value: object = None, workspace: str | None = None
+        self, key: object, field: object, value: object = None, cwd: str = ""
     ) -> AgentPage:
-        """Save one field of one row, or reset it to its default when `value` is `None`, then
-        log it and return `agent_page`. Out of bounds is refused and nothing is written.
+        """Save one field of one row into the owner's layer (`pack.write`), or put the built-in's
+        back when `value` is `None` (or `""`), then log it and return `agent_page`.
 
-        `field` is one of `agents.FIELDS` (an agent's identity; `""` resets too) or of
-        `models.FIELD_PREFIX` (model, effort, turns, budget; which rows take which is
-        `models.settable`; an effort of `""` resets too).
+        `field` is a frontmatter key (`pack.KEYS`), `body`, or `skill:<name>`, its value the whole
+        key as the row file holds it. The row as it would then stand must pass `pack.check` with
+        the app's catalog, its `input` and `output` `contracts`; else a 400 naming every reason and
+        nothing is written. `trigger` is saved only on a row its own trigger starts (an event, a
+        schedule, a press, Leif), and only within `pack.check`: a row an event, a schedule or Leif
+        starts holds only reading tools, and Bash only in the sandbox. Any other row's is shown, not saved.
 
-        **Behind the password like every route here**: whoever holds it or a live session can
-        raise any agent's budget to `BUDGET_MAX` a step, and the autopilot runs with it. The
-        trace is the `agent-setting` record and each step's `config` event.
+        **Behind the password like every route here**: whoever holds it or a live session can give
+        any agent another model, larger ceilings, another prompt or more of the catalog's tools,
+        inside the critical calls (`policy.critical`), and the autopilot runs with it. The trace is
+        the `agent-setting` record and each run's `row_hash` and `edited`.
         """
-        if not isinstance(key, str) or not key:
-            raise Invalid("key is required")
+        if not isinstance(key, str) or pack.row(key) is None:
+            raise Invalid(f"no such agent: {key} (use one of {', '.join(pack.rows())})")
         field = str(field)
-        if field in agents.FIELDS:
-            old, new = self._set_identity(key, field, value)
-        elif field in models.FIELD_PREFIX:
-            old, new = self._set_config(key, field, value)
-        else:
-            known = (*agents.FIELDS, *models.FIELD_PREFIX)
-            raise Invalid(f"no such field: {field} (use one of {', '.join(known)})")
+        if field == "trigger" and not pack.triggered((pack.row(key) or {}).get("builtin")):
+            raise Invalid("trigger is read-only: the process or the engine says when it runs")
+        if value == "":
+            value = None
+        try:
+            if value is not None and field == "input":
+                contracts.check_input(key, value, pack.rows())
+            if (
+                isinstance(value, dict)
+                and field == "output"
+                and value.get("kind") in contracts.KINDS
+            ):
+                contracts.check(key, value)
+            old, new = pack.write(key, field, value, self._effects())
+        except (ValueError, contracts.ContractError) as e:
+            raise Invalid(str(e)) from e
+        except OSError as e:
+            raise Invalid(
+                f"the owner's layer could not be written, so nothing was saved: {e}"
+            ) from e
         journal = self.ws.journal()
         if journal is not None:
             try:
@@ -315,80 +646,167 @@ class Agents:
                 )
             except (BadRecord, Busy) as e:
                 raise Invalid(f"the setting was saved but not logged: {e}") from e
-        return self.agent_page(workspace)
+        return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
 
-    def _set_config(self, key: str, field: str, value: Any) -> tuple[Any, Any]:
-        """Write or remove `<prefix><key>`; `(old, new)` override."""
-        rows = models.settable(agents.load_defaults()[0])
-        if key not in rows:
-            raise Invalid(f"no such row: {key} (use one of {', '.join(rows)})")
-        if field not in rows[key]:
-            raise Invalid(f"{key} has no {field} to set")
-        # The effort box's "Default" choice sends nothing: it means the default, so a reset.
-        if field == "effort" and value == "":
-            value = None
-        if value is not None:
-            value, reason = models.check(field, value)
-            if reason:
-                raise Invalid(reason)
-        prefix = models.FIELD_PREFIX[field]
-        data = Data(self.config.data_dir)
+    def _vault(self) -> vault.Store:
+        return vault.Store(Data(self.config.data_dir))
+
+    def _log(self, record: dict[str, Any]) -> None:
+        journal = self.ws.journal()
+        if journal is None:
+            return
         try:
-            old = models.overrides_from(data.pref_rows(prefix), prefix)[0].get(key)
-        except (Unusable, sqlite3.Error, OSError) as e:
-            raise Invalid(f"the overrides could not be read, so nothing was saved: {e}") from e
-        if value is None:
-            data.delete_pref(prefix + key)
-        else:
-            data.set_pref(prefix + key, value)
-        return old, value
+            journal.append({"workspace": "", "unit": "", "stage": "", **record, "by": OWNER})
+        except (BadRecord, Busy) as e:
+            raise Invalid(f"the setting was saved but not logged: {e}") from e
 
-    def _set_identity(self, key: str, field: str, value: Any) -> tuple[Any, Any]:
-        """Write or remove one identity field of `key`'s override; `(old, new)` of that field.
-
-        A name another row has, override or default, whatever its case, is refused: removing
-        an override brings the default name back, so that is checked too.
-        """
-        defaults, _ = agents.load_defaults()
-        if key not in defaults:
-            raise Invalid(f"no such agent: {key} (use one of {', '.join(defaults)})")
-        value = "" if value is None else value
-        if value != "":
-            reason = agents.check_field(field, value)
-            if reason:
-                raise Invalid(reason)
-
-        # Read strictly, unlike `agent_overrides`: a write built on overrides it could not read
-        # would drop the row's other fields and check the name against defaults alone.
-        data = Data(self.config.data_dir)
+    def new_agent(
+        self, key: object, start: object, name: object, cwd: str = "", given: object = None
+    ) -> AgentPage:
+        """Write a new agent into the owner's pack (`pack.new_row`): a copy of row `start`, the
+        whole row `given` (`{fields, body}`: a draft a person read and saves), or the smallest row
+        that runs, checked with the app's catalog; logged as an `agent-setting` record. **Behind
+        the password**: its tools are the catalog's, its runs get only what the engine derives,
+        inside the critical calls."""
+        if not isinstance(key, str) or not isinstance(name, str):
+            raise Invalid("send {key, name, from?, row?}: key and name are names")
+        if start is not None and not isinstance(start, str):
+            raise Invalid("from is the key of an agent")
+        if given is not None and not isinstance(given, dict):
+            raise Invalid("row is {fields, body}")
         try:
-            overrides, _ = agents.overrides_from(data.pref_rows(agents.PREFIX))
-        except (Unusable, sqlite3.Error, OSError) as e:
+            pack.new_row(key, name, start or None, self._effects(), given)
+        except pack.PackError as e:
+            raise Refused(e) from e
+        except OSError as e:
             raise Invalid(
-                f"the agent overrides could not be read, so nothing was saved: {e}"
+                f"the owner's pack could not be written, so nothing was saved: {e}"
             ) from e
-        old = overrides.get(key) or {}
-        new = {f: v for f, v in {**old, field: value}.items() if v != ""}
-        after = {k: v for k, v in overrides.items() if k != key}
-        if new:
-            after[key] = new
+        self._log(
+            {
+                "kind": SETTING_KIND,
+                "agent": key,
+                "field": "new",
+                "old": None,
+                "new": start or ("draft" if given is not None else ""),
+            }
+        )
+        return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
 
-        def named(k: str) -> str:
-            row = agents.resolve(k, defaults, after)
-            if row is None:
-                raise Invalid(f"no such agent: {k} (use one of {', '.join(defaults)})")
-            return str(row["name"])
+    def delete_agent(self, key: object, cwd: str = "") -> AgentPage:
+        """Remove a whole row of the owner's pack, refused `in-use` while a process names it."""
+        try:
+            pack.delete_row(str(key))
+        except pack.PackError as e:
+            raise Refused(e) from e
+        self._vault().forget_agents({str(key)})
+        self._log(
+            {"kind": SETTING_KIND, "agent": str(key), "field": "delete", "old": None, "new": None}
+        )
+        return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
 
-        name = named(key)
-        taken = {named(k).lower(): k for k in defaults if k != key}
-        if name.lower() in taken:
-            raise Invalid(f"the name {name} is already {taken[name.lower()]}'s")
+    def set_process(self, cwd: str, name: object, given: object) -> list[pack.PackShown]:
+        """Set the owner's process `local/<name>` (`pack.write_process`), or remove it with `None`:
+        refused `in-use` while a unit records it. Logged as a `pack-setting` record."""
+        key = self.ws.key(self.ws.check(cwd))
+        if not isinstance(name, str) or (given is not None and not isinstance(given, dict)):
+            raise Invalid("send {cwd, name, process}: process is {start, end, states} or null")
+        ref = f"{pack.LOCAL_NAME}/{name}"
+        try:
+            if given is None and (used := self.ws.unit_meta().units_on(ref)):
+                raise pack.PackError([f"{ref} is the process of {', '.join(used)}"], code="in-use")
+            old, new = pack.write_process(name, given)
+        except pack.PackError as e:
+            raise Refused(e) from e
+        except OSError as e:
+            raise Invalid(
+                f"the owner's pack could not be written, so nothing was saved: {e}"
+            ) from e
+        self._log(
+            {
+                "kind": PACK_KIND,
+                "pack": pack.LOCAL_NAME,
+                "field": f"process:{name}",
+                "old": old,
+                "new": new,
+            }
+        )
+        return pack.packs_shown(Data(self.config.data_dir), key)
 
-        if new:
-            data.set_pref(agents.PREFIX + key, new)
-        else:
-            data.delete_pref(agents.PREFIX + key)
-        return old.get(field), new.get(field)
+    def export_pack(self, name: str) -> bytes:
+        try:
+            return pack.export_zip(name)
+        except pack.PackError as e:
+            raise Refused(e) from e
+
+    def import_pack(self, cwd: str, blob: bytes) -> list[pack.PackShown]:
+        """Put the pack in zip `blob` in place (`pack.import_zip`, checked with the app's catalog),
+        off in every workspace; logged as a `pack-setting` record. **Behind the password**: it
+        brings prompts, skills and compositions of catalog tools, nothing that runs until a
+        workspace turns it on and a run is started."""
+        key = self.ws.key(self.ws.check(cwd))
+        data = Data(self.config.data_dir)
+        try:
+            named = self._vault().named_agents()
+            name = pack.import_zip(blob, self._effects(), lambda k, _: _named(k, named))
+        except pack.PackError as e:
+            raise Refused(e) from e
+        except OSError as e:
+            raise Invalid(f"the pack could not be written, so nothing was imported: {e}") from e
+        _forget(data, name)
+        self._log(
+            {
+                "kind": PACK_KIND,
+                "pack": name,
+                "field": "import",
+                "old": None,
+                "new": pack.pack_version(name),
+            }
+        )
+        return pack.packs_shown(data, key)
+
+    def delete_pack(self, cwd: str, name: str) -> list[pack.PackShown]:
+        """Remove an imported pack, refused `in-use` while a unit records one of its processes."""
+        key = self.ws.key(self.ws.check(cwd))
+        data = Data(self.config.data_dir)
+        try:
+            if used := self.ws.unit_meta().units_on(name):
+                raise pack.PackError(
+                    [f"{name} holds the process of {', '.join(used)}"], code="in-use"
+                )
+            old = pack.pack_version(name)
+            keys = {k for k, r in pack.rows().items() if r["pack"] == name}
+            pack.remove_pack(name)
+            self._vault().forget_agents(keys)
+        except pack.PackError as e:
+            raise Refused(e) from e
+        except OSError as e:
+            raise Invalid(f"the pack could not be removed: {e}") from e
+        _forget(data, name)
+        self._log({"kind": PACK_KIND, "pack": name, "field": "delete", "old": old, "new": None})
+        return pack.packs_shown(data, key)
+
+
+def _named(key: str, named: set[str]) -> list[str]:
+    """An imported row never takes a key a vault secret's list names: it would get the secret."""
+    return [f"{key}: a vault secret names an agent {key}"] if key in named else []
+
+
+def _forget(data: Data, name: str) -> None:
+    """Drop pack `name`'s on/off from every workspace: a pack imported under a removed one's name
+    starts off."""
+    state = data.pref(pack.STATE_PREF, {})
+    if isinstance(state, dict) and name in state:
+        data.set_pref(pack.STATE_PREF, {k: v for k, v in state.items() if k != name})
+
+
+class Refused(Invalid):
+    """A pack write refused: its `code` (`pack-refused`, `in-use`) and every reason in words."""
+
+    def __init__(self, e: pack.PackError):
+        super().__init__("; ".join(e.reasons))
+        self.code = e.code
+        self.reasons = e.reasons
 
 
 class Models:
@@ -396,44 +814,51 @@ class Models:
         self.config = config
         self.ws = ws
 
-    # -- which model each stage runs on --------------------------------------
-    #
-    # The resolving is `coscc/agent/models.py`; this gathers its inputs: the stage list from
-    # the loop, the overrides from `prefs`, `COS_MODEL` from `Config`.
-
-    def model_overrides(self) -> tuple[dict[str, models.Value], list[str]]:
-        return models.overrides_from(Data(self.config.data_dir).pref_rows(models.PREFIX))
-
-    def effort_overrides(self) -> tuple[dict[str, models.Value], list[str]]:
-        return models.overrides_from(
-            Data(self.config.data_dir).pref_rows(models.EFFORT_PREFIX), models.EFFORT_PREFIX
+    def agent(
+        self,
+        key: str,
+        row: policy.Row,
+        model: str | None = None,
+        effort: str | None = None,
+    ) -> run_mod.Agent:
+        """The `run` agent of a session no stage runs: the estimate, a feature's session (whose own
+        `model` and `effort` stand where the pack has no row) and Leif, on the row's own ceilings
+        and with its body as the system prompt."""
+        model, model_source, effort, effort_source = models.resolve(
+            key, None, self.config.model, own={"id": model, "effort": effort}
         )
-
-    def model_for(self, name: str) -> tuple[str | None, str]:
-        """`(model, source)` for chat. Never raises on bad data.
-
-        A board step goes through `stage_config` instead, which also reads the label.
-        """
-        return self.config_for(name)[:2]
+        return run_mod.Agent(
+            key,
+            row,
+            model=model,
+            effort=effort,
+            sources={
+                "model_source": model_source,
+                "effort_source": effort_source,
+                "max_turns_source": models.DEFAULT,
+                "max_budget_source": models.DEFAULT if row.max_budget_usd else models.NONE,
+            },
+            system=str((pack.row(key) or {}).get(pack.BODY) or ""),
+        )
 
     def config_for(self, name: str) -> tuple[str | None, str, str | None, str]:
         """`(model, model_source, effort, effort_source)` of a row run with no label: Gebo's
-        `integrate`, which falls back to `impl`'s base row (`models.FALLS_BACK`)."""
-        defaults, _ = models.load_defaults()
-        return models.resolve(
-            name,
-            None,
-            self.model_overrides()[0],
-            self.effort_overrides()[0],
-            defaults,
-            self.config.model,
-        )
+        `integrate`."""
+        return models.resolve(name, None, self.config.model)
 
     def stage_config(
-        self, stage: str, stages: list[str], directory: Path, journal: Journal, key: str, unit: str
+        self,
+        stage: str,
+        process: str | None,
+        plan: Plan | None,
+        journal: Journal,
+        key: str,
+        unit: str,
+        agent: str | None = None,
     ) -> dict[str, Any]:
-        """The label a step runs under, the model and effort it resolves to, and for `impl`
-        which run of the unit's this is. Called after the gate, before any money is spent.
+        """The label a step runs under, the model and effort its `agent` row resolves to (the
+        stage's own when none is given), and for a state that writes in the unit's branch which
+        run of the unit's this is. Called after the gate, before any money is spent.
         The label chooses a configuration and nothing else.
 
         `Busy` from the run log is left to the caller, as `failed_attempts` is.
@@ -442,24 +867,13 @@ class Models:
         and `trial_record` says which arm and what was asked for; the model the session really
         ran is filled in once its `init` names it. Any other step has no `trial_record` key.
         """
-        try:
-            plan_text: str | None = (Path(directory) / "plan.md").read_text(
-                encoding="utf-8", errors="replace"
-            )
-        except OSError:
-            plan_text = None
-        history = [r for r in journal.records(key, unit) if r.get("stage") == "impl"]
-        label_declared, label, label_source = labels.label_for(stage, stages, plan_text, history)
-        arm = modeltrial.arm(unit) if modeltrial.applies(stage, label) else None
-        trial_kw = {"trial_model": modeltrial.model_for(stage, label, arm)} if arm else {}
+        row = agent or stage
+        history = [r for r in journal.records(key, unit) if r.get("stage") == stage]
+        label_declared, label, label_source = models.label_of(stage, process, plan)
+        arm = modeltrial.arm(unit, row) if modeltrial.applies(row, label) else None
+        trial_model = modeltrial.model_for(row, label, arm) if arm else None
         model, model_source, effort, effort_source = models.resolve(
-            stage,
-            label,
-            self.model_overrides()[0],
-            self.effort_overrides()[0],
-            models.load_defaults()[0],
-            self.config.model,
-            **trial_kw,
+            row, label, self.config.model, trial_model
         )
         trial_record = (
             {"trial_record": {modeltrial.FIELD: {"arm": arm, "requested": model}}} if arm else {}
@@ -473,9 +887,11 @@ class Models:
             "label_declared": label_declared,
             "label": label,
             "label_source": label_source,
-            # Every `start` of `impl` counts, the review-driven fixes included.
+            # Every `start` of `impl` counts, the review-driven fixes included; a raise's does not.
             "impl_run": (
-                sum(1 for r in history if r.get("kind") == "start") + 1 if stage == "impl" else None
+                sum(1 for r in history if r.get("kind") == "start" and "continues" not in r) + 1
+                if states.by_of(process, stage) == "session"
+                else None
             ),
         }
 
@@ -491,15 +907,3 @@ class Models:
             # Recorded as null.
             log.exception("whether the CI of %s is red could not be read", unit)
             return None
-
-    async def findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, Any]:
-        """The findings in the rounds a `review` step added, off the board (`parseReview`'s
-        count, read the way `post_new_rounds` reads it), and those rounds' verdicts."""
-        data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
-        found = next((u for u in data["units"] if u["name"] == unit), None) or {}
-        added = [r for r in found.get("rounds") or [] if r.get("n") not in before]
-        return {
-            "findings": sum(int(r.get("findings") or 0) for r in added),
-            "findings_open": sum(int(r.get("findings_open") or 0) for r in added),
-            "verdicts": [str(r.get("verdict") or "") for r in added],
-        }

@@ -21,17 +21,14 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal, get_args
+from typing import Any, Literal, get_args
 
 from coscc.agent import agents
-from coscc.agent.transcript import ceilings_left
 from coscc.git import gh
 from coscc.runner.step import check_started_by
-from coscc.runner.attempt import CLAUDE_CODE_PRESET, Denials, permission_gate
+from coscc.units import states
 from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
-from coscc.units.submit import SERVER
 
 STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown")
 # The three states with something to integrate. `current` carries a button too; a press on it
@@ -354,15 +351,6 @@ def related_units(rel: dict[str, list[dict]]) -> list[str]:
     return out
 
 
-def read_paths(units_root: Path, own: str, rel: dict[str, list[dict]]) -> tuple[str, ...]:
-    """Gebo's own unit folder, and intent/spec/plan of the related units, nothing else."""
-    paths = [str(units_root / own)]
-    for name in related_units(rel):
-        for f in ("intent.md", "spec.md", "plan.md"):
-            paths.append(str(units_root / name / f))
-    return tuple(paths)
-
-
 def needs_person_of(submitted: dict[str, Any] | None) -> list[str]:
     """What Gebo handed back through `submit` as needing a person, one line each: `<commit>: <why>`,
     or `<why>` alone when it names no commit. `[]` when it handed back none; its reply is never
@@ -478,19 +466,16 @@ def outcome_of_session(head_before: str, head_now: str, needs_person: list[str])
     return "failed"
 
 
-def describe_for_review(
-    rec: dict[str, Any], overrides: dict[str, dict[str, str]] | None = None
-) -> str:
+def describe_for_review(rec: dict[str, Any]) -> str:
     """The section the next `review` prompt carries.
 
     A completion says what it pushed (local commits nobody had pushed) and that the app opened
     the session for it, not a person.
 
-    The session is named from the record, or for an older one from today's table, `overrides`
-    included.
+    The session is named from the record, or for an older one from today's row.
     """
     body = json.dumps(rec, ensure_ascii=False, indent=2)
-    name = agents.of_record(rec, overrides)
+    name = agents.of_record(rec)
     session = f"an agent session ({name})" if name else "an agent session"
     if str((rec.get("completion") or {}).get("relation") or "") in COMPLETION:
         return (
@@ -592,9 +577,9 @@ def build_prompt(
     if names:
         parts.append("\n# Artifacts you may read for their intent\n")
         for name in names:
-            for f in ("intent.md", "spec.md", "plan.md"):
+            for f in states.files_where(kind="artifact"):
                 parts.append(f"- {units_root / name / f}")
-    # Named, not carried. `read_paths` already lets Gebo `Read` its own unit's folder.
+    # Named, not carried: Gebo reads what it needs of them.
     parts.append("\n# This unit's own artifacts\n")
     for path in own_paths.values():
         parts.append(f"- {path}")
@@ -734,105 +719,3 @@ async def pr_head(tree: str, n: int) -> str:
         return str(json.loads(out).get("headRefOid") or "")
     except (ValueError, AttributeError) as e:
         raise IntegrateError(f"gh pr view did not return JSON: {e}") from e
-
-
-async def run_gebo(
-    sessions: Any,
-    *,
-    tree: str,
-    workspace: str,
-    prompt: str,
-    grant: Any,
-    read_also: tuple[str, ...],
-    lease: tuple[str, str],
-    model: str | None,
-    effort: str | None = None,
-    settings: str | None = None,
-    owner: dict[str, Any] | None = None,
-    resume: dict[str, Any] | None = None,
-    channel: Any = None,
-    on_open: Callable[[int, float | None], None] | None = None,
-) -> AsyncIterator[tuple[str, Any]]:
-    """One Gebo session, streamed. Not `Runner.run`: that requires an artifact written, and Gebo
-    writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`.
-
-    `model` and `effort` are passed to the session only when named. The `grant`'s two ceilings are
-    the ones the caller resolved (`models.ceilings`); a `resume` goes on under what is left of them.
-    `on_open` is told those two, the turns and the budget (`None` for none) the session is handed,
-    just before it opens and so before any of its events; a session a used-up ceiling never opens
-    does not call it.
-
-    `settings` is the agent's commit attribution, beside the preset every Gebo session has; `None`
-    passes nothing.
-
-    `owner` and `resume`: whose session this is, for a `suspend` row, and such a row to go on
-    from, under what is left of the grant's ceilings.
-
-    `channel` is the `submit.Collector` Gebo hands its result to; `None` opens none.
-    """
-    denials = Denials()
-    reply = ""
-    end: dict[str, Any] = {}
-    kwargs: dict[str, Any] = {"system_prompt": dict(CLAUDE_CODE_PRESET)}
-    if tree != workspace:
-        kwargs["workspace"] = workspace
-    if model is not None:
-        kwargs["model"] = model
-    if effort is not None:
-        kwargs["effort"] = effort
-    if settings is not None:
-        kwargs["settings"] = settings
-    if owner is not None:
-        kwargs["owner"] = owner
-    if channel is not None:
-        kwargs["mcp_servers"] = {SERVER: channel.server()}
-    turns, budget = grant.max_turns, grant.max_budget_usd or None
-    if resume is not None:
-        turns, budget, used_up = ceilings_left(grant.max_turns, grant.max_budget_usd, resume)
-        if used_up:
-            yield (
-                "end",
-                {
-                    "reply": "",
-                    "session_id": resume.get("session_id", ""),
-                    "terminal_reason": used_up,
-                    "cost": {},
-                    "denials": 0,
-                    "denied": None,
-                    "background": 0,
-                },
-            )
-            return
-        kwargs["resume_at"] = resume.get("safe_uuid")
-    if on_open is not None:
-        on_open(turns, budget)
-    async for kind, payload in sessions.stream(
-        tree,
-        prompt,
-        (resume or {}).get("session_id") or None,
-        max_turns=turns,
-        can_use_tool=permission_gate(grant, tree, denials, None, read_also=read_also, lease=lease),
-        tools=list(grant.tools),
-        max_budget_usd=budget,
-        **kwargs,
-    ):
-        if kind == "chunk":
-            reply += payload
-            yield ("chunk", payload)
-        elif kind == "tool":
-            continue
-        elif kind == "session":
-            end["session_id"] = str(payload)
-        else:  # `done`, as `Runner.run` reads it
-            end.update(
-                session_id=payload.get("session_id", end.get("session_id", "")),
-                cost=payload.get("cost", {}) or {},
-                terminal_reason=str(payload.get("terminal_reason") or ""),
-                models_used=list(payload.get("models_used") or []),
-            )
-    end["reply"] = reply
-    end["denials"] = denials.count
-    end["denied"] = denials.reasons or None
-    # The `integrate` grant always holds `Bash`.
-    end["background"] = denials.background
-    yield ("end", end)

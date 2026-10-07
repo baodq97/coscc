@@ -22,8 +22,10 @@ from coscc.http.app import Core
 from coscc.kernel import Invalid
 from coscc.runner.queue import Refused
 from coscc.agent.sessions import Sessions
+from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
 from tests.http.test_app import use_sessions, use_config
+from tests.agent.edit import whole
 
 
 class _Replies:
@@ -74,28 +76,39 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         # A pass every 5 minutes would never come in a test; the loop's first pass does.
         self.addAsyncCleanup(self.core.shutdown)
 
-    async def unit(self, slug: str, intent: str = "Status: accepted.") -> str:
+    async def unit(
+        self,
+        slug: str,
+        status: str = "accepted",
+        questions: tuple[str, ...] = (),
+        also: dict[str, str] | None = None,
+        asked: dict[str, list[str]] | None = None,
+    ) -> str:
+        """A unit whose intent stands at `status`, with `questions`; `also` and `asked` state
+        other artifacts, all as rows."""
         made = await self.core.answers.create_unit(self.ws, slug, "words for the proof")
         (Path(made["path"]) / "intent.md").write_text(
-            f"# Intent: x\nAuthor: proof. Type: fix. {intent}\n", encoding="utf-8"
+            "# Intent: x\nAuthor: proof.\n", encoding="utf-8"
         )
-        await self.ingest(made["unit"])
+        seed(
+            self.core.ws.unit_meta(),
+            self.key,
+            made["unit"],
+            statuses={"intent.md": status, **(also or {})},
+            type="fix",
+            questions={
+                k: v for k, v in {"intent.md": list(questions), **(asked or {})}.items() if v
+            },
+        )
         return made["unit"]
 
-    async def ingest(self, unit: str) -> None:
-        """Files written here by hand reach `cos.db` as a step's would."""
-        self.assertEqual(
-            await self.core.answers.ingest(self.ws, unit, {"outcome": "done", "stage": "test"}),
-            {},
-        )
-
     def rows(self, unit: str) -> list[tuple]:
-        """The answers `cos.db` holds for `unit`, `(artifact, ref, answered_by, via, text)`."""
+        """The answers `cos.db` holds for `unit`, `(artifact, ref, name, via, text)`."""
         with self.core.ws.unit_meta().data.connect() as conn:
             return [
                 tuple(r)
                 for r in conn.execute(
-                    "SELECT artifact, ref, answered_by, via, text FROM unit_answers WHERE unit = ? ORDER BY id",
+                    "SELECT artifact, ref, name, via, text FROM unit_answers WHERE unit = ? ORDER BY id",
                     (unit,),
                 )
             ]
@@ -162,7 +175,9 @@ class OnTheRealLoop(_Base):
         await self.settled()
         self.assertEqual([s["started_by"] for s in self.starts()], ["person"])
         self.assertEqual(self.core.autopilot.tasks, {})
-        self.assertFalse((await self.core.board(self.ws))["autopilot"]["on"])
+        block = (await self.core.board(self.ws))["autopilot"]
+        self.assertFalse(block["on"])
+        self.assertGreater(block["cap"]["limit"], 0)  # the day's spend shows with the autopilot off
 
     async def test_a_done_step_starts_the_next_stage_and_a_draft_stops_it(self):
         use_sessions(self.core, _Replies(accepted=1))
@@ -188,7 +203,7 @@ class OnTheRealLoop(_Base):
 
     async def test_a_open_question_stops_it(self):
         use_sessions(self.core, _Replies(accepted=5))
-        unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
+        unit = await self.unit("asks", questions=("Which one?",))
         self.listed(unit)
         self.core.autopilot.set_setting(self.ws, "autopilot", True)
         await self.stopped()
@@ -196,24 +211,6 @@ class OnTheRealLoop(_Base):
         [stop] = (await self.core.board(self.ws))["autopilot"]["stops"]
         self.assertEqual((stop["unit"], stop["kind"]), (unit, "a"))
         self.assertIn("intent.md question 1", stop["reason"])
-
-    async def test_a_note_under_open_questions_does_not_stop_it(self):
-        """A bullet and a numbered line with no `?` are notes, so (a) never fires."""
-        use_sessions(self.core, _Replies(accepted=1))
-        unit = await self.unit(
-            "notes",
-            "Status: accepted.\n\n## Open questions\n\n"
-            "Không còn câu hỏi mở.\n\n- Câu 1 là hạn.\n"
-            "7. Người khởi xướng vẫn nên đọc lại file này.",
-        )
-        self.listed(unit)
-        self.core.autopilot.set_setting(self.ws, "autopilot", True)
-        await self.until(lambda: len(self.starts()) >= 2, "two steps")
-        await self.settled()
-        self.assertEqual(self.starts()[0]["stage"], "spec")
-        self.assertEqual(self.starts()[0]["started_by"], "autopilot")
-        [stop] = (await self.core.board(self.ws))["autopilot"]["stops"]
-        self.assertEqual((stop["unit"], stop["kind"]), (unit, "f"))
 
     async def test_e_a_failed_step_is_not_run_again(self):
         use_sessions(self.core, _Replies(accepted=5))
@@ -268,10 +265,10 @@ class OnTheRealLoop(_Base):
         return Journal(self.config.working_dir, self.config.data_dir).records(kind="answer")
 
     async def test_each_block_writes_an_answer_record_and_only_the_last_completes(self):
-        unit = await self.unit("asked", "Status: draft.\n\n## Open questions\n\n1. Một?\n2. Hai?")
-        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
+        unit = await self.unit("asked", "draft", ("Một?", "Hai?"))
+        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "person")
         self.assertEqual([r["completes"] for r in self.answers()], [False])
-        await self.core.answers.answer(self.ws, unit, "intent.md", 2, "hai", "")
+        await self.core.answers.answer(self.ws, unit, "intent.md", 2, "hai", "person")
         first, last = self.answers()
         self.assertEqual(
             {
@@ -307,7 +304,7 @@ class OnTheRealLoop(_Base):
 
     async def test_the_last_answer_runs_the_draft_again_in_the_pass_it_wakes(self):
         use_sessions(self.core, _Intents())
-        unit = await self.unit("rerun", "Status: draft.\n\n## Open questions\n\n1. Một?")
+        unit = await self.unit("rerun", "draft", ("Một?",))
         self.listed(unit)
         self.core.autopilot.set_setting(self.ws, "autopilot", True)
         await self.stopped()
@@ -315,7 +312,7 @@ class OnTheRealLoop(_Base):
         [stop] = (await self.core.board(self.ws))["autopilot"]["stops"]
         self.assertEqual(stop["kind"], "a")
         # The loop's next poll is 300 s away: only the pass the answer wakes can start it.
-        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "person")
         await self.until(lambda: self.starts(), "the rerun's start")
         await self.settled()
         self.assertEqual(
@@ -341,11 +338,11 @@ class OnTheRealLoop(_Base):
         use_sessions(
             self.core, _Intents("\n## Open questions\n\n1. Một?\n", questions=((1, "Một?"),))
         )
-        unit = await self.unit("kept", "Status: draft.\n\n## Open questions\n\n1. Một?")
+        unit = await self.unit("kept", "draft", ("Một?",))
         self.listed(unit)
         self.core.autopilot.set_setting(self.ws, "autopilot", True)
         await self.settled()
-        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "person")
         await self.until(lambda: self.starts(), "the rerun's start")
         await self.settled()
         self.assertEqual((await self.core.steps.next_step(self.ws, unit))["rerun"], "intent")
@@ -362,7 +359,7 @@ class OnTheRealLoop(_Base):
     async def test_an_open_question_stops_the_unit_and_opens_no_session(self):
         """The stop `a` is what a person sees; nothing answers for them."""
         use_sessions(self.core, _Intents())
-        unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
+        unit = await self.unit("asks", questions=("Which one?",))
         self.listed(unit)
         self.core.autopilot.set_setting(self.ws, "autopilot", True)
         await self.stopped()
@@ -377,18 +374,17 @@ class OnTheRealLoop(_Base):
     # --- , a draft impl asks a person ---------------------------------------
 
     async def test_a_draft_impl_is_answered_and_journalled_as_impl(self):
-        unit = await self.unit("impl-asks")
+        unit = await self.unit(
+            "impl-asks",
+            also={"spec.md": "accepted", "plan.md": "accepted", "impl.md": "draft"},
+            asked={"impl.md": ["Chạy lệnh X rồi đưa kết quả?"]},
+        )
         d = self.core.ws.unit_dir(self.ws, unit)
-        (d / "spec.md").write_text(
-            "# Spec: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8"
-        )
-        (d / "plan.md").write_text(
-            "# Plan: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8"
-        )
         before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
         (d / "impl.md").write_text(before, encoding="utf-8")
-        await self.ingest(unit)
-        await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "Leif")
+        await self.core.answers.answer(
+            self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "delegated", "Leif"
+        )
         # A row, and not one byte of `impl.md`.
         self.assertEqual((d / "impl.md").read_text(encoding="utf-8"), before)
         self.assertEqual(self.rows(unit), [("impl.md", "1", "Leif", "product", "Đã chạy, ra 0.")])
@@ -400,19 +396,18 @@ class OnTheRealLoop(_Base):
         self.assertEqual(
             (record["stage"], record["artifact"], record["completes"]), ("impl", "impl.md", True)
         )
+        self.assertEqual(record["by"], "delegated")
 
     async def impl_asks(self, slug: str) -> tuple[str, Path, str]:
-        unit = await self.unit(slug, "Status: accepted.\n\n## Open questions\n\n1. Một?")
+        unit = await self.unit(
+            slug,
+            questions=("Một?",),
+            also={"spec.md": "accepted", "plan.md": "accepted", "impl.md": "draft"},
+            asked={"impl.md": ["Chạy lệnh X rồi đưa kết quả?"]},
+        )
         d = self.core.ws.unit_dir(self.ws, unit)
-        (d / "spec.md").write_text(
-            "# Spec: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8"
-        )
-        (d / "plan.md").write_text(
-            "# Plan: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8"
-        )
         before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
         (d / "impl.md").write_text(before, encoding="utf-8")
-        await self.ingest(unit)
         return unit, d, before
 
     async def test_an_answer_to_impl_md_is_refused_while_an_impl_step_runs(self):
@@ -423,13 +418,13 @@ class OnTheRealLoop(_Base):
         with self.assertRaisesRegex(
             Invalid, r"^impl\.md cannot be answered while the impl step that writes it is running"
         ):
-            await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
+            await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "person")
         self.assertEqual((d / "impl.md").read_text(encoding="utf-8"), before)
         self.assertEqual(self.answers(), [])
         # Another artifact of the same unit is not the step's to write.
-        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "person")
         self.core.attempts.move(row["id"], "ended", "done")
-        await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
+        await self.core.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "person")
         self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md", "impl.md"])
 
     async def test_a_prose_step_does_not_refuse_an_answer_to_its_artifact(self):
@@ -438,7 +433,7 @@ class OnTheRealLoop(_Base):
         unit, d, before = await self.impl_asks("intent-busy")
         row = self.core.attempts.open("step", self.key, unit, "intent", state="running")
         try:
-            await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
+            await self.core.answers.answer(self.ws, unit, "intent.md", 1, "một", "person")
         finally:
             self.core.attempts.move(row["id"], "ended", "done")
         self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md"])
@@ -450,7 +445,9 @@ class _Intents:
     def __init__(self, asks: str = "", questions: tuple = ()):
         self.asks = asks
         # The questions the object hands back, which the app reads; `asks` is prose.
-        self.questions = [{"n": n, "text": t} for n, t in questions]
+        self.questions = [
+            {"n": n, "text": t, "recommendation": "Take the first."} for n, t in questions
+        ]
 
     async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
         yield (
@@ -551,11 +548,7 @@ class Scripted(_Base):
             "reasons": list(reasons),
         }
         if plan is not None:
-            d = self.core.ws.unit_dir(self.ws, name)
-            d.mkdir(parents=True, exist_ok=True)
-            (d / "plan.md").write_text(
-                f"# Plan\n\n## Files that change\n\n{plan}\n\n## Order\n", encoding="utf-8"
-            )
+            seed(self.core.ws.unit_meta(), self.core.ws.key(self.ws), name, plan={"files": plan})
 
     def listed(self, *names: str) -> None:
         """No names: every unit added, in the order it was added."""
@@ -591,9 +584,9 @@ class Scripted(_Base):
         self.assertEqual(len(self.launched), 1)
 
     async def test_overlapping_impls_run_one_after_the_other(self):
-        self.add("0001_a", "impl", plan="- `coscc/x.py`\n- `coscc/y.py`")
-        self.add("0002_b", "impl", plan="- `coscc/y.py`")
-        self.add("0003_c", "impl", plan="- `coscc/z.py`")
+        self.add("0001_a", "impl", plan=["coscc/x.py", "coscc/y.py"])
+        self.add("0002_b", "impl", plan=["coscc/y.py"])
+        self.add("0003_c", "impl", plan=["coscc/z.py"])
         await self.pass_()
         self.assertEqual([u for u, _, _ in self.launched], ["0001_a", "0003_c"])
         # `spec.md ## Answers`, câu 1: one ranked above that overlaps does not hold the rest.
@@ -609,6 +602,18 @@ class Scripted(_Base):
         del self.units["0001_a"], self.units["0003_c"]
         await self.pass_()
         self.assertEqual([u for u, _, _ in self.launched], ["0002_b"])
+
+    async def test_the_files_are_the_plan_records_not_plan_md(self):
+        self.add("0001_a", "impl", plan=["coscc/x.py"])
+        self.add("0002_b", "impl")
+        d = self.core.ws.unit_dir(self.ws, "0002_b")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "plan.md").write_text("# Plan\n\n## Files that change\n\n- `coscc/x.py`\n")
+        self.add("0003_c", "impl", plan=[])
+        files = self.core.autopilot._files
+        self.assertEqual(files(self.ws, "0001_a"), {"coscc/x.py"})
+        self.assertIsNone(files(self.ws, "0002_b"))
+        self.assertIsNone(files(self.ws, "0003_c"))
 
     async def test_turned_off_in_the_middle_of_a_pass_starts_nothing(self):
         read = self.core.boards.read
@@ -882,7 +887,7 @@ class Scripted(_Base):
         """CI red on its own integration runs the `impl` that `next` names, once. A person's
         integration is still integrated again."""
         red = "CI is red on #3: tests — back to impl: fix on the branch and push"
-        for unit, action, plan in (("0001_a", red, "- `a/x.py`"), ("0002_b", "", "- `b/y.py`")):
+        for unit, action, plan in (("0001_a", red, ["a/x.py"]), ("0002_b", "", ["b/y.py"])):
             self.add(
                 unit,
                 "impl",
@@ -929,7 +934,7 @@ class Scripted(_Base):
             "0001_a",
             "",
             action=action,
-            plan="- `a/x.py`",
+            plan=["a/x.py"],
             integration={"state": "red-after-integration"},
             reasons=["changes-requested", "ci-unfixable", "needs-person"],
             rounds=[{"verdict": "changes-requested"}],
@@ -961,7 +966,7 @@ class Scripted(_Base):
             "0001_a",
             "impl",
             action=red,
-            plan="- `a/x.py`",
+            plan=["a/x.py"],
             integration={"state": "red-after-integration"},
             reasons=["ci-red"],
             rounds=[{"verdict": "pass"}],
@@ -997,30 +1002,15 @@ class Scripted(_Base):
         self.assertEqual(stops, [])
         return log
 
-    async def test_an_exhausted_impl_after_its_own_integration_runs_once_more(self):
-        log = await self._impl_after_a_red_rebase("exhausted")
+    async def test_an_impl_paused_after_its_own_integration_stops_and_is_not_raised(self):
+        log = await self._impl_after_a_red_rebase("paused-budget")
         await self.pass_()
-        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")] * 2)
-        self.assertEqual(self.stops(), {})
-        await self.settled()
-        log.started(self.key, "0001_a", "impl", "autonomous", started_by="autopilot")
-        log.finished(self.key, "0001_a", "impl", "exhausted")
-        await self.pass_()
-        self.assertEqual(len(self.launched), 2)
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
         self.assertEqual(self.stops(), {"0001_a": "e"})
-        reason = self.core.autopilot.stops[self.key]["0001_a"]["reason"]
-        self.assertEqual(reason, "the last impl step ended exhausted")
-
-    async def test_the_impl_after_an_exhausted_one_is_the_one(self):
-        log = await self._impl_after_a_red_rebase("exhausted")
-        await self.pass_()
-        await self.settled()
-        log.started(self.key, "0001_a", "impl", "autonomous", started_by="autopilot")
-        log.finished(self.key, "0001_a", "impl", "done")
-        await self.pass_()
-        self.assertEqual(len(self.launched), 2)
-        self.assertEqual(self.stops(), {"0001_a": "e"})
-        self.assertEqual(self.core.autopilot.stops[self.key]["0001_a"]["reason"], decide.STILL_RED)
+        stop = self.core.autopilot.stops[self.key]["0001_a"]
+        self.assertEqual(stop["code"], "budget-reached")
+        self.assertEqual(stop["reason"], "the last impl step paused at its ceiling")
+        self.assertIsNotNone(log)
 
     async def test_a_rebase_that_turns_ci_red_runs_impl_once_then_stops(self):
         await self._impl_after_a_red_rebase()
@@ -1080,9 +1070,9 @@ class Scripted(_Base):
         )
         self.assertEqual(self.core.autopilot.cap([], 100.0)["running"], need)
         # A raised dollar ceiling is what the queued step is held at from then on.
-        self.core.agents.set_agent_field("integrate", "budget", 30)
+        self.core.agents.set_agent_field("integrate", *whole("integrate", "ceilings.usd", 30))
         self.assertEqual(self.core.autopilot.cap([], 100.0)["running"], 30.0)
-        self.core.agents.set_agent_field("integrate", "budget", None)
+        self.core.agents.set_agent_field("integrate", *whole("integrate", "ceilings.usd", None))
         self.add("0002_b", "spec")
         self.listed()
         await self.pass_()
@@ -1241,8 +1231,8 @@ class Scripted(_Base):
     async def test_a_queued_attempt_holds_max_parallel_and_the_overlap_and_the_cap(self):
         self.core.attempts.admitting = lambda: False
         self.core.autopilot.set_setting(self.ws, "max_parallel", 2)
-        self.add("0001_a", "impl", plan="- `coscc/x.py`")
-        self.add("0002_b", "impl", plan="- `coscc/x.py`")
+        self.add("0001_a", "impl", plan=["coscc/x.py"])
+        self.add("0002_b", "impl", plan=["coscc/x.py"])
         self.add("0003_c", "spec")
         self.add("0004_d", "spec")
         await self.pass_()
@@ -1320,7 +1310,7 @@ class Scripted(_Base):
             name,
             "impl",
             action="CI is red on #7: tests — back to impl: fix on the branch and push",
-            plan="- `a/b.py`",
+            plan=["a/b.py"],
             reasons=["changes-requested", "ci-red"],
             rounds=[{"verdict": "changes-requested"}],
         )
@@ -1473,7 +1463,7 @@ class Scripted(_Base):
             "0001_a",
             "impl",
             action="fix the open findings of review round 1 on the branch",
-            plan="- `a/b.py`",
+            plan=["a/b.py"],
             reasons=["changes-requested"],
             rounds=[{"verdict": "changes-requested"}],
         )
@@ -1487,7 +1477,7 @@ class Scripted(_Base):
         """A gate closed after the pass picked: the attempt is `refused`, and the pass after it
         says so once and queues nothing again, however many follow."""
         self.refuse["0001_a"] = "no-worktree"
-        self.add("0001_a", "impl", plan="- `a/b.py`")
+        self.add("0001_a", "impl", plan=["a/b.py"])
         await self.pass_()
         self.assertEqual((self.refused(), self.stops()), ([("0001_a", "no-worktree")], {}))
         for _ in range(4):
@@ -1547,7 +1537,7 @@ class Scripted(_Base):
 
     async def test_a_refusal_that_is_not_a_gate_code_has_no_code_in_its_stop(self):
         self.refuse["0001_a"] = "invalid"
-        self.add("0001_a", "impl", plan="- `a/b.py`")
+        self.add("0001_a", "impl", plan=["a/b.py"])
         await self.pass_()
         await self.pass_()
         self.assertNotIn("code", self.core.autopilot.stops[self.key]["0001_a"])
@@ -1733,7 +1723,7 @@ class Scripted(_Base):
         self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {}))
 
         self.refuse["0002_b"] = "draft"
-        self.add("0002_b", "impl", plan="- `a/b.py`")
+        self.add("0002_b", "impl", plan=["a/b.py"])
         self.listed()
         await self.pass_()
         await self.pass_()
@@ -1743,7 +1733,7 @@ class Scripted(_Base):
 
     def add_rerun(self, name, stage="intent", *before, plan=None):
         """`next` says `rerun: stage`, after `before`'s records and then one `answer`. `plan` is for
-        a code stage, whose files the autopilot reads off `plan.md`."""
+        a code stage, whose files the autopilot reads off the plan's record."""
         self.add(
             name,
             "",
@@ -1882,7 +1872,7 @@ class Scripted(_Base):
     # --- , an answered draft impl runs again --------------------------------
 
     async def test_an_answered_draft_impl_runs_impl_again(self):
-        self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
+        self.add_rerun("0001_a", "impl", "start", plan=["coscc/x.py"])
         await self.pass_()
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
         self.assertEqual([(p["unit"], p["stage"]) for p in self.picks()], [("0001_a", "impl")])
@@ -1890,7 +1880,7 @@ class Scripted(_Base):
 
     async def test_two_impl_reruns_after_answers_stop_it(self):
         self.add_rerun(
-            "0001_a", "impl", "start", "answer", "start", "answer", "start", plan="- `coscc/x.py`"
+            "0001_a", "impl", "start", "answer", "start", "answer", "start", plan=["coscc/x.py"]
         )
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "reruns"}))
@@ -1900,70 +1890,31 @@ class Scripted(_Base):
         )
 
     async def test_off_starts_no_impl(self):
-        self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
+        self.add_rerun("0001_a", "impl", "start", plan=["coscc/x.py"])
         self.core.autopilot.set_setting(self.ws, "autopilot", False)
         await self.pass_()
         self.assertEqual(self.launched, [])
 
-    # --- , a step that only ran out of turns runs once more -----------------
+    # --- a step that paused at its ceiling waits for a person ------------------
 
-    def ran_out(self, unit, stage):
+    def paused(self, unit, stage):
         Journal(self.config.working_dir, self.config.data_dir).finished(
-            self.key, unit, stage, "exhausted"
+            self.key, unit, stage, "paused-budget", ceiling="usd", max_budget_usd=4.0
         )
 
-    async def test_a_first_exhausted_step_runs_its_stage_again(self):
-        self.ran_out("0001_a", "plan")
-        self.add("0001_a", "plan")
-        await self.pass_()
-        self.assertEqual(self.launched, [("0001_a", "plan", "autopilot")])
-        self.assertEqual([(p["unit"], p["stage"]) for p in self.picks()], [("0001_a", "plan")])
-        self.assertEqual(self.stops(), {})
-
-    async def test_the_rerun_that_runs_out_again_stops_e(self):
-        self.ran_out("0001_a", "plan")
-        self.add("0001_a", "plan")
-        await self.pass_()
-        self.assertEqual(len(self.picks()), 1)
-        self.release.set()
-        await self.settled()
-        self.ran_out("0001_a", "plan")
-        await self.pass_()
-        self.assertEqual(self.stops(), {"0001_a": "e"})
-        self.assertEqual(
-            self.core.autopilot.stops[self.key]["0001_a"]["reason"],
-            "the last plan step ended exhausted",
-        )
-        self.assertEqual((len(self.picks()), len(self.launched)), (1, 1))
-
-    async def test_an_exhausted_ship_stops_the_first_time(self):
+    async def test_a_step_paused_at_its_ceiling_stops_e_and_is_never_run_or_raised_again(self):
         self.core.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
-        self.ran_out("0001_a", "ship")
-        self.add("0001_a", "ship")
-        await self.pass_()
-        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
-
-    async def test_a_held_unit_or_a_closed_gate_after_a_first_exhausted_step(self):
-        self.ran_out("0001_a", "plan")
-        self.add("0001_a", "")
-        self.nexts["0001_a"]["hold"] = {
-            "state": "paused",
-            "reason": "later",
-            "by": "Leif",
-            "date": "2026-09-27",
-        }
-
-        self.refuse["0002_b"] = "draft"
-        self.ran_out("0002_b", "impl")
-        self.add("0002_b", "impl", plan="- `a/b.py`")
-        await self.pass_()
-        await self.pass_()
-        self.assertEqual([p["unit"] for p in self.picks()], ["0002_b"])
-        self.assertEqual(self.stops(), {"0002_b": "f"})
-        self.assertEqual(
-            self.core.autopilot.stops[self.key]["0002_b"],
-            {"unit": "0002_b", "kind": "f", "reason": "impl was refused: draft", "code": "draft"},
-        )
+        raised: list = []
+        self.core.steps.raise_step = lambda *a, **kw: raised.append((a, kw))
+        for stage in ("plan", "impl", "ship"):
+            self.paused("0001_a", stage)
+            self.add("0001_a", stage)
+            await self.pass_()
+            self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {"0001_a": "e"}))
+            stop = self.core.autopilot.stops[self.key]["0001_a"]
+            self.assertEqual(stop["code"], "budget-reached")
+            self.assertEqual(stop["reason"], f"the last {stage} step paused at its ceiling")
+        self.assertEqual(raised, [])
 
     # --- , a prose step whose reply lacked its opening runs once more ---------
 
@@ -1997,54 +1948,6 @@ class Scripted(_Base):
             "the last plan step ended failed",
         )
         self.assertEqual((len(self.picks()), len(self.launched)), (1, 1))
-
-    async def test_the_two_counts_are_apart(self):
-        self.ran_out("0001_a", "plan")
-        self.add("0001_a", "plan")
-        await self.pass_()
-        self.release.set()
-        await self.settled()
-        self.unopened("0001_a", "plan")
-        await self.pass_()
-        self.assertEqual((len(self.launched), self.stops()), (2, {}))
-        await self.settled()
-        Journal(self.config.working_dir, self.config.data_dir).finished(
-            self.key, "0001_a", "plan", "failed", detail="the session returned nothing"
-        )
-        await self.pass_()
-        self.assertEqual(self.stops(), {"0001_a": "e"})
-        self.assertEqual(len(self.launched), 2)
-
-    # --- , an old exhausted `ship` before one that only records ---------------
-
-    RECORDING = "ship — #95 was merged as abc1234 at 2026-09-20T00:00:00Z: record it in ship.md; do not merge"
-    MERGING = "ship — merge with --match-head-commit abc1234"
-
-    def shipped(self, unit, **start):
-        Journal(self.config.working_dir, self.config.data_dir).append(
-            {
-                "kind": "start",
-                "workspace": self.key,
-                "unit": unit,
-                "stage": "ship",
-                "started_by": "person",
-                **start,
-            }
-        )
-        self.ran_out(unit, "ship")
-
-    def ran_out_at(self, unit):
-        ends = Journal(self.config.working_dir, self.config.data_dir).records(kind="end")
-        return [e for e in ends if e.get("unit") == unit and e.get("outcome") == "exhausted"][-1][
-            "at"
-        ]
-
-    async def test_a_recording_ship_that_ran_out_is_not_run_again(self):
-        self.core.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
-        self.shipped("0001_a", ship_mode="record")
-        self.add("0001_a", "ship", action=self.RECORDING, reasons=["recording-ship"])
-        await self.pass_()
-        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
 
     # --- an open question waits for a person -------------------------------------
 
@@ -2168,7 +2071,7 @@ class Scripted(_Base):
             "0001_a",
             "impl",
             action="CI is red on #7: test — back to impl: fix on the branch and push",
-            plan="- `a/b.py`",
+            plan=["a/b.py"],
             reasons=["ci-red"],
         )
         self.listed()
@@ -2197,7 +2100,7 @@ class Scripted(_Base):
         gh = test_prmachine.FakeGh(buckets=("pass",))
         machine = self.a_machine(gh)
         await self.an_open_pr(machine, "0001_a")
-        self.add("0002_b", "impl", plan="- `coscc/b.py`")
+        self.add("0002_b", "impl", plan=["coscc/b.py"])
         self.waiting(
             machine,
             lambda: prmachine.state(machine.history, self.key, "0001_a")["state"] == "merged",
@@ -2221,7 +2124,7 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0002_b", "impl", "autopilot")])
         self.assertEqual(gh.count("pr", "merge"), 0, "a merge made elsewhere is only recorded")
         # No `ship` step follows it, so the reader writes what one did.
-        ships = [(r["unit"], r["result"]) for r in self.core.ws.journal().records(kind="ship")]
+        ships = [(r["unit"], r["result"]) for r in self.core.ws.journal().records(kind="merge")]
         self.assertEqual((ships, cleaned), ([("0001_a", "shipped")], ["0001_a"]))
 
     async def test_a_merge_the_start_up_reconcile_records_leaves_the_ship_row(self):
@@ -2249,7 +2152,7 @@ class Scripted(_Base):
         self.core.integration.cleanup = cleanup
         got = await self.core.integration.reconcile_prs()
         self.assertEqual([o["result"] for o in got], ["recorded"])
-        ships = [(r["unit"], r["result"]) for r in self.core.ws.journal().records(kind="ship")]
+        ships = [(r["unit"], r["result"]) for r in self.core.ws.journal().records(kind="merge")]
         self.assertEqual(
             (ships, cleaned, gh.count("pr", "merge")), ([("0001_a", "shipped")], ["0001_a"], 1)
         )
@@ -2261,8 +2164,8 @@ class Scripted(_Base):
         await self.an_open_pr(machine, "0001_a")
         await self.core.autopilot.pr_read(self.key)
         await self.settled()
-        self.add("0002_b", "impl", plan="- `coscc/a.py`")
-        self.add("0003_c", "impl", plan="- `coscc/c.py`")
+        self.add("0002_b", "impl", plan=["coscc/a.py"])
+        self.add("0003_c", "impl", plan=["coscc/c.py"])
         await self.pass_()
         self.assertEqual(self.launched, [("0003_c", "impl", "autopilot")])
         [pick] = self.picks()
@@ -2317,7 +2220,7 @@ class Scripted(_Base):
         self.assertIn("could not record", self.core.autopilot.stops[self.key][""]["reason"])
 
     async def test_no_answer_since_the_last_impl_is_the_stop_f(self):
-        self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
+        self.add_rerun("0001_a", "impl", "start", plan=["coscc/x.py"])
         Journal(self.config.working_dir, self.config.data_dir).append(
             {
                 "kind": "start",
@@ -2332,17 +2235,6 @@ class Scripted(_Base):
         self.assertEqual(
             self.core.autopilot.stops[self.key]["0001_a"],
             {"unit": "0001_a", "kind": "f", "reason": "finish and accept impl.md"},
-        )
-
-    async def test_an_old_exhausted_ship_still_stops_a_merging_ship(self):
-        self.core.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
-        self.shipped("0001_a")
-        self.add("0001_a", "ship", action=self.MERGING)
-        await self.pass_()
-        self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {"0001_a": "e"}))
-        self.assertEqual(
-            self.core.autopilot.stops[self.key]["0001_a"]["reason"],
-            "the last ship step ended exhausted",
         )
 
     async def test_the_stop_names_each_question_that_waits(self):

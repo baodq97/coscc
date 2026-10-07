@@ -164,6 +164,8 @@ class TheSkipCommand(unittest.TestCase):
 
         from coscc import units
         from coscc.store.db import Data
+        from coscc.units.meta import UnitMeta
+        from tests.units.test_meta import seed_fixture
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -181,6 +183,7 @@ class TheSkipCommand(unittest.TestCase):
             Path(__file__).resolve().parent / "units" / "testdata" / "meta_store", self.store
         )
         self.env = {"COS_DATA_DIR": str(self.data_dir), "COS_WORKING_DIR": str(work)}
+        seed_fixture(UnitMeta(work, self.data), self.key)
 
     def coscc(self, *args):
         import contextlib

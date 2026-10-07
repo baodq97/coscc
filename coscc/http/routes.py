@@ -13,8 +13,9 @@ not kept.
 The guard in `coscc/http/auth.py` serves `/login`, `/setup` and `/logout`; nothing here may use
 them. Every route sits behind that guard: without a live session only `GET /api/health` gets
 through. One password, one user: whoever holds it or a session cookie can call every route
-below. A name a body carries (`answered_by`, `by`, `stopped_by`, `recorded_by`) is written as
-sent, or as `kernel.OWNER` when absent; neither is an identity. Tests that build this app alone
+below. A name a body carries (`name`, `by`, `stopped_by`, `recorded_by`) is written as
+sent, or as `kernel.OWNER` when absent; neither is an identity. An answer's `by` (`person` or
+`delegated`) is written as sent too: a label, not an identity check. Tests that build this app alone
 drive it without the guard.
 
 A refusal is `Invalid`, answered in one place (`coscc/http/app.py`).
@@ -29,20 +30,24 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, AsyncIterator, NotRequired, TypedDict
 
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from coscc import kernel
+from coscc.agent import pack
+from coscc.agent.pack import PackShown
+from coscc.store.db import Data
 from coscc.bus import Event
 from coscc.http import plugin
 from coscc.kernel import Invalid
-from coscc.leif.agents import AgentPage
-from coscc.leif.answers import opens_with
+from coscc.leif.agents import AgentPage, ProposalsView
 from coscc.leif.chat import ChatHistory, ChatSessions
 from coscc.leif.insights import Insights
+from coscc.runner import triggers
 from coscc.runner.steps import NextStep
 from coscc.runner.watch import EventsPage
+from coscc.units import proposals
 from coscc.units.backlog import SHORTLIST_MAX
-from coscc.units.read import Cards, Detail, UpNext, cards, detail
+from coscc.units.read import Cards, Detail, UpNext, cards
 from coscc.units.workspaces import WorkspaceList
 from coscc.update.updater import refusals, update_words
 
@@ -108,20 +113,16 @@ class UpdateStatus(TypedDict):
     actions: list[str]
 
 
-# Who answers for the owner, as the start of an answer's `by`.
-AGENT_NAMES = ("Leif", "Claude", "agent")
-
-
 class Decided(TypedDict):
-    """An answer given for the owner: by Leif, or inferred by an agent."""
+    """An answer given for the owner: one sent `by: delegated`."""
 
     unit: str
     artifact: str
     n: int
     question: str
     text: str
-    by: str
-    authority: str
+    # The name it was sent with.
+    name: str
     date: str
 
 
@@ -152,8 +153,9 @@ async def health() -> dict[str, bool]:
 
 @router.get("/api/stream")
 async def stream(request: Request) -> StreamingResponse:
-    """Every bus event as server-sent events, `{subject, workspace, unit}`, `workspace` being
-    the resolved path. It only says that something changed: the page reads what it shows again.
+    """Every bus event as server-sent events, `{subject, ...payload}`, the payload its subject
+    declares (`bus.SCHEMAS`). It mostly says that something changed: the page reads what it shows
+    again.
     It ends after `STREAM_LIFETIME_SECONDS` with an `end` event, and the page connects again at
     once; an event in that second is missed, and the page's slow refresh covers it."""
     loop = asyncio.get_running_loop()
@@ -174,7 +176,7 @@ async def stream(request: Request) -> StreamingResponse:
                 except TimeoutError:
                     yield ": ping\n\n"
                     continue
-                data = {"subject": e.name, "workspace": e.workspace, "unit": e.unit}
+                data = {"subject": e.name, **e.payload}
                 yield f"data: {json.dumps(data)}\n\n"
             yield "event: end\ndata: {}\n\n"
         finally:
@@ -227,23 +229,121 @@ async def remove_workspace(name: str, request: Request) -> Any:
 
 @router.get("/api/agents")
 async def get_agents(request: Request) -> AgentPage:
-    """The eight agents: who each is, what it runs on and may do, how its runs went, its chip;
-    then `estimate` and `chat`, and what was wrong."""
-    return _core(request).agents.agent_page()
+    """Every agent, every part of its row as it stands and as built in, which keys the owner set,
+    its problems, skills, hash and runs grouped by definition; the tool catalog, each feature on
+    or off for `cwd`; what was wrong."""
+    core, cwd = _core(request), _cwd(request)
+    with pack.held():
+        return core.agents.agent_page(core.ws.key(cwd) if cwd else None, cwd=cwd)
 
 
 @router.post("/api/agents/field")
-async def set_agent_field(request: Request) -> Any:
-    """`{key, field, value}` saves one field of one row; no `value` (or `null`) resets it to
-    its default. Out of bounds is a 400 and nothing is written. No route writes a grant.
+async def set_agent_field(request: Request) -> AgentPage:
+    """`{key, field, value}` saves one part of one agent's row in the owner's layer: a frontmatter
+    key whole, `body`, or `skill:<name>`; `value` `null` puts the built-in's back. A row that would
+    not pass its checks is a 400 naming every reason, and nothing is written.
 
-    It decides what every step spends: whoever holds the password or a session can move any
-    agent's model or raise its ceilings. The trace is an `agent-setting` record in the run log.
+    Whoever holds the password or a session can give any agent another model, larger ceilings,
+    another prompt or more of the catalog's tools, never past the critical calls every session is
+    refused (`policy.critical`). The trace is an `agent-setting` record in the run log, and each
+    run's `row_hash` and `edited`.
     """
     body = await kernel.body(request)
     return _core(request).agents.set_agent_field(
-        body.get("key"), body.get("field"), body.get("value")
+        body.get("key"), body.get("field"), body.get("value"), cwd=str(body.get("cwd") or "")
     )
+
+
+@router.post("/api/agents/new")
+async def new_agent(request: Request) -> AgentPage:
+    """`{key, from?, row?, name, cwd?}` writes a new agent into the owner's pack,
+    `local/agents/<key>.md`: a copy of row `from` (every key, the body, its skills by name), the
+    whole row `row` (`{fields, body}`: Dagaz's draft, read and saved by a person), or the smallest
+    row that runs (a manual reader on Sonnet low). A taken or bad key, or a row `pack.check`
+    refuses with the catalog, is a 400 naming every reason, and nothing is written. Logged as an
+    `agent-setting` record `by: owner`. Every later edit is `/api/agents/field`'s."""
+    body = await kernel.body(request)
+    return _core(request).agents.new_agent(
+        body.get("key"),
+        body.get("from"),
+        body.get("name"),
+        cwd=str(body.get("cwd") or ""),
+        given=body.get("row"),
+    )
+
+
+@router.post("/api/agents/delete")
+async def delete_agent(request: Request) -> AgentPage:
+    """`{key, cwd?}` removes a whole row of the owner's pack; refused `in-use` while a process
+    names it, and for any row that is no whole `local` row."""
+    body = await kernel.body(request)
+    return _core(request).agents.delete_agent(body.get("key"), cwd=str(body.get("cwd") or ""))
+
+
+@router.post("/api/agents/state")
+async def set_agent_state(request: Request) -> AgentPage:
+    """`{cwd, key, on}` turns a row's event or schedule on or off in one workspace: the pref
+    `agents.state`, the owner's own setting like `/api/packs`, logged as an `agent-state` row
+    `by: owner`. A row with neither is a 400. On, a row may open paid read-only sessions on its
+    own there, under its ceilings and the daily cap."""
+    body = await kernel.body(request)
+    cwd = str(body.get("cwd") or "")
+    return _core(request).agents.set_state(cwd, body.get("key"), body.get("on"))
+
+
+class Started(TypedDict):
+    agent: str
+    started: bool
+    # The run's id: its live line is `/api/runs/{run}/follow`, what it handed back `/api/runs/{run}`.
+    run: str
+
+
+@router.post("/api/agents/run")
+async def run_agent(request: Request) -> Started:
+    """`{cwd, key, unit?, text?}` **opens one paid, read-only session** of a row whose trigger
+    says `manual` (*Run now*), in the background, `started_by: manual`. Refused before spend
+    (`code`): a row with no `manual` trigger, a unit it does not read, an update under way, the
+    daily cap reached, a run of it in this workspace already going. Bounded by the row's
+    ceilings; its `start` and `end` are in the run log."""
+    body = await kernel.body(request)
+    key = str(body.get("key") or "")
+    run = triggers.start(
+        _core(request),
+        key,
+        str(body.get("cwd") or ""),
+        str(body.get("unit") or ""),
+        by="manual",
+        text=str(body.get("text") or ""),
+    )
+    return {"agent": key, "started": True, "run": run}
+
+
+@router.get("/api/proposals")
+async def get_proposals(request: Request) -> ProposalsView:
+    """`?cwd=`: every agent's proposals in the workspace, newest first, and the rows that
+    propose."""
+    return await asyncio.to_thread(_core(request).agents.proposals_view, _cwd(request))
+
+
+@router.post("/api/proposals/{pid}")
+async def decide_proposal(pid: int, request: Request) -> proposals.Proposal:
+    """`{cwd, action: accept, slug}` makes a unit from it; `{cwd, action: dismiss, reason}` puts
+    it aside with 1 to 500 characters of why. Either acts for whoever holds the password, as
+    `owner`; no agent holds a tool that reaches it. The scan's press, moved here."""
+    body = await kernel.body(request)
+    core = _core(request)
+    cwd = core.ws.check(str(body.get("cwd") or ""))
+    ws, data = core.ws.key(cwd), Data(core.config.data_dir)
+    action = body.get("action")
+    if action == "accept":
+
+        async def create(slug: str, brief: str) -> str:
+            return str((await core.answers.create_unit(cwd, slug, brief))["unit"])
+
+        return await proposals.accept(data, ws, pid, str(body.get("slug") or ""), create)
+    if action == "dismiss":
+        return await proposals.dismiss(data, ws, pid, str(body.get("reason") or ""))
+    raise Invalid("action must be accept or dismiss")
 
 
 @router.get("/api/insights")
@@ -253,7 +353,8 @@ async def get_insights(request: Request) -> Insights:
     again. Read only; the run log and the board held."""
     core, cwd = _core(request), _cwd(request)
     board = await core.boards.get(cwd, "held")
-    return core.activity.insights(cwd, board.get("units") or [])
+    with pack.held():
+        return await asyncio.to_thread(core.activity.insights, cwd, board.get("units") or [])
 
 
 @router.get("/api/chat/sessions", response_model=ChatSessions)
@@ -274,8 +375,8 @@ async def chat(request: Request) -> Any:
     """**Opens a paid Claude session** in a workspace's folder, or continues one the app may
     resume: `{cwd, text, session_id?}`. One turn on the `chat` row's model; the tools it gets
     are the chat setting's. Streams NDJSON: `chunk` lines, `tool` lines (`name`), then `done`
-    with the `session_id`. A dropped reader ends the turn. The trace is a `chat` record in the
-    run log. Refused while the app updates."""
+    with the `session_id` and the `run`. A dropped reader ends the turn. The turn is a run of the
+    `chat` agent, with its `start` and `end` in the run log. Refused while the app updates."""
     body = await kernel.body(request)
     cwd, text = str(body.get("cwd") or ""), str(body.get("text") or "")
     core = _core(request)
@@ -313,14 +414,20 @@ async def create_unit(request: Request) -> Any:
     """Start a work unit. `brief` is the originator's own words and becomes the unit's
     `idea.md`, which the intent step reads."""
     body = await kernel.body(request)
-    return await _core(request).answers.create_unit(
-        str(body.get("cwd") or ""),
+    core, cwd = _core(request), str(body.get("cwd") or "")
+    made = await core.answers.create_unit(
+        cwd,
         str(body.get("slug") or ""),
         str(body.get("brief") or ""),
-        # A unit opened from a shared idea: no brief, one line under `## Units`.
+        # A unit opened from a shared idea: no brief; its link is a row of `unit_links`.
         idea=str(body.get("idea") or ""),
         depends_on=str(body.get("depends_on") or ""),
     )
+    # The page opens the unit at once and asks for the held board: it must hold the unit, opened.
+    # A board never read is read whole on its first ask, so only a held one is read again.
+    if core.ws.key(cwd) in core.boards.held:
+        await asyncio.shield(core.boards.refresh(cwd, again=True))
+    return made
 
 
 @router.post("/api/ideas")
@@ -336,15 +443,17 @@ async def create_idea(request: Request) -> Any:
 
 @router.post("/api/units/answer")
 async def answer_question(request: Request) -> Any:
-    """A person answers one item under an artifact's `## Open questions`.
+    """One answer to an open question: body `{cwd, unit, artifact, question, answer, by, name?}`.
 
-    Appends a `### Câu N` block under `## Answers` and writes nothing else. **The name is
-    not checked**: whoever holds the password or a session can put words into an artifact
-    under a name they chose, and the next stage reads them as a person's decision.
+    Writes one `unit_answers` row and nothing else; no file is touched. `by` is required:
+    `person` for a person's press (the Inbox, *Take it*), `delegated` for an answer given for
+    them; any other value, or none, is refused. **Neither `by` nor `name` is checked**: whoever
+    holds the password or a session can answer under a name and a `by` they chose, and the next
+    stage reads it as a decision already made. No gate reads `by`.
 
     `question` may also be `"F<n>"` with `artifact` `review.md`: a finding the last
-    review round confirmed needs a person. That appends `### F<n>`; `coscc.loop next` reads
-    it to offer `review` again, and the `ship` gate counts an `[answered]` finding as closed.
+    review round confirmed needs a person. `coscc.loop next` reads its row to offer `review`
+    again, and the `ship` gate counts an `[answered]` finding as closed.
     """
     body = await kernel.body(request)
     return await _core(request).answers.answer(
@@ -353,16 +462,15 @@ async def answer_question(request: Request) -> Any:
         str(body.get("artifact") or ""),
         body.get("question"),
         str(body.get("answer") or ""),
-        str(body.get("answered_by") or ""),
+        body.get("by"),
+        str(body.get("name") or ""),
     )
 
 
 @router.get("/api/decided")
 async def get_decided(request: Request) -> list[Decided]:
-    """Every answer in one workspace that a person did not give, newest first: what Leif and
-    the agents decided for the owner. An answer counts when its authority is not `person`, or
-    when its `by` opens with an agent's name: Leif's answers through `/api/units/answer` are
-    recorded as `person` with `by` naming Leif. Read from the board held."""
+    """Every answer in one workspace sent `by: delegated`, newest first: what Leif and the
+    agents decided for the owner. Read from the board held."""
     board = await _core(request).boards.get(_cwd(request), "held")
     out: list[Decided] = [
         {
@@ -371,13 +479,12 @@ async def get_decided(request: Request) -> list[Decided]:
             "n": int(a.get("n") or 0),
             "question": str(a.get("question") or ""),
             "text": str(a.get("text") or ""),
-            "by": str(a.get("by") or ""),
-            "authority": str(a.get("authority") or ""),
+            "name": str(a.get("name") or ""),
             "date": str(a.get("date") or ""),
         }
         for u in board.get("units") or []
         for a in u.get("answers") or []
-        if (a.get("authority") or "person") != "person" or opens_with(a.get("by"), AGENT_NAMES)
+        if a.get("by") == "delegated"
     ]
     return sorted(out, key=lambda d: d["date"], reverse=True)
 
@@ -386,10 +493,9 @@ async def get_decided(request: Request) -> list[Decided]:
 async def record_outcome(request: Request) -> Any:
     """Record whether a finished unit met its intent's outcome.
 
-    Appends a `### Outcome` block under `intent.md`'s `## Answers` and writes nothing
-    else. `result` is `đạt`, `trượt` or `không đo được`. **Whoever holds the password or
-    a session can record `đạt`**, under any name. No gate reads the block; the board
-    shows it as the ground for keeping or dropping a unit.
+    Writes one `outcome` row in `unit_decisions` and nothing else; no file is touched.
+    `result` is `đạt`, `trượt` or `không đo được`. **Whoever holds the password or a session
+    can record `đạt`**, under any name. No gate reads the row; the unit's history shows it.
     """
     body = await kernel.body(request)
     return await _core(request).answers.record_outcome(
@@ -413,8 +519,7 @@ async def record_outcome(request: Request) -> Any:
 async def hold_unit(request: Request) -> Any:
     """Pause, drop or resume a unit: body `{cwd, unit, to, reason, by}`.
 
-    Appends a `### Paused|Dropped|Resumed` block under `intent.md ## Answers` and a
-    `hold` row to the run log; the loop then offers no stage and closes every gate.
+    Writes one `unit_holds` row and a `hold` record in the run log; the loop then offers no stage and closes every gate.
     **Whoever holds the password or a session can pause every unit**, and `to: "dropped"`
     closes the unit's open pull request **with this machine's `gh` login** and removes its
     worktree. It starts nothing, a resume included.
@@ -429,8 +534,8 @@ async def hold_unit(request: Request) -> Any:
 async def more_rounds(request: Request) -> Any:
     """Allow one more review round to a unit out of rounds: body `{cwd, unit, by?}`.
 
-    Appends a `### More rounds` block under `review.md ## Answers`; the loop then adds
-    one round to the limit and opens the `review` gate again. **Whoever holds the password
+    Writes one `more-rounds` row in `unit_decisions`; the loop then adds one round to the
+    limit and opens the `review` gate again. **Whoever holds the password
     or a session can open a paid review round**; the route starts nothing itself, but
     with the autopilot on its next sweep will.
     """
@@ -539,23 +644,25 @@ async def get_units(request: Request) -> Cards:
 @router.get("/api/units/next")
 async def get_next(request: Request) -> NextStep:
     """The one stage the run button may offer for a unit, as `coscc.loop next` answered it:
-    `{stage, action, blocked}`. Asks `gh`, so it can wait up to 60s. It starts nothing;
+    `{stage, action, blocked, gate}`, `gate` being what the gate says of that stage when it is
+    closed. Asks `gh`, so it can wait up to 60s. It starts nothing;
     `/api/board/run` still asks the gate."""
-    return await _core(request).steps.next_step(_cwd(request), request.query_params.get("unit", ""))
+    with pack.held():
+        return await _core(request).steps.next_step(
+            _cwd(request), request.query_params.get("unit", ""), with_gate=True
+        )
 
 
 @router.get("/api/units/{name}")
 async def get_unit(name: str, request: Request) -> Detail:
     """One unit as its page shows it: its card, stages, questions and answers with who gave them,
-    review rounds, and every run from the run log. Read from the board held, like `/api/units`."""
-    core, cwd = _core(request), _cwd(request)
-    board = await core.boards.get(cwd, "held")
-    unit = next((u for u in board.get("units") or [] if u.get("name") == name), None)
-    if unit is None:
-        raise Invalid(f"no unit {name} in {cwd}")
-    journal = core.ws.journal()
-    timeline = await asyncio.to_thread(journal.timeline, core.ws.key(cwd), name) if journal else []
-    return detail(unit, timeline)
+    review rounds, its graded outcome, and every run from the run log. Read from the board held, like `/api/units`."""
+    with pack.held():
+        return await _unit(name, request)
+
+
+async def _unit(name: str, request: Request) -> Detail:
+    return await _core(request).unit(_cwd(request), name)
 
 
 def _number(request: Request, name: str) -> int | None:
@@ -567,14 +674,14 @@ def _number(request: Request, name: str) -> int | None:
     return int(value)
 
 
-@router.get("/api/units/{name}/runs/{run}", response_model=EventsPage)
-async def get_run_events(name: str, run: str, request: Request) -> Any:
-    """The last `limit` events one run of a unit recorded, oldest first; `before` pages back,
-    `seq` reads one event whole. Everything the step saw: commands, paths, thoughts, output."""
+@router.get("/api/runs/{run}", response_model=EventsPage)
+async def get_run_events(run: str, request: Request) -> Any:
+    """The last `limit` events one run of the workspace recorded, any agent's, with a unit or none
+    (`unit` is `""`), oldest first; `before` pages back, `seq` reads one event whole. Everything
+    the run saw: commands, paths, thoughts, output."""
     limit = _number(request, "limit")
     return _core(request).watch.events_page(
         _cwd(request),
-        name,
         run,
         before=_number(request, "before"),
         seq=_number(request, "seq"),
@@ -582,15 +689,15 @@ async def get_run_events(name: str, run: str, request: Request) -> Any:
     )
 
 
-@router.get("/api/units/{name}/runs/{run}/follow")
-async def follow_run(name: str, run: str, request: Request) -> StreamingResponse:
+@router.get("/api/runs/{run}/follow")
+async def follow_run(run: str, request: Request) -> StreamingResponse:
     """The events of a running run past `after` as server-sent events, a batch a message, until
     its `end`; then `event: done`. `event: status` (the page) when it is not running here, `event:
     cut` (`{from}`) when this reader fell behind. Ends like `/api/stream` after
     `STREAM_LIFETIME_SECONDS` with `event: end`, and the page follows again from what it has."""
     loop = asyncio.get_running_loop()
     follow = _core(request).watch.follow_events(
-        _cwd(request), name, run, after=_number(request, "after") or 0, gather=0.3
+        _cwd(request), run, after=_number(request, "after") or 0, gather=0.3
     )
 
     async def events() -> AsyncIterator[str]:
@@ -634,19 +741,22 @@ async def set_board_mode(request: Request) -> Any:
 
 @router.post("/api/board/run")
 async def run_step(request: Request) -> Any:
-    """Streams NDJSON: chunks, then one done.
+    """Streams NDJSON: chunks, then one done. `raise: {usd?, turns?}` goes on with the session a
+    ceiling paused, under the higher ceiling; a person's request only, never the autopilot's.
 
     Anything decidable before output is a status code; a refusal after streaming starts
     arrives as an `error` line.
     """
     body = await kernel.body(request)
+    cwd, unit, stage = (str(body.get(k, "")) for k in ("cwd", "unit", "stage"))
+    steps = _core(request).steps
+    if "raise" in body:
+        # A stage paused at a ceiling goes on in its own session: `raise: {usd?, turns?}`.
+        return await kernel.ndjson(steps.raise_step(cwd, unit, stage, body["raise"]), "the step")
     # `rerun` only when the body says `true` itself.
     rerun = body.get("rerun") is True
     extra = {"rerun": True, "note": str(body.get("note") or "")} if rerun else {}
-    stream = _core(request).steps.run_step(
-        str(body.get("cwd", "")), str(body.get("unit", "")), str(body.get("stage", "")), **extra
-    )
-    return await kernel.ndjson(stream, "the step")
+    return await kernel.ndjson(steps.run_step(cwd, unit, stage, **extra), "the step")
 
 
 @router.post("/api/board/stop")
@@ -702,7 +812,7 @@ async def get_features(request: Request) -> Any:
 @router.get("/api/features/shown")
 async def get_features_shown(request: Request) -> list[plugin.Shown]:
     """Each feature as Settings shows it for one workspace: its state, whether `pilot` may be
-    chosen, the sentence, whether it is locked, its schedule and the hours offered."""
+    chosen, the sentence and whether it is locked."""
     core = _core(request)
     cwd = core.ws.check(_cwd(request))
     return plugin.shown(request.app.state.ctxs, request.app.state.plugins, cwd)
@@ -714,21 +824,8 @@ async def set_feature(request: Request) -> Any:
     is read as `on` or `off`. A feature, workspace or state not known, `pilot` for a feature
     without it, or `pilot`/`on` while the feature's status forbids them is a 400. It changes the
     pref `features.state`, then tells the feature, which may start its own setup (codegraph's
-    install). Whoever holds the password or a session can silence a workspace's notices.
-
-    `{cwd, name, schedule}` instead sets how many hours apart a feature with a `schedule` runs
-    on its own there, `0` for never: the pref `features.schedule`. A scheduled run may open a
-    paid session (the `scan` feature's), so this is a spending choice."""
+    install). Whoever holds the password or a session can silence a workspace's notices."""
     body = await kernel.body(request)
-    if "schedule" in body and "state" not in body and "on" not in body:
-        hours = plugin.set_schedule_of(
-            _core(request),
-            request.app.state.plugins,
-            str(body.get("name") or ""),
-            str(body.get("cwd") or ""),
-            body.get("schedule"),
-        )
-        return {"name": str(body.get("name")), "schedule": hours}
     state, on = body.get("state"), body.get("on")
     if state is None and isinstance(on, bool):
         state = "on" if on else "off"
@@ -745,22 +842,76 @@ async def set_feature(request: Request) -> Any:
     return {"name": str(body.get("name")), "state": chosen}
 
 
-@router.get("/api/grants/impl")
-async def get_command_lists(request: Request) -> Any:
-    """`{allow, block}`: the commands `impl` gains and loses in one workspace."""
+@router.get("/api/packs")
+async def get_packs(request: Request) -> list[PackShown]:
+    """Each pack in one workspace: name, version, `on`, the default `process` a new unit walks
+    and every process's states. A workspace the app does not have is a 400."""
     core = _core(request)
-    return core.ws.command_lists(core.ws.check(_cwd(request)))
+    key = core.ws.key(core.ws.check(_cwd(request)))
+    return pack.packs_shown(Data(core.config.data_dir), key)
 
 
-@router.post("/api/grants/impl")
-async def set_command_lists(request: Request) -> Any:
-    """`{cwd, allow, block}` replaces both lists; a name that is not a command's is a 400. Whoever
-    holds the password or a session can widen what `impl` runs in that workspace: `curl` or
-    `ssh` there reach the network through `Bash`, outside every filter."""
+@router.post("/api/packs")
+async def set_pack(request: Request) -> Any:
+    """`{cwd, name, on?, process?}` switches a pack on or off for one workspace and/or chooses
+    the process its new units walk (`<pack>/<name>`). `{cwd, name, delete: true}` removes an
+    imported pack, refused `in-use` while a unit records one of its processes. A pack, workspace or process not known is
+    a 400. It writes the prefs `packs.state` and `packs.process`, the owner's own settings, and
+    no decision; off, a new unit or idea is refused `no-process` and running units still step.
+    Whoever holds the password or a session can stop a workspace opening units."""
     body = await kernel.body(request)
-    return _core(request).ws.set_command_lists(
-        str(body.get("cwd") or ""), body.get("allow"), body.get("block")
+    core = _core(request)
+    cwd = str(body.get("cwd") or "")
+    key = core.ws.key(core.ws.check(cwd))
+    if body.get("delete") is True:
+        return core.agents.delete_pack(cwd, str(body.get("name") or ""))
+    on, chosen = body.get("on"), body.get("process")
+    if (on is not None and not isinstance(on, bool)) or (
+        chosen is not None and not isinstance(chosen, str)
+    ):
+        raise Invalid("on is true or false, process is <pack>/<name>")
+    try:
+        pack.set_packs(Data(core.config.data_dir), key, str(body.get("name") or ""), on, chosen)
+    except pack.PackError as e:
+        raise Invalid(str(e)) from e
+    return pack.packs_shown(Data(core.config.data_dir), key)
+
+
+@router.post("/api/packs/process")
+async def set_process(request: Request) -> list[PackShown]:
+    """`{cwd, name, process}` sets the owner's process `local/<name>` in `local/process.json`, or
+    with `process: null` removes it. It must pass `pack.check_process` against every row; a
+    removal a unit records is refused `in-use`. Logged as a `pack-setting` record `by: owner`."""
+    body = await kernel.body(request)
+    return _core(request).agents.set_process(
+        str(body.get("cwd") or ""), body.get("name"), body.get("process")
     )
+
+
+@router.get("/api/packs/{name}/export")
+async def export_pack(name: str, request: Request) -> Response:
+    """Pack `name` as a zip of its plugin folder. `local` holds its own rows, skills and processes,
+    not its overrides of other packs' rows."""
+    blob = _core(request).agents.export_pack(name)
+    return Response(
+        blob,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'},
+    )
+
+
+@router.post("/api/packs/import")
+async def import_pack(request: Request) -> list[PackShown]:
+    """`?cwd=`, the body a zip of a pack (`pack.import_zip`'s rules: at most 1 MB and 200 entries,
+    only the plugin folder's files, no absolute path, `..` or link). Checked as a pack with the
+    catalog, then put in place off in every workspace; a refusal names every reason and leaves
+    nothing behind. Logged as a `pack-setting` record `by: owner`."""
+    blob = b""
+    async for chunk in request.stream():
+        blob += chunk
+        if len(blob) > pack.ZIP_MAX:
+            raise Invalid(f"the zip is over {pack.ZIP_MAX} bytes")
+    return _core(request).agents.import_pack(_cwd(request), blob)
 
 
 # -- updating the app ----------------------------------------------------

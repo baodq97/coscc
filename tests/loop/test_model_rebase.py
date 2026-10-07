@@ -1,7 +1,8 @@
 """The ship gate and `next` across a rebase, a merge made elsewhere, a round more and a red check.
 
 A probe is a namespace answering `git` and `gh` as the real ones would; the cases
-on a real repository run `git` itself and fake only `gh`.
+on a real repository run `git` itself and fake only `gh`. A unit is stated by the rows the app
+holds (`round_row`, `finding_row`, `ship`, `pr`), never by an artifact's text.
 """
 
 from __future__ import annotations
@@ -11,72 +12,151 @@ import re
 from pathlib import Path
 from types import SimpleNamespace
 
-from coscc.loop.model import (
-    branch_problem,
-    parse_answers,
-    parse_more_rounds,
-    parse_review,
-    parse_ship,
-    parse_status,
-    review_limit,
-)
+from coscc.loop import REVIEW_ROUNDS
+from coscc.loop.model import branch_problem, read_unit, review_from, review_limit
 from coscc.loop.probe import UI_STANDARD, Probe
 from coscc.loop.repo_rules import screens_problems
-from coscc.loop.rules import more_rounds, open_lines
-from tests.loop.conftest import git
-from tests.loop.test_model import (
-    ROUND1,
-    ROUND2,
-    moved_to,
-    round3,
-    tree_after_round_two,
-    check_gate,
-    next_action,
-    next_step,
-    CHAIN,
-    HEAD2,
-    NOT_ANCESTOR,
-    PR,
-    REVIEW_HEAD,
-    SHA,
-    art,
-    asked,
-    branched,
-    f_block,
-    green_probe,
-    impl_text,
-    ok,
-    question_tree,
-    rated,
-    review_art,
-    round_,
-)
+from coscc.loop.rules import decide, gate_answer, more_rounds, next_answer, open_lines
+from tests.loop.conftest import entry, finding_row, git, round_row
 
-NO = NOT_ANCESTOR
+# --- the suite's glue: snapshot rows, the units they make, probes ------------------------------
+
+SHA = "a" * 40
+FIX = "b" * 40
+HEAD2 = "e" * 40
 REB = "d" * 40
 TRUNK = "refs/remotes/origin/main"
-
-# --- the glue: ship.md as the reader attaches it, probes, trees --------------------------------
-
-SHIP_OLD = "# Ship: x\nReview: review.md. Author: A. Status: draft.\n\n## What went out\n\nNothing merged.\n"
-
-
-def ship_draft(n, refused="the head branch is not up to date with the base branch"):
-    said = "" if refused is None else f"Refused: {refused}\n"
-    return (
-        f"# Ship: x\nReview: review.md. Round: {n}. Author: A. Status: draft.\n\n"
-        f"## What went out\n\nNothing merged.\n{said}\n## What is still open\n\nRefused: not this one\n"
-    )
+NOT_ANCESTOR = {"code": 1, "out": "", "err": ""}
+NO = NOT_ANCESTOR
+BEHIND = "the head branch is not up to date with the base branch"
 
 
-def ship_art(text):
-    ship = parse_ship(text)
-    has = ship["round"] is not None or ship["refused"] is not None
-    return {**art(parse_status(text)), **({"ship": ship} if has else {})}
+def next_action(unit, limit=REVIEW_ROUNDS):
+    return {k: v for k, v in decide(unit, limit).items() if k not in ("why", "rerun", "continue")}
+
+
+def check_gate(unit, stage, probe=None, limit=REVIEW_ROUNDS):
+    return {k: v for k, v in gate_answer(unit, stage, probe, limit).items() if k != "reasons"}
+
+
+def next_step(unit, probe=None, limit=REVIEW_ROUNDS):
+    return {k: v for k, v in next_answer(unit, probe, limit).items() if k != "reasons"}
+
+
+def ok(out: str = "") -> dict:
+    return {"code": 0, "out": out, "err": ""}
+
+
+def art(status) -> dict:
+    return {"status": status, "skipReason": None}
+
+
+def unit(artifacts: dict) -> dict:
+    return {"name": "0001_x", "type": "feat", "artifacts": artifacts, "problems": []}
+
+
+def branched(artifacts):
+    return {**unit(artifacts), "name": "0001_x", "branch": "feat/x"}
+
+
+FULL = {"intent.md": art("accepted"), "spec.md": art("accepted"), "plan.md": art("accepted")}
+PR = {**art("accepted"), "pr": {"url": "https://github.com/o/r/pull/7", "number": 7}}
+CHAIN = {**FULL, "impl.md": art("accepted"), "pr.md": PR}
+
+
+def rnd(n, verdict, *findings, sha=SHA, screens=None):
+    """A review round's row, on `sha`."""
+    return round_row(n, verdict, sha, *findings, screens=screens)
+
+
+def open_f(id_="F1", severity="high"):
+    return finding_row(id_, "open", severity)
+
+
+def review_art(status, *rounds):
+    """What `read_unit` attaches of a review: the rounds `review_from` builds of their rows."""
+    return {**art(status), "review": review_from(list(rounds))}
+
+
+def ship_art(n=None, refused=BEHIND):
+    """A draft `ship.md`, with the round and the refusal the app recorded; none says neither."""
+    return {**art("draft"), **({"merge": {"round": n, "refused": refused}} if n else {})}
+
+
+def asked(*rounds):
+    rounds = rounds or (rnd(1, "changes-requested", open_f()),)
+    return branched({**CHAIN, "review.md": review_art("changes-requested", *rounds)})
+
+
+def passed(*findings):
+    return branched({**CHAIN, "review.md": review_art("accepted", rnd(1, "pass", *findings))})
 
 
 def passed_once():
-    return branched({**CHAIN, "review.md": review_art("accepted", round_(1, "pass"))})
+    return passed()
+
+
+def titled(view):
+    return view if "title" in view else {**view, "title": "feat(0001): x"}
+
+
+def green_probe(checks=None, git=None, view=None) -> SimpleNamespace:
+    """A probe that answers as git and gh would: `checks` for `gh pr checks`, `view` for
+    `gh pr view` (the reviewed head when `None`), `git` by its argument string."""
+    checks = [{"name": "tests", "bucket": "pass"}] if checks is None else checks
+    view = titled(view or {"state": "OPEN", "headRefOid": SHA})
+    git = git or {}
+    return SimpleNamespace(
+        gh=lambda *a: ok(json.dumps(view)) if a[1] == "view" else ok(json.dumps(checks)),
+        git=lambda *a: git.get(" ".join(a), ok()),
+    )
+
+
+def moved_to(files, checks=None):
+    diff = {f"diff --name-only {SHA}..{HEAD2}": ok("\n".join(files))}
+    return green_probe(checks, diff, {"state": "OPEN", "headRefOid": HEAD2})
+
+
+def known(statuses=None, *, questions=None, records=None, **kwargs) -> dict:
+    """The snapshot entry of a unit: each file's status, the questions a record handed back
+    (`{file: [text]}`), a record's fields (`{file: {...}}`) and what `entry` takes."""
+    fields: dict[str, dict] = {}
+    for f, qs in (questions or {}).items():
+        fields.setdefault(f.replace(".md", "_md"), {})["questions"] = [
+            {"n": i, "text": t} for i, t in enumerate(qs, 1)
+        ]
+    for f, rec in (records or {}).items():
+        fields.setdefault(f.replace(".md", "_md"), {}).update(rec)
+    for key, extra in kwargs.pop("fields", {}).items():
+        fields.setdefault(key, {}).update(extra)
+    return entry(statuses or {}, **kwargs, **fields)
+
+
+def claim_record(*ids: str) -> dict:
+    """impl's submitted record, claiming `ids` only a person can close."""
+    return {
+        "impl.md": {"result": {"judgement": "ready", "questions": [], "needs_person": list(ids)}}
+    }
+
+
+def answer(file: str, ref: int | str, by: str, text: str, date: str = "2026-09-23") -> dict:
+    """A person's answer row: to question `ref` (a number) or finding `ref` (`F<n>`)."""
+    number = isinstance(ref, int)
+    return {
+        "artifact": file,
+        "n": ref if number else None,
+        "id": None if number else ref,
+        "by": by,
+        "date": date,
+        "via": "product",
+        "text": text,
+    }
+
+
+def read(dir_: Path, name: str, known_entry: dict | None = None) -> dict:
+    """`read_unit` of `dir_`, with the entry as the app's snapshot."""
+    state = {"workspace": "", "workspaces": [], "units": {f"/{name}": known_entry or known()}}
+    return read_unit(str(dir_), name, state)
 
 
 def with_attrs(probe, **attrs):
@@ -109,10 +189,6 @@ def no_trunk(probe):
         return git_(*a)
 
     return with_attrs(probe, git=git2)
-
-
-def titled(view):
-    return view if "title" in view else {**view, "title": "feat(0001): x"}
 
 
 # --- a clean rebase does not void a passing review ---------------------------------------------
@@ -195,8 +271,8 @@ def test_a_branch_ref_rewritten_clean_while_the_pull_request_head_is_the_reviewe
     refused = branched(
         {
             **CHAIN,
-            "review.md": review_art("accepted", round_(1, "pass")),
-            "ship.md": ship_art(ship_draft(1)),
+            "review.md": review_art("accepted", rnd(1, "pass")),
+            "ship.md": ship_art(1),
         }
     )
     assert next_step(refused, rebased_probe(head=SHA)) == {
@@ -295,13 +371,12 @@ def test_next_offers_ship_on_a_green_clean_rebase_impl_on_red_and_nothing_while_
 
 
 def test_a_ship_refused_as_not_up_to_date_and_then_rebased_clean_is_offered_ship_again():
-    def u(refused=None):
-        kwargs = {} if refused is None else {"refused": refused}
+    def u(refused=BEHIND):
         return branched(
             {
                 **CHAIN,
-                "review.md": review_art("accepted", round_(1, "pass")),
-                "ship.md": ship_art(ship_draft(1, **kwargs)),
+                "review.md": review_art("accepted", rnd(1, "pass")),
+                "ship.md": ship_art(1, refused),
             }
         )
 
@@ -405,8 +480,7 @@ class RebaseRepo:
 
 
 def passed_at(commit):
-    text = round_(1, "pass").replace(SHA, commit, 1)
-    return branched({**CHAIN, "review.md": review_art("accepted", text)})
+    return branched({**CHAIN, "review.md": review_art("accepted", rnd(1, "pass", sha=commit))})
 
 
 def rebase_repo(tmp_path, binary=False):
@@ -483,9 +557,12 @@ def test_a_head_that_differs_only_under_the_units_own_files_is_clean(tmp_path):
 
 # --- a rebase alone answers no finding ---------------------------------------------------------
 
-TWO_ASKED = "\n".join(
-    round_(n, "changes-requested", [rated("F1", "low"), rated("F2", "medium")]) for n in (1, 2)
-)
+
+def two_asked(sha=SHA):
+    return [
+        rnd(n, "changes-requested", open_f("F1", "low"), open_f("F2", "medium"), sha=sha)
+        for n in (1, 2)
+    ]
 
 
 def test_changes_asked_main_moved_and_the_branch_rebased_on_a_real_repository_is_impl(tmp_path):
@@ -493,7 +570,7 @@ def test_changes_asked_main_moved_and_the_branch_rebased_on_a_real_repository_is
     r.on_main(far_from_the_hunk)
     head = r.rebase()
     assert head != r.R
-    u = asked(TWO_ASKED.replace(SHA, r.R))
+    u = asked(*two_asked(r.R))
     assert next_step(u, r.probe(head))["stage"] == "impl"
     # The review gate is as it was: `next` chooses, the gate does not close.
     assert check_gate(u, "review", r.probe(head))["ok"] is True
@@ -505,7 +582,7 @@ def test_a_rebase_with_a_fix_commit_on_top_goes_to_review_on_green_impl_on_red(t
     r.rebase()
     r.file.write_text(r.file.read_text().replace("line 40\n", "line 40, fixed by the unit\n"))
     head = r.commit("-m", "the fix")
-    u = asked(TWO_ASKED.replace(SHA, r.R))
+    u = asked(*two_asked(r.R))
     n = next_step(u, r.probe(head))
     assert n["stage"] == "review"
     assert re.search(r"differs from the reviewed one in a\.txt", n["action"])
@@ -517,7 +594,7 @@ def test_a_rebase_whose_patch_differs_in_one_file_names_it_and_goes_to_review():
     def patch(c):
         return PATCH_R if c == SHA else hunk(28, "line 28, changed by main")
 
-    n = next_step(asked(TWO_ASKED), rebased_probe(patch=patch))
+    n = next_step(asked(*two_asked()), rebased_probe(patch=patch))
     assert n["stage"] == "review"
     assert re.search(
         r"was rewritten past aaaaaaa — its patch differs from the reviewed one in a\.txt",
@@ -527,17 +604,20 @@ def test_a_rebase_whose_patch_differs_in_one_file_names_it_and_goes_to_review():
 
 # --- a passing review the ship gate cannot read loops ------------------------------------------
 
-SHOT = "- .screens/board-1440x900.png — 1440×900 — /board — no violation"
-FULL_PAGE = "- .screens/board-1440x900.png — 1440×900 (full page) — /board — no violation"
+SHOT = {
+    "path": ".screens/board-1440x900.png",
+    "size": "1440×900",
+    "address": "/board",
+    "result": "no violation",
+}
+FULL_PAGE = {**SHOT, "size": "1440×900 (full page)"}
 UI = {"path": UI_STANDARD, "globs": ["coscc/screens.py"]}
 STALE_AT = "7" * 40
 
 
-def screens(taken=SHA, by="an agent session (write-review)", shots=(SHOT,), head=None):
-    first = head or (
-        f"Taken at: {taken}. Standard: `{UI_STANDARD}`. Looked at by: {by}, from screenshots."
-    )
-    return f"\n### Screens\n\n{first}\n\n{chr(10).join(shots)}\n"
+def screens(taken=SHA, by="an agent session (write-review)", shots=(SHOT,)):
+    """A round's screens row: where they were taken, who looked and the shots."""
+    return {"taken": taken, "standard": UI_STANDARD, "by": by, "shots": list(shots)}
 
 
 def ui_probe(files, extra=None):
@@ -569,24 +649,22 @@ def stuck_probe(git_=None, head=SHA):
 
 
 def passes(*on):
-    return "\n".join(
-        f"{round_(i + 1, 'pass').replace(SHA, sha, 1)}{OFF_BRANCH}" for i, sha in enumerate(on)
-    )
+    return [rnd(i + 1, "pass", sha=sha, screens=OFF_BRANCH) for i, sha in enumerate(on)]
 
 
 def passed_on(*on):
-    return branched({**CHAIN, "review.md": review_art("accepted", passes(*on))})
+    return branched({**CHAIN, "review.md": review_art("accepted", *passes(*on))})
 
 
 def five_full_page_passes():
-    return "\n".join(f"{round_(n, 'pass')}{screens(shots=[FULL_PAGE])}" for n in (1, 2, 3, 4, 5))
+    return [rnd(n, "pass", screens=screens(shots=[FULL_PAGE])) for n in (1, 2, 3, 4, 5)]
 
 
 def test_five_passing_rounds_with_a_full_page_screenshot_open_ship():
-    text = five_full_page_passes()
-    u = branched({**CHAIN, "review.md": review_art("accepted", text)})
+    rounds = five_full_page_passes()
+    u = branched({**CHAIN, "review.md": review_art("accepted", *rounds)})
     probe = ui_probe(["coscc/screens.py"])
-    for r in parse_review(text)["rounds"]:
+    for r in review_from(rounds)["rounds"]:
         assert screens_problems(r["screens"], UI_STANDARD) == []
     g = check_gate(u, "ship", probe)
     assert not any("lists no screenshot" in n for n in g["need"])
@@ -610,7 +688,7 @@ def test_one_pass_the_ship_gate_stays_closed_on_sends_next_to_review_and_the_gat
 
 def test_the_review_gate_adds_nothing_when_the_stop_has_come_or_ship_would_open():
     assert check_gate(passed_on(SHA, SHA), "review", stuck_probe()) == {"ok": True, "need": []}
-    u = branched({**CHAIN, "review.md": review_art("accepted", five_full_page_passes())})
+    u = branched({**CHAIN, "review.md": review_art("accepted", *five_full_page_passes())})
     assert check_gate(u, "review", ui_probe(["coscc/screens.py"])) == {"ok": True, "need": []}
     calls = []
     probe = stuck_probe()
@@ -635,8 +713,8 @@ def test_the_same_stop_in_the_ship_refused_branch():
     u = branched(
         {
             **CHAIN,
-            "review.md": review_art("accepted", passes(SHA, SHA)),
-            "ship.md": ship_art(ship_draft(2)),
+            "review.md": review_art("accepted", *passes(SHA, SHA)),
+            "ship.md": ship_art(2),
         }
     )
     n = next_step(u, stuck_probe())
@@ -737,7 +815,7 @@ def test_a_commit_outside_the_units_files_on_the_head_or_a_rejected_review_is_th
         f"merge-base --is-ancestor {HEAD2} {SHA}": NO,
     }
     assert next_step(passed_on(SHA, SHA), stuck_probe(git_, HEAD2))["stage"] == "review"
-    rejected = branched({**CHAIN, "review.md": review_art("rejected", passes(SHA, SHA))})
+    rejected = branched({**CHAIN, "review.md": review_art("rejected", *passes(SHA, SHA))})
     r = next_step(rejected, stuck_probe())
     assert r == next_action(rejected)
     assert "needs a person" not in r["action"]
@@ -802,10 +880,10 @@ def test_a_merged_pull_request_opens_ship_to_record_it_when_its_branch_is_gone()
 def test_next_offers_ship_for_a_merged_pull_request_when_ship_md_is_missing_stale_or_refused():
     action = f"ship — #7 was merged as {MERGE} at {MERGED_AT}: record it in ship.md; do not merge"
     stale = {**art("accepted"), "stale": {"stage": "review", "date": "2026-09-26"}}
-    refused = ship_art(ship_draft(1, "failed to delete local branch fix/x: cannot switch to main"))
+    refused = ship_art(1, "failed to delete local branch fix/x: cannot switch to main")
     for ship in [None, stale, refused]:
         extra = {"ship.md": ship} if ship else {}
-        u = branched({**CHAIN, "review.md": review_art("accepted", round_(1, "pass")), **extra})
+        u = branched({**CHAIN, "review.md": review_art("accepted", rnd(1, "pass")), **extra})
         for git_ in [{}, GONE]:
             n = next_step(u, merged_probe(git_=git_))
             assert n == {"blocked": True, "action": action, "stage": "ship"}
@@ -816,7 +894,7 @@ def test_an_accepted_ship_md_is_finished_for_a_merged_pull_request_without_askin
     u = branched(
         {
             **CHAIN,
-            "review.md": review_art("accepted", round_(1, "pass")),
+            "review.md": review_art("accepted", rnd(1, "pass")),
             "ship.md": art("accepted"),
         }
     )
@@ -828,95 +906,51 @@ def test_an_accepted_ship_md_is_finished_for_a_merged_pull_request_without_askin
 
 # --- a unit stuck at the review limit is given a round more ------------------------------------
 
-MORE = "\n### More rounds\nDecided by: owner. Date: 2026-09-27. Via: product.\nRounds: 1\n"
-
 
 def stuck_rounds(n):
-    return "\n".join(round_(i + 1, "changes-requested", ["- F1 [open] a"]) for i in range(n))
+    return [rnd(i + 1, "changes-requested", open_f("F1")) for i in range(n)]
 
 
-STUCK = f"{REVIEW_HEAD}{stuck_rounds(3)}"
+def stuck(tmp_path, rounds, granted=0):
+    """`rounds` read from rows on disk, with `granted` rounds a person allowed (the sum of the
+    app's `more-rounds` rows)."""
+    d = tmp_path / str(len(list(tmp_path.iterdir()))) / "qroot" / ".cos" / "0001_q"
+    d.mkdir(parents=True)
+    files = ["intent.md", "spec.md", "plan.md", "impl.md", "pr.md", "review.md"]
+    for f in files:
+        (d / f).write_text("# x\n")
+    statuses = dict.fromkeys(files, "accepted") | {"review.md": "changes-requested"}
+    row = known(
+        statuses,
+        rounds_granted=granted,
+        fields={"pr_md": {"pr": PR["pr"]}, "review_md": {"rounds": rounds}},
+    )
+    return read(d, "0001_q", row)
 
 
-def with_more(review, *blocks):
-    return f"{review}\n## Answers\n{''.join(blocks)}"
-
-
-def stuck_files(review):
-    return {
-        "intent.md": "# I\nAuthor: t. Type: feat. Status: accepted.\n",
-        "spec.md": "# S\nStatus: accepted.\n",
-        "plan.md": "# P\nStatus: accepted.\n",
-        "impl.md": impl_text(""),
-        "pr.md": "# PR: feat(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n",
-        "review.md": review,
-    }
-
-
-def fresh(tmp_path: Path) -> Path:
-    return tmp_path / str(len(list(tmp_path.iterdir())))
-
-
-def stuck(tmp_path, review, extra=None):
-    return question_tree(fresh(tmp_path), {**stuck_files(review), **(extra or {})})[1]
-
-
-def test_a_more_rounds_block_lifts_the_review_limit_of_its_unit_alone(tmp_path):
-    none = stuck(tmp_path, STUCK)
+def test_a_round_granted_lifts_the_review_limit_of_its_unit_alone(tmp_path):
+    none = stuck(tmp_path, stuck_rounds(3))
     need = check_gate(none, "review", green_probe(), 3)["need"][0]
     assert "needs a person — review used 3 of 3 rounds" in need
     assert "needs a person" in next_action(none, 3)["action"]
-    given = stuck(tmp_path, with_more(STUCK, MORE))
+    given = stuck(tmp_path, stuck_rounds(3), granted=1)
     assert given["artifacts"]["review.md"]["roundsGranted"] == 1
     assert given["problems"] == []
     assert check_gate(given, "review", green_probe(), 3)["ok"] is True
     assert "needs a person" not in next_action(given, 3)["action"]
     assert "3 of 4 rounds used" in next_action(given, 3)["action"]
     assert "needs a person" not in next_step(given, green_probe(), 3)["action"]
+    assert "roundsGranted" not in none["artifacts"]["review.md"]
 
 
 def test_a_unit_that_used_its_granted_round_needs_a_person_again_at_the_new_limit(tmp_path):
-    used = f"{REVIEW_HEAD}{stuck_rounds(4)}"
-    again = stuck(tmp_path, with_more(used, MORE))
+    again = stuck(tmp_path, stuck_rounds(4), granted=1)
     need = check_gate(again, "review", green_probe(), 3)["need"][0]
     assert "needs a person — review used 4 of 4 rounds" in need
     assert "review used 4 of 4 rounds" in next_action(again, 3)["action"]
     assert more_rounds(again, 3) is True
-    # Two blocks add up.
-    assert review_limit(stuck(tmp_path, with_more(used, MORE, MORE)), 3) == 5
-
-
-def test_a_more_rounds_block_with_no_decided_by_or_no_rounds_line_is_not_counted(tmp_path):
-    decided = "Decided by: owner. Date: 2026-09-27. Via: product.\n"
-    bad = [
-        ("\n### More rounds\nRounds: 1\n", "Decided by"),
-        (f"\n### More rounds\n{decided}Rounds: 0\n", "Rounds"),
-        (f"\n### More rounds\n{decided}Rounds: x\n", "Rounds"),
-    ]
-    for block, line in bad:
-        u = stuck(tmp_path, with_more(STUCK, block))
-        assert "roundsGranted" not in u["artifacts"]["review.md"], block
-        assert u["problems"] == [
-            f"review.md: more rounds block 1 has no valid {line} line — it is not counted"
-        ], block
-        need = check_gate(u, "review", green_probe(), 3)["need"][0]
-        assert re.search(r"needs a person — review used 3 of 3", need)
-    # A bad block is numbered among the more rounds blocks only, and does not void a good one.
-    mixed = parse_more_rounds(with_more(STUCK, f_block("F1"), MORE, bad[1][0]))
-    assert mixed == {
-        "granted": 1,
-        "problems": ["more rounds block 2 has no valid Rounds line — it is not counted"],
-    }
-
-
-def test_a_more_rounds_block_is_never_an_answer_and_never_the_tail_of_a_finding_answer():
-    answers = parse_answers(with_more(STUCK, f_block("F1", "đã chạy"), MORE))
-    assert len(answers) == 1
-    assert answers[0]["id"] == "F1"
-    assert answers[0]["text"] == "đã chạy"
-    assert "Rounds:" not in answers[0]["text"]
-    # Nor is it a round: the review stops at the answers.
-    assert len(parse_review(with_more(STUCK, MORE))["rounds"]) == 3
+    # Rounds granted add up in the entry.
+    assert review_limit(stuck(tmp_path, stuck_rounds(4), granted=2), 3) == 5
 
 
 # --- a red check no rerun can fix just stops ---------------------------------------------------
@@ -1051,19 +1085,47 @@ def test_a_bad_head_no_red_check_runs_check_branch_for_or_a_head_gh_cannot_read_
 
 
 def incomplete_round(n):
-    return (
-        f"## Round {n}\n\nReviewed: {SHA}. Verdict: incomplete.\n\n### Reviewed so far\n\n- a.py\n\n"
-        "### Findings\n\n- F1 [open] a.py:3 — high — x\n\n### What was not reviewed\n\n- b.py\n"
-    )
+    return rnd(n, "incomplete", open_f("F1"))
 
 
 def review_of_rounds(status, rounds):
-    text = f"# Review: x\nStatus: {status}.\n\n{chr(10).join(rounds)}"
-    return branched({**CHAIN, "review.md": review_art(status, text)})
+    return branched({**CHAIN, "review.md": review_art(status, *rounds)})
 
 
 def cr(n):
-    return round_(n, "changes-requested", ["- F1 [open] x"])
+    return rnd(n, "changes-requested", open_f("F1"))
+
+
+def round_two_tree(tmp_path, rounds, claims=("F2", "F3"), answers=()):
+    """A unit right after its review rounds, impl's record claiming `claims` only a person can
+    close, and a person's `answers` on the review: read from rows, files on disk."""
+    d = tmp_path / str(len(list(tmp_path.iterdir()))) / "qroot" / ".cos" / "0001_q"
+    d.mkdir(parents=True)
+    files = ["intent.md", "spec.md", "plan.md", "impl.md", "pr.md", "review.md"]
+    for f in files:
+        (d / f).write_text("# x\n")
+    statuses = dict.fromkeys(files, "accepted") | {"review.md": "changes-requested"}
+    row = known(
+        statuses,
+        type="fix",
+        records=claim_record(*claims),
+        answers=list(answers),
+        fields={"pr_md": {"pr": PR["pr"]}, "review_md": {"rounds": rounds}},
+    )
+    return read(d, "0001_q", row)
+
+
+def rounds_one_two():
+    return [
+        rnd(1, "changes-requested", open_f("F1"), open_f("F2"), open_f("F3")),
+        rnd(
+            2,
+            "changes-requested",
+            finding_row("F1", "fixed", fixed_in=FIX),
+            open_f("F2"),
+            open_f("F3"),
+        ),
+    ]
 
 
 def test_a_merge_base_that_names_no_commit_is_an_error_never_a_clean_rebase():
@@ -1198,19 +1260,27 @@ def test_every_branch_of_next_that_reads_ci_stops_on_the_same_line_and_the_gates
         return head_probe(rebased_probe(checks=RED_97))
 
     stale = {
-        **review_art("accepted", round_(1, "pass")),
+        **review_art("accepted", rnd(1, "pass")),
         "stale": {"stage": "impl", "date": "2026-09-26"},
     }
-    passed_review = {**CHAIN, "review.md": review_art("accepted", round_(1, "pass"))}
-    answered = (
-        f"{REVIEW_HEAD}{ROUND1}\n{ROUND2}\n{round3()}\n## Answers\n{f_block('F2')}{f_block('F3')}"
-    )
-    claimed = f"{REVIEW_HEAD}{ROUND1}\n{ROUND2}"
+    passed_review = {**CHAIN, "review.md": review_art("accepted", rnd(1, "pass"))}
+    rows = [answer("review.md", f, "Bao", "ran it", "2026-09-24") for f in ("F2", "F3")]
+    answered = [
+        *rounds_one_two(),
+        rnd(
+            3,
+            "needs-person",
+            finding_row("F1", "fixed", fixed_in=FIX),
+            finding_row("F2", "needs-person"),
+            finding_row("F3", "needs-person"),
+        ),
+    ]
+    claimed = rounds_one_two()
     cases = [
         ("pr done, no review", branched(CHAIN), probe()),
         ("a stale review", branched({**CHAIN, "review.md": stale}), probe()),
-        ("person-answered", tree_after_round_two(tmp_path, answered), probe()),
-        ("every open finding claimed", tree_after_round_two(tmp_path, claimed), probe()),
+        ("person-answered", round_two_tree(tmp_path, answered, answers=rows), probe()),
+        ("every open finding claimed", round_two_tree(tmp_path, claimed), probe()),
         (
             "review-incomplete",
             review_of_rounds("draft", [cr(1), incomplete_round(2)]),
@@ -1220,7 +1290,7 @@ def test_every_branch_of_next_that_reads_ci_stops_on_the_same_line_and_the_gates
         ("ship after a clean rebase", branched(passed_review), rebased()),
         (
             "ship-refused after a clean rebase",
-            branched({**passed_review, "ship.md": ship_art(ship_draft(1))}),
+            branched({**passed_review, "ship.md": ship_art(1)}),
             rebased(),
         ),
     ]

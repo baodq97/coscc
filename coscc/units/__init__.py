@@ -27,6 +27,15 @@ UNITS_DIR = "units"
 # `NNNN_slug`: the only shape `new-path` produces and the only one accepted back.
 UNIT_RE = re.compile(r"(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)", re.ASCII)
 
+
+def pr_title(name: str, type_: str | None) -> str:
+    """A unit's pull request title, `<type>(<NNNN>): <slug, hyphens as spaces>`: computed from
+    its name and type, never stored. The PR machine opens with it; the ship gate holds GitHub's
+    title to it."""
+    number, _, slug = name.partition("_")
+    return f"{type_ or 'chore'}({number}): {slug.replace('-', ' ')}"
+
+
 # Turns a hung `coscc.loop` child into an error; it does not bound the work.
 TIMEOUT = 10.0
 
@@ -126,7 +135,10 @@ def branch_name(
     directory = unit_dir(workspace, unit, data_dir)  # validates before it reaches a command
     if not directory.is_dir():
         raise CannotCreate(f"no such work unit in this workspace: {unit}")
-    if not (directory / "intent.md").is_file():
+    from coscc.units import states
+
+    typed = states.files_with_field("type")
+    if not any((directory / f).is_file() for f in typed):
         # The loop's `unit-branch` says `No such work unit` here, false of the unit; say what is missing.
         raise CannotCreate(
             f"{unit} has no intent.md yet, and the branch name comes from the Type: "
@@ -181,15 +193,13 @@ def create(
     directory.mkdir(parents=True, exist_ok=False)
     text = str(brief or "").strip()
     if text:
-        (directory / "idea.md").write_text(_idea(unit, text), encoding="utf-8")
+        from coscc.units import states
+
+        (directory / states.brief_file()).write_text(_idea(unit, text), encoding="utf-8")
     return {"unit": unit, "path": str(directory), "brief": bool(text)}
 
 
 def _idea(unit: str, brief: str) -> str:
-    """The brief as an `idea.md` the loop can read, `Status: accepted` (nothing for an agent to accept)."""
+    """The brief as an `idea.md`; the app records it accepted when the unit opens."""
     title = unit.split("_", 1)[-1].replace("-", " ")
-    return (
-        f"# Idea: {title}\n"
-        f"Author: the originator. Status: accepted.\n\n"
-        f"## In their own words\n\n{brief.strip()}\n"
-    )
+    return f"# Idea: {title}\nAuthor: the originator.\n\n## In their own words\n\n{brief.strip()}\n"

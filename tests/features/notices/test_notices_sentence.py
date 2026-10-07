@@ -42,7 +42,7 @@ def _ship(result: str) -> dict:
     return {
         "v": 1,
         "at": "2026-09-27T10:00:00Z",
-        "kind": "ship",
+        "kind": "merge",
         "workspace": WS,
         "unit": "0007_x",
         "stage": "ship",
@@ -79,7 +79,19 @@ EVERY = [
 
 
 class EachKindComesFromItsRecord(unittest.TestCase):
-    def test_each_of_the_five_kinds_comes_from_its_record(self):
+    def test_each_of_the_six_kinds_comes_from_its_record(self):
+        off = {
+            "kind": "agent-state",
+            "workspace": WS,
+            "unit": "",
+            "stage": "scan",
+            "agent": "scan",
+            "on": False,
+            "by": "app",
+            "reason": "a run stopped at its ceiling",
+        }
+        self.assertIsNone(notices.notice_of(7, {**off, "by": "owner"}))
+        self.assertIn("scan is off", notices.notice_of(7, off)["text"])
         got = {
             "autopilot-stop": notices.notice_of(1, _stop("0007_x", "a")),
             "questions": notices.notice_of(2, QUESTIONS),
@@ -87,7 +99,7 @@ class EachKindComesFromItsRecord(unittest.TestCase):
             "shipped": notices.notice_of(4, _ship("shipped")),
             "ship-refused": notices.notice_of(5, _ship("refused")),
         }
-        self.assertEqual(set(got), set(notices.KINDS))
+        self.assertEqual(set(got) | {"agent-off"}, set(notices.KINDS))
         for kind, n in got.items():
             self.assertIsNotNone(n, kind)
             self.assertEqual(n["kind"], kind)

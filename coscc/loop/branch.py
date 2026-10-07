@@ -1,8 +1,7 @@
-"""The commands that name a branch, a pull request's text, a tag or a version.
+"""The commands that name a branch, a tag or a version.
 
 `TAG_RE` through `version_problem`, the by-hand reading of the version files, the commands
-from `cmd_check_branch` to `cmd_pr_text`, and the dispatch of `unit-branch`, `pr-text`,
-`check-branch`, `check-tag` and `check-version`. The `check-*` commands read the checkout the
+from `cmd_check_branch` on, and the dispatch of `unit-branch`, `check-branch`, `check-tag` and `check-version`. The `check-*` commands read the checkout the
 process stands in (`checkout()`), never a `--root`, nor where this package is installed.
 """
 
@@ -15,27 +14,20 @@ import subprocess
 from collections.abc import Callable
 
 from coscc.loop import (
-    BRANCH_TYPES,
     JS_SPACE,
-    UNDEFINED,
-    UNIT_RE,
+    proc_of,
     checkout,
     dig,
     js,
     nullish,
     read_text,
-    stringify,
     trim,
 )
 from coscc.loop.model import (
-    NO_ENTRY,
     branch_for,
     branch_problem,
     entry_of,
     not_a_work_branch,
-    pr_text,
-    status_in,
-    title_problem,
 )
 
 # JavaScript's `\s`, spelled out: `re`'s `\s` reads `\x1c`-`\x1f` and `\x85` as space, and not `﻿`.
@@ -234,10 +226,11 @@ def cmd_unit_branch(unit_name, cos_dir, state, out, err):
     if not unit_name:
         err("usage: python -m coscc.loop unit-branch <NNNN_slug>")
         return 2
-    if not os.path.exists(_join(cos_dir, unit_name, "intent.md")):
+    known = entry_of(state, dig(state, "workspace"), unit_name)
+    opener = proc_of(nullish(dig(known, "process")))
+    if not os.path.exists(_join(cos_dir, unit_name, opener.file(opener.opener))):
         err(f"No such work unit: {unit_name}")
         return 2
-    known = entry_of(state, dig(state, "workspace"), unit_name)
     made = branch_for(unit_name, nullish(dig(known, "type"), None))
     if made.get("error"):
         err(made["error"])
@@ -246,50 +239,11 @@ def cmd_unit_branch(unit_name, cos_dir, state, out, err):
     return 0
 
 
-def cmd_pr_text(unit_name, cos_dir, state, out, err):
-    """Reads `pr.md` and the `intent.md` whose `Type:` the title is checked against; prints."""
-    if not unit_name:
-        err("usage: python -m coscc.loop pr-text <NNNN_slug>")
-        return 2
-    if not UNIT_RE.fullmatch(unit_name):
-        err(f'Invalid unit name "{unit_name}": expected NNNN_slug.')
-        return 2
-    dir_ = _join(cos_dir, unit_name)
-    if not os.path.exists(dir_):
-        err(f"No such work unit: {unit_name}")
-        return 1
-    file = _join(dir_, "pr.md")
-    if not os.path.exists(file):
-        err(f"{unit_name} has no pr.md")
-        return 1
-    text = read_text(file)
-    known = nullish(entry_of(state, dig(state, "workspace"), unit_name), NO_ENTRY)
-    type_ = (
-        None if not os.path.exists(_join(dir_, "intent.md")) else nullish(dig(known, "type"), None)
-    )
-    read = pr_text(text)
-    problem = title_problem(read["title"], type_ if type_ in BRANCH_TYPES else None, unit_name[:4])
-    status = status_in(known, "pr.md")
-    out(
-        stringify(
-            {
-                "unit": unit_name,
-                **read,
-                "status": None if status is UNDEFINED else status,
-                "titleProblem": problem,
-            }
-        )
-    )
-    return 0
-
-
 def run(args, out, err) -> int:
     word = args.rest[0] if args.rest else None
     match args.cmd:
         case "unit-branch":
             return cmd_unit_branch(word, args.cos_dir, args.state, out, err)
-        case "pr-text":
-            return cmd_pr_text(word, args.cos_dir, args.state, out, err)
         case "check-branch":
             return cmd_check_branch(word, out, err)
         case "check-tag":

@@ -4,6 +4,7 @@ Nothing here creates a session. Creating one spends account quota, so the suite 
 a loop; what needs a real session is the proof command, which is run deliberately."""
 
 import asyncio
+import json
 import os
 import shutil
 import sys
@@ -17,6 +18,8 @@ import claude_agent_sdk as sdk
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from coscc.agent import sessions
+from coscc.agent.helpers import Denials, Gate, Helpers
+from coscc.agent.policy import Grant
 from coscc.config import PROTECTED_DB_VAR, Config
 from coscc.store.db import Data
 from coscc.agent.sessions import (
@@ -28,8 +31,18 @@ from coscc.agent.sessions import (
 )
 
 
+# What every gate of these tests denies; a real run's are the app's (`sessions.secrets_of`).
+SECRETS = ("/data/cos.db",)
+
+
+def _grant(**kw) -> Grant:
+    """A run's grant in `/p`, holding `kw`."""
+    return Grant(**{"cwd": "/p", "secrets": SECRETS, **kw})
+
+
 def _options(*args, **kw):
     kw.setdefault("data_dir", tempfile.gettempdir())
+    kw.setdefault("gate", Gate(_grant()))
     return sessions._options(*args, **kw)
 
 
@@ -163,11 +176,6 @@ class TranscriptExcerptIsWhatTheSessionDid(unittest.TestCase):
 
 
 class OptionsCarryTheKnobs(unittest.TestCase):
-    def test_permission_mode_follows_knob_3(self):
-        self.assertEqual(_options(Config(), "/p", None).permission_mode, "default")
-        loose = Config(bypass_permissions=True)
-        self.assertEqual(_options(loose, "/p", None).permission_mode, "bypassPermissions")
-
     def test_project_settings_cannot_widen_the_tool_list(self):
         # A repo's own .claude/settings.json must not be able to grant a tool the four knobs did
         # not. C2b is about the app deciding, not the directory it visits.
@@ -221,45 +229,79 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         self.assertIsNot(got, CLAUDE_CODE_PRESET)
 
     def test_a_preset_changes_nothing_else(self):
-        # The grant is `tools` + `can_use_tool` + `permission_mode`, and project settings stay out.
-        # The preset may move none of them, in either permission mode.
+        # The grant is `tools` + the gate + `auto`, and project settings stay out. The preset may
+        # move none of them.
         from coscc.agent import policy
         from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
-        def gate(name, data, ctx):  # never called; compared by identity
-            raise AssertionError("not called")
+        gate = Gate(_grant(tools=policy.READ_TOOLS))
+        common = dict(max_turns=40, tools=list(policy.READ_TOOLS), gate=gate)
+        bare = _options(Config(), "/p", None, **common)
+        preset = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET, **common)
+        self.assertEqual(preset.tools, bare.tools)
+        self.assertEqual(preset.can_use_tool, gate.can_use_tool)
+        self.assertEqual(bare.can_use_tool, gate.can_use_tool)
+        self.assertEqual(preset.setting_sources, [])
+        self.assertTrue(preset.verbatim_prompts)
+        self.assertEqual(preset.permission_mode, bare.permission_mode)
+        self.assertEqual(preset.max_turns, bare.max_turns)
 
-        for config in (Config(), Config(bypass_permissions=True)):
-            common = dict(max_turns=40, tools=list(policy.READ_TOOLS), can_use_tool=gate)
-            bare = _options(config, "/p", None, **common)
-            preset = _options(config, "/p", None, system_prompt=CLAUDE_CODE_PRESET, **common)
-            self.assertEqual(preset.tools, bare.tools)
-            self.assertIs(preset.can_use_tool, gate)
-            self.assertIs(bare.can_use_tool, gate)
-            self.assertEqual(preset.setting_sources, [])
-            self.assertTrue(preset.verbatim_prompts)
-            self.assertEqual(preset.permission_mode, bare.permission_mode)
-            self.assertEqual(preset.max_turns, bare.max_turns)
+    def test_a_sandboxed_grant_runs_bash_in_the_os_sandbox(self):
+        config = Config(data_dir="/data", config_home="/home/o/.config", home="/home/o")
+        gate = Gate(_grant(tools=("Bash",), sandbox=("127.0.0.1:3000",)))
+        with (
+            tempfile.TemporaryDirectory() as run,
+            mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": ""}),
+        ):
+            options = _options(config, "/repo", None, tools=["Bash"], gate=gate, data_dir=run)
+            box = json.loads(options.settings or "")["sandbox"]
+            self.assertEqual(options.env["TMPDIR"], run)
+        self.assertEqual(json.loads(options.settings or "")["autoMode"], sessions.AUTO_MODE)
+        self.assertTrue(box["enabled"] and box["failIfUnavailable"])
+        self.assertFalse(box["allowUnsandboxedCommands"])
+        self.assertNotIn("excludedCommands", box)
+        self.assertEqual(
+            box["network"], {"allowedDomains": ["127.0.0.1:3000"], "strictAllowlist": True}
+        )
+        self.assertEqual(box["filesystem"]["allowWrite"], [run])
+        self.assertEqual(box["filesystem"]["denyWrite"], ["/repo"])
+        deny = box["filesystem"]["denyRead"]
+        for secret in (
+            "/data/cos.db",
+            "/data/vault",
+            "/data/packs",
+            "/home/o/.config/coscc",
+            "/home/o/.config/gh",
+            "/home/o/.ssh",
+            "/home/o/.claude/.credentials.json",
+        ):
+            self.assertIn(secret, deny)
+        self.assertTrue(all(p.startswith("/") for p in deny))
+        # The gate's hooks stay in front of it.
+        self.assertTrue(options.hooks)
+        # No sandbox for a grant that has none.
+        plain = _options(config, "/repo", None, tools=["Bash"], gate=Gate(_grant(tools=("Bash",))))
+        self.assertNotIn("sandbox", json.loads(plain.settings or ""))
 
-    def test_settings_are_set_only_beside_a_preset(self):
+    def test_attribution_rides_beside_auto_only_with_a_preset(self):
         from coscc.agent import agents, policy
         from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
-        def gate(name, data, ctx):  # never called; compared by identity
-            raise AssertionError("not called")
-
         given = agents.settings_json(agents.agent_for("impl"))
-        common = dict(max_turns=40, tools=list(policy.READ_TOOLS), can_use_tool=gate)
+        common = dict(max_turns=40, tools=list(policy.READ_TOOLS))
         plain = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET, **common)
         signed = _options(
             Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET, settings=given, **common
         )
-        self.assertEqual(signed.settings, given)
-        self.assertIsNone(plain.settings)
-        self.assertIsNone(_options(Config(), "/p", None, settings=given, **common).settings)
+        bare = _options(Config(), "/p", None, settings=given, **common)
+        self.assertEqual(
+            json.loads(signed.settings or ""),
+            {"autoMode": sessions.AUTO_MODE, **json.loads(given)},
+        )
+        for options in (plain, bare):
+            self.assertEqual(json.loads(options.settings or ""), {"autoMode": sessions.AUTO_MODE})
         self.assertEqual(signed.setting_sources, [])
         self.assertTrue(signed.strict_mcp_config)
-        self.assertIs(signed.can_use_tool, gate)
         self.assertEqual(
             (signed.tools, signed.permission_mode, signed.extra_args),
             (plain.tools, plain.permission_mode, plain.extra_args),
@@ -396,20 +438,17 @@ class OptionsCarryTheKnobs(unittest.TestCase):
 
         from coscc.runner.attempt import CLAUDE_CODE_PRESET
 
-        def gate(name, data, ctx):  # never called
-            raise AssertionError("not called")
-
         self.assertEqual(sessions.MAX_BUFFER, 33_554_432)
-        for tools, can_use_tool, prompt, effort, budget in itertools.product(
+        for tools, helpers, prompt, effort, budget in itertools.product(
             (None, [], ["Read"]),
-            (None, gate),
+            (None, Helpers()),
             (None, CLAUDE_CODE_PRESET),
             (None, "high"),
             (None, 1.0),
         ):
             with self.subTest(
                 tools=tools,
-                gate=can_use_tool is not None,
+                helpers=helpers is not None,
                 preset=prompt is not None,
                 effort=effort,
                 budget=budget,
@@ -419,7 +458,7 @@ class OptionsCarryTheKnobs(unittest.TestCase):
                     "/p",
                     None,
                     tools=tools,
-                    can_use_tool=can_use_tool,
+                    gate=Gate(_grant(), helpers=helpers),
                     system_prompt=prompt,
                     effort=effort,
                     max_budget_usd=budget,
@@ -429,14 +468,14 @@ class OptionsCarryTheKnobs(unittest.TestCase):
     def test_options_are_built_only_in_one_place(self):
         # Chat, a board step, Gebo and an estimate all reach the SDK through `_options`; a second
         # `ClaudeAgentOptions(` anywhere else in the package would be a session without the ceiling.
-        # `_harness/` and `_web/` are built, not committed.
+        # `_web/` is built, not committed.
         import ast
 
         package = Path(sessions.__file__).parents[1]
         found = []
         for path in sorted(package.rglob("*.py")):
             relative = path.relative_to(package)
-            if path.name.endswith("_test.py") or relative.parts[0] in ("_harness", "_web"):
+            if path.name.endswith("_test.py") or relative.parts[0] == "_web":
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
@@ -455,6 +494,100 @@ class OptionsCarryTheKnobs(unittest.TestCase):
             if isinstance(node, ast.FunctionDef) and node.name == "_options"
         )
         self.assertTrue(builder.lineno <= line <= builder.end_lineno)
+
+
+class EverySessionRunsAuto(unittest.TestCase):
+    """`auto`, its settings inline, the server-side review off, and the gate in front, for a
+    chat, a session holding no tool and a step alike."""
+
+    def test_every_shape_runs_auto_behind_the_gate(self):
+        from coscc.runner.attempt import CLAUDE_CODE_PRESET
+
+        for name, kw in {
+            "chat": {},
+            "no tool": {"tools": []},
+            "a step": {"tools": ["Read", "Bash"], "system_prompt": CLAUDE_CODE_PRESET},
+        }.items():
+            with self.subTest(name):
+                gate = Gate(_grant(tools=tuple(kw.get("tools") or ())))
+                options = _options(Config(), "/p", None, gate=gate, **kw)
+                self.assertEqual(options.permission_mode, "auto")
+                self.assertEqual(json.loads(options.settings or "")["autoMode"], sessions.AUTO_MODE)
+                self.assertEqual(options.env["CLAUDE_CODE_AUTO_MODE_SERVER"], "0")
+                self.assertEqual(options.can_use_tool, gate.can_use_tool)
+                self.assertEqual(
+                    options.hooks["PreToolUse"][0].hooks,  # ty: ignore[not-subscriptable] - set above
+                    [gate.pre_tool_use],
+                )
+                self.assertEqual(options.allowed_tools, [])
+
+    def test_auto_keeps_its_defaults_and_is_told_where_it_runs(self):
+        self.assertEqual(sessions.AUTO_MODE["soft_deny"], ["$defaults"])
+        self.assertEqual(sessions.AUTO_MODE["hard_deny"], ["$defaults"])
+        self.assertEqual(sessions.AUTO_MODE["environment"][0], "$defaults")
+        self.assertIn("worktree", sessions.AUTO_MODE["environment"][1])
+
+    def test_the_apps_own_mcp_tools_are_allowed_by_name_and_no_command_is(self):
+        grant = _grant(
+            helpers=("scout", "worker"),
+            mcp=("mcp__cos__submit", "mcp__cos__peers", "mcp__vault__vault_exec"),
+        )
+        options = _options(Config(), "/p", None, gate=Gate(grant))
+        self.assertEqual(
+            options.allowed_tools,
+            ["mcp__cos__submit", "mcp__cos__peers", "mcp__vault__vault_exec"],
+        )
+
+    def test_a_session_with_no_helpers_hooks_no_helper(self):
+        options = _options(Config(), "/p", None)
+        self.assertEqual(set(options.hooks or {}), {"PreToolUse"})
+
+
+class AClassifierDenialIsRecorded(unittest.IsolatedAsyncioTestCase):
+    """A refusal `auto` made itself reaches the stream as a system message, and the gate records
+    it; a session started with no gate gets a locked one, with the secrets."""
+
+    async def _stream(self, messages, **kw):
+        s = Sessions(Config(workspaces=("/tmp",)))
+        self.addAsyncCleanup(s.close_all)
+        _Recording.messages = messages
+        with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _Recording):
+            return [item async for item in s.stream("/tmp", "hi", **kw)]
+
+    async def test_the_classifiers_refusal_is_in_the_runs_denials(self):
+        from claude_agent_sdk._internal.message_parser import parse_message
+
+        denied = parse_message(
+            {
+                "type": "system",
+                "subtype": "permission_denied",
+                "uuid": "u",
+                "session_id": "sid",
+                "tool_name": "Bash",
+                "tool_use_id": "toolu_1",
+                "decision_reason_type": "classifier",
+                "decision_reason": "[Data Exfiltration]",
+            }
+        )
+        denials = Denials()
+        config = Config(workspaces=("/tmp",))
+        grant = Grant(
+            cwd="/tmp", write=("/tmp",), secrets=sessions.secrets_of(config), home=config.home
+        )
+        gate = Gate(grant, denials)
+        await self._stream([denied, _result("sid")], gate=gate, step=sessions.StepHandle())
+        self.assertEqual(denials.count, 1)
+        self.assertIn("[Data Exfiltration]", denials.reasons[0])
+
+    async def test_a_session_given_no_gate_gets_a_locked_one_with_the_secrets(self):
+        await self._stream([_result("sid")])
+        options = _Recording.options
+        (matcher,) = options.hooks["PreToolUse"]
+        gate = matcher.hooks[0].__self__
+        self.assertEqual((gate.grant.cwd, gate.grant.write), ("/tmp", ()))
+        self.assertEqual(gate.grant.tools, ())
+        self.assertIn(str(Data(Config().data_dir).db_path), gate.grant.secrets)
+        self.assertEqual(options.permission_mode, "auto")
 
 
 class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
@@ -510,6 +643,15 @@ class _FakeClient:
 
     async def disconnect(self):
         pass
+
+
+class _Recording(_FakeClient):
+    """Keeps the options it was built with."""
+
+    options = None
+
+    def __init__(self, options=None):
+        _Recording.options = options
 
 
 def _assistant(text, session_id):
@@ -1466,6 +1608,22 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(sessions.Refused) as caught:
                     await self.s.stream("/tmp", "hi", step=step).__anext__()
                 self.assertEqual(str(caught.exception), sessions.PAUSED)
+        self.assertEqual((_CountingClient.made, self.s._steps, self.s._turns), ([], set(), {}))
+
+    async def test_no_stream_opens_on_a_grant_missing_this_apps_secrets_or_home(self):
+        # A grant issued without the app's config denies a thinner list: refused before a client.
+        _CountingClient.made, _CountingClient.fail = [], False
+        full = self.s.secrets()
+        home = self.s.config.home
+        thin = (
+            Grant(cwd="/p", secrets=full[:1], home=home),
+            Grant(cwd="/p", secrets=full, home="/x"),
+        )
+        with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _CountingClient):
+            for grant in thin:
+                with self.assertRaises(sessions.Refused) as caught:
+                    await self.s.stream("/tmp", "hi", gate=Gate(grant)).__anext__()
+                self.assertEqual(str(caught.exception), sessions.THIN_GRANT)
         self.assertEqual((_CountingClient.made, self.s._steps, self.s._turns), ([], set(), {}))
 
     async def test_suspend_closes_every_session_in_parallel(self):

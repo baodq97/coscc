@@ -6,11 +6,13 @@ import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from statistics import median
-from typing import Any, TypedDict
+from typing import Any, TypedDict, get_args
 
 from coscc.leif import spend
 from coscc.store.db import Busy
+from coscc.store.journal import MERGE_RECORD
 from coscc.kernel import Invalid
+from coscc.units.contracts import Graded
 
 from coscc.config import Config
 
@@ -18,12 +20,19 @@ from coscc.units.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
 
+GRADED = get_args(Graded)
+
 
 # What a shipped unit should cost and how many review rounds it should take: the owner's targets.
 TARGET_USD = spend.BUDGET_USD
 TARGET_ROUNDS = 1.5
 # A unit counts as shipped once the loop says it is finished, or finished with main moved on.
 SHIPPED = ("finished", "outdated-main")
+# The owner's outcome targets: every shipped unit graded within 7 days of the week the grader
+# waits after a merge, and 95% of those graded met.
+WAIT = timedelta(days=7)
+TARGET_GRADED = 1.0
+TARGET_MET = 0.95
 
 
 class Shipped(TypedDict):
@@ -31,6 +40,22 @@ class Shipped(TypedDict):
     usd: float | None
     rounds: int
     at: str
+    # Its latest graded outcome (`contracts.Graded`), `""` when none.
+    outcome: str
+
+
+class Outcomes(TypedDict):
+    """The shipped units' outcomes: `due` those shipped a week ago or more, `on_time` those of
+    them graded within 7 days after that week, `graded` those with a verdict, `met` those whose
+    latest is met, `missed` those whose latest is not met or unclear, not met first."""
+
+    due: int
+    on_time: int
+    graded: int
+    met: int
+    target_graded: float
+    target_met: float
+    missed: list[str]
 
 
 class Target(TypedDict):
@@ -49,11 +74,26 @@ class DaySpend(TypedDict):
     steps: int
 
 
-class StageSpend(TypedDict):
-    stage: str
+class AgentRun(TypedDict):
+    """One run of an agent, which `/api/runs/{run}` opens: its unit (`""` for none), when it
+    ended, what it cost and how."""
+
+    run: str
+    unit: str
+    at: str
+    usd: float | None
+    outcome: str
+
+
+class AgentSpend(TypedDict):
+    """What one agent spent: a stage's, the estimate's, a feature's session's, Gebo's or chat's,
+    with its latest runs."""
+
+    agent: str
     usd: float | None
     steps: int
     unknown: int
+    runs: list[AgentRun]
 
 
 class Waste(TypedDict):
@@ -72,8 +112,9 @@ class Insights(TypedDict):
     shipped: list[Shipped]
     targets: list[Target]
     by_day: list[DaySpend]
-    by_stage: list[StageSpend]
+    by_agent: list[AgentSpend]
     waste: list[Waste]
+    outcomes: Outcomes
 
 
 class Activity:
@@ -100,7 +141,7 @@ class Activity:
         now: datetime | None = None,
     ) -> Insights:
         """How one workspace did over the last `days`: each unit it shipped with its cost and
-        review rounds, the median of each against its target, the money by day and by stage, and
+        review rounds, the median of each against its target, the money by day and by agent, and
         what was spent again. `units` are the board's, for which shipped and their rounds."""
         rows = self._records_or_none(cwd)
         out: Insights = {
@@ -109,8 +150,9 @@ class Activity:
             "shipped": [],
             "targets": [],
             "by_day": [],
-            "by_stage": [],
+            "by_agent": [],
             "waste": [],
+            "outcomes": _outcomes([], {}, now),
         }
         if rows is None:
             return out
@@ -125,7 +167,7 @@ class Activity:
         # When the app merged it: its `ship` record. A unit merged by hand has none and is left out.
         shipped_at: dict[str, str] = {}
         for r in rows:
-            if r.get("kind") == "ship" and r.get("result") == "shipped" and r.get("unit"):
+            if r.get("kind") == MERGE_RECORD and r.get("result") == "shipped" and r.get("unit"):
                 shipped_at[str(r["unit"])] = str(r.get("at") or "")
         for u in units:
             name = str(u["name"])
@@ -136,9 +178,14 @@ class Activity:
                         "usd": whole.get(name),
                         "rounds": len(rounds[name]),
                         "at": shipped_at[name],
+                        "outcome": "",
                     }
                 )
         out["shipped"].sort(key=lambda s: s["at"], reverse=True)
+        verdicts = _verdicts(rows)
+        for s in out["shipped"]:
+            s["outcome"] = verdicts[s["unit"]][-1][1] if s["unit"] in verdicts else ""
+        out["outcomes"] = _outcomes(out["shipped"], verdicts, now)
         by_cost = sorted(out["shipped"], key=lambda s: -(s["usd"] or 0))
         by_rounds = sorted(out["shipped"], key=lambda s: -s["rounds"])
         costs = [s["usd"] for s in out["shipped"] if s["usd"] is not None]
@@ -159,9 +206,15 @@ class Activity:
         out["by_day"] = [
             {"day": d["key"], "usd": d["usd"], "steps": d["steps"]} for d in found["by_day"]
         ]
-        out["by_stage"] = [
-            {"stage": r["key"], "usd": r["usd"], "steps": r["steps"], "unknown": r["unknown"]}
-            for r in found["by_stage"]
+        out["by_agent"] = [
+            {
+                "agent": r["key"],
+                "usd": r["usd"],
+                "steps": r["steps"],
+                "unknown": r["unknown"],
+                "runs": r["runs"],
+            }
+            for r in found["by_agent"]
         ]
         out["waste"] = [
             {
@@ -174,3 +227,49 @@ class Activity:
             for w in found["waste"]
         ]
         return out
+
+
+def _verdicts(rows: Sequence[Mapping[str, Any]]) -> dict[str, list[tuple[str, str]]]:
+    """`{unit: [(at, graded)]}`, oldest first: each run that graded a unit's outcome, as its `end`
+    says (`coscc/runner/triggers.py`)."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    for r in rows:
+        if r.get("kind") == "end" and r.get("unit") and r.get("verdict") in GRADED:
+            out.setdefault(str(r["unit"]), []).append((str(r.get("at") or ""), str(r["verdict"])))
+    return out
+
+
+def _outcomes(
+    shipped: Sequence[Shipped],
+    verdicts: Mapping[str, list[tuple[str, str]]],
+    now: datetime | None,
+) -> Outcomes:
+    """KR2.1 and KR2.2 over `shipped`."""
+    at = now or datetime.now(timezone.utc)
+    due = on_time = met = 0
+    missed: list[tuple[int, str]] = []
+    for s in shipped:
+        try:
+            shipped_at = datetime.fromisoformat(s["at"])
+        except ValueError:
+            continue
+        found = verdicts.get(s["unit"]) or []
+        if shipped_at + WAIT <= at:
+            due += 1
+            limit = (shipped_at + 2 * WAIT).isoformat()
+            on_time += bool(found) and found[0][0] <= limit
+        if not found:
+            continue
+        last = found[-1][1]
+        met += last == "met"
+        if last != "met":
+            missed.append((0 if last == "not-met" else 1, s["unit"]))
+    return {
+        "due": due,
+        "on_time": on_time,
+        "graded": sum(1 for s in shipped if s["unit"] in verdicts),
+        "met": met,
+        "target_graded": TARGET_GRADED,
+        "target_met": TARGET_MET,
+        "missed": [u for _, u in sorted(missed)],
+    }

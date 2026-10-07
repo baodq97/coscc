@@ -19,12 +19,42 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from coscc.agent import policy
+from coscc.agent import pack, policy
 from coscc.config import from_env
 from coscc.store.db import Data, now
+from coscc.units import states
 
 MODES = ("env", "file", "placeholder", "ssh")
-VAULT_STAGES = ("impl", "spike")
+
+
+# The agents a secret's list may name ("Agents that may use it"): those whose row holds `vault`.
+def vault_agents() -> tuple[str, ...]:
+    """The agents whose row holds the vault now: the ones a secret's list may name."""
+    return tuple(k for k, r in pack.rows().items() if "vault" in pack.tools(r))
+
+
+def default_agents() -> tuple[str, ...]:
+    """The agents a new secret is kept for: those that write in the unit's branch and hold the
+    vault, of the built-in pack or the owner's own; never an imported pack's."""
+    mine = (pack.manifest()["name"], pack.LOCAL_NAME)
+    return tuple(
+        k
+        for k in states.coder_agents()
+        if k in vault_agents() and (pack.row(k) or {}).get("pack") in mine
+    )
+
+
+def may_use(data: Data, agent: str, workspace: str) -> bool:
+    """Whether `agent` may be handed a secret its list names in `workspace` now: its row holds
+    the vault and its pack is on there."""
+    found = pack.row(agent)
+    return (
+        found is not None
+        and "vault" in pack.tools(found)
+        and pack.pack_on(data, str(found.get("pack") or ""), workspace)
+    )
+
+
 NAME = re.compile(r"(global|ws):[a-z0-9][a-z0-9._-]{0,63}")
 
 # Chosen, not measured: turns a hung `age` into an error.
@@ -35,7 +65,7 @@ TABLES = (
     name        TEXT NOT NULL,
     workspace   TEXT NOT NULL,
     description TEXT NOT NULL,
-    stages      TEXT NOT NULL,
+    agents      TEXT NOT NULL,
     modes       TEXT NOT NULL,
     broker      INTEGER NOT NULL,
     created_by  TEXT NOT NULL,
@@ -64,7 +94,7 @@ class Secret:
     # The workspace key of a `ws:` secret; empty for a `global:` one.
     workspace: str
     description: str
-    stages: tuple[str, ...]
+    agents: tuple[str, ...]
     modes: tuple[str, ...]
     broker: bool
     # The workspace keys a `global:` secret is granted to; empty for a `ws:` one.
@@ -156,7 +186,7 @@ class Store:
                 name=r["name"],
                 workspace=r["workspace"],
                 description=r["description"],
-                stages=tuple(json.loads(r["stages"])),
+                agents=tuple(json.loads(r["agents"])),
                 modes=tuple(json.loads(r["modes"])),
                 broker=bool(r["broker"]),
                 granted=tuple(granted.get(r["name"], ())) if r["workspace"] == "" else (),
@@ -172,26 +202,26 @@ class Store:
         name: str,
         workspace: str,
         description: str = "",
-        stages: tuple[str, ...] = ("impl",),
+        agents: tuple[str, ...] | None = None,
         modes: tuple[str, ...] = ("env", "file"),
         broker: bool = False,
         actor: str = "human:owner",
     ) -> Secret:
         """A secret with no value yet. A name in use is refused, never overwritten."""
         name, column = self._row_key(name, workspace)
-        stages = _subset("stage", stages, VAULT_STAGES)
+        agents = _subset("agent", default_agents() if agents is None else agents, vault_agents())
         modes = ("ssh",) if broker else _subset("mode", modes, MODES)
         self._tables()
         try:
             with self.data.write() as conn:
                 conn.execute(
-                    "INSERT INTO vault_secrets (name, workspace, description, stages, modes, "
+                    "INSERT INTO vault_secrets (name, workspace, description, agents, modes, "
                     "broker, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         name,
                         column,
                         description.strip(),
-                        json.dumps(stages),
+                        json.dumps(agents),
                         json.dumps(modes),
                         int(broker),
                         actor,
@@ -220,6 +250,22 @@ class Store:
     def all(self) -> list[Secret]:
         return self._select()
 
+    def forget_agents(self, keys: set[str]) -> None:
+        """Take `keys` off every secret's list: an agent removed leaves nothing to the next row
+        that takes its key."""
+        for s in self.all():
+            kept = tuple(a for a in s.agents if a not in keys)
+            if kept != s.agents:
+                with self.data.write() as conn:
+                    conn.execute(
+                        "UPDATE vault_secrets SET agents = ? WHERE name = ? AND workspace = ?",
+                        (json.dumps(kept), s.name, s.workspace),
+                    )
+
+    def named_agents(self) -> set[str]:
+        """Every agent some secret's list names."""
+        return {a for s in self.all() for a in s.agents}
+
     def visible(self, workspace: str) -> list[Secret]:
         """Its own `ws:` secrets and the `global:` ones granted to it."""
         return [
@@ -230,16 +276,16 @@ class Store:
         ]
 
     def set_policy(
-        self, name: str, workspace: str, stages: tuple[str, ...], modes: tuple[str, ...]
+        self, name: str, workspace: str, agents: tuple[str, ...], modes: tuple[str, ...]
     ) -> Secret:
         """A broker secret keeps `ssh` as its only mode, whatever `modes` says."""
         secret = self.known(name, workspace)
-        stages = _subset("stage", stages, VAULT_STAGES)
+        agents = _subset("agent", agents, vault_agents())
         modes = ("ssh",) if secret.broker else _subset("mode", modes, MODES)
         with self.data.write() as conn:
             conn.execute(
-                "UPDATE vault_secrets SET stages = ?, modes = ? WHERE name = ? AND workspace = ?",
-                (json.dumps(stages), json.dumps(modes), secret.name, secret.workspace),
+                "UPDATE vault_secrets SET agents = ?, modes = ? WHERE name = ? AND workspace = ?",
+                (json.dumps(agents), json.dumps(modes), secret.name, secret.workspace),
             )
         return self.known(name, workspace)
 

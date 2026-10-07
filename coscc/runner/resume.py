@@ -25,7 +25,7 @@ from coscc.units import worktrees
 from coscc.units.workspaces import Workspaces
 
 # The kinds `Sessions.stream`'s `owner` names, and which of them hold a unit.
-STEP_KINDS = ("step", "opening", "closing")
+STEP_KINDS = ("step", "opening")
 KINDS = STEP_KINDS + ("integrate", "estimate", "chat")
 
 # How often `settle_after_suspend` looks again.
@@ -61,27 +61,6 @@ def resume_message(dropped: list[dict[str, Any]] | None) -> str:
         "may have left files half written -- then run again whichever of them still needs to "
         "run, and carry on with the work."
     )
-
-
-def resume_kwargs(resume: dict[str, Any] | None, grant: Any, prompt: str) -> dict[str, Any]:
-    """The prompt, the session id and the ceilings of one tool-less session, taken up again
-    from `resume` or not. `used_up` is there only when nothing is left to run with."""
-    if resume is None:
-        return {
-            "text": prompt,
-            "session_id": None,
-            "max_turns": grant.max_turns,
-            "max_budget_usd": grant.max_budget_usd,
-        }
-    turns, budget, used_up = transcript.ceilings_left(grant.max_turns, grant.max_budget_usd, resume)
-    return {
-        "text": str(resume.get("message") or ""),
-        "session_id": resume.get("session_id") or None,
-        "max_turns": turns,
-        "max_budget_usd": budget,
-        "resume_at": resume.get("safe_uuid"),
-        **({"used_up": used_up} if used_up else {}),
-    }
 
 
 def check(row: dict[str, Any]) -> tuple[str, list[str]]:
@@ -155,7 +134,6 @@ class Resume:
         *,
         takers: dict[str, Callable[[str, dict[str, Any]], Any]],
         refuse_updating: Callable[[], None],
-        chat_turns: int,
         finish: Callable[[], Awaitable[None]],
     ) -> None:
         self.config = config
@@ -165,7 +143,6 @@ class Resume:
         self.steps = steps
         self.takers = takers
         self.refuse_updating = refuse_updating
-        self.chat_turns = chat_turns
         self.finish = finish
 
     # -- pausing for an update ------------------------------------------------
@@ -280,12 +257,11 @@ class Resume:
                 workspace=workspace,
                 workspace_key=str(owner.get("workspace") or ""),
                 unit=unit,
-                stage=str(owner.get("stage") or ""),
+                agent=str(owner.get("stage") or ""),
                 run=str(owner.get("run") or ""),
                 cwd=str(scratch or tree),
                 watch=tree if scratch else None,
                 directory=directory,
-                commands=(),
                 resumed=True,
             )
         )
@@ -338,11 +314,6 @@ class Resume:
                     problem = self._feature_refuses(owner)
             if not problem and kind in ("estimate", "chat"):
                 problem = self._owner_refuses(kind, owner)
-            if not problem and kind == "chat":
-                # A chat turn's used-up ceiling, said here so its `resume` row does.
-                used_up = transcript.ceilings_left(self.chat_turns, None, row)[2]
-                if used_up:
-                    problem = f"its ceiling was used up before the update: {used_up}"
             try:
                 journal.resumed(
                     str(row.get("workspace") or ""),
@@ -438,18 +409,19 @@ class Resume:
         self.holds.attempts.wake_all()
 
     def _end_unresumed(self, journal: Any, row: dict[str, Any], kind: str, problem: str) -> None:
-        """The step, integration or estimate ends `failed` and waits for a rerun; a
-        chat turn has no `start`, and only its `resume` row says it failed."""
-        if kind == "chat":
-            return
+        """The run ends `failed`: a step or integration waits for a rerun."""
         try:
             journal.finished(
                 str(row.get("workspace") or ""),
                 str(row.get("unit") or ""),
                 str(row.get("stage") or ""),
                 "failed",
+                # The fields every run's `end` has (`run.ended`) that a run not taken up knows.
+                agent=kind if kind not in STEP_KINDS else str(row.get("stage") or ""),
+                status="failed",
                 detail=f"not resumed after an update: {problem}",
                 session_id=str(row.get("session_id") or ""),
+                model=row.get("model"),
                 **(
                     {"cost_usd": row["spent_usd"]}
                     if row.get("spent_usd") is not None

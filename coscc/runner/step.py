@@ -17,45 +17,35 @@ import inspect
 import json
 import logging
 import os
-import sqlite3
 import uuid
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-import claude_agent_sdk as sdk
 
 from coscc import kernel
-from coscc.agent import agents, instructions, models, modeltrial, steps, transcript
+from coscc.agent import agents, instructions, models, modeltrial, pack, steps, transcript
 from coscc.agent import sessions as sessions_mod
-from coscc.agent.helpers import DEFINITIONS, PROTOCOL, Helpers
+from coscc.agent.helpers import PROTOCOL, Denials, Gate, Helpers, definitions
 from coscc.store.journal import Journal, Outcome
 from coscc.units import scratch as scratch_mod
 from coscc.units import submit as submit_mod
 from coscc.agent.policy import (
     AGENT_TOOL,
-    GRANTS_PREF,
-    LISTED_STAGE,
     Grant,
-    beyond_reading,
-    grant_for_step,
-    is_prose_stage,
-    lists_of,
-    protected_paths,
-    with_lists,
+    Row,
+    record,
+    row_for_step,
 )
-from coscc.store.db import Data, Unusable
-from coscc.units import guards
-from coscc.units import states as unit_states
+from coscc.units import guards, states
 from coscc.agent.sessions import Refused, Sessions, Suspended
 
-from coscc.runner.prompt import _read, compose_prompt, submit_prompt, PROGRESS_FILE
+from coscc.runner import run as run_mod
+from coscc.runner.prompt import _read, compose_prompt, submit_prompt
 from coscc.runner.review import (
     _round_number,
     _rounds,
-    closing_prompt,
-    closing_round_problem,
     render_round,
     replace_new_rounds,
     UI_STANDARD,
@@ -69,12 +59,8 @@ from coscc.runner.reply import (
     _title,
     _after_tool,
     _joined,
-    _hit_ceiling,
 )
 from coscc.runner.attempt import (
-    Denials,
-    CLAUDE_CODE_PRESET,
-    permission_gate,
     snapshot,
     _head_of,
     _tree_state,
@@ -101,52 +87,13 @@ def check_started_by(value: str) -> str:
 SESSIONS_PER_STEP = 1
 
 
-# # How long the closing turn may take. Chosen, not measured: one took 9.8 s, the longest 25.5 s.
-CLOSING_TIMEOUT = 180.0
+# The kernel's own catalog names (`kernel.BUILTINS`).
+_BUILTIN = frozenset(t.name for t in kernel.BUILTINS)
 
 # # How long the repair turn may take. Rewriting a 26,535-character plan took about 94 s and
 # # a spec 79 s; the text comes at once at the end of the turn, so a turn cut here leaves
 # # nothing to write.
 OPENING_TIMEOUT = 180.0
-
-
-async def _closing_turn(
-    sessions: Sessions,
-    cwd: str,
-    prompt: str,
-    session_id: str,
-    denials: Denials,
-    **kw: Any,
-) -> tuple[str, dict[str, Any] | None]:
-    """The reply of one more turn on a review's own session, and its `done`.
-
-    Same session id, a new handle, no tools, a callback that refuses every call, one turn. A
-    new handle has no recorder, so nothing of this turn reaches the step's live view.
-    """
-
-    async def deny_all(tool: str, tool_input: dict, _context: Any):
-        reason = "the closing turn holds no tools"
-        denials.record(tool, reason, tool_input)
-        return sdk.PermissionResultDeny(message=reason)
-
-    text, done = "", None
-    async for kind, payload in sessions.stream(
-        cwd,
-        prompt,
-        session_id,
-        max_turns=1,
-        can_use_tool=deny_all,
-        tools=[],
-        step=sessions_mod.StepHandle(),
-        **kw,
-    ):
-        if kind == "chunk":
-            text += payload
-        elif kind == "tool":
-            text = _after_tool(text)
-        elif kind == "done":
-            done = payload
-    return text, done
 
 
 async def _opening_turn(
@@ -160,22 +107,15 @@ async def _opening_turn(
     """The reply of one more turn on a prose step's own session, how many pieces of text it said,
     and its `done`.
 
-    `_closing_turn`'s shape: same session id, a new handle with no recorder, no tools, a
-    callback that refuses every call, one turn.
+    Same session id, a new handle with no recorder, no tools and a gate granting none, one turn.
     """
-
-    async def deny_all(tool: str, tool_input: dict, _context: Any):
-        reason = "the opening turn holds no tools"
-        denials.record(tool, reason, tool_input)
-        return sdk.PermissionResultDeny(message=reason)
-
     text, blocks, done = "", 0, None
     async for kind, payload in sessions.stream(
         cwd,
         prompt,
         session_id,
         max_turns=1,
-        can_use_tool=deny_all,
+        gate=Gate(run_mod.issue(Row(), sessions, cwd=cwd), denials),
         tools=[],
         step=sessions_mod.StepHandle(),
         **kw,
@@ -203,14 +143,13 @@ async def _submit_turn(
     """One more turn on a step's own session, holding `submit` and nothing else, and its `done`.
     What it says is not kept: the artifact was written before it.
     """
-    gate = permission_gate(Grant(submits=True), cwd, denials)
     done = None
     async for kind, payload in sessions.stream(
         cwd,
         prompt,
         session_id,
         max_turns=SUBMIT_TURNS,
-        can_use_tool=gate,
+        gate=Gate(run_mod.issue(Row(submits=True), sessions, cwd=cwd), denials),
         tools=[],
         step=sessions_mod.StepHandle(),
         mcp_servers={submit_mod.SERVER: channel.server()},
@@ -247,7 +186,7 @@ def _titled(pieces: list[str], artifact: str) -> bool:
 def _unsubmitted(channel: submit_mod.Channel) -> str:
     """`""` once the run holds an object its channel's guard still opens on, with the app's hash
     taken now; else why not, the object dropped when it went stale. The run itself ends `done`
-    only as the lane's `run-submitted` guard says.
+    only as the `run-submitted` guard says.
     """
     got = channel.received
     if got is not None:
@@ -258,8 +197,7 @@ def _unsubmitted(channel: submit_mod.Channel) -> str:
                 f"guard {channel.guard_id} refused the object it had accepted ({', '.join(verdict.reasons)}): "
                 "the unit's files changed after it was submitted"
             )
-    lane = unit_states.default_lanes().lane("full")
-    ran = guards.guard(lane.guard_for("run", "submitted")).check(
+    ran = guards.guard(guards.TRANSITIONS["run"]["submitted"]).check(
         {"submitted": channel.received is not None}
     )
     return "" if ran.open else f"{', '.join(ran.reasons)}: no object reached submit"
@@ -333,7 +271,7 @@ async def _from_progress(
     # From here a Stop is refused, as on the reply's road.
     if not steps.seal(running):
         return "withheld", ""
-    progress = Path(cwd) / PROGRESS_FILE
+    progress = Path(cwd) / artifact
     try:
         text = progress.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
@@ -373,23 +311,31 @@ def _noted(detail: str, said: str) -> str:
     return f"{detail}\n--- {said} ---" if detail else said
 
 
+def _bound(process: str, stage: str, agent_key: str) -> tuple[str, bool]:
+    """The agent key the process binds `stage` to and whether the state is a review, or
+    `RunError` for a state that runs no agent."""
+    key = agent_key or pack.agent_for(process, stage) or ""
+    if not key:
+        raise RunError(f"{stage} runs no agent in {process}")
+    return key, states.kind_of(process, stage) == "review"
+
+
 def _admitted(
-    started_by: str, stage: str, label: str | None, directory: str | Path, workspace: str, unit: str
-) -> Grant:
-    """The stage's grant, once the step may run at all: else `ValueError` or `RunError`."""
+    started_by: str,
+    stage: str,
+    label: str | None,
+    directory: str | Path,
+    workspace: str,
+    unit: str,
+) -> Row:
+    """The stage's row, once the step may run at all: else `ValueError` or `RunError`. Whether the
+    row itself may run (a prose stage holding only reading tools among them) is `pack.check`'s,
+    asked before the step (`agent-invalid`)."""
     check_started_by(started_by)
-    grant = grant_for_step(stage, label)
+    row = row_for_step(stage, label)
     if not Path(directory).exists():
         raise RunError(f"no such work unit for {workspace}: {unit}")
-    if is_prose_stage(stage):
-        # Belt and braces against a future edit to the table: a prose stage that acquired the ability
-        # to write or run a command would stop being covered. Asks `beyond_reading`, not
-        # `opens_anything`, because `plan` holds `Read`, `Glob` and `Grep`; the guard's purpose is that
-        # the app writes a prose stage's artifact, so the stage must not be able to.
-        beyond = beyond_reading(grant)
-        if beyond:
-            raise RunError(f"{stage} is a prose stage and must not carry {', '.join(beyond)}")
-    return grant
+    return row
 
 
 async def _compose(
@@ -397,13 +343,13 @@ async def _compose(
     directory: Path,
     unit: str,
     stage: str,
-    stages: list[str],
     artifact: str,
-    grant: Grant,
+    row: Row,
     resume: dict[str, Any] | None,
     was: dict[str, Any],
     watch: str | None,
     *,
+    branch: str,
     blocks: tuple[tuple[str, str], ...],
     gate_said: str,
     base_note: str,
@@ -411,6 +357,7 @@ async def _compose(
     integration_note: str,
     screens_note: str,
     drift_note: str,
+    lane: str,
     rerun: bool,
     rerun_note: str,
     app_note: str,
@@ -422,22 +369,23 @@ async def _compose(
     agent: dict[str, Any] | None,
     meta: dict[str, Any] | None,
     state_file: str | None,
-) -> tuple[str, str, list, list]:
-    """`(head, prompt, included, pointed)` of the step: the message of a step taken up again, or the
+    process: str | None = None,
+) -> tuple[str, str, list]:
+    """`(head, prompt, envelope)` of the step: the message of a step taken up again, or the
     prompt composed from the unit's files."""
     if resume is not None:
         # Nothing of git is read or run on a step taken up again; what the first start read is in its
         # owner.
-        return str(was.get("head") or ""), str(resume.get("message") or ""), [], []
+        return str(was.get("head") or ""), str(resume.get("message") or ""), []
     head = await _head_of(watch or cwd)
-    prompt, included, pointed = compose_prompt(
+    branch = branch if states.by_of(process, stage) == "session" and not watch else ""
+    prompt, envelope = compose_prompt(
         cwd,
         directory,
         unit,
         stage,
-        stages,
         artifact,
-        writes_own=not grant.app_writes_artifact,
+        writes_own=not row.app_writes_artifact,
         gate_said=gate_said,
         head=head,
         base_note=base_note,
@@ -445,52 +393,48 @@ async def _compose(
         integration_note=integration_note,
         screens_note=screens_note,
         drift_note=drift_note,
+        lane=lane,
         worktree=watch or "",
-        ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
+        ceilings=(row.max_turns, row.max_budget_usd or None),
         rerun=rerun,
         rerun_note=rerun_note,
         app_note=app_note,
         plan_map=plan_map,
-        commands=grant.commands if stage == "impl" else (),
         unfinished_round=unfinished_round,
         idea_note=idea_note,
         siblings_note=siblings_note,
         mentions_note=mentions_note,
-        runs_commands="Bash" in grant.tools,
+        runs_commands="Bash" in row.tools and "Bash" not in row.asks,
         agent=agent,
         unit_meta=meta,
         state_file=state_file,
         blocks=blocks,
+        branch=branch,
+        process=process,
     )
-    return head, prompt, included, pointed
+    return head, prompt, envelope
 
 
-def _session_kw(
-    workspace: str,
-    cwd: str,
+def _runs_as(
+    stage: str,
+    key: str,
+    row: Row,
     model: str | None,
     effort: str | None,
-    grant: Grant,
     agent: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """What every session of a step is given beyond its prompt, each named only when it differs."""
-    # The same condition that decides whether a gate and a tool list are sent.
-    preset = CLAUDE_CODE_PRESET if grant.opens_anything else None
-    # Only beside a preset: a tool-less session's argv is unchanged.
-    settings = agents.settings_json(agent) if agent is not None and preset else None
-    return {
-        # Only named when it differs, so a stand-in `stream` without a `workspace` parameter keeps
-        # working for a plain step.
-        **({"workspace": workspace} if cwd != workspace else {}),
-        # The same: a stand-in with no `model` parameter keeps working for a step nobody resolved a
-        # model for.
-        **({"model": model} if model is not None else {}),
-        **({"effort": effort} if effort is not None else {}),
-        # And again: a tool-less step passes nothing, so it gets the session it always got.
-        **({"system_prompt": dict(preset)} if preset else {}),
-        # Only a preset session with an agent row passes it.
-        **({"settings": settings} if settings is not None else {}),
-    }
+) -> run_mod.Agent:
+    """The step as `run_mod` opens its session: Claude Code's system prompt for a row that opens
+    anything, and the commit attribution only beside it, so a tool-less session's argv is
+    unchanged."""
+    return run_mod.Agent(
+        stage,
+        row,
+        model=model,
+        effort=effort,
+        settings=agents.settings_json(agent) if agent is not None else None,
+        preset=row.opens_anything,
+        system=str((pack.row(key) or {}).get(pack.BODY) or ""),
+    )
 
 
 def _turn_kw(
@@ -513,59 +457,41 @@ def _turn_kw(
 
 
 def _channel_for(
-    grant: Grant,
+    row: Row,
     recorder: Any,
     stage: str,
     directory: Path,
     artifact: str,
     head: str,
-    open_findings: tuple[str, ...],
+    open_ids: tuple[str, ...],
     claims_round: int | None,
 ) -> submit_mod.Channel | None:
     """This run's `submit`, bound to it: a stage that hands back a stage result ends `done` only
     once the channel holds an object its guard still opens on."""
-    if not grant.submits:
+    if not row.submits:
         return None
     return submit_mod.Channel(
         run=str(recorder.run) if recorder is not None else uuid.uuid4().hex,
         stage=stage,
         directory=directory,
         artifact=artifact,
-        own=not grant.app_writes_artifact,
+        own=not row.app_writes_artifact,
         head=head,
-        open_findings=tuple(open_findings),
+        open_ids=tuple(open_ids),
         claims_round=claims_round,
     )
 
 
-def _ceiling_overrides(config: Any) -> tuple[dict[str, models.Value], dict[str, models.Value]]:
-    """`(turns, budget)` overrides stored in `cos.db`, by row. A store that cannot be read is no
-    override: a step never fails to start for it. A value out of bounds is skipped."""
-    try:
-        data = Data(config.data_dir)
-        turns = models.overrides_from(data.pref_rows(models.TURNS_PREFIX), models.TURNS_PREFIX)
-        budget = models.overrides_from(data.pref_rows(models.BUDGET_PREFIX), models.BUDGET_PREFIX)
-    except Unusable, sqlite3.Error, OSError:
-        log.exception("the ceiling overrides could not be read, so the defaults apply")
-        return {}, {}
-    return turns[0], budget[0]
-
-
 def with_ceilings(
-    grant: Grant,
-    stage: str,
-    label: str | None,
-    turns: Mapping[str, models.Value],
-    budget: Mapping[str, models.Value],
-    was: Mapping[str, Any],
-) -> tuple[Grant, models.Ceilings]:
-    """`grant` with its two ceilings as `models.ceilings` resolves them from the stored overrides,
-    and those ceilings with where each came from. Gebo's grant is given the same way.
+    row: Row, stage: str, label: str | None, was: Mapping[str, Any]
+) -> tuple[Row, models.Ceilings]:
+    """`row` with its two ceilings as `models.ceilings` resolves them from the agent's row, and
+    those ceilings with where each came from. Gebo's row is given the same way.
 
     `was` is the owner of a step taken up again (`{}` for a first segment): it goes on under what
     its first segment ran under, as its owner kept it. An owner with none (an older build's)
     leaves them as resolved now."""
-    ceilings = models.ceilings(stage, label, turns, budget)
+    ceilings = models.ceilings(stage, label)
     if was.get("max_turns") is not None:
         ceilings = models.Ceilings(
             max_turns=int(was["max_turns"]),
@@ -575,8 +501,8 @@ def with_ceilings(
         )
     return (
         replace(
-            grant,
-            max_turns=int(ceilings["max_turns"] or grant.max_turns),
+            row,
+            max_turns=int(ceilings["max_turns"] or row.max_turns),
             max_budget_usd=ceilings["max_budget_usd"] or 0.0,
         ),
         ceilings,
@@ -600,37 +526,12 @@ def config_sources(
     }
 
 
-def tell_config(
-    recorder: Any,
-    model: str | None,
-    effort: str | None,
-    sources: Mapping[str, str],
-    turns: int,
-    budget: float | None,
-) -> None:
-    """The recorder's `config` event: the values the session about to open is handed, with where
-    each came from (`config_sources`). Nothing here may change the step."""
-    try:
-        recorder.config(
-            model=model,
-            model_source=sources["model_source"],
-            effort=effort,
-            effort_source=sources["effort_source"],
-            max_turns=turns,
-            max_turns_source=sources["max_turns_source"],
-            max_budget_usd=budget,
-            max_budget_source=sources["max_budget_source"],
-        )
-    except Exception:
-        log.exception("the config of a session was not recorded")
-
-
 def _owner(
     journal_key: str,
     unit: str,
     stage: str,
     start_at: Any,
-    grant: Grant,
+    row: Row,
     head: str,
     label: str | None,
     effort: str | None,
@@ -659,8 +560,8 @@ def _owner(
         "unit": unit,
         "stage": stage,
         "start_at": start_at,
-        "max_turns": grant.max_turns,
-        "max_budget_usd": grant.max_budget_usd,
+        "max_turns": row.max_turns,
+        "max_budget_usd": row.max_budget_usd,
         "head": head,
         "label": label,
         "effort": effort,
@@ -685,7 +586,7 @@ def _carried(
     terminal = ""
     session_id = str((resume or {}).get("session_id") or "")
     cost: dict[str, Any] = {}
-    if turn_kind in ("opening", "closing"):
+    if turn_kind == "opening":
         # The main reply ended before the update; what it ended with is in the owner.
         terminal = str(was.get("main_terminal") or "")
         cost = dict(was.get("main_cost") or {})
@@ -710,15 +611,15 @@ async def _tree_before(
 
 
 def _helpers_of(
-    grant: Grant,
+    row: Row,
     recorder: Any,
     blocks: tuple[tuple[str, str], ...],
     resumed: bool,
 ) -> tuple[Helpers | None, tuple[tuple[str, str], ...]]:
-    """This run's helpers, for a grant that may start them (its hooks hold `Agent` and
+    """This run's helpers, for a row that may start them (its hooks hold `Agent` and
     `SendMessage`), and the prompt blocks with `PROTOCOL` added. A step taken up again composes no
     prompt."""
-    if AGENT_TOOL not in grant.tools:
+    if AGENT_TOOL not in row.tools or AGENT_TOOL in row.asks:
         return None, blocks
     ledger = Helpers(recorder.helper if recorder is not None else None)
     return ledger, blocks if resumed else (*blocks, ("helpers", PROTOCOL))
@@ -758,43 +659,41 @@ def _reply_done(
 
 
 def _rounds_before(
-    grant: Grant,
+    row: Row,
     channel: submit_mod.Channel | None,
-    stage: str,
     directory: Path,
     artifact: str,
 ) -> set[int] | None:
-    """The rounds `review.md` held before this step's reply is written, for a review that hands
-    its round back through `submit`; else `None`.
+    """The rounds a review's artifact held before this step's reply is written, for a review that
+    hands its round back through `submit`; else `None`.
 
     Taken before the write and kept when it is refused: the round is numbered past these.
     """
-    if not (grant.app_writes_artifact and channel is not None and stage == submit_mod.ROUND):
+    if not (row.app_writes_artifact and channel is not None and channel.is_round):
         return None
     return {_round_number(r) for r in _rounds(_read(directory / artifact))}
 
 
 def _write_reply(
-    grant: Grant,
+    row: Row,
     directory: Path,
     artifact: str,
-    stage: str,
+    is_review: bool,
     watch: str | None,
     pieces: list[str],
     after_submit: int | None,
     channel: submit_mod.Channel | None,
-    terminal: str,
     blocks: int,
     spike_md: str | None,
     review_md: str | None,
 ) -> tuple[str | None, str | None]:
     """The artifact, written from the reply or found on disk: `(spike_md, review_md)`."""
-    if not grant.app_writes_artifact:
+    if not row.app_writes_artifact:
         # The session had the tools to write it. Believing it did, rather than looking, is how a step
         # reports success for a file that is not there.
         if not (directory / artifact).exists():
             raise RunError(f"the step did not write {artifact}")
-        # Its `Status:` line is not looked at: what decides is the object.
+        # What decides is the object.
         return spike_md, review_md
     # Synchronous, so nothing yields between reading the `## Answers` already on disk and writing
     # the artifact over it.
@@ -811,12 +710,11 @@ def _write_reply(
         # What came after the last `submit` call, with no title in it, is the session saying it
         # called the tool: never part of the artifact.
         taken = pieces[:after_submit]
-    taken = taken[-1:] if _hit_ceiling(terminal) else taken
     _write_artifact(directory, artifact, _joined(taken, artifact), blocks=blocks)
     if watch:
         # The reply was written, so the progress file is never read.
         spike_md = "reply"
-    if stage == "review":
+    if is_review:
         review_md = "round"
     return spike_md, review_md
 
@@ -832,8 +730,7 @@ def _judged(
     """How a step that raised ends: `(outcome, detail, error, unopened)`; `None` when the app is
     going down or an update paused the session, and the caller lets `e` through with no `end`.
 
-    `error` is set only here, so a step that finished (even one that merely hit its ceiling)
-    carries no error.
+    `error` is set only here, so a step that finished, or paused at a ceiling, carries no error.
     """
     if isinstance(e, asyncio.CancelledError):
         if _taken_back(running, e) is not None:
@@ -845,24 +742,21 @@ def _judged(
         # An update paused the session and wrote its `suspend` row: like an app going down, no
         # `attempt` and no `end`. The next start takes it up.
         return None
+    if run_mod.ceiling_of(terminal):
+        # Bounded, not failed: the session is kept and a raise goes on from it.
+        return "paused-budget", f"stopped at the ceiling: {terminal}", None, None
     error = {"type": type(e).__name__, "message": str(e)}
     if isinstance(e, (RunError, Refused)):
         # "The step did not write impl.md" is a real reason to stop, so it goes into the attempt
         # record's `error` like any other.
         unopened = e if isinstance(e, OpeningError) else None
-        # What the session said, kept: the money was spent, and a reply with no `Status:` line is
-        # often a good artifact with a preamble that a person can judge in a second.
+        # What the session said, kept: the money was spent, and a reply with a preamble is
+        # often a good artifact that a person can judge in a second.
         detail = _with_reply(str(e), _joined(pieces))
-        ceiling = f"stopped at the ceiling: {terminal} — {detail}"
     else:
         log.exception("the session of %s %s failed", unit, stage)
         unopened = None
         detail = _with_reply(f"{type(e).__name__}: {e}", _joined(pieces))
-        ceiling = f"stopped at the ceiling: {terminal}"
-    # A step stopped by its own ceiling was bounded, not failed. `journal.OUTCOMES` keeps the two
-    # apart so a reader can tell a defect from a limit working as intended.
-    if _hit_ceiling(terminal):
-        return "exhausted", ceiling, error, unopened
     return "failed", detail, error, unopened
 
 
@@ -898,109 +792,6 @@ async def _spike_progress(
         log.exception("the progress file of %s was not read", unit)
         said = f"the progress file was not read: {type(e).__name__}: {e}"
         return "unusable", _noted(detail, said), None
-
-
-async def _close_review(
-    sessions: Sessions,
-    cwd: str,
-    head: str,
-    directory: Path,
-    artifact: str,
-    session_id: str,
-    denials: Denials,
-    turn_kw: dict[str, Any],
-    take_up: bool,
-    running: steps.Running | None,
-    cost: dict[str, Any],
-    taken: bool,
-    segment_done: dict[str, Any] | None,
-    detail: str,
-    unit: str,
-    stage: str,
-    message: str,
-) -> tuple[
-    str | None,
-    str,
-    dict[str, Any] | None,
-    dict[str, Any],
-    bool,
-    dict[str, Any] | None,
-    BaseException | None,
-]:
-    """A review that ran out of turns before its reply could be written gets one closing turn on its
-    own session, asking for an incomplete round: `(review_md, detail, closing, cost, taken,
-    segment_done, held)`.
-
-    Sealed first, as the reply's road is: from here a Stop is refused, so the turn cannot be
-    cut halfway; `CLOSING_TIMEOUT` bounds it instead. The budget does not: the CLI compares the
-    whole session's cost after the turn has run. Wrapped, for the reason the progress file is
-    read in the `finally`: `outcome` stays `exhausted` and the `end` row never depends on it.
-    """
-    review_md: str | None = None
-    closing: dict[str, Any] | None = None
-    held: BaseException | None = None
-    said = ""
-    try:
-        if not steps.seal(running):
-            review_md = "withheld"
-        else:
-            number = (
-                max(
-                    (_round_number(r) for r in _rounds(_read(directory / artifact))),
-                    default=0,
-                )
-                + 1
-            )
-            reply, done = await asyncio.wait_for(
-                _closing_turn(
-                    sessions,
-                    cwd,
-                    message if take_up else closing_prompt(head, number),
-                    session_id,
-                    denials,
-                    **turn_kw,
-                ),
-                CLOSING_TIMEOUT,
-            )
-            if take_up:
-                taken, segment_done = True, segment_done or done
-            closing, cost = _turn_cost(done, cost)
-            # Judged on the text, never on `after`. No `await` from here to the write, as on the reply's
-            # road.
-            problem = closing_round_problem(_read(directory / artifact), reply, head)
-            if problem:
-                review_md, said = (
-                    "none",
-                    f"review.md: the closing turn's reply was not written: {problem}",
-                )
-            else:
-                try:
-                    _write_artifact(directory, artifact, reply)
-                    review_md, said = (
-                        "incomplete",
-                        f"review.md: Round {number} incomplete, written by the closing turn",
-                    )
-                except RunError as e:
-                    review_md, said = (
-                        "none",
-                        f"review.md: the closing turn's reply was not written: {e}",
-                    )
-    except asyncio.CancelledError as e:
-        held = _taken_back(running, e)
-        if held is None:
-            review_md = "withheld"
-    except Suspended as e:
-        # Paused by an update, like the main reply: no `end`.
-        held = e
-    except Exception as e:
-        # The `end` row never depends on it.
-        log.exception("the closing turn of %s %s failed", unit, stage)
-        closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
-        review_md, said = (
-            "none",
-            f"review.md: the closing turn failed: {type(e).__name__}: {e}",
-        )
-    return review_md, _noted(detail, said), closing, cost, taken, segment_done, held
 
 
 async def _repair_opening(
@@ -1077,11 +868,11 @@ async def _repair_opening(
             closing, cost = _turn_cost(done, cost)
             after = str((done or {}).get("terminal_reason") or "")
             # A turn that stopped at a ceiling writes nothing. At `max_turns` it was cut off: an MCP tool
-            # still reaches a session with `tools=[]`, and one call refused by `deny_all` ends the only
+            # still reaches a session with `tools=[]`, and one call its gate refuses ends the only
             # turn, so what came before may be a draft whose header says `accepted`. At the budget the
             # turn ran whole and the CLI compared the cost after, so its reply may be complete; it is
             # refused all the same, because the reply's road never ends a step past its ceiling `done`.
-            if _hit_ceiling(after):
+            if run_mod.ceiling_of(after):
                 opening, said = (
                     "none",
                     f"{artifact}: the repair turn's reply was not written: it stopped at the ceiling: {after}",
@@ -1174,7 +965,7 @@ async def _repair_submit(
                 OPENING_TIMEOUT,
             )
             submit_turn, cost = _turn_cost(done, cost)
-            if _hit_ceiling(str((done or {}).get("terminal_reason") or "")):
+            if run_mod.ceiling_of(str((done or {}).get("terminal_reason") or "")):
                 channel.received = None
                 said = "the repair turn stopped at its ceiling"
             else:
@@ -1229,9 +1020,8 @@ def _write_round(
         rendered = render_round(
             new[-1] if new else "## Round", number, head, received["object"], screens
         )
-        status = submit_mod.ROUND_STATES[str(received["object"]["verdict"])]
         (directory / artifact).write_text(
-            replace_new_rounds(text, rounds_before or set(), rendered, status),
+            replace_new_rounds(text, rounds_before or set(), rendered),
             encoding="utf-8",
         )
         channel.extra = {"n": number, "screens": screens}
@@ -1363,14 +1153,18 @@ async def _attempt(
     return pending
 
 
-async def _end_extra(end_fields: Any, unit: str, stage: str) -> dict[str, Any]:
-    """What `end_fields` adds to a `done` step's `end`; none if it raises. The same rule as the
-    attempt record: the `end` row never depends on it."""
-    try:
-        return dict(await end_fields())
-    except Exception:
-        log.exception("the end fields of %s %s were not read", unit, stage)
+def _round_counts(channel: submit_mod.Channel | None) -> dict[str, Any]:
+    """The findings of the round a `review` step handed back, for its `end`: the count, the open
+    ones and its verdict. Nothing for a step that handed back no round."""
+    obj = (channel.received or {}).get("object") if channel is not None else None
+    if not isinstance(obj, dict) or "verdict" not in obj:
         return {}
+    findings = [f for f in obj.get("findings") or () if isinstance(f, dict)]
+    return {
+        "findings": len(findings),
+        "findings_open": sum(1 for f in findings if f.get("state") == "open"),
+        "verdicts": [str(obj["verdict"])],
+    }
 
 
 class Runner:
@@ -1391,25 +1185,10 @@ class Runner:
         self.app = app
 
     def _configured(
-        self, grant: Grant, stage: str, label: str | None, journal_key: str, was: Mapping[str, Any]
-    ) -> tuple[Grant, models.Ceilings]:
-        """`grant` with its two ceilings as `with_ceilings` resolves them (an override of
-        `turns:<row>` and `budget:<row>` from `cos.db`, else the grant's own) for every stage; this
-        machine's protected paths and, for `impl`, the workspace's `allow` and `block`, before
-        `Facts.commands` is read from it; and the ceilings with their sources. A stand-in `Sessions`
-        with no config (a test's) has no overrides and leaves the rest of the grant as it is."""
-        config = getattr(self.sessions, "config", None)
-        turns, budget = _ceiling_overrides(config) if config is not None else ({}, {})
-        grant, ceilings = with_ceilings(grant, stage, label, turns, budget, was)
-        if config is None:
-            return grant, ceilings
-        data = Data(config.data_dir)
-        grant = replace(
-            grant, protected=protected_paths(str(data.root), config.config_home, config.home)
-        )
-        if stage != LISTED_STAGE:
-            return grant, ceilings
-        return with_lists(grant, *lists_of(data.pref(GRANTS_PREF, {}), journal_key)), ceilings
+        self, row: Row, stage: str, label: str | None, was: Mapping[str, Any]
+    ) -> tuple[Row, models.Ceilings]:
+        """`row` and its two ceilings with their sources, as `with_ceilings` resolves them."""
+        return with_ceilings(row, stage, label, was)
 
     def _scratch(self, workspace: str, unit: str) -> tuple[Path, Path] | None:
         """The unit's `(ram, disk)` scratch directories, made if missing, or `None` for a stand-in
@@ -1427,7 +1206,7 @@ class Runner:
 
     async def _features(
         self,
-        grant: Grant,
+        row: Row,
         running: Any,
         *,
         workspace: str,
@@ -1438,53 +1217,83 @@ class Runner:
         watch: str | None,
         directory: Path,
         resumed: bool,
-    ) -> tuple[Any, kernel.Facts, tuple[tuple[str, str], ...], Helpers | None]:
+        plan: kernel.Plan | None,
+        branch: str,
+    ) -> tuple[
+        Any,
+        kernel.Facts,
+        tuple[tuple[str, str], ...],
+        Helpers | None,
+        tuple[kernel.Tool, ...],
+        tuple[str, str] | None,
+    ]:
         """The step's recorder, when `Steps.run_step` gave it one (its `run` goes into `start` and
         `end`, and it is closed, everything on disk, before `end` is written); this run as the
-        features see it; the prompt blocks they add; and the run's helpers (`_helpers_of`). A step
-        taken up again composes no prompt, so it has no block."""
+        features see it, its grant issued; the prompt blocks they add; the run's helpers
+        (`_helpers_of`); the catalog tools it was granted; and the unit's `(ram, disk)` scratch
+        directories, made here. A step taken up again composes no prompt, so it has no block.
+
+        The grant (`run_mod.issue`) holds its `cwd` and, unless it is a spike, the unit's folder to
+        write, and `branch`, the unit's own as the app recorded it, the one it may push (a spike
+        has none): never the worktree's `HEAD`, which the session can move."""
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
-        facts = kernel.facts(
+        asked = kernel.facts(
             workspace=workspace,
             workspace_key=journal_key,
             unit=unit,
-            stage=stage,
+            agent=stage,
             run=str(recorder.run) if recorder is not None else uuid.uuid4().hex,
             cwd=cwd,
             watch=watch,
             directory=directory,
-            commands=grant.commands,
             resumed=resumed,
+            plan=plan,
         )
+        tools = self.hooks.tools_for(asked, row)
+        made = self._scratch(workspace, unit)
+        # A step with nothing to name passes nothing, so a stand-in `stream` keeps working.
+        own = (str(made[0]), str(made[1])) if made is not None else None
+        grant = run_mod.issue(
+            row,
+            self.sessions,
+            cwd=cwd,
+            unit_dir="" if watch else str(directory),
+            scratch=own,
+            branch="" if watch else branch,
+            # What the row names beyond the kernel's own tools is a feature's: never `--tools`.
+            features=tuple(t for t in row.tools if t not in _BUILTIN),
+            held=tuple(t.name for t in self.hooks.held(row, workspace)),
+            mcp=kernel.granted(tools),
+            use=tuple((t.name, r) for t in tools if t.uses is not None for r in t.uses(asked)),
+            asks=kernel.granted(tuple(t for t in tools if t.name in row.asks)),
+        )
+        facts = replace(asked, grant=grant)
         ledger, blocks = _helpers_of(
-            grant, recorder, () if resumed else await self._blocks(facts), resumed
+            row, recorder, () if resumed else await self._blocks(facts), resumed
         )
-        return recorder, facts, blocks, ledger
+        return recorder, facts, blocks, ledger, tools, own
 
     def _with_tools(
         self,
-        grant: Grant,
         channel: submit_mod.Channel | None,
         facts: kernel.Facts,
+        tools: tuple[kernel.Tool, ...],
         ledger: Helpers | None = None,
-    ) -> tuple[Grant, dict[str, Any]]:
-        """The grant with the MCP names features' tools add, and the `mcp_servers` argument holding
-        `submit` (when there is a channel) and one server per tool, each made from this run's facts.
-        `ledger`'s `peers` rides on `submit`'s server: a grant holding `Agent` (impl) submits."""
+    ) -> dict[str, Any]:
+        """The `mcp_servers` argument holding `submit` (when there is a channel) and one server per
+        granted catalog tool, each made from this run's facts. `ledger`'s `peers` rides on
+        `submit`'s server: a row holding `Agent` (impl) submits."""
         extra = (ledger.tool(),) if ledger is not None else ()
         servers: dict[str, Any] = (
             {submit_mod.SERVER: channel.server(*extra)} if channel is not None else {}
         )
-        tools = self.hooks.tools_for(facts)
-        if tools:
-            grant = replace(grant, mcp=kernel.granted(tools))
-            servers.update({t.server: t.make(facts) for t in tools})
-        return grant, ({"mcp_servers": servers} if servers else {})
+        servers.update({t.server: t.make(facts) for t in tools if t.make is not None})
+        return {"mcp_servers": servers} if servers else {}
 
     async def _blocks(self, facts: kernel.Facts) -> tuple[tuple[str, str], ...]:
         """The prompt blocks features add to this run, in order, those with words only."""
         out = []
-        for b in self.hooks.for_step(facts.stage, facts.workspace).blocks:
+        for b in self.hooks.blocks_for(facts):
             text = b.render(facts)
             if inspect.isawaitable(text):
                 text = await text
@@ -1500,10 +1309,12 @@ class Runner:
         unit: str,
         stage: str,
         artifact: str,
-        stages: list[str],
         mode: str,
         gate_said: str = "",
         gate_reasons: tuple[str, ...] = (),
+        lane: str = "full",
+        process: str = pack.DEFAULT_PROCESS,
+        agent_key: str = "",
         cwd: str | None = None,
         model: str | None = None,
         model_source: str = "",
@@ -1521,7 +1332,6 @@ class Runner:
         label: str | None = None,
         label_source: str | None = None,
         impl_run: int | None = None,
-        end_fields: Any = None,
         watch: str | None = None,
         running: steps.Running | None = None,
         started_by: str = "person",
@@ -1531,19 +1341,20 @@ class Runner:
         app_note: str = "",
         plan_map: str = "",
         plan_map_record: dict[str, Any] | None = None,
+        plan: kernel.Plan | None = None,
         unfinished_round: dict[str, Any] | None = None,
-        open_findings: tuple[str, ...] = (),
+        open_ids: tuple[str, ...] = (),
         claims_round: int | None = None,
         rounds_known: tuple[int, ...] = (),
         idea_note: str = "",
         siblings_note: str = "",
         mentions_note: str = "",
-        read_also: tuple[str, ...] = (),
         agent: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
         state_file: str | None = None,
         resume: dict[str, Any] | None = None,
         owner_extra: dict[str, Any] | None = None,
+        branch: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -1561,18 +1372,18 @@ class Runner:
         `settings`) and `meta` (the unit's snapshot entry) are carried into the prompt or the
         `start` record and nowhere else; this module reads no git and decides no meaning.
         `base_note` is `service.describe_base(base)`, already worked out, so `build_prompt` does not
-        import the app's assembly. `end_fields`, an async callable, is awaited only for a `done` step and its
-        fields added to `end`; if it raises they are left out. `model_trial.model` is filled in once
+        import the app's assembly. A `done` review's `end` carries the
+        findings of the round it handed back. `model_trial.model` is filled in once
         the session's `init` names it. `ci_red` may come alone.
 
         `watch` is the unit's worktree when `cwd` is a spike's throwaway directory: writing is held
-        to `cwd`, the worktree and the unit are read only. Its `HEAD` and `git status --porcelain`
+        to `cwd`, and the spike has no branch to push. Its `HEAD` and `git status --porcelain`
         are read before and after the session and a difference fails the step before any artifact
         is written; nothing is restored, the difference goes in `detail`.
 
-        `idea_note`, `siblings_note`, `mentions_note` and `read_also` are the shared idea, the
-        sibling checkouts `impl` may read, the units this unit names, and the paths the read
-        boundary lets through (never writes, never `git -C`). `unfinished_round` is `{n, dropped}` for a `review` prompt only.
+        `idea_note`, `siblings_note` and `mentions_note` are the shared idea, the sibling
+        checkouts `impl` may read, and the units this unit names. `unfinished_round` is
+        `{n, dropped}` for a `review` prompt only.
 
         `running` is the step's row in `Core.steps`. With it the client is closed when the step
         ends, and a person's Stop ends it as `stopped`, decided by `running.stop_requested`, never
@@ -1583,46 +1394,50 @@ class Runner:
 
         `resume` is a `suspend` row, with the `message` to send and the `pieces` the transcript held
         before its safe point. The step goes on in the same session under what is left of the
-        grant's two ceilings and writes no `start`; one whose ceiling is used up opens no session and
-        ends `exhausted`. A row whose `owner.kind` is `opening` or `closing` goes through the main
-        reply again from those pieces and takes up that one turn. `owner_extra` is what `Core`
+        row's two ceilings and writes no `start`; one whose ceiling is used up opens no session and
+        ends `paused-budget`. A row whose `owner.kind` is `opening` goes through the main reply again
+        from those pieces and takes up that one turn. A person's raise of a ceiling is such a row. `owner_extra` is what `Core`
         adds to the owner a `suspend` row carries.
         """
         was = dict((resume or {}).get("owner") or {})
+        # The one row the unit's process binds this state to: its grants, ceilings, model, system
+        # prompt, identity and stamp all come from it.
+        key, is_review = _bound(process, stage, agent_key)
         # A step taken up again goes on under the ceilings its owner kept.
-        grant, ceilings = self._configured(
-            _admitted(started_by, stage, label, directory, workspace, unit),
-            stage,
+        row, ceilings = self._configured(
+            _admitted(started_by, key, label, directory, workspace, unit),
+            key,
             label,
-            journal_key,
             was,
         )
         directory = Path(directory)
         cwd = cwd or workspace
         turn_kind = str(was.get("kind") or "step") if resume is not None else ""
-        recorder, facts, blocks, ledger = await self._features(
-            grant,
+        recorder, facts, blocks, ledger, tools, own = await self._features(
+            row,
             running,
             workspace=workspace,
             journal_key=journal_key,
             unit=unit,
-            stage=stage,
+            stage=key,
             cwd=cwd,
             watch=watch,
             directory=directory,
             resumed=resume is not None,
+            plan=plan,
+            branch=branch,
         )
-        head, prompt, included, pointed = await _compose(
+        head, prompt, envelope = await _compose(
             cwd,
             directory,
             unit,
             stage,
-            stages,
             artifact,
-            grant,
+            row,
             resume,
             was,
             watch,
+            branch=branch,
             blocks=blocks,
             gate_said=gate_said,
             base_note=base_note,
@@ -1630,6 +1445,8 @@ class Runner:
             integration_note=integration_note,
             screens_note=screens_note,
             drift_note=drift_note,
+            process=process,
+            lane=lane,
             rerun=rerun,
             rerun_note=rerun_note,
             app_note=app_note,
@@ -1642,11 +1459,11 @@ class Runner:
             meta=meta,
             state_file=state_file,
         )
-        kw = _session_kw(workspace, cwd, model, effort, grant, agent)
         channel = _channel_for(
-            grant, recorder, stage, directory, artifact, head, open_findings, claims_round
+            row, recorder, key, directory, artifact, head, open_ids, claims_round
         )
-        grant, servers = self._with_tools(grant, channel, facts, ledger)
+        servers = self._with_tools(channel, facts, tools, ledger)
+        runs_as = _runs_as(key, key, row, model, effort, agent)
         start_at = self._write_start(
             was.get("start_at"),
             resume,
@@ -1656,9 +1473,9 @@ class Runner:
             mode,
             started_by,
             prompt,
-            included,
-            pointed,
-            grant,
+            envelope,
+            row,
+            facts.grant,
             head,
             cwd,
             recorder,
@@ -1667,6 +1484,7 @@ class Runner:
             model_source=model_source,
             effort=effort,
             effort_source=effort_source,
+            budget_source=ceilings["max_budget_source"],
             label_declared=label_declared,
             label=label,
             label_source=label_source,
@@ -1680,13 +1498,15 @@ class Runner:
             rerun_note=rerun_note,
             agent=agent,
             blocks=[name for name, _ in blocks],
+            process=process,
+            agent_key=key,
         )
         owner = _owner(
             journal_key,
             unit,
             stage,
             start_at,
-            grant,
+            row,
             head,
             label,
             effort,
@@ -1702,9 +1522,9 @@ class Runner:
         trial_at = start_at if (trial_record or {}).get(modeltrial.FIELD) and start_at else None
         # What is left of the two ceilings after the part of the session before the cut.
         turns_left, budget_left, used_up = (
-            transcript.ceilings_left(grant.max_turns, grant.max_budget_usd, resume)
+            transcript.ceilings_left(row.max_turns, row.max_budget_usd, resume)
             if resume is not None
-            else (grant.max_turns, grant.max_budget_usd or None, "")
+            else (row.max_turns, row.max_budget_usd or None, "")
         )
         denials = _denials(recorder)
         pieces, blocks, terminal, session_id, cost = _carried(resume, was, turn_kind)
@@ -1722,34 +1542,29 @@ class Runner:
         spike_md = review_md = None
         try:
             before = await _tree_before(resume, was, watch, owner)
-            if used_up and turn_kind not in ("opening", "closing"):
+            if used_up and turn_kind != "opening":
                 # Nothing left to resume with, so no session is opened. Not for a closing or repair turn:
                 # that is one turn of its own, bounded by its timeout.
                 terminal = used_up
                 raise RunError(
                     "the ceiling was used up before the update, so the step was not resumed"
                 )
-            async for kind, payload in self._open_main(
+            async for kind, payload in await self._open_main(
                 cwd,
                 prompt,
                 session_id,
                 turns_left,
                 budget_left,
-                grant,
-                denials,
-                channel,
-                watch,
-                directory,
-                read_also,
-                kw,
+                runs_as,
+                # A session's own `git push` asks the guards again first (`vault-leak`).
+                Gate(facts.grant, denials, ledger, before_push=lambda: self.hooks.refusal(facts)),
+                own,
                 running,
                 owner,
                 resume,
                 servers,
                 turn_kind,
-                ledger,
                 workspace,
-                unit,
             ):
                 if kind == "chunk":
                     pieces[-1] += payload
@@ -1774,9 +1589,12 @@ class Runner:
                     session_id, cost, terminal, models_used, segment_done = _reply_done(
                         payload, segment_done, resume
                     )
-            # What the main reply ended with, for an `opening` or `closing` turn an update pauses: its
+            # What the main reply ended with, for an `opening` turn an update pauses: its
             # next start goes through this reply again without a session.
             owner.update(main_terminal=terminal, main_cost=dict(cost))
+            if run_mod.ceiling_of(terminal):
+                # Nothing is written of what it had not finished: the session is kept.
+                raise RunError(f"stopped at the ceiling: {terminal}")
 
             # Before anything is written: a spike that touched the branch it was meant only to read must
             # leave no `spike.md` saying it measured.
@@ -1794,20 +1612,19 @@ class Runner:
             if not steps.seal(running):
                 spike_md, review_md = (
                     "withheld" if watch else spike_md,
-                    "withheld" if stage == "review" else review_md,
+                    "withheld" if is_review else review_md,
                 )
                 raise _Stopped()
-            rounds_before = _rounds_before(grant, channel, stage, directory, artifact)
+            rounds_before = _rounds_before(row, channel, directory, artifact)
             spike_md, review_md = _write_reply(
-                grant,
+                row,
                 directory,
                 artifact,
-                stage,
+                is_review,
                 watch,
                 pieces,
                 after_submit,
                 channel,
-                terminal,
                 blocks,
                 spike_md,
                 review_md,
@@ -1819,25 +1636,22 @@ class Runner:
                 shutting_down = True
                 raise
             outcome, detail, error, unopened = judged
-        else:
-            if _hit_ceiling(terminal):
-                # It wrote something, but it ran out of room doing it. Saying `done` here would hide that
-                # the work may be half finished.
-                outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
-            outcome, detail, cost, stopped_by = await self._conclude(
+            outcome, detail, cost, stopped_by, review_md = await self._conclude(
                 ledger=ledger,
                 journal_key=journal_key,
                 unit=unit,
                 stage=stage,
+                key=key,
+                is_review=is_review,
                 artifact=artifact,
                 cwd=cwd,
                 watch=watch,
                 directory=directory,
-                grant=grant,
+                row=row,
                 head=head,
                 agent=agent,
-                kw=kw,
+                kw=dict(run_mod.session_kw(runs_as, cwd, workspace)),
                 owner=owner,
                 resume=resume,
                 turn_kind=turn_kind,
@@ -1845,7 +1659,6 @@ class Runner:
                 recorder=recorder,
                 channel=channel,
                 denials=denials,
-                end_fields=end_fields,
                 rounds_known=rounds_known,
                 budget_left=budget_left,
                 before=before,
@@ -1874,7 +1687,7 @@ class Runner:
                 "outcome": outcome,
                 "artifact": artifact if outcome == "done" else None,
                 "session_id": session_id,
-                "included": included,
+                "envelope": envelope,
                 "error": detail,
                 "cost": cost,
                 "model": model,
@@ -1903,8 +1716,8 @@ class Runner:
         mode: str,
         started_by: str,
         prompt: str,
-        included: list,
-        pointed: list,
+        envelope: list,
+        row: Row,
         grant: Grant,
         head: str,
         cwd: str,
@@ -1915,6 +1728,7 @@ class Runner:
         model_source: str,
         effort: str | None,
         effort_source: str,
+        budget_source: str,
         label_declared: str | None,
         label: str | None,
         label_source: str | None,
@@ -1928,6 +1742,8 @@ class Runner:
         rerun_note: str,
         agent: dict[str, Any] | None,
         blocks: list[str],
+        process: str,
+        agent_key: str,
     ) -> Any:
         """The step's `start` record, and its `at`; `start_at` as it was for a step taken up again or
         with no journal."""
@@ -1936,7 +1752,9 @@ class Runner:
         # The autopilot tells a recording `ship` that ran out from a merging one by this field. Only
         # a `ship` whose gate named the merge already made carries it, by the code `recording-ship`.
         ship_extra = (
-            {"ship_mode": "record"} if stage == "ship" and "recording-ship" in gate_reasons else {}
+            {"ship_mode": "record"}
+            if states.action_of(process, stage) == "merge" and "recording-ship" in gate_reasons
+            else {}
         )
         return self.journal.started(
             journal_key,
@@ -1945,9 +1763,9 @@ class Runner:
             mode,
             started_by=started_by,
             prompt_chars=len(prompt),
-            included=included,
-            # The artifacts named by path only, `[]` for a stage that names none.
-            pointed=pointed,
+            # The parts the prompt was handed: the artifacts, records, answers, findings and data its
+            # row declares, and the app's own sections; `[]` for a step taken up again.
+            envelope=envelope,
             # Which build ran the step, so a measurement splits by what ran rather than by a date.
             **(
                 {
@@ -1957,10 +1775,14 @@ class Runner:
                 if self.app is not None
                 else {}
             ),
-            granted=list(grant.tools),
-            mcp=list(grant.mcp),
+            grants=record(grant),
             blocks=blocks,
-            max_turns=grant.max_turns,
+            max_turns=row.max_turns,
+            # The $ ceiling the session runs under (`None`: none) and where it came from.
+            max_budget_usd=row.max_budget_usd or None,
+            max_budget_source=budget_source,
+            # Which row ran: its pack, its hash, the keys the owner's layer set; the unit's process.
+            **pack.stamp(agent_key, process),
             head=head,
             model=model,
             model_source=model_source,
@@ -1975,7 +1797,7 @@ class Runner:
             # Which system prompt the step ran on. `""` means no preset, and nothing more: a step
             # without one whose `cwd` holds project instructions runs on those as its whole system
             # prompt, and only `instructions` below says whether it did.
-            system_prompt="claude_code" if grant.opens_anything else "",
+            system_prompt="claude_code" if row.opens_anything else "",
             # Which project files `_options` puts into the system prompt, whole or as a line of contents.
             # Read again there, so a file edited in between is not seen here.
             instructions=instructions.read(cwd).record(),
@@ -1988,8 +1810,10 @@ class Runner:
             # Only on a stage run again from the board.
             **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),
             **ship_extra,
-            # Top level, the name when the step began; none for a stage the agent table has no row for.
-            **({"agent": agent["name"]} if agent is not None else {}),
+            # The agent's key, as its `end` names it, and its name when the step began (none for a
+            # stage the agent table has no row for).
+            agent=agent_key,
+            **({"agent_name": agent["name"]} if agent is not None else {}),
             # Whose step this is, so the next start can tell one this process still runs from one the app
             # went down under.
             **({"run": recorder.run, "pid": os.getpid()} if recorder is not None else {}),
@@ -2010,79 +1834,61 @@ class Runner:
             log.exception("the trial model of %s %s was not recorded", unit, stage)
         return None
 
-    def _open_main(
+    async def _open_main(
         self,
         cwd: str,
         prompt: str,
         session_id: str,
         turns_left: int,
         budget_left: float | None,
-        grant: Grant,
-        denials: Denials,
-        channel: submit_mod.Channel | None,
-        watch: str | None,
-        directory: Path,
-        read_also: tuple[str, ...],
-        kw: dict[str, Any],
+        runs_as: run_mod.Agent,
+        gate: Gate,
+        own: tuple[str, str] | None,
         running: steps.Running | None,
         owner: dict[str, Any],
         resume: dict[str, Any] | None,
         servers: dict[str, Any],
         turn_kind: str,
-        ledger: Helpers | None = None,
         workspace: str = "",
-        unit: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """The main reply's stream. An `opening` or `closing` turn taken up again has its main reply
-        already. The unit's `(ram, disk)` scratch directories are made before the session opens:
-        the gate lets the step write below them and the session's environment names them.
+        already. `gate` holds the grant issued for the step (`_features`), and the session's
+        environment names the unit's scratch directories `own`.
 
         The recorder is handed the segment's `config` first, so it comes before any SDK event: the
-        model and effort as `kw` has them, the two ceilings as the session gets them, and the
-        sources the owner keeps."""
+        model and effort it runs on, the two ceilings as the session gets them, and the sources
+        the owner keeps."""
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
         if recorder is not None:
-            tell_config(recorder, kw.get("model"), kw.get("effort"), owner, turns_left, budget_left)
-        if turn_kind in ("opening", "closing"):
+            run_mod.tell_config(
+                recorder,
+                runs_as.model,
+                runs_as.effort,
+                owner,
+                turns_left,
+                budget_left,
+                gate.grant,
+            )
+        if turn_kind == "opening":
             return nothing()
-        places = self._scratch(workspace, unit)
-        # A spike writes only its `cwd`; the worktree, the unit and what `read_also` names are
-        # read. Only when a path was named, so every other step's gate is unchanged.
-        gate_args = (
-            (None, (watch, str(directory), *read_also))
-            if watch
-            else (str(directory), tuple(read_also))
-            if read_also
-            else (str(directory),)
-        )
-        # A step with nothing to name passes nothing, so a stand-in `stream` keeps working.
-        own = (str(places[0]), str(places[1])) if places is not None else None
-        return self.sessions.stream(
+        return run_mod.open_session(
+            self.sessions,
+            runs_as,
             cwd,
             prompt,
-            session_id or None,
-            max_turns=turns_left,
-            # Only pass a gate when something was actually granted. The list is always the grant's, `[]`
-            # when empty: `None` would fall back to `COS_TOOLS`, and an `idea` on a machine that set it
-            # held tools with no gate in front of them.
-            can_use_tool=(
-                permission_gate(
-                    grant, cwd, denials, *gate_args, scratch=own, ram_cap=scratch_mod.RAM_CAP
-                )
-                if grant.opens_anything or channel is not None or grant.mcp
-                else None
-            ),
-            tools=list(grant.tools),
-            max_budget_usd=budget_left,
-            **kw,
+            session_id,
+            turns=turns_left,
+            budget=budget_left,
+            gate=gate,
+            workspace=workspace,
             # Only a board step has a row.
             **({"step": running.handle, "owner": owner} if running is not None else {}),
             # Only on a step taken up again.
             **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
             # Only a step with a channel.
             **servers,
-            # Only a grant holding the helpers' tool gets them, and their ledger: impl.
-            **({"agents": DEFINITIONS, "helpers": ledger} if ledger is not None else {}),
+            # Only a grant holding helpers gets them (impl); the gate holds their ledger.
+            **({"agents": definitions(gate.grant.helpers)} if gate.helpers is not None else {}),
             **({"unit_scratch": own} if own is not None else {}),
         )
 
@@ -2092,11 +1898,13 @@ class Runner:
         journal_key: str,
         unit: str,
         stage: str,
+        key: str,
+        is_review: bool,
         artifact: str,
         cwd: str,
         watch: str | None,
         directory: Path,
-        grant: Grant,
+        row: Row,
         head: str,
         agent: dict[str, Any] | None,
         kw: dict[str, Any],
@@ -2107,7 +1915,6 @@ class Runner:
         recorder: Any,
         channel: submit_mod.Channel | None,
         denials: Denials,
-        end_fields: Any,
         rounds_known: tuple[int, ...],
         budget_left: float | None,
         before: tuple[str, str] | None,
@@ -2127,9 +1934,9 @@ class Runner:
         error: dict[str, str] | None,
         cost: dict[str, Any],
         ledger: Helpers | None = None,
-    ) -> tuple[Outcome, str, dict[str, Any], str | None]:
+    ) -> tuple[Outcome, str, dict[str, Any], str | None, str | None]:
         """The end of a step, whatever ended it: the turns that repair a reply, the attempt record and
-        the `end` row. `(outcome, detail, cost, stopped_by)`. `ledger` tells what its helpers left
+        the `end` row. `(outcome, detail, cost, stopped_by, review_md)`. `ledger` tells what its helpers left
         untold first, while the recorder is open.
 
         `shutting_down` is set when the task is cancelled with no Stop behind it: the app is going
@@ -2148,47 +1955,14 @@ class Runner:
         held: BaseException | None = None
         closing = opening = submit_turn = None
         message = str((resume or {}).get("message") or "")
-        if watch and not shutting_down and outcome in ("failed", "exhausted") and spike_md is None:
+        if watch and not shutting_down and outcome == "failed" and spike_md is None:
             spike_md, detail, held = await _spike_progress(
                 cwd, watch, before, running, tree_changed, directory, artifact, detail, unit
             )
             shutting_down = held is not None
         if (
-            stage == "review"
-            and grant.app_writes_artifact
-            and not shutting_down
-            and outcome == "exhausted"
-            and review_md is None
-            and session_id
-            and head
-            and not _stop_asked(running)
-        ):
-            # The closing turn an update paused is taken up, not asked again.
-            take_up = turn_kind == "closing"
-            review_md, detail, closing, cost, turn_taken, segment_done, held = await _close_review(
-                self.sessions,
-                cwd,
-                head,
-                directory,
-                artifact,
-                session_id,
-                denials,
-                _turn_kw(kw, owner, "closing", running, turn_budget, take_up, resume),
-                take_up,
-                running,
-                cost,
-                turn_taken,
-                segment_done,
-                detail,
-                unit,
-                stage,
-                message,
-            )
-            shutting_down = held is not None
-        if (
             unopened is not None
-            and is_prose_stage(stage)
-            and grant.app_writes_artifact
+            and row.prose
             and not watch
             and outcome == "failed"
             and not shutting_down
@@ -2216,12 +1990,12 @@ class Runner:
             shutting_down = held is not None
             if opening == "repaired":
                 outcome, error = "done", None
-                review_md = "round" if stage == "review" else review_md
+                review_md = "round" if is_review else review_md
         if channel is not None and outcome == "done" and not shutting_down:
             outcome, error, detail, submit_turn, cost, held = await _repair_submit(
                 self.sessions,
                 cwd,
-                stage,
+                key,
                 artifact,
                 session_id,
                 denials,
@@ -2238,7 +2012,7 @@ class Runner:
             shutting_down = held is not None
         if (
             channel is not None
-            and stage == submit_mod.ROUND
+            and is_review
             and outcome == "done"
             and channel.received is not None
             and not shutting_down
@@ -2271,7 +2045,7 @@ class Runner:
             cost = cost if terminal else {}
         # Nothing wrote a spike's or a review's mark: a Stop withheld it, or there was no file.
         spike_md = _unwritten(spike_md, bool(watch) and not shutting_down, outcome)
-        review_md = _unwritten(review_md, stage == "review" and not shutting_down, outcome)
+        review_md = _unwritten(review_md, is_review and not shutting_down, outcome)
         # Not for an app going down: `drive` writes what it can, and no `end`.
         run_fields, stored, stored_from = (
             await _close_recorder(recorder, outcome, detail, unit, stage)
@@ -2281,8 +2055,14 @@ class Runner:
         cost_fields = _cost_fields(
             cost, recorder is not None and not shutting_down, outcome, stored, stored_from
         )
+        if resume is not None and resume.get("raised") and cost_fields.get("cost_usd") is not None:
+            # The CLI's total on a raised session holds the part before it: this `end` keeps its own
+            # share, so a sum over ends counts each dollar once, and the session's total beside it.
+            total = float(cost_fields["cost_usd"])
+            cost_fields["session_cost_usd"] = total
+            cost_fields["cost_usd"] = round(total - float(resume.get("spent_usd") or 0.0), 6)
         segment_fields = _segment_fields(owner, resume, segment_done)
-        dropped = turn_kind in ("opening", "closing") and not turn_taken and not shutting_down
+        dropped = turn_kind == "opening" and not turn_taken and not shutting_down
         detail = _noted(
             detail,
             f"the {turn_kind} turn an update paused was not reached again, so it was dropped"
@@ -2307,11 +2087,7 @@ class Runner:
                 cost,
                 cost_fields.get("turns"),
             )
-        extra = (
-            await _end_extra(end_fields, unit, stage)
-            if record and outcome == "done" and end_fields is not None
-            else {}
-        )
+        extra = _round_counts(channel) if record and outcome == "done" else {}
         if record and trial_at is not None:
             self._trial_model(
                 trial_at,
@@ -2322,19 +2098,20 @@ class Runner:
                 or modeltrial.NEVER_STARTED,
             )
         if journal is not None and record:
-            journal.finished(
+            run_mod.ended(
+                journal,
                 journal_key,
                 unit,
                 stage,
-                outcome,
+                run_mod.status_of(outcome),
+                outcome=outcome,
+                agent=key,
                 session_id=session_id,
+                model=kw.get("model"),
+                denials=denials,
+                cost=cost_fields,
                 artifact=artifact if outcome == "done" else None,
                 detail=detail or None,
-                denials=denials.count,
-                denied=denials.reasons or None,
-                # Every step that may run a command says how many it was refused for running in the
-                # background, zero included.
-                **({"background": denials.background} if "Bash" in grant.tools else {}),
                 models_used=models_used or None,
                 terminal=terminal or None,
                 **(
@@ -2345,7 +2122,6 @@ class Runner:
                     if outcome == "stopped"
                     else {}
                 ),
-                **cost_fields,
                 # The `Author:` the artifact carries, as written: `""` for none, never checked against the
                 # table and never a reason to refuse.
                 **(
@@ -2355,10 +2131,23 @@ class Runner:
                 ),
                 **extra,
                 **run_fields,
+                # What a raise needs to go on from this end: both ceilings, the one hit, and whose
+                # session it is.
+                **(
+                    {
+                        "ceiling": run_mod.ceiling_of(terminal),
+                        "max_turns": row.max_turns,
+                        "max_budget_usd": row.max_budget_usd or None,
+                        "cwd": cwd,
+                        "owner": owner,
+                    }
+                    if outcome == "paused-budget"
+                    else {}
+                ),
                 # Only a spike's `end` carries it.
                 **({"spike_md": spike_md} if watch else {}),
                 # Only a review's; `closing` only when that turn ran.
-                **({"review_md": review_md} if stage == "review" else {}),
+                **({"review_md": review_md} if is_review else {}),
                 **({"closing": closing} if closing is not None else {}),
                 # Only once a reply lacked its opening.
                 **({"opening": opening} if opening is not None else {}),
@@ -2376,4 +2165,4 @@ class Runner:
                 raise pending
             # A Stop's cancel that landed in the capture rather than the session.
             _uncancel()
-        return outcome, detail, cost, stopped_by
+        return outcome, detail, cost, stopped_by, review_md

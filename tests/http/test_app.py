@@ -6,24 +6,31 @@ as a missing test rather than as a bug only one entry point has."""
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from coscc import units
-from coscc.agent import harness
+from coscc.agent import pack
 from coscc.config import Config
 from coscc.http.app import Core
 from coscc.kernel import Invalid
 from coscc.agent.sessions import Sessions
 from coscc.store.journal import totals_of
 from coscc.units.history import History
+from tests.units.test_meta import seed
 
 REPO = str(Path(__file__).resolve().parents[2])
 
 
 def create_sync(core: Core, *args):
     return asyncio.run(core.answers.create_unit(*args))
+
+
+def seed_unit(core: Core, cwd: str, unit: str, **kw) -> None:
+    """Test glue: `unit` of workspace `cwd` stated as rows in the core's database (see `seed`)."""
+    seed(core.ws.unit_meta(), core.ws.key(cwd), unit, **kw)
 
 
 def _core(**kw) -> Core:
@@ -140,7 +147,7 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
     """The boundary `coscc/http/routes.py` depends on, and the one review caught open.
 
     `run_step` maps this layer's refusals with one `except RunError`. 0012 introduced a
-    second exception type on that path -- `harness.MissingRules`, raised when a stage's
+    second exception type on that path -- a missing skill, raised when a stage's
     rules cannot be found -- and for one commit it escaped: measured 2026-09-22, a
     workspace whose harness had no skills produced an unhandled
     `MissingRules` where a 400 was intended, so the page would have shown a 500 for the
@@ -159,13 +166,8 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             # fixture has to be built where the product looks.
             unit = units.unit_dir(workspace, "0009_a-test-unit", root / "data")
             unit.mkdir(parents=True)
-            (unit / "intent.md").write_text("Status: accepted.\nI", encoding="utf-8")
-            (unit / "spec.md").write_text("Status: accepted.\nS", encoding="utf-8")
-
-            # A harness carrying no skills: the Board reads, every Run refuses.
-            half = root / "half"
-            half.mkdir()
-            (half / "skills").mkdir()
+            (unit / "intent.md").write_text("I", encoding="utf-8")
+            (unit / "spec.md").write_text("S", encoding="utf-8")
 
             config = Config(
                 workspaces=(),
@@ -174,24 +176,26 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             )
             core = Core(config, Sessions(config))
             asyncio.run(core.ws.add("proj"))
+            seed_unit(
+                core,
+                str(workspace),
+                "0009_a-test-unit",
+                statuses={"intent.md": "accepted", "spec.md": "accepted"},
+            )
 
-            originals = (harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS)
-            harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
-            harness.CHECKOUT_HARNESS = half
-            try:
+            # A row naming no skill: the Board reads, every Run refuses.
+            pack.write("plan", "skills", [])
 
-                async def go():
-                    async for _ in core.steps.run_step(str(workspace), "0009_a-test-unit", "plan"):
-                        pass
+            async def go():
+                async for _ in core.steps.run_step(str(workspace), "0009_a-test-unit", "plan"):
+                    pass
 
-                with self.assertRaises(Invalid) as caught:
-                    asyncio.run(go())
-            finally:
-                harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS = originals
+            with self.assertRaises(Invalid) as caught:
+                asyncio.run(go())
 
             message = str(caught.exception)
             self.assertIn("plan", message)
-            self.assertIn("SKILL.md", message)
+            self.assertIn("no skill", message)
 
 
 if __name__ == "__main__":
@@ -232,3 +236,26 @@ class OneMembershipQuestion(unittest.TestCase):
             config = Config(workspaces=(), working_dir=d, data_dir=d)
             s = Core(config, Sessions(config))
             self.assertFalse(s.sessions.membership("/etc"))
+
+
+class ARefusalBodyCarriesItsCode(unittest.TestCase):
+    """A gate's refusal says its reason code beside its words, so a caller branches on the code."""
+
+    def test_a_paused_stage_says_budget_reached_and_a_plain_refusal_says_no_code(self):
+        from coscc.http.app import _refused
+        from coscc.kernel import Invalid
+        from coscc.runner.queue import Refused
+        from coscc.units.read import BUDGET_REACHED, paused
+        from starlette.requests import Request
+
+        asked = Request({"type": "http"})
+        said = asyncio.run(_refused(asked, Refused("paused", (BUDGET_REACHED,))))
+        self.assertEqual(
+            (said.status_code, json.loads(said.body)),
+            (400, {"error": "paused", "code": BUDGET_REACHED, "reasons": [BUDGET_REACHED]}),
+        )
+        said = asyncio.run(_refused(asked, Invalid("no")))
+        self.assertEqual(json.loads(said.body), {"error": "no"})
+        # Where the board shows the hold, the same code.
+        shown = paused({"stage": "impl", "ceiling": "usd"})
+        self.assertEqual(shown["code"] if shown else "", BUDGET_REACHED)

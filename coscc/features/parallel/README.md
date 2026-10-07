@@ -1,36 +1,26 @@
 # Parallel: a plan's parallel steps, handed to impl
 
-Read this before changing `coscc/features/parallel/__init__.py`: the reader, the block and `FEATURE` are
+Read this before changing `coscc/features/parallel/__init__.py`: the block and `FEATURE` are
 all in it.
 
-## The section it reads
+## What it reads
 
-`plan.md ## Parallelization`, in the shape the plan skill's template gives:
-
-```markdown
-## Parallelization
-(a) <title>
-- <path or glob>
-Report: <what the step reports when done>
-
-(b) <title>
-- <path or glob>
-Report: <…>
-```
-
-A bullet under a step's line is a path until the first other line, which starts the report; the
-report runs to the next step. `none: one session` means no step.
+`Facts.plan["steps"]`, the plan record's parallel steps (`{title, paths, report}`), which a
+board step's features are handed. `submit` refuses a plan whose step names a path its `files`
+does not, or a path two steps share.
 
 ## What the agent sees
 
-- One prompt block, `parallel`, on `impl` only, when the plan names two or more steps: each
-  step's line, its paths and its report, and the instruction to start one `worker` per step.
+- One prompt block, `parallel`, on `impl` only, when the record names two or more steps: each
+  step's `(a) <title>`, its paths and its report, and the instruction to start one `worker` per
+  step with that step's slice of the envelope (its part of `plan.md`, the answers and findings
+  on its paths) in the worker's prompt.
 - No tool and no guard. The `worker` helper, the hooks holding `Agent` and `SendMessage`, `peers`
   and the block on how the agents talk are the kernel's.
 
 ## Hazards
 
-- Nothing checks a plan: two steps naming the same path, or a step past ten paths, reach impl as
-  written. The run log's `worker_write` events show what each worker wrote.
-- The plan is read once, when the step starts: a step taken up again after an update keeps the
-  block its first prompt had, even if `plan.md` changed since.
+- A step past ten paths reaches impl as written. The run log's `worker_write` events show what
+  each worker wrote.
+- The record is read once, when the step starts: a step taken up again keeps the block its
+  first prompt had.

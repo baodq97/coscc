@@ -61,7 +61,7 @@ The gate reads the words of the review's `### Screens` section, never the images
 whose first word is an `S<n>` always blocks, even rated `low`. The app retakes screenshots
 before `review` when the head was rewritten after them.
 
-## What each stage does on a UI unit
+## What each agent does on a UI unit
 
 A UI unit changes a file under `paths:`.
 

@@ -8,13 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-BLOCK = "\n### More rounds\nDecided by: {by}. Date: {today}. Via: product.\nRounds: 1\n"
-
-
-def block(by: str, today: str) -> str:
-    """The block appended under `review.md ## Answers`, blank line first."""
-    return BLOCK.format(by=by, today=today)
-
 
 def refusal(found: dict[str, Any] | None, by: str, busy: str) -> str:
     """The first reason a round is refused, or `""`."""
@@ -27,8 +20,6 @@ def refusal(found: dict[str, Any] | None, by: str, busy: str) -> str:
         )
     if "\n" in by or "\r" in by:
         return "the name must be one line"
-    if by.lstrip().startswith("#"):
-        return "the name may not start with #"
     if busy:
         return f"{busy}; allowing a round does not stop anything itself"
     return ""

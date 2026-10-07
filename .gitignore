@@ -1,4 +1,3 @@
-coscc/_harness/
 coscc/_build.json
 *.db
 *.py[cod]

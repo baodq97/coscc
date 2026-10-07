@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from coscc.bus import NAMES, Event
+from coscc.bus import NAMES
 from coscc.config import Config
 from coscc.agent.sessions import Sessions
 from coscc.http.app import Core
@@ -27,12 +27,12 @@ class TheServiceWiresWhoListensToWhat(unittest.TestCase):
                 self.assertTrue(self.core.bus._handlers[name])
 
     def test_a_step_ended_by_the_app_going_down_wakes_only_the_updater(self):
-        self.core.bus.publish(Event("step.ended", "k", "u", going_down=True))
+        self.core.bus.publish("step.ended", {"workspace": "k", "unit": "u", "going_down": True})
         self.ended.assert_called_once_with()
         self.nudged.assert_not_called()
 
     def test_a_written_answer_wakes_only_the_autopilot(self):
-        self.core.bus.publish(Event("answer.written", "k", "u"))
+        self.core.bus.publish("answer.written", {"workspace": "k", "unit": "u"})
         self.ended.assert_not_called()
         self.nudged.assert_called_once_with("k")
 
@@ -42,6 +42,6 @@ class TheServiceWiresWhoListensToWhat(unittest.TestCase):
             with self.subTest(name=name):
                 self.ended.reset_mock()
                 self.nudged.reset_mock()
-                self.core.bus.publish(Event(name, "k", "u"))
+                self.core.bus.publish(name, {"workspace": "k", "unit": "u", "going_down": False})
                 self.ended.assert_called_once_with()
                 self.nudged.assert_called_once_with("k")

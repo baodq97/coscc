@@ -22,7 +22,7 @@ from unittest import mock
 from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
-from tests.github.test_integration import BRANCH, PR, SLUG, StandIn, git
+from tests.github.test_integration import BRANCH, PR, SLUG, StandIn, a_unit_at_pr, git
 from coscc.http.app import Core
 from coscc.kernel import Invalid
 from tests.http.test_app import use_sessions, use_config
@@ -69,15 +69,7 @@ class ACutIntegration(unittest.TestCase):
         self.core = Core(config, StandIn(self._no_act))
         made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
-        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
-        (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
-        )
+        a_unit_at_pr(self.core, self.cwd, self.unit, directory)
         git(seed, "switch", "-q", "-c", BRANCH)
         (seed / "g.txt").write_text("branch\n", encoding="utf-8")
         git(seed, "commit", "-q", "-am", "g.txt: branch")
@@ -233,10 +225,10 @@ class ACleanRebaseNeverPushed(ACutIntegration):
     def pushing_act(self, L: str, allowed: dict):
         async def act(tree, gate):
             compare = f"git range-diff origin/main {self.P} {L}"
-            allowed["range-diff"] = type(await gate("Bash", {"command": compare}, None)).__name__
+            allowed["range-diff"] = await gate("Bash", {"command": compare})
             git(tree, *compare.split()[1:])
             push = f"git push --force-with-lease={BRANCH}:{self.P} origin {BRANCH}"
-            allowed["push"] = type(await gate("Bash", {"command": push}, None)).__name__
+            allowed["push"] = await gate("Bash", {"command": push})
             git(tree, *push.split()[1:])
             return "pushed; the range-diff showed context only"
 
@@ -248,9 +240,7 @@ class ACleanRebaseNeverPushed(ACutIntegration):
         self.cut()
         allowed: dict = {}
         stops = self.autopilot_pass(self.pushing_act(L, allowed))
-        self.assertEqual(
-            allowed, {"range-diff": "PermissionResultAllow", "push": "PermissionResultAllow"}
-        )
+        self.assertEqual(allowed, {"range-diff": "", "push": ""})
         [rec] = self.records("integration")
         self.assertEqual(
             (rec["outcome"], rec["mode"], rec["head_after"]), ("pushed", "agent", L), rec["detail"]

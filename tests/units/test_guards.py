@@ -8,7 +8,8 @@ from pathlib import Path
 
 from coscc.runner.queue import Refused
 from coscc.runner.queue import Updating
-from coscc.units import guards, states
+from coscc.agent import pack
+from coscc.units import guards
 from coscc.units.guards import OPEN, BadVerdict, Verdict
 
 REPO = Path(__file__).resolve().parents[2]
@@ -27,10 +28,38 @@ def loop_lines() -> list[str]:
 class EveryGuardIsNamed(unittest.TestCase):
     def test_every_transition_can_be_decided_by_a_guard_that_exists(self):
         for machine, table in guards.TRANSITIONS.items():
-            for transition, allowed in table.items():
-                self.assertTrue(allowed, f"{machine}.{transition}")
-                for gid in allowed:
-                    self.assertIn(gid, guards.GUARDS, f"{machine}.{transition}")
+            for transition, gid in table.items():
+                self.assertIn(gid, guards.GUARDS, f"{machine}.{transition}")
+
+    def test_every_guard_a_process_may_ask_exists(self):
+        for gid in pack.PROCESS_GUARDS:
+            self.assertIn(gid, guards.GUARDS, gid)
+
+
+class AUnitOpensAcceptedOnlyFromABrief(unittest.TestCase):
+    def test_a_brief_opens_it(self):
+        self.assertEqual(guards.guard("unit-created").check({"brief": True}), OPEN)
+
+    def test_no_brief_closes_it_with_a_code(self):
+        for inputs in ({"brief": False}, {}):
+            verdict = guards.guard("unit-created").check(inputs)
+            self.assertFalse(verdict.open)
+            self.assertEqual(verdict.reasons, ("no-brief",))
+
+    def test_the_table_names_it_for_the_create_transition(self):
+        self.assertEqual(guards.TRANSITIONS["unit"]["create"], "unit-created")
+
+
+class AReviewGoesBackToDraftOnlyOnItsIncompleteRound(unittest.TestCase):
+    def test_a_round_number_opens_it_and_none_closes_it_with_a_code(self):
+        self.assertEqual(guards.guard("incomplete-round").check({"round": 2}), OPEN)
+        for inputs in ({"round": 0}, {}):
+            verdict = guards.guard("incomplete-round").check(inputs)
+            self.assertFalse(verdict.open)
+            self.assertEqual(verdict.reasons, ("no-round",))
+
+    def test_the_table_names_it_for_the_incomplete_transition(self):
+        self.assertEqual(guards.TRANSITIONS["unit"]["incomplete"], "incomplete-round")
 
 
 class TheReasonTableIsClosed(unittest.TestCase):
@@ -122,10 +151,10 @@ class TheGuards(unittest.TestCase):
         self.assertEqual(guards.review_round({"run": "r", "open_run": "r"}).reasons, ("no-head",))
 
     def test_impl_may_claim_only_an_open_finding(self):
-        self.assertEqual(guards.impl_claim({"claims": ["F1"], "open_findings": ["F1", "F2"]}), OPEN)
-        self.assertEqual(guards.impl_claim({"claims": [], "open_findings": []}), OPEN)
+        self.assertEqual(guards.impl_claim({"claims": ["F1"], "open_ids": ["F1", "F2"]}), OPEN)
+        self.assertEqual(guards.impl_claim({"claims": [], "open_ids": []}), OPEN)
         self.assertEqual(
-            guards.impl_claim({"claims": ["F3"], "open_findings": ["F1"]}).reasons,
+            guards.impl_claim({"claims": ["F3"], "open_ids": ["F1"]}).reasons,
             ("not-open-finding",),
         )
 
@@ -242,24 +271,31 @@ class TheGuards(unittest.TestCase):
         )
         self.assertEqual(guards.merge_read({"merge_commit": "m"}), OPEN)
         self.assertEqual(guards.merge_read({}).reasons, ("not-merged",))
+        self.assertEqual(guards.merge_refused({"refused": "conflicts"}), OPEN)
+        self.assertEqual(guards.merge_refused({"refused": ""}).reasons, ("no-refusal",))
+        self.assertEqual(guards.merge_refused({}).reasons, ("no-refusal",))
         self.assertEqual(guards.close_read({"state": "CLOSED"}), OPEN)
         self.assertEqual(guards.close_read({"state": "OPEN"}).reasons, ("not-closed",))
 
 
-class ThePackagedLaneUsesEveryGuardAMachineNeeds(unittest.TestCase):
-    def test_lane_full_picks_a_guard_for_every_transition(self):
-        lane = states.default_lanes().lane("full")
-        for machine, table in guards.TRANSITIONS.items():
-            for transition in table:
-                self.assertIn(lane.guard_for(machine, transition), guards.GUARDS)
+class TheFullProcessRunsIdeaIntentImplAndReviewAlways(unittest.TestCase):
+    def test_every_way_from_the_start_to_the_end_passes_them(self):
+        # The four no branch may pass over: every path through `full` holds them.
+        full = pack.process("coscc-sdlc/full")
+        states_ = full["states"]
 
-    def test_lane_full_runs_idea_intent_impl_and_review_always(self):
-        # The four the lane may never pass over.
-        lane = states.default_lanes().lane("full")
-        always = {stage for stage, when in lane.path if when == "always"}
-        self.assertEqual(always, {"idea", "intent", "impl", "review"})
-        self.assertEqual(dict(lane.path)["spike"], "if-unmeasured")
-        self.assertEqual(lane.end, "shipped")
+        def paths(at, seen):
+            ways = [w["to"] for w in states_[at].get("next") or [] if w["to"] not in seen]
+            if not states_[at].get("next"):
+                yield [*seen, at]
+            for to in ways:
+                yield from paths(to, [*seen, at])
+
+        found = list(paths(full["start"], []))
+        self.assertTrue(found)
+        for path in found:
+            self.assertLessEqual({"idea", "intent", "impl", "review"}, set(path), path)
+        self.assertEqual(full["end"], "shipped")
 
 
 if __name__ == "__main__":

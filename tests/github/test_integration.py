@@ -17,8 +17,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from tests.units.test_meta import ingest
-from coscc.agent.policy import grant_for
+from tests.runner.test_step import asks
+from tests.units.test_meta import seed
+from coscc.agent.policy import row_for
 from coscc.bus import Bus
 from coscc.github import integrate
 from coscc.git import fetches
@@ -29,6 +30,7 @@ from coscc.kernel import Invalid
 from tests.units.test_submit import submits as _submits
 from coscc.github.integration import CI_REFRESH
 from tests.http.test_app import use_config, use_sessions
+from tests.agent.edit import whole
 
 SLUG = "proof-of-gebo"
 PR = 7
@@ -60,8 +62,33 @@ def commit(where: Path, text: str, push: str) -> None:
     git(where, "push", "-q", "origin", push)
 
 
+def a_unit_at_pr(core, cwd, unit, directory):
+    """The unit's files as prose, and its state, intent to pr accepted, as rows."""
+    for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
+        (directory / name).write_text("# X: fixture\nAuthor: t.\n", encoding="utf-8")
+    (directory / "pr.md").write_text("# PR: fixture\n", encoding="utf-8")
+    seed(
+        core.ws.unit_meta(),
+        core.ws.key(cwd),
+        unit,
+        statuses={f"{n}.md": "accepted" for n in ("intent", "spec", "plan", "impl")},
+        type="feat",
+    )
+    # The pull request is the PR machine's `open` row.
+    core.ws.unit_meta().history.record(
+        core.ws.key(cwd),
+        unit,
+        "pr.md",
+        "accepted",
+        source="prmachine:open",
+        guard="branch-named",
+        authority="code",
+        inputs={"number": PR, "url": f"https://github.com/o/r/pull/{PR}", "head": "a" * 40},
+    )
+
+
 class StandIn:
-    """`Sessions` as `run_gebo` uses it: `stream` runs `act` in the tree, then replies.
+    """`Sessions` as Gebo's run uses it: `stream` runs `act` in the tree, then replies.
 
     Like a Gebo that follows its rules, it hands back through `submit` one `needs_person` item per
     `[needs-person] <why>` line its reply carries, unless `said` is set, which it hands back
@@ -79,7 +106,11 @@ class StandIn:
     async def stream(self, cwd, prompt, session_id, **kw):
         self.prompts.append(prompt)
         self.kws.append(kw)
-        reply = await self.act(Path(cwd), kw["can_use_tool"])
+
+        async def gate(tool, tool_input):
+            return await asks(kw["gate"], tool, tool_input)
+
+        reply = await self.act(Path(cwd), gate)
         yield ("chunk", reply)
         marker = "[needs-person] "
         said = (
@@ -127,15 +158,7 @@ class GeboThroughTheService(unittest.TestCase):
         made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
         self.directory = directory
-        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
-        (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
-        )
+        a_unit_at_pr(self.core, self.cwd, self.unit, directory)
         # Both sides change the same line: a real conflict when the branch is rebased.
         git(seed, "switch", "-q", "-c", BRANCH)
         commit(seed, "branch\n", BRANCH)
@@ -217,12 +240,12 @@ class GeboThroughTheService(unittest.TestCase):
             git(tree, "add", "f.txt")
             git(tree, "-c", "core.editor=true", "rebase", "--continue")
             push = f"git push --force-with-lease={BRANCH}:{self.head_before} origin {BRANCH}"
-            allowed["push"] = type(await gate("Bash", {"command": push}, None)).__name__
+            allowed["push"] = await gate("Bash", {"command": push})
             git(tree, *push.split()[1:])
             return "kept both lines of f.txt"
 
         rec = self.integrate_with(act)
-        self.assertEqual(allowed["push"], "PermissionResultAllow")
+        self.assertEqual(allowed["push"], "")
         self.assertEqual(rec["outcome"], "pushed")
         self.assertEqual(rec["mode"], "agent")
         self.assertEqual(rec["head_before"], self.head_before)
@@ -248,13 +271,13 @@ class GeboThroughTheService(unittest.TestCase):
         async def act(tree, gate):
             return "[needs-person] f.txt: both"
 
-        for field, value in (
-            ("turns", 33),
-            ("budget", 2.5),
-            ("model", "gebo-model"),
-            ("effort", "high"),
+        for path, value in (
+            ("ceilings.turns", 33),
+            ("ceilings.usd", 2.5),
+            ("model.id", "gebo-model"),
+            ("model.effort", "high"),
         ):
-            self.core.agents.set_agent_field("integrate", field, value)
+            self.core.agents.set_agent_field("integrate", *whole("integrate", path, value))
         self.integrate_with(act)
         [kw] = self.core.sessions.kws
         self.assertEqual((kw["max_turns"], kw["max_budget_usd"]), (33, 2.5))
@@ -267,6 +290,12 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(
             {k: v for k, v in stored[0].items() if k not in ("run", "seq", "at", "kind")},
             {
+                # Gebo's grant: its tree to write, its branch to push with a lease, `submit`.
+                "granted": [
+                    "write: worktree",
+                    f"push: {start['grants']['branch']} (with a lease)",
+                    "submit",
+                ],
                 "model": "gebo-model",
                 "model_source": "override",
                 "effort": "high",
@@ -536,7 +565,7 @@ class GeboThroughTheService(unittest.TestCase):
         from coscc.runner.queue import Refused
 
         seen = []
-        self.guarded(lambda facts: seen.append(facts.stage) or "not today")
+        self.guarded(lambda facts: seen.append(facts.agent) or "not today")
         with self.assertRaises(Refused) as caught:
             self.integrate_with(self._no_act)
         self.assertEqual(caught.exception.reasons, ("feature-refused",))
@@ -561,7 +590,7 @@ class GeboThroughTheService(unittest.TestCase):
             return "[needs-person] f.txt: both"
 
         self.integrate_with(act)
-        grant = grant_for("integrate")
+        grant = row_for("integrate")
         [kw] = self.core.sessions.kws
         self.assertEqual(
             (kw["max_turns"], kw["max_budget_usd"]), (grant.max_turns, grant.max_budget_usd)
@@ -611,15 +640,7 @@ class AStaleOriginMain(unittest.TestCase):
         self.core = Core(config, StandIn(self._no_act))
         made = asyncio.run(self.core.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
-        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
-        (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
-        )
+        a_unit_at_pr(self.core, self.cwd, self.unit, directory)
         # The branch changes `g.txt`; `main` later changes `f.txt`: no line in common.
         git(seed, "switch", "-q", "-c", BRANCH)
         (seed / "g.txt").write_text("branch\n", encoding="utf-8")
@@ -780,11 +801,22 @@ class AStaleOriginMain(unittest.TestCase):
         before and after, the calls, and the stops the pass left."""
         head = self.remote_head()
         (self.core.ws.unit_dir(self.cwd, self.unit) / "review.md").write_text(
-            f"# Review: fixture\nAuthor: t. Status: accepted.\n\n## Round 1\n\nReviewed: {head}. Verdict: pass.\n\n"
-            "### Findings\n\n### What was not reviewed\n\nnothing\n",
-            encoding="utf-8",
+            "# Review: fixture\nAuthor: t.\n", encoding="utf-8"
         )
-        ingest(self.core, self.cwd, self.unit)
+        meta, key = self.core.ws.unit_meta(), self.core.ws.key(self.cwd)
+        with meta.data.write() as conn:
+            meta.record_round(
+                conn,
+                key,
+                self.unit,
+                {"n": 1, "run": "r", "head": head, "object": {"verdict": "pass"}},
+            )
+        seed(
+            self.core.ws.unit_meta(),
+            self.core.ws.key(self.cwd),
+            self.unit,
+            statuses={"review.md": "accepted"},
+        )
         use_config(self.core, dataclasses.replace(self.core.config, host="127.0.0.1"))
         calls: list[tuple[str, str]] = []
 
@@ -884,15 +916,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self.core = Core(config, StandIn(None))
         made = await self.core.answers.create_unit(self.cwd, SLUG, "fixture")
         self.unit, directory = made["unit"], Path(made["path"])
-        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
-        (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
-        )
+        a_unit_at_pr(self.core, self.cwd, self.unit, directory)
         self.head = "a" * 40
         self.checks: list[dict] | None = None  # None: `pr checks` never answers
         self.never = asyncio.Event()

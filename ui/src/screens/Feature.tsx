@@ -1,12 +1,19 @@
 // A feature's own page (the vault's) in the studio's frame: its title, the project picker, and
 // what the feature draws for that project. A feature off in that project says so.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { FEATURE_UIS } from "../lib/feature";
-import { Link } from "../lib/router";
+import { Link, navigate } from "../lib/router";
 import { Empty, PageHead, SkeletonRows } from "../components/ui";
+
+/** What a feature page shows: "wait" only while the answer can still come; an unknown name, or a
+ * project list that failed to load, is "none". */
+export function featureView(hasPage: boolean, loading: boolean, shownState: string, exists: boolean): "wait" | "none" | "page" {
+  if (hasPage) return "page";
+  return exists || loading || shownState === "loading" ? "wait" : "none";
+}
 
 export function Feature({ name }: { name: string }) {
   const { boards, loading } = useBoards();
@@ -14,7 +21,19 @@ export function Feature({ name }: { name: string }) {
   const workspace = boards.find((b) => b.workspace.name === project)?.workspace ?? boards[0]?.workspace;
   const shown = useResource(workspace ? "/api/features/shown" : null, workspace ? { cwd: workspace.path } : {});
   const page = FEATURE_UIS[name]?.page;
+  // A feature with no page of its own has its row on What Leif may do.
+  const exists = shown.data?.some((f) => f.name === name);
+  useEffect(() => {
+    if (!page && exists) navigate(`/may-do?feature=${encodeURIComponent(name)}`);
+  }, [page, exists, name]);
 
+  const view = featureView(Boolean(page), loading, workspace ? shown.state : "ready", Boolean(exists));
+  if (view === "wait")
+    return (
+      <div className="page">
+        <SkeletonRows rows={4} />
+      </div>
+    );
   if (!page)
     return (
       <div className="page">
@@ -23,7 +42,7 @@ export function Feature({ name }: { name: string }) {
         </Empty>
       </div>
     );
-  if (loading || !workspace || !shown.data)
+  if (!page || loading || !workspace || !shown.data)
     return (
       <div className="page">
         <SkeletonRows rows={4} />

@@ -14,7 +14,7 @@ from unittest import mock
 from coscc.bus import Bus
 from coscc import units
 from coscc.agent import modeltrial
-from coscc.github import prmachine, prscope
+from coscc.github import prmachine
 from coscc.git import fetches
 from coscc.units import worktrees
 from coscc.config import Config
@@ -24,8 +24,15 @@ from coscc.kernel import Invalid
 from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 from tests.http.test_app import create_sync, timeline, unit_history
+from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
 from tests.http.test_app import use_sessions
+from tests.agent.edit import whole
+
+
+def state_of(core, cwd, unit, **kw):
+    """The unit's state as rows, where the app keeps it."""
+    seed(core.ws.unit_meta(), core.ws.key(cwd), unit, **kw)
 
 
 def live(core, unit: str):
@@ -120,7 +127,10 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
     def _typed_unit(self, slug: str = "a-problem") -> str:
         made = create_sync(self.core, str(self.repo), slug, "some words")
         (Path(made["path"]) / "intent.md").write_text(
-            f"# Intent: {slug}\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
+            f"# Intent: {slug}\nAuthor: t. Type: fix.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core, str(self.repo), made["unit"], statuses={"intent.md": "accepted"}, type="fix"
         )
         return made["unit"]
 
@@ -160,6 +170,22 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.assertEqual((fetched["outcome"], fetched["attempts"]), ("fetched", 1))
         self.assertEqual(self._git("rev-parse", "main").strip(), local_before)
         self.assertEqual(self._tree_head(self._tree(unit)), ahead)
+
+    def test_the_pre_step_guards_are_asked_for_the_agent_the_state_binds(self):
+        unit = self._typed_unit()
+        seen = []
+
+        def deny(facts):
+            seen.append(facts.agent)
+            return "stop here"
+
+        with (
+            mock.patch("coscc.runner.steps._agent_key", return_value="rune"),
+            mock.patch.object(self.core.steps, "feature_refusal", side_effect=deny),
+            self.assertRaises(Refused),
+        ):
+            self._run_step(unit)
+        self.assertEqual(seen, ["rune"])
 
     def test_a_broken_origin_does_not_stop_the_step(self):
         unit = self._typed_unit()
@@ -329,11 +355,13 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         def __init__(self):
             self.reply = ""
             self.prompts: list[str] = []
+            # What the next `submit` hands back beyond the defaults.
+            self.fields: dict = {}
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.prompts.append(text)
             yield ("chunk", self.reply)
-            await _submits(kw)
+            await _submits(kw, **self.fields)
             yield ("done", {"session_id": "sess-42", "cost": {"output_tokens": 3}})
 
     def setUp(self):
@@ -351,23 +379,21 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
     _tree = AUnitsBaseIsTheRemoteTrunk._tree
     _run_step = AUnitsBaseIsTheRemoteTrunk._run_step
 
-    PLAN = (
-        "# Plan: a problem\nIntent: intent.md. Author: t. Status: accepted.\n\n"
-        "## Files that change\n\n| `a.py` | x |\n| `b.py:3-4` | y |\n\n## Order of work\n\n1. x\n"
-    )
+    PLAN = "# Plan: a problem\nIntent: intent.md. Author: t.\n\n## Order of work\n\n1. x\n"
 
     def _unit_with_spec(self) -> tuple[str, Path]:
         unit = self._typed_unit()
         directory = units.unit_dir(str(self.repo), unit, str(self.root / "data"))
-        (directory / "spec.md").write_text(
-            "# Spec: a problem\nAuthor: t. Status: accepted.\n", encoding="utf-8"
-        )
+        (directory / "spec.md").write_text("# Spec: a problem\nAuthor: t.\n", encoding="utf-8")
+        state_of(self.core, str(self.repo), unit, statuses={"spec.md": "accepted"})
         return unit, directory
 
     def _planned(self) -> str:
         unit, _ = self._unit_with_spec()
         self.core.sessions.reply = self.PLAN
+        self.core.sessions.fields = {"files": ["a.py", "b.py"]}
         self.assertEqual(self._run_step(unit, "plan")["outcome"], "done")
+        self.core.sessions.fields = {}
         return unit
 
     def _impl(self, unit: str) -> tuple[str, dict]:
@@ -452,7 +478,14 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.core = Core(config, self.Replies())
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
 
     def _run(self, stage: str) -> None:
@@ -470,58 +503,6 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertEqual(row["actor"], "stage:spec")
         self.assertEqual(row["session"], "sess-42")
         self.assertNotEqual(row["session"], "unknown")
-
-    def test_a_failed_ingest_is_on_the_step_and_in_the_database(self):
-        """The step still ends `done`, and the failure is kept, not dropped. What is kept is one
-        fixed sentence; the error, which may carry a path, goes to the log."""
-        from unittest import mock
-
-        from coscc.units import meta
-
-        async def go():
-            return [
-                item
-                async for item in self.core.steps.run_step(
-                    str(self.repo), self.made["unit"], "spec"
-                )
-            ]
-
-        # The store is imported on its first read, before `meta` is broken: only the ingest fails.
-        asyncio.run(self.core.board(str(self.repo)))
-        error = meta.MetaError("coscc.loop meta did not run: no interpreter at /home/x/units")
-        with (
-            mock.patch.object(meta, "read", side_effect=error),
-            self.assertLogs("coscc", "WARNING") as log,
-        ):
-            _, payload = asyncio.run(go())[-1]
-        self.assertEqual(payload["outcome"], "done")
-        self.assertEqual(payload["ingest_error"], "its files could not be read")
-        with self.core.ws.unit_meta().data.connect() as conn:
-            [row] = conn.execute(
-                "SELECT unit, field, reason FROM unit_unknowns WHERE field = 'ingest'"
-            ).fetchall()
-        self.assertEqual(tuple(row), (self.made["unit"], "ingest", "its files could not be read"))
-        self.assertIn("/home/x/units", log.output[-1])
-        self.assertIn(self.made["unit"], log.output[-1])
-
-    def test_a_failed_ingest_on_the_database_names_no_path(self):
-        from unittest import mock
-
-        from coscc.store.db import Busy
-
-        asyncio.run(self.core.board(str(self.repo)))
-        busy = Busy(self.core.config.data_dir + "/cos.db")
-        with (
-            mock.patch("coscc.units.meta.UnitMeta.ingest", side_effect=busy),
-            self.assertLogs("coscc", "WARNING") as log,
-        ):
-            said = asyncio.run(
-                self.core.answers.ingest(
-                    str(self.repo), self.made["unit"], {"outcome": "done", "stage": "spec"}
-                )
-            )
-        self.assertEqual(said, {"ingest_error": "the database could not be written"})
-        self.assertIn("cos.db", log.output[-1])
 
     def test_a_failed_step_records_nothing(self):
         class Empty:
@@ -554,7 +535,10 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
     ASKS = "# Spec: a problem\nAuthor: t. Status: draft.\n\n## Body\n\n## Open questions\n\n1. Which one?\n"
     # What the session hands back beside `ASKS`; the questions are the object's.
-    ASKED = {"judgement": "not-ready", "questions": [{"n": 1, "text": "Which one?"}]}
+    ASKED = {
+        "judgement": "not-ready",
+        "questions": [{"n": 1, "text": "Which one?", "recommendation": "The first."}],
+    }
 
     def replies(self, text: str, outcome: dict | None = None, **fields):
         class Replies:
@@ -582,7 +566,14 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = self.made["unit"]
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
         self.key = self.core.ws.key(str(self.repo))
 
@@ -622,7 +613,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
         with mock.patch.object(board_reader, "read", read):
             asyncio.run(self.core.steps.after_end(str(self.repo), self.unit, stage, self.key))
-        return [r for r in self.records() if r["kind"] == "ship"]
+        return [r for r in self.records() if r["kind"] == "merge"]
 
     def test_a_done_ship_records_shipped_when_the_unit_is_finished(self):
         [row] = self._after_end_with("finished")
@@ -700,7 +691,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         """`enqueue_step` opens no reader; the step's own task still ends the attempt,
         publishes `step.ended` and runs `after_end`."""
         ended: list[str] = []
-        self.core.bus.subscribe("step.ended", lambda e: ended.append(e.unit))
+        self.core.bus.subscribe("step.ended", lambda e: ended.append(e.payload["unit"]))
         real = self.core.steps.after_end
         after: list[str] = []
 
@@ -804,7 +795,14 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         for slug in ("a-problem", "b-problem"):
             made = create_sync(self.core, str(self.repo), slug, "some words")
             (Path(made["path"]) / "intent.md").write_text(
-                "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+                "# Intent: x\nAuthor: t. Type: feat.\n", encoding="utf-8"
+            )
+            state_of(
+                self.core,
+                str(self.repo),
+                made["unit"],
+                statuses={"intent.md": "accepted"},
+                type="feat",
             )
             self.units.append(made)
         self.sessions.units = [u["unit"] for u in self.units]
@@ -880,7 +878,13 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         self.assertEqual((end["outcome"], end["stopped_by"]), ("stopped", "Lan"))
         found = unit_history(self.core, self.ws, a["unit"])
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
-        self.assertIn("Status: accepted.", (Path(a["path"]) / "intent.md").read_text())
+        self.assertEqual(
+            (Path(a["path"]) / "intent.md").read_text(), "# Intent: x\nAuthor: t. Type: feat.\n"
+        )
+        self.assertEqual(
+            [r["to_state"] for r in found["transitions"] if r["artifact"] == "intent.md"][-1:],
+            ["accepted"],
+        )
         self.assertEqual(self.core.steps.running_steps(self.ws), [])
 
     def test_a_stop_at_ending_is_recorded_and_the_step_runs_on_and_ends_stop_late(self):
@@ -1002,7 +1006,14 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
         self.core = Core(config, self.Empty())
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
 
     def _run(self, stage: str) -> None:
@@ -1138,7 +1149,14 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
 
     def _run(self, stage: str):
@@ -1196,10 +1214,14 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
     """The label is read after the gate and picks the configuration; the gate is stubbed open, as
     the review tests below stub it."""
 
-    PLAN = (
-        "# Plan: a problem\nIntent: intent.md. Author: t. Status: accepted. Impl: routine.\n\n"
-        "## Files that change\n\n- {path}: a change.\n\n## Order of work\n\n1. Do it.\n"
-    )
+    def _plan(self, path: str) -> None:
+        """A routine plan whose record names `path`."""
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            plan={"variant": "routine", "files": [path]},
+        )
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1217,6 +1239,8 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.dir = Path(self.made["path"])
+        # What impl declares it needs.
+        (self.dir / "intent.md").write_text("# Intent: x\n", encoding="utf-8")
         self.seen: list[dict] = []
         self.terminal = None
 
@@ -1237,7 +1261,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
                 {"session_id": "sess-i", "cost": {}, "terminal_reason": self.test.terminal},
             )
 
-    def _run(self):
+    def _run(self, rerun: bool = False):
         from coscc.units import board as board_reader
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
@@ -1245,13 +1269,16 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
 
         async def go():
             return [
-                i async for i in self.core.steps.run_step(str(self.repo), self.made["unit"], "impl")
+                i
+                async for i in self.core.steps.run_step(
+                    str(self.repo), self.made["unit"], "impl", **({"rerun": True} if rerun else {})
+                )
             ]
 
         # A routine run asks for its arm's model; the Sonnet arm is `models.json`'s.
         with (
             mock.patch.object(board_reader, "gate", open_gate),
-            mock.patch.object(modeltrial, "arm", lambda unit: modeltrial.SONNET_ARM),
+            mock.patch.object(modeltrial, "arm", lambda unit, stage: "sonnet-5-5"),
         ):
             return asyncio.run(go())
 
@@ -1259,10 +1286,16 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         journal = self.core.ws.journal()
         return journal.records(self.core.ws.key(str(self.repo)), kind="start")
 
+    def test_a_missing_declared_input_is_refused_before_any_session(self):
+        (self.dir / "intent.md").unlink()
+        with self.assertRaises(Refused) as refused:
+            self._run()
+        self.assertEqual(refused.exception.reasons, ("input-missing",))
+        self.assertIn("impl cannot start: it needs intent.md", str(refused.exception))
+        self.assertEqual((self.seen, self._starts()), ([], []))
+
     def test_a_plan_naming_the_security_surface_runs_as_novel(self):
-        (self.dir / "plan.md").write_text(
-            self.PLAN.format(path="`coscc/agent/policy.py`"), encoding="utf-8"
-        )
+        self._plan("coscc/agent/policy.py")
         self._run()
         start = self._starts()[-1]
         self.assertEqual(
@@ -1272,11 +1305,44 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.assertEqual((start["model"], start["effort"]), ("claude-opus-5-5[1m]", "high"))
         self.assertEqual(self.seen[-1].get("effort"), "high")
         self.assertEqual(start["impl_run"], 1)
+        # The agent's key, as its `end` names it, and its name beside it.
+        self.assertEqual((start["agent"], start["agent_name"]), ("impl", "Uruz"))
+
+    def test_start_and_end_name_the_agent_the_state_is_bound_to(self):
+        from coscc.agent import pack
+
+        pack.new_row("tidy", "Tidy", "impl")
+        real = pack.agent_for
+        bound = lambda ref, state: "tidy" if state == "impl" else real(ref, state)
+        with (
+            mock.patch.object(pack, "agent_for", bound),
+            mock.patch.object(pack, "problems", lambda *a, **k: []),
+        ):
+            self._run()
+        journal = self.core.ws.journal()
+        key = self.core.ws.key(str(self.repo))
+        start = journal.records(key, kind="start")[-1]
+        end = journal.records(key, kind="end")[-1]
+        self.assertEqual((start["agent"], start["pack"].split("@")[0]), ("tidy", "local"))
+        self.assertEqual(end["agent"], "tidy")
+
+    def test_the_label_is_the_records_whatever_plan_md_says(self):
+        self._plan("coscc/units/board.py")
+        (self.dir / "plan.md").write_text(
+            "# Plan: x\nImpl: novel.\n\n## Files that change\n- coscc/agent/policy.py\n",
+            encoding="utf-8",
+        )
+        self._run()
+        start = self._starts()[-1]
+        self.assertEqual((start["label"], start["label_source"]), ("routine", "declared"))
+
+    def test_a_unit_with_no_plan_record_runs_as_novel(self):
+        self._run()
+        start = self._starts()[-1]
+        self.assertEqual((start["label"], start["label_source"]), ("novel", "missing"))
 
     def test_a_novel_impl_gets_the_novel_ceilings(self):
-        (self.dir / "plan.md").write_text(
-            self.PLAN.format(path="`coscc/agent/policy.py`"), encoding="utf-8"
-        )
+        self._plan("coscc/agent/policy.py")
         self._run()
         start = self._starts()[-1]
         self.assertEqual((start["label"], start["label_source"]), ("novel", "forced"))
@@ -1285,27 +1351,62 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         )
         self.assertEqual(start["max_turns"], 250)
 
-    def test_a_routine_run_escalates_after_a_max_turns_stop_and_counts_its_runs(self):
-        (self.dir / "plan.md").write_text(
-            self.PLAN.format(path="`coscc/units/board.py`"), encoding="utf-8"
-        )
+    def test_a_routine_run_that_hit_a_ceiling_keeps_its_label_and_counts_its_runs(self):
+        self._plan("coscc/units/board.py")
         self.terminal = "max_turns"
         self._run()
         self.terminal = None
-        self._run()
+        # A plain run of a paused stage is refused; a person's rerun starts it again.
+        self._run(rerun=True)
         first, second = self._starts()[-2:]
-        self.assertEqual(
-            (first["label"], first["label_source"], first["model"], first["effort"]),
-            ("routine", "declared", "claude-sonnet-5-5[1m]", "medium"),
-        )
-        self.assertEqual(
-            (second["label"], second["label_source"], second["model"]),
-            ("novel", "escalated", "claude-opus-5-5[1m]"),
-        )
+        for start in (first, second):
+            self.assertEqual(
+                (start["label"], start["label_source"], start["model"], start["effort"]),
+                ("routine", "declared", "claude-sonnet-5-5[1m]", "medium"),
+            )
         self.assertEqual((first["impl_run"], second["impl_run"]), (1, 2))
-        # The rerun also gets the ceilings it was escalated for.
         ceilings = [(kw["max_turns"], kw.get("max_budget_usd")) for kw in self.seen[-2:]]
-        self.assertEqual(ceilings, [(120, 8.0), (250, 16.0)])
+        self.assertEqual(ceilings, [(120, 8.0), (120, 8.0)])
+
+
+class TheGatesLaneReachesThePrompt(unittest.TestCase):
+    """What the gate says of the lane is what the step's prompt is built for."""
+
+    setUp = AnImplStepRunsUnderThePlansLabel.setUp
+
+    class Impl(AnImplStepRunsUnderThePlansLabel.Impl):
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.test.prompts.append(text)
+            async for item in super().stream(cwd, text, session_id, max_turns, **kw):
+                yield item
+
+    def _run(self, lane):
+        from coscc.units import board as board_reader
+
+        self.prompts = []
+
+        async def gate(units_root, unit, stage, repo=None, **kw):
+            return board_reader.Gate(True, "open: impl may proceed", (), None, lane)
+
+        async def go():
+            return [
+                i async for i in self.core.steps.run_step(str(self.repo), self.made["unit"], "impl")
+            ]
+
+        with mock.patch.object(board_reader, "gate", gate):
+            asyncio.run(go())
+        journal = self.core.ws.journal()
+        return journal.records(self.core.ws.key(str(self.repo)), kind="start")[-1]
+
+    def test_a_fast_lane_gate_puts_the_block_in_the_prompt_and_the_record(self):
+        start = self._run("fast")
+        self.assertIn("# The fast lane", self.prompts[-1])
+        self.assertIn("fast-lane", start["envelope"])
+
+    def test_a_full_lane_gate_puts_no_block_anywhere(self):
+        start = self._run("full")
+        self.assertNotIn("# The fast lane", self.prompts[-1])
+        self.assertNotIn("fast-lane", start["envelope"])
 
 
 class AnImplStepUnderTheModelTrial(unittest.TestCase):
@@ -1314,9 +1415,8 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
     `self.init` says otherwise. `coscc.loop next` is a stub that counts its calls and answers
     `self.action`, or raises `self.next_fails`."""
 
-    PLAN = AnImplStepRunsUnderThePlansLabel.PLAN
-    ROUTINE = "`coscc/units/board.py`"
-    SECURITY = "`coscc/agent/policy.py`"
+    ROUTINE = "coscc/units/board.py"
+    SECURITY = "coscc/agent/policy.py"
     OPUS, SONNET = "claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]"
 
     def setUp(self):
@@ -1358,10 +1458,16 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.dir = Path(self.made["path"])
+        (self.dir / "intent.md").write_text("# Intent: x\n", encoding="utf-8")
         if plan is not None:
-            (self.dir / "plan.md").write_text(self.PLAN.format(path=plan), encoding="utf-8")
+            state_of(
+                self.core,
+                str(self.repo),
+                self.made["unit"],
+                plan={"variant": "routine", "files": [plan]},
+            )
 
-    def _run(self, stage: str = "impl", arm: str = "opus-5-5"):
+    def _run(self, stage: str = "impl", arm: str = "opus-5-5", rerun: bool = False):
         from coscc.units import board as board_reader
         from coscc.agent import modeltrial
 
@@ -1383,13 +1489,16 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
         async def go():
             return [
-                i async for i in self.core.steps.run_step(str(self.repo), self.made["unit"], stage)
+                i
+                async for i in self.core.steps.run_step(
+                    str(self.repo), self.made["unit"], stage, **({"rerun": True} if rerun else {})
+                )
             ]
 
         with (
             mock.patch.object(board_reader, "gate", open_gate),
             mock.patch.object(board_reader, "next_step", next_step),
-            mock.patch.object(modeltrial, "arm", lambda unit: arm),
+            mock.patch.object(modeltrial, "arm", lambda unit, stage: arm),
         ):
             return asyncio.run(go())
 
@@ -1398,11 +1507,9 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         return journal.records(self.core.ws.key(str(self.repo)), kind="start")
 
     def _prefs(self):
-        from coscc.agent import models
-        from coscc.store.db import Data
+        from coscc.agent import pack
 
-        data = Data(self.core.config.data_dir)
-        return {**data.pref_rows(models.PREFIX), **data.pref_rows(models.EFFORT_PREFIX)}
+        return pack.row("impl")["model"]
 
     def test_every_routine_impl_start_carries_arm_and_model(self):
         for arm, model in (("opus-5-5", self.OPUS), ("sonnet-5-5", self.SONNET)):
@@ -1421,8 +1528,14 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
     def test_an_override_keeps_the_arm_and_records_the_real_model(self):
         self._unit()
-        self.core.agents.set_agent_field("impl", "model", "claude-other")
-        before = self._prefs()
+        from coscc.agent import pack
+
+        # This app has no feature, so its catalog holds no `vault` or `codegraph`.
+        tools = {
+            t: p for t, p in pack.row("impl")["tools"].items() if t not in ("vault", "codegraph")
+        }
+        pack.write("impl", "tools", tools)
+        self.core.agents.set_agent_field("impl", *whole("impl", "model.id", "claude-other"))
         self._run(arm="opus-5-5")
         start = self._starts()[0]
         self.assertEqual((start["model"], start["model_source"]), ("claude-other", "override"))
@@ -1430,7 +1543,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
             start["model_trial"],
             {"arm": "opus-5-5", "requested": "claude-other", "model": "claude-other"},
         )
-        self.assertEqual(self._prefs(), before)
+        self.assertEqual(self._prefs()["id"], "claude-other")
         self._unit(model="from-env")
         self._run(arm="opus-5-5")
         start = self._starts()[0]
@@ -1445,16 +1558,16 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
         self.assertEqual((start["model"], start["model_source"]), (self.OPUS, "default"))
         self.assertNotIn("model_trial", start)
 
-    def test_an_escalated_impl_leaves_the_trial(self):
+    def test_an_impl_that_hit_a_ceiling_stays_in_the_trial(self):
         self._unit()
         self.terminal = "max_turns"
         self._run(arm="sonnet-5-5")
         self.terminal = None
-        self._run(arm="sonnet-5-5")
+        self._run(arm="sonnet-5-5", rerun=True)
         first, second = self._starts()
         self.assertEqual(first["model_trial"]["arm"], "sonnet-5-5")
-        self.assertEqual((second["label"], second["label_source"]), ("novel", "escalated"))
-        self.assertNotIn("model_trial", second)
+        self.assertEqual((second["label"], second["label_source"]), ("routine", "declared"))
+        self.assertEqual(second["model_trial"]["arm"], "sonnet-5-5")
 
     # -- the CI question, now asked of every routine impl ---------------------
 
@@ -1543,6 +1656,28 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
                 self._run(stage)
         self.assertEqual(seen["next"], seen["gate"])
         self.assertEqual(seen["next"][1], str(self.repo))
+
+    def test_a_unit_with_no_hold_row_is_asked_once_and_a_held_one_first_without_its_tree(self):
+        from coscc.units import board as board_reader
+
+        asked: list[str | None] = []
+        real = board_reader.next_step
+
+        async def counting(units_root, unit, repo=None, **kw):
+            asked.append(repo)
+            return await real(units_root, unit, repo=repo, **kw)
+
+        with mock.patch.object(board_reader, "next_step", counting):
+            self.assertEqual(self._next()["stage"], "spec")
+            self.assertEqual(len(asked), 1)
+            self.assertIsNotNone(asked[0])
+            asked.clear()
+            asyncio.run(
+                self.core.answers.hold(str(self.repo), self.made["unit"], "paused", "x", "owner")
+            )
+            got = self._next()
+        self.assertEqual(asked, [None])
+        self.assertEqual(got["hold"]["state"], "paused")
 
     def test_waiting_is_copied_and_absent_reads_as_none(self):
         """The findings a person is awaited on reach the page as the loop named them."""
@@ -1658,7 +1793,7 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
             yield ("done", {"session_id": "sess-spike", "cost": {}})
 
     class RunsOut:
-        """Keeps its progress file in `cwd`, then stops at the turn ceiling."""
+        """Keeps its progress file in `cwd`, then ends with no usable reply."""
 
         bus = Bus()
 
@@ -1671,12 +1806,12 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
             (Path(cwd) / "spike.md").write_text(self.PROGRESS, encoding="utf-8")
             yield ("chunk", "Tôi hết lượt.")
             await _submits(kw)
-            yield ("done", {"session_id": "sess-spike", "terminal_reason": "max_turns", "cost": {}})
+            yield ("done", {"session_id": "sess-spike", "terminal_reason": "completed", "cost": {}})
 
     def test_the_progress_file_is_read_before_the_scratch_is_removed(self):
         core = self._core(self.RunsOut())
         out = self._run(core)
-        self.assertEqual(out[-1][1]["outcome"], "exhausted", out[-1])
+        self.assertEqual(out[-1][1]["outcome"], "failed", out[-1])
         written = Path(core.ws.unit_dir(str(self.repo), self.unit)) / "spike.md"
         self.assertEqual(written.read_text(encoding="utf-8"), self.RunsOut.PROGRESS)
         self.assertFalse(self.scratch.exists())
@@ -1729,6 +1864,20 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
             "- [unmeasured] U1. does it exit?\n",
             encoding="utf-8",
         )
+        state_of(
+            core,
+            str(self.repo),
+            made["unit"],
+            statuses={"intent.md": "accepted", "spec.md": "accepted"},
+            type="feat",
+        )
+        # The loop reads what is unmeasured from the spec's record, never from the file.
+        meta = core.ws.unit_meta()
+        spec = {"stage": "spec", "judgement": "ready", "questions": [], "unmeasured": ["U1"]}
+        with meta.data.write() as conn:
+            meta.record_result(
+                conn, core.ws.key(str(self.repo)), made["unit"], "spec", "spec.md", {"object": spec}
+            )
         self.unit = made["unit"]
         self.scratch = units.spike_dir(str(self.repo), self.unit, str(self.root / "data"))
         return core
@@ -1907,33 +2056,29 @@ class APrStepIsMechanical(unittest.TestCase):
 
 
 class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
-    """Through `run_step`: after a `pr` step that was not stopped, the title and body
-    `coscc.loop pr-text` cut from `pr.md` are on the pull request, and one `pr-sync` row says how.
+    """Through `run_step`: after a `pr` step that was not stopped, the unit's title and body
+    are on the pull request the PR machine recorded, and one `pr-sync` row says how.
     `APrStepIsHandedItsPullRequest`'s fixture, with `gh` in memory."""
 
     setUp = AUnitsBaseIsTheRemoteTrunk.setUp
     _git = AUnitsBaseIsTheRemoteTrunk._git
     _typed_unit = AUnitsBaseIsTheRemoteTrunk._typed_unit
 
-    TITLE = "a problem, fixed"
-    BODY = "## Where\n\nhttps://github.com/o/r/pull/7, checks pending.\n"
-    ACCEPTED = f"# PR: {TITLE}\nIntent: intent.md. PR: https://github.com/o/r/pull/7. Author: t. Status: accepted.\n\n{BODY}"
+    TITLE = "fix(0001): a problem"
+    URL = "https://github.com/o/r/pull/7"
 
     class Replies:
-        """A session that writes `pr.md` itself; with `hold`, it then waits to be stopped."""
+        """A session that writes nothing itself; with `hold`, it waits to be stopped."""
 
         bus = Bus()
 
-        def __init__(self, text: str | None = None, hold: bool = False):
-            self.text, self.hold = text, hold
-            self.directory: Path | None = None
+        def __init__(self, hold: bool = False):
+            self.hold = hold
             self.reply = "working"
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             step = kw.get("step")
             try:
-                if self.text is not None:
-                    (self.directory / "pr.md").write_text(self.text, encoding="utf-8")
                 yield ("chunk", self.reply)
                 if self.hold:
                     await asyncio.sleep(10)
@@ -1953,10 +2098,9 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             body: str = "temporary",
             fail=None,
             raise_=None,
-            scope=None,
         ):
             self.listed, self.title, self.body = listed, title, body
-            self.fail, self.raise_, self.scope = fail, raise_, scope
+            self.fail, self.raise_ = fail, raise_
             self.calls: list[tuple[list[str], str | None]] = []
 
         async def __call__(self, argv, cwd, stdin=None):
@@ -1983,8 +2127,6 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                 return 1, "", "HTTP 422: Validation Failed"
             if argv[:2] == ["pr", "view"] and argv[-1] == "comments":
                 return 0, json.dumps({"comments": []}), ""
-            if argv[:2] == ["pr", "view"] and argv[-1] == prscope.FIELDS:
-                return 0, json.dumps(self.scope or {}), ""
             if argv[:2] == ["pr", "view"]:
                 return 0, json.dumps({"title": self.title, "body": self.body}), ""
             if argv[:2] == ["pr", "edit"]:
@@ -2002,20 +2144,45 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                 if c[0][:2] == ["pr", sub] and (json_ is None or c[0][-1] == json_)
             ]
 
-    def _run(self, text, gh, stage="pr", hold=False, prepare=None, gate=None, via_step=False):
-        """A `pr` step writes `pr.md` itself and runs no session, so a `pr.md` of any other words --
-        `text` -- reaches `sync_pr` only by calling it as the step does, with what the PR machine
-        found. `via_step` runs the step itself."""
+    def _open(self, unit, state="open"):
+        """The PR machine's rows: `open` on pr.md, and `merge-read` after it for `merged`."""
+        history = self.core.ws.unit_meta().history
+        key = self.core.ws.key(str(self.repo))
+        history.record(
+            key,
+            unit,
+            "pr.md",
+            "accepted",
+            source="prmachine:open",
+            guard="branch-named",
+            authority="code",
+            inputs={"number": 7, "url": self.URL, "head": "a" * 40},
+        )
+        if state == "merged":
+            history.record(
+                key,
+                unit,
+                "ship.md",
+                "accepted",
+                source="prmachine:merged",
+                guard="merge-read",
+                authority="code",
+                inputs={"merge_commit": "m" * 40},
+            )
+
+    def _run(self, gh, stage="pr", opened="open", gate=None, via_step=False):
+        """A `pr` step runs no session, so what `sync_pr` is given reaches it only by calling it as
+        the step does, with what the PR machine found. `via_step` runs the step itself. `opened`
+        is the machine's row (`open`, `merged`) or `None` for none."""
         from coscc.units import board as board_reader
         from coscc.github import integrate
 
         unit = self._typed_unit()
         self._git("branch", "fix/a-problem")
         directory = self.core.ws.unit_dir(str(self.repo), unit)
-        if prepare:
-            prepare(directory)
-        replies = self.Replies(text, hold)
-        replies.directory = directory
+        if opened:
+            self._open(unit, opened)
+        replies = self.Replies()
         use_sessions(self.core, replies)
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
@@ -2025,13 +2192,11 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
         async def go():
             if stage == "pr" and not via_step:
-                if text is not None:
-                    (directory / "pr.md").write_text(text, encoding="utf-8")
                 await self.core.answers.ingest(
                     str(self.repo), unit, {"outcome": "done", "stage": "pr"}, "pr.md"
                 )
                 # What the PR machine hands on: no answer, no pull request, or its URL.
-                url = "https://github.com/o/r/pull/7" if gh.listed else ""
+                url = self.URL if gh.listed else ""
                 before = None if gh.fail == "list" else url
                 return [
                     (
@@ -2056,101 +2221,55 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         rows = self.core.ws.journal().records(
             self.core.ws.key(str(self.repo)), unit, kind="pr-sync"
         )
-        return out[-1][1], rows, directory
+        return out[-1][1], rows, directory, unit
 
     def test_a_pull_request_that_existed_gets_the_title_and_body(self):
         gh = self.Gh(listed=True)
-        done, [row], _ = self._run(self.ACCEPTED, gh)
+        done, [row], _, unit = self._run(gh)
+        body = prmachine.body_of(unit)
         [(argv, stdin)] = gh.of("edit")
         self.assertEqual(
-            argv,
-            [
-                "pr",
-                "edit",
-                "https://github.com/o/r/pull/7",
-                f"--title={self.TITLE}",
-                "--body-file",
-                "-",
-            ],
+            argv, ["pr", "edit", self.URL, f"--title={self.TITLE}", "--body-file", "-"]
         )
-        self.assertEqual(stdin, self.BODY)
-        self.assertEqual((gh.title, gh.body), (self.TITLE, self.BODY))
-        self.assertEqual(
-            (row["outcome"], row["existed"], row["pr"]),
-            ("updated", True, "https://github.com/o/r/pull/7"),
-        )
+        self.assertEqual(stdin, body)
+        self.assertEqual((gh.title, gh.body), (self.TITLE, body))
+        self.assertEqual((row["outcome"], row["existed"], row["pr"]), ("updated", True, self.URL))
         self.assertNotIn("detail", row)
+        self.assertNotIn("scope", row)
         self.assertEqual(done["pr_sync"]["outcome"], "updated")
 
     def test_a_pr_step_that_fails_calls_nothing_and_writes_no_row(self):
         gh = self.Gh(listed=True, fail="list")
-        done, rows, _ = self._run(None, gh, via_step=True)
+        done, rows, _, _ = self._run(gh, opened=None, via_step=True)
         self.assertEqual(done["outcome"], "failed")
         self.assertEqual((gh.of("view"), gh.of("edit"), rows), ([], [], []))
         self.assertNotIn("pr_sync", done)
 
-    def test_a_draft_or_a_missing_url_is_skipped_without_gh(self):
-        for text in (
-            self.ACCEPTED.replace("Status: accepted", "Status: draft"),
-            self.ACCEPTED.replace("PR: https://github.com/o/r/pull/7. ", ""),
-        ):
-            with self.subTest(text=text.splitlines()[1]):
+    def test_a_pull_request_not_open_is_skipped_without_gh(self):
+        for opened in (None, "merged"):
+            with self.subTest(opened=opened):
                 self.setUp()
                 gh = self.Gh(listed=True)
-                done, [row], _ = self._run(text, gh)
+                done, [row], _, _ = self._run(gh, opened=opened)
                 self.assertEqual((gh.of("view"), gh.of("edit")), ([], []))
                 self.assertEqual(row["outcome"], "skipped")
                 self.assertTrue(row["detail"])
 
     def test_a_refusal_leaves_the_step_done_and_pr_md_as_it_was(self):
         gh = self.Gh(listed=True, fail="edit")
-        done, [row], directory = self._run(self.ACCEPTED, gh)
+        done, [row], directory, _ = self._run(gh)
         self.assertEqual(done["outcome"], "done")
         self.assertEqual((row["outcome"], row["detail"]), ("failed", "HTTP 422: Validation Failed"))
-        self.assertEqual((directory / "pr.md").read_text(encoding="utf-8"), self.ACCEPTED)
+        self.assertFalse((directory / "pr.md").exists())
 
     def test_a_timeout_is_failed_and_says_so(self):
         gh = self.Gh(listed=True, raise_=asyncio.TimeoutError())
-        done, [row], _ = self._run(self.ACCEPTED, gh)
+        done, [row], _, _ = self._run(gh)
         self.assertEqual(done["outcome"], "done")
         self.assertEqual(row["outcome"], "failed")
         self.assertIn("timed out", row["detail"])
 
-    SCOPED = f"{ACCEPTED}\n## Scope of the diff\n\n2 files, +10/-3\n- `a.py`\n- `b.py`\n"
-    GH_SCOPE = {
-        "changedFiles": 2,
-        "additions": 10,
-        "deletions": 3,
-        "files": [{"path": "a.py"}, {"path": "b.py"}],
-    }
-
-    def test_a_mismatch_leaves_the_step_done_and_pr_md_as_it_was(self):
-        gh = self.Gh(
-            listed=True,
-            scope={
-                **self.GH_SCOPE,
-                "changedFiles": 3,
-                "files": [{"path": "a.py"}, {"path": "c.py"}],
-            },
-        )
-        done, [row], directory = self._run(self.SCOPED, gh)
-        self.assertEqual(done["outcome"], "done")
-        self.assertEqual(row["outcome"], "updated")
-        self.assertEqual(
-            {k: row["scope"][k] for k in ("verdict", "differ", "only_in_pr_md", "only_on_github")},
-            {
-                "verdict": "mismatch",
-                "differ": ["files"],
-                "only_in_pr_md": ["b.py"],
-                "only_on_github": ["c.py"],
-            },
-        )
-        self.assertEqual((directory / "pr.md").read_text(encoding="utf-8"), self.SCOPED)
-
-    def _pr_md(self, text):
-        return lambda d: (d / "pr.md").write_text(text, encoding="utf-8")
-
-    def test_a_ship_step_puts_pr_md_up_before_the_gate_is_asked(self):
+    def test_a_ship_step_puts_the_title_up_before_the_gate_is_asked(self):
         gh = self.Gh(listed=True, title="changed on GitHub")
         seen: list[str] = []
 
@@ -2158,16 +2277,11 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             seen.append(gh.title)
             return True, f"open: {stage} may proceed"
 
-        _, rows, _ = self._run(
-            None, gh, stage="ship", prepare=self._pr_md(self.ACCEPTED), gate=gate
-        )
+        _, rows, _, unit = self._run(gh, stage="ship", gate=gate)
         self.assertEqual(seen, [self.TITLE])
-        self.assertEqual((gh.title, gh.body), (self.TITLE, self.BODY))
+        self.assertEqual((gh.title, gh.body), (self.TITLE, prmachine.body_of(unit)))
         [row] = rows
-        self.assertEqual(
-            (row["stage"], row["outcome"], row["pr"]),
-            ("ship", "updated", "https://github.com/o/r/pull/7"),
-        )
+        self.assertEqual((row["stage"], row["outcome"], row["pr"]), ("ship", "updated", self.URL))
         self.assertNotIn("existed", row)
 
     def test_a_failed_sync_still_asks_the_gate_and_a_closed_gate_refuses(self):
@@ -2179,7 +2293,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             return False, 'blocked: ship cannot proceed\n  - #7 carries the title "temporary"'
 
         with self.assertRaises(Invalid) as refused:
-            self._run(None, gh, stage="ship", prepare=self._pr_md(self.ACCEPTED), gate=closed)
+            self._run(gh, stage="ship", gate=closed)
         self.assertIn("carries the title", str(refused.exception))
         self.assertEqual(asked, ["ship"])
         [row] = self.core.ws.journal().records(self.core.ws.key(str(self.repo)), kind="pr-sync")
@@ -2187,7 +2301,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             (row["stage"], row["outcome"], row["detail"]),
             ("ship", "failed", "HTTP 422: Validation Failed"),
         )
-        self.assertEqual(len(gh.of("edit")), 1, "the scope read writes nothing of its own")
+        self.assertEqual(len(gh.of("edit")), 1)
 
 
 class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
@@ -2206,7 +2320,11 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
             data_dir=str(self.root / "data"),
         )
         self.core = Core(config, Sessions(config))
-        self.unit = create_sync(self.core, str(self.repo), "a-problem", "words")["unit"]
+        made = create_sync(self.core, str(self.repo), "a-problem", "words")
+        self.unit = made["unit"]
+        # What spike declares it needs.
+        for name in ("intent.md", "spec.md"):
+            (Path(made["path"]) / name).write_text("# x\n", encoding="utf-8")
 
     def test_a_suspended_drive_abandons_its_recorder_and_nudges_nothing(self):
         from coscc.agent.sessions import Suspended
@@ -2274,9 +2392,9 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
         self.assertTrue(units.spike_dir(str(self.repo), self.unit, core.config.data_dir).is_dir())
 
 
-class EveryStageReadsTheUnitsItsUnitNames(unittest.TestCase):
-    """`_link_kwargs` adds the named units' `idea.md` and `intent.md` to `read_also` for every
-    stage, after the siblings `impl` reads."""
+class EveryStageIsToldTheUnitsItsUnitNames(unittest.TestCase):
+    """`_link_kwargs` names where the named units' `idea.md` and `intent.md` are, for every stage,
+    beside the siblings `impl` reads."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -2299,25 +2417,24 @@ class EveryStageReadsTheUnitsItsUnitNames(unittest.TestCase):
     def link(self, stage: str) -> dict:
         return asyncio.run(self.core.steps._link_kwargs(str(self.repo), self.unit, stage))
 
-    def test_a_stage_other_than_impl_is_handed_the_paths_and_the_note(self):
+    def test_a_stage_other_than_impl_is_handed_the_note(self):
         kw = self.link("plan")
-        self.assertEqual(kw["read_also"], (str(self.named),))
+        self.assertNotIn("siblings_note", kw)
         self.assertIn(f"- {self.other} (idea.md): {self.named}", kw["mentions_note"])
 
     def test_impl_keeps_its_siblings_beside_them(self):
         async def siblings(cwd, unit):
-            return ("/sibling",), "- api: /sibling"
+            return "- api: /sibling"
 
         with mock.patch.object(self.core.steps.ideas, "siblings", siblings):
             kw = self.link("impl")
-        self.assertEqual(kw["read_also"], ("/sibling", str(self.named)))
+        self.assertIn(str(self.named), kw["mentions_note"])
         self.assertEqual(kw["siblings_note"], "- api: /sibling")
 
     def test_a_unit_that_names_none_is_handed_neither(self):
         own = self.core.ws.unit_dir(str(self.repo), self.unit)
         (own / "idea.md").write_text("words\n", encoding="utf-8")
         kw = self.link("plan")
-        self.assertNotIn("read_also", kw)
         self.assertNotIn("mentions_note", kw)
 
 
@@ -2342,7 +2459,14 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\nAuthor: t. Type: feat.\n", encoding="utf-8"
+        )
+        state_of(
+            self.core,
+            str(self.repo),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
         self.key = self.core.ws.key(str(self.repo))
 
@@ -2382,7 +2506,7 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
             raise RuntimeError("nope")
 
         self.guarded(boom)
-        with self.assertLogs("coscc.runner.steps", "ERROR"):
+        with self.assertLogs("coscc.kernel", "ERROR"):
             self.assertEqual(self.refused(), "g: failed (RuntimeError)")
 
     def test_a_pr_step_is_refused_before_the_mechanical_path(self):
@@ -2392,13 +2516,14 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
             return board_reader.Gate(True, "open: pr may proceed", (), None)
 
         async def tree(*a, **kw):
-            return str(self.repo), str(self.repo)
+            return {"path": str(self.repo), "branch": "feat/a-problem"}, str(self.repo)
 
         async def none(*a, **kw):
             return None
 
         mechanical = mock.AsyncMock()
-        self.guarded(lambda facts: "no")
+        seen = []
+        self.guarded(lambda facts: seen.append(facts.grant.branch) or "no")
         steps = self.core.steps
         with (
             mock.patch.object(steps, "_ask_gate", open_gate),
@@ -2408,6 +2533,8 @@ class AFeatureGuardRefusesAStepBeforeSpend(unittest.TestCase):
         ):
             self.refused("pr")
         mechanical.assert_not_called()
+        # The PR machine pushes the unit's branch: the guard is told so.
+        self.assertEqual(seen, ["feat/a-problem"])
 
 
 class APrOrShipEndsThroughTheMachine(unittest.TestCase):
@@ -2443,7 +2570,10 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
                 pass
 
             async def run(self, **kw):
+                sessions.append(kw["stage"])
                 yield ("done", {"outcome": outcome})
+
+        sessions = self.sessions = []
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return board_reader.Gate(True, f"open: {stage} may proceed", (), rebased)
@@ -2503,6 +2633,11 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         ):
             asyncio.run(go())
 
+    def test_an_open_pr_or_merge_state_opens_no_session(self):
+        for stage in ("pr", "ship"):
+            self.drive(self.core(), stage, "done")
+        self.assertEqual(self.sessions, [])
+
     def test_the_gates_clean_rebase_reaches_the_machines_guard(self):
         core = self.core()
         rebased = {"reviewed": "a" * 40, "head": "b" * 40}
@@ -2544,7 +2679,7 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
         self.assertEqual(
             (rec["outcome"], rec["merge_refused"], rec["detail"]), ("failed", True, "gh down")
         )
-        [ship] = core.ws.journal().records(kind="ship")
+        [ship] = core.ws.journal().records(kind="merge")
         self.assertEqual(ship["result"], "refused")
 
 
@@ -2567,6 +2702,9 @@ class _AReviewStep:
         self.core = Core(config, Sessions(config))
         made = create_sync(self.core, str(self.repo), "a-problem", "words")
         self.unit, self.dir = made["unit"], Path(made["path"])
+        # What review declares it needs.
+        for name in ("intent.md", "impl.md"):
+            (self.dir / name).write_text("# x\n", encoding="utf-8")
         self.seen: list[dict] = []
         self.taken: list[list[str]] = []
 
@@ -2633,7 +2771,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
     NEW = {"head": "b" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
 
     def test_the_step_is_handed_a_snapshot_file_the_loop_decides_on(self):
-        """A step that runs `coscc.loop gate` or `pr-text` itself needs `--state`."""
+        """A step that runs `coscc.loop gate` itself needs `--state`."""
         import json
         from coscc.loop import run as loop
 
@@ -2676,9 +2814,8 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                 rec["head_before"],
                 rec["head_after"],
                 rec["started_by"],
-                rec["stage"],
             ),
-            ("taken", "a" * 40, "b" * 40, "person", "review"),
+            ("taken", "a" * 40, "b" * 40, "person"),
         )
         self.assertEqual(len(self.seen), 1)
         self.assertIn("# The screenshots, taken again", self.seen[0]["screens_note"])

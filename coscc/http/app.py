@@ -20,9 +20,11 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.requests import ClientDisconnect
 
 from coscc import features
+from coscc.agent import pack
 from coscc.agent.sessions import Sessions
 from coscc.bus import Event
 from coscc.config import Config, from_env
@@ -34,15 +36,19 @@ from coscc.leif.agents import Agents, Models
 from coscc.leif.answers import Answers
 from coscc.leif.autopilot import Autopilot, autopilot_values
 from coscc.leif.backlog import Backlog
-from coscc.leif.chat import CHAT_TURNS, Chat
+from coscc.leif import chat
+from coscc.leif.chat import Chat
 from coscc.leif.insights import Activity
 from coscc.runner.queue import Attempts, Holds, Updating
 from coscc.runner.resume import Resume
+from coscc.runner import triggers
 from coscc.runner.steps import Steps
 from coscc.runner.watch import Watch
 from coscc.store.db import Data
 from coscc.units.ideas import Ideas
-from coscc.units.read import Asked, Board
+from coscc import units
+from coscc.units import proposals, read, states
+from coscc.units.read import Asked, Board, Detail
 from coscc.units.workspaces import Workspaces
 from coscc.update import updater as updater_mod
 from coscc.update.updater import (
@@ -53,6 +59,8 @@ from coscc.update.updater import (
 
 log = logging.getLogger(__name__)
 
+# How often the triggers are asked for what is due (`triggers.tick`). Chosen, not measured.
+TICK_SECONDS = 300.0
 # How long `shutdown` waits for what it cancelled. Chosen, not measured: past it a step's
 # thread is left running rather than an update held up.
 SHUTDOWN_WITHIN = 10.0
@@ -64,6 +72,8 @@ class Core:
     sessions: Sessions
 
     def __post_init__(self) -> None:
+        # The owner's layer of the agents' rows lives under this data root.
+        pack.ROOT = self.config.data_dir
         # Which workspaces there are, and where each keeps its units.
         self.ws = Workspaces(self.config, self.sessions)
         # One question, asked in two places. See `Sessions.membership`.
@@ -76,7 +86,7 @@ class Core:
         self.attempts.admitting = self._admitting
         self.holds = Holds(self.attempts)
         # The parts below `Core`, each given what it reads.
-        self.agents = Agents(self.config, self.ws)
+        self.agents = Agents(self.config, self.ws, lambda: self.steps.hooks)
         self.models = Models(self.config, self.ws)
         self.activity = Activity(self.config, self.ws)
         self.chat = Chat(
@@ -84,7 +94,8 @@ class Core:
             self.ws,
             self.sessions,
             lambda: refuse_while_updating(self.updater),
-            self.models.model_for,
+            self.models.agent,
+            lambda cwd: triggers.leif_server(self, cwd, chat.read_tools(self, cwd)),
         )
         self.ideas = Ideas(self.config, self.ws)
         self.backlog = Backlog(
@@ -106,9 +117,7 @@ class Core:
             agent_of=self.agents.agent,
             stage_config=self.models.stage_config,
             ci_red=self.models.ci_red,
-            findings_added=self.models.findings_added,
             worktree=self.answers.worktree,
-            append_to_answers=self.answers.append_to_answers,
             ingest=self.answers.ingest,
             post_new_rounds=self.answers.post_new_rounds,
             sync_pr=self.answers.sync_pr,
@@ -124,17 +133,14 @@ class Core:
             self.sessions,
             self.steps,
             self.bus,
-            agent_overrides=lambda: self.agents.agent_overrides()[0],
-            config_overrides=self.agents.config_overrides,
             config_for=self.models.config_for,
         )
-        self.watch = Watch(self.config, self.ws, self.steps.recorders)
+        self.watch = Watch(self.config, self.ws)
         self.boards = Board(
             self.config,
             self.ws,
             self.bus,
             self.attempts.unfinished,
-            lambda: self.agents.agent_overrides()[0],
             lambda cwd: open_prs_once(cwd)(),
             self._attach,
         )
@@ -144,8 +150,6 @@ class Core:
             self.config,
             self.ws,
             self.holds,
-            lambda: self.agents.config_overrides()[0]["budget"],
-            lambda: self.agents.agent_overrides()[0],
             self.steps,
             self.integration,
             self.boards,
@@ -189,7 +193,6 @@ class Core:
                 "chat": lambda cwd, record: self._resume_chat(cwd, record),
             },
             refuse_updating=lambda: refuse_while_updating(self.updater),
-            chat_turns=CHAT_TURNS,
             finish=self._resumed,
         )
 
@@ -240,8 +243,8 @@ class Core:
         self.attempts.wake_all()
 
     def _wake_autopilot(self, event: Event) -> None:
-        if not event.going_down:
-            self.autopilot.nudge(event.workspace)
+        if not event.payload.get("going_down"):
+            self.autopilot.nudge(event.payload.get("workspace", ""))
 
     async def _attach(self, cwd, data, journal, key, prs, fresh) -> Callable[[], None]:
         """What the board read adds from above `units`: each unit's integration. Returns what
@@ -260,6 +263,30 @@ class Core:
         data = await self.boards.get(cwd, which)
         self.autopilot.show(self.ws.key(cwd), data)
         return data
+
+    async def unit(self, cwd: str, name: str) -> Detail:
+        """One unit as its page shows it (`read.detail`), from the board held."""
+        board = await self.boards.get(cwd, "held")
+        unit = next((u for u in board.get("units") or [] if u.get("name") == name), None)
+        if unit is None:
+            raise Invalid(f"no unit {name} in {cwd}")
+        key, meta = self.ws.key(cwd), self.ws.unit_meta()
+        journal = self.ws.journal()
+        timeline = await asyncio.to_thread(journal.timeline, key, name) if journal else []
+        outputs = await asyncio.to_thread(meta.outputs, key, name)
+        decisions = await asyncio.to_thread(meta.decisions, key, name)
+        graded = await asyncio.to_thread(meta.graded, key, name)
+        found = read.grader()
+        shown = None
+        if found is not None:
+            verdict = await asyncio.to_thread(meta.verdict, key, name)
+            made = await asyncio.to_thread(
+                proposals.listed, Data(self.config.data_dir), key, found[0]
+            )
+            shown = read.outcome(*found, verdict, [p for p in made if p["unit"] == name])
+        idea = units.unit_dir(cwd, name, self.config.data_dir) / states.brief_file()
+        brief = await asyncio.to_thread(idea.read_text, "utf-8") if idea.is_file() else ""
+        return read.detail(unit, timeline, outputs, decisions, graded, shown, brief)
 
     def _asks(self) -> list[tuple[str, asyncio.Task]]:
         """The background `gh` asks running now: CI, the board's and each feature's."""
@@ -353,8 +380,20 @@ async def _drain(agen: AsyncIterator[Any]) -> None:
 
 
 async def _refused(_: Request, e: Exception) -> JSONResponse:
+    """`error`, its words; a gate's refusal adds its `code` (`guards.REASONS`, the first) and every
+    one of its `reasons`, for a caller to branch on; a pack's refusal its own `code` and every
+    reason in words."""
     status = 503 if isinstance(e, Updating) else 409 if isinstance(e, NotUpdatable) else 400
-    return JSONResponse({"error": str(e)}, status_code=status)
+    reasons = list(getattr(e, "reasons", ()) or ())
+    code = getattr(e, "code", "") or (reasons[0] if reasons else "")
+    coded = {"code": code, "reasons": reasons} if reasons else {}
+    return JSONResponse({"error": str(e), **coded}, status_code=status)
+
+
+async def _gone(_: Request, _e: Exception) -> Response:
+    """A caller that left while its body was read: nothing to answer and nothing wrong here, so
+    no 500 and no traceback; 499 is what a proxy logs for it."""
+    return Response(status_code=499)
 
 
 def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
@@ -367,8 +406,8 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
     async def schedules() -> None:
         # The first round waits one period, so a start spends nothing at once.
         while True:
-            await asyncio.sleep(plugin.TICK_SECONDS)
-            await plugin.tick(core, ctxs, features.FEATURES)
+            await asyncio.sleep(TICK_SECONDS)
+            await triggers.tick(core)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -380,6 +419,7 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
         yield
         for task in tasks:
             task.cancel()
+        await triggers.stop()
         # Steps first: each is a task that would otherwise write its `end` after its client
         # was closed. `shutdown` writes none, on purpose.
         await core.shutdown()
@@ -388,7 +428,8 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
     # The routes themselves, not `include_router`, which keeps them behind one entry of `routes`.
     # Read now, so a test can patch `features.FEATURES`.
     ctxs = {f.name: plugin.ctx_of(core, f) for f in features.FEATURES}
-    plugin.add_sessions(core, features.FEATURES)
+    plugin.check_declarations()
+    triggers.listen(core)
     core.steps.hooks = plugin.hooks_of(features.FEATURES, ctxs)
     # Checked now, created when the app starts: `typescript()` and the tests build an app
     # that never opens the database.
@@ -418,6 +459,7 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
     api.state.ctxs = ctxs
     api.state.plugins = features.FEATURES
     api.add_exception_handler(Invalid, _refused)
+    api.add_exception_handler(ClientDisconnect, _gone)
     return api
 
 

@@ -71,14 +71,6 @@ MACHINES: dict[str, dict[str, set[str]]] = {
 }
 
 
-def add_session(kind: str) -> None:
-    """A feature's paid session (`kernel.Session`, run through `kernel.Ctx.agents.session`): a short
-    hold named by its grant, added when the app is built."""
-    if MACHINES.get(kind, _SHORT) is not _SHORT:
-        raise ValueError(f"the machine {kind!r} is taken")
-    MACHINES[kind] = _SHORT
-
-
 ENDS = ("ended", "refused")
 # The kind of slot each machine waits for, and where the scheduler sends one that gets it.
 SLOTS = {"step": "agent", "integration": "heavy"}
@@ -342,7 +334,10 @@ class Attempts:
                 "INSERT INTO attempt_moves (attempt, seq, moved_to, at) VALUES (?, 1, ?, ?)",
                 (attempt, state, now()),
             )
-        self.bus.publish(Event(cast(Name, f"{machine}.{state}"), workspace, unit))
+        self.bus.publish(
+            cast(Name, f"{machine}.{state}"),
+            {"workspace": workspace, "unit": unit, "going_down": False},
+        )
         row = self.get(attempt)
         assert row is not None
         return row
@@ -378,9 +373,8 @@ class Attempts:
             if run is not None:
                 conn.execute("UPDATE attempts SET run = ? WHERE id = ?", (run, int(attempt)))
         self.bus.publish(
-            Event(
-                cast(Name, f"{machine}.{to}"), row["workspace"], row["unit"], going_down=going_down
-            )
+            cast(Name, f"{machine}.{to}"),
+            {"workspace": row["workspace"], "unit": row["unit"], "going_down": going_down},
         )
         moved = self.get(attempt)
         assert moved is not None
@@ -401,7 +395,8 @@ class Attempts:
                 )
         if first:
             self.bus.publish(
-                Event(cast(Name, f"{row['machine']}.stop-asked"), row["workspace"], row["unit"])
+                cast(Name, f"{row['machine']}.stop-asked"),
+                {"workspace": row["workspace"], "unit": row["unit"], "going_down": False},
             )
         asked = self.get(attempt)
         assert asked is not None
@@ -420,7 +415,7 @@ class Attempts:
     # -- the scheduler ------------------------------------------------------
 
     def _woken(self, event: Event) -> None:
-        self.wake(event.workspace)
+        self.wake(event.payload.get("workspace", ""))
 
     def wake(self, workspace: str) -> None:
         """Move the oldest queued attempts of `workspace` on while a slot of their kind is free.

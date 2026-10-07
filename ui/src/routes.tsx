@@ -7,13 +7,15 @@ import { Briefing } from "./screens/Briefing";
 import { Work } from "./screens/Work";
 import { UnitPage } from "./screens/UnitPage";
 import { Inbox } from "./screens/Inbox";
-import { AgentPage, Agents } from "./screens/Agents";
+import { Agents } from "./screens/Agents";
+import { AgentPage } from "./screens/AgentPage";
 import { System } from "./screens/System";
 import { MayDo } from "./screens/MayDo";
 import { NewWork } from "./screens/NewWork";
 import { UpNext } from "./screens/UpNext";
 import { Talk } from "./screens/Talk";
 import { Insights } from "./screens/Insights";
+import { RunPage } from "./screens/RunLog";
 import { Feature } from "./screens/Feature";
 import { Decided } from "./screens/Decided";
 
@@ -66,6 +68,7 @@ export const SCREENS: Screen[] = [
   },
   { path: "/agents", title: "Agents", nav: "Team", icon: "team", keys: "G T", render: () => <Agents /> },
   { path: "/agents/:key", title: "Agent", crumbs: (p) => ["Agents", p.key], render: (p) => <AgentPage name={p.key} /> },
+  { path: "/agents/:key/:tab", title: "Agent", crumbs: (p) => ["Agents", p.key], render: (p) => <AgentPage name={p.key} tab={p.tab} /> },
   {
     path: "/insights",
     title: "Insights",
@@ -74,6 +77,7 @@ export const SCREENS: Screen[] = [
     keys: "G S",
     render: () => <Insights />,
   },
+  { path: "/run/:ws/:run", title: "Run", crumbs: (p) => ["Insights", p.ws, "Run"], render: (p) => <RunPage workspace={p.ws} run={p.run} /> },
   {
     path: "/may-do",
     title: "What Leif may do",

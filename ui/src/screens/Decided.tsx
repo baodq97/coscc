@@ -2,6 +2,7 @@
 // with the question it settled and the unit it moved. Overruling one comes with Leif's backend.
 
 import type { Decided as Row } from "../api.gen";
+import { useState } from "react";
 import { useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { unitCode, unitTitle } from "../lib/format";
@@ -10,19 +11,31 @@ import type { Workspace } from "../lib/model";
 import { Link } from "../lib/router";
 import { Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
+/** The rows whose unit, question, answer or decider has every word of `q`. */
+export function filterDecided(rows: Row[], q: string): Row[] {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return rows;
+  return rows.filter((r) => {
+    const hay = `${r.unit} ${r.question} ${r.text} ${r.name} ${r.artifact}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
 export function Decided() {
   const { boards, loading } = useBoards();
+  const [q, setQ] = useState("");
   return (
     <div className="page mid">
       <PageHead title="Leif decided" lede="Every question Leif or an agent answered in your place, newest first. Your own answers are not listed." />
-      {loading ? <SkeletonRows rows={6} /> : boards.map((b) => <Project key={b.workspace.path} workspace={b.workspace} />)}
+      <input className="input" style={{ marginBottom: 12, width: "100%", maxWidth: 360 }} type="search" placeholder="Filter by unit, question or answer…" aria-label="Filter decisions" value={q} onChange={(e) => setQ(e.target.value)} />
+      {loading ? <SkeletonRows rows={6} /> : boards.map((b) => <Project key={b.workspace.path} workspace={b.workspace} q={q} />)}
     </div>
   );
 }
 
-function Project({ workspace }: { workspace: Workspace }) {
+function Project({ workspace, q }: { workspace: Workspace; q: string }) {
   const decided = useResource("/api/decided", { cwd: workspace.path }, { on: ["answer."] });
-  const rows = decided.data ?? [];
+  const rows = filterDecided(decided.data ?? [], q);
   const days = [...new Set(rows.map((r) => r.date))];
   return (
     <>
@@ -34,8 +47,8 @@ function Project({ workspace }: { workspace: Workspace }) {
       ) : decided.state === "loading" ? (
         <SkeletonRows rows={3} />
       ) : !rows.length ? (
-        <Empty icon="decided" title="Nothing decided for you here">
-          Every answer in {workspace.name} is yours.
+        <Empty icon="decided" title={q ? "Nothing matches" : "Nothing decided for you here"}>
+          {q ? "Try fewer words." : `Every answer in ${workspace.name} is yours.`}
         </Empty>
       ) : (
         days.slice(0, 7).map((day) => (
@@ -74,7 +87,7 @@ function Item({ row, workspace }: { row: Row; workspace: string }) {
         </div>
         {row.question && <div style={{ fontWeight: 500, marginTop: 4 }}>{row.question.replace(/\*\*/g, "")}</div>}
         <div className="muted" style={{ marginTop: 2 }}>{row.text}</div>
-        <div className="prov" style={{ marginTop: 4 }}>{row.by}</div>
+        <div className="prov" style={{ marginTop: 4 }}>{row.name}</div>
       </div>
     </div>
   );

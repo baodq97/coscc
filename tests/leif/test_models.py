@@ -13,7 +13,9 @@ from coscc.config import Config
 from coscc.kernel import Invalid
 from coscc.http.app import Core
 from tests.http.test_app import create_sync
+from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
+from tests.agent.edit import whole
 
 
 class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
@@ -48,7 +50,14 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         )
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent\nAuthor: t.\n", encoding="utf-8"
+        )
+        seed(
+            self.core.ws.unit_meta(),
+            self.core.ws.key(str(self.repo)),
+            self.made["unit"],
+            statuses={"intent.md": "accepted"},
+            type="feat",
         )
 
     def _run(self, stage: str):
@@ -64,21 +73,21 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         return journal.records(self.core.ws.key(str(self.repo)), kind="start")[-1]
 
     def test_an_override_reaches_the_session_and_the_log_then_goes_away(self):
-        self.core.agents.set_agent_field("spec", "model", "claude-sonnet-5")
+        self.core.agents.set_agent_field("spec", *whole("spec", "model.id", "claude-sonnet-5"))
         self._run("spec")
         self.assertEqual(self.probe.models[-1], "claude-sonnet-5")
         self.assertEqual(
             (self._start()["model"], self._start()["model_source"]),
             ("claude-sonnet-5", "override"),
         )
-        self.core.agents.set_agent_field("spec", "model", None)
+        self.core.agents.set_agent_field("spec", *whole("spec", "model.id", None))
         self._run("spec")
         self.assertEqual(self._start()["model_source"], "default")
 
     def test_bad_names_and_empty_models_are_invalid(self):
         for name, model in (("bogus", "m"), ("spec", "  "), ("spec", 3), ("", "m"), (None, "m")):
             with self.assertRaises(Invalid, msg=(name, model)):
-                self.core.agents.set_agent_field(name, "model", model)
+                self.core.agents.set_agent_field(name, "model", {"id": model, "effort": "low"})
 
     def test_the_gate_is_asked_the_same_question_either_way(self):
         from coscc.units import board as board_reader
@@ -92,7 +101,7 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
 
         with mock.patch.object(board_reader, "gate", spy):
             self._run("spec")
-            self.core.agents.set_agent_field("spec", "model", "x")
+            self.core.agents.set_agent_field("spec", *whole("spec", "model.id", "x"))
             self._run("spec")
         self.assertEqual(len(seen), 2)
         # The snapshot is the unit as it stands, and the first step wrote `spec.md` between the two
@@ -110,33 +119,38 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertNotIn("impl_run", start)
 
     def test_an_effort_override_of_max_is_taken_and_logged(self):
-        self.core.agents.set_agent_field("impl:novel", "effort", "max")
-        self.core.agents.set_agent_field("impl:novel", "effort", None)
+        self.core.agents.set_agent_field(
+            "impl", *whole("impl", "variants.novel.model.effort", "max")
+        )
+        self.core.agents.set_agent_field(
+            "impl", *whole("impl", "variants.novel.model.effort", None)
+        )
         records = self.core.ws.journal().records("", kind="agent-setting")
         self.assertEqual(
-            [(r["agent"], r["field"], r["old"], r["new"]) for r in records],
-            [("impl:novel", "effort", None, "max"), ("impl:novel", "effort", "max", None)],
+            [(r["agent"], r["field"], r["old"]["novel"]["model"]["effort"]) for r in records],
+            [("impl", "variants", "high"), ("impl", "variants", "max")],
         )
+        self.assertEqual(records[-1]["new"]["novel"]["model"]["effort"], "high")
         for name, effort in (
             ("chat", "low"),
-            ("plan:novel", "low"),
             ("impl", "turbo"),
             ("bogus", "low"),
         ):
             with self.assertRaises(Invalid, msg=(name, effort)):
-                self.core.agents.set_agent_field(name, "effort", effort)
+                self.core.agents.set_agent_field(name, "model", {"id": "m", "effort": effort})
 
     def test_a_novel_row_takes_a_model_override(self):
-        self.core.agents.set_agent_field("review:novel", "model", "m")
+        self.core.agents.set_agent_field("review", *whole("review", "variants.novel.model.id", "m"))
         [review] = [r for r in self.core.agents.agent_page()["rows"] if r["key"] == "review"]
         self.assertEqual(
-            (review["variants"][0]["model"], review["variants"][0]["model_source"]),
-            ("m", "override"),
+            (review["novel"]["model"], review["novel"]["model_source"]), ("m", "override")
         )
         self.assertEqual(review["config"]["model_source"], "default")
 
     def test_settings_never_show_the_trial(self):
         """The Agents page shows `models.json` and the overrides, never an arm's model."""
         page = self.core.agents.agent_page()
-        rows = [r["config"] for r in page["rows"]] + page["others"]
+        rows = [r["config"] for r in page["rows"]] + [
+            r["novel"] for r in page["rows"] if r["novel"]
+        ]
         self.assertFalse([r for r in rows if r["model_source"] == "trial"])

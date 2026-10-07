@@ -1,8 +1,10 @@
 """Vault: secrets an agent can use and never read, and the page a person keeps them on.
 
-Agent side: one in-process MCP server per run (`vault_list`, `vault_exec`, `vault_generate`, none
-taking a value), a guard holding `pr`, `ship` and integration while a value is in the unit's work,
-and a prompt block. Person side: the studio's page (`ui/`), and one POST a value goes in by. The store,
+Agent side: the catalog entry `vault`, one in-process MCP server per run that holds it
+(`vault_list`, `vault_exec`, `vault_generate`, none taking a value); a run may use a secret only
+when its grant names it (`Grant.use`, from the secret's list of agents); a guard holding every
+action that pushes (the PR machine's, Gebo's) while a value is in the unit's work; and a prompt
+block. Person side: the studio's page (`ui/`), and one POST a value goes in by. The store,
 filter, scan and runner are `coscc/vault/`'s; what this is not is in `coscc/features/vault/README.md`.
 """
 
@@ -13,7 +15,6 @@ import functools
 import json
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
 from typing import Any, TypedDict
 from urllib.parse import parse_qs
 
@@ -28,21 +29,15 @@ from coscc.kernel import (
     Ctx,
     Facts,
     Feature,
-    Grant,
     Guard,
     Invalid,
     Parts,
     Tool,
     body,
-    check_command,
-    grant_for,
 )
 
 NAME = "vault"
 HUMAN = "human:owner"
-# The stages the tool is offered to, and the ones the guard holds.
-TOOL_STAGES = ("impl", "spike")
-LEAK_STAGES = ("pr", "ship", "integrate")
 TOOL_NAMES = ("vault_list", "vault_exec", "vault_generate")
 # Seconds a command may run: the default and the ceiling. Chosen, not measured.
 TIMEOUT_DEFAULT = 120
@@ -119,16 +114,16 @@ class Handlers:
         self.facts, self.ctx, self.get = facts, ctx, get
 
     def _listing(self) -> dict[str, Any]:
-        key, stage = self.facts.workspace_key, self.facts.stage
+        key, agent = self.facts.workspace_key, self.facts.agent
         rows = []
         for s in self.get().visible(key):
-            now = s.has_value and any(not vault.policy(s, key, stage, m) for m in s.modes)
+            now = (
+                _granted(self.facts, s.name)
+                and s.has_value
+                and any(not vault.policy(s, key, agent, m) for m in s.modes)
+            )
             rows.append({**_meta(s, key), "usable_now": now})
         return _text({"secrets": rows})
-
-    def _grant(self) -> Grant:
-        grant = grant_for(self.facts.stage)
-        return replace(grant, commands=self.facts.commands, protected=self.get().protected())
 
     def _run(self, command: str, uses: list[vault.Use], timeout: int, capture: str) -> Any:
         f = self.facts
@@ -136,16 +131,16 @@ class Handlers:
             self.get(),
             command=command,
             uses=uses,
-            grant=self._grant(),
             workspace=f.workspace_key,
-            stage=f.stage,
+            stage=f.agent,
             unit=f.unit,
             run=f.run,
             cwd=f.scratch or f.tree,
             journal=self.ctx.runs.journal(),
             timeout=timeout,
             capture=capture,
-            actor=f"agent:{f.stage}",
+            actor=f"agent:{f.agent}",
+            granted={r for t, r in f.grant.use if t == NAME},
         )
 
     async def _execute(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -155,23 +150,19 @@ class Handlers:
             return _no("command is a shell line")
         if isinstance(uses, str) or not isinstance(capture, str):
             return _no(uses if isinstance(uses, str) else "capture is a ws: name")
-        # The kernel lets the tool through by name; the line is this handler's to check.
-        words = check_command(self._grant(), command)
-        if words:
-            return _text({"result": "command-refused", "reason": words}, True)
         timeout = _seconds(args.get("timeout"))
         try:
             got = await asyncio.to_thread(self._run, command, uses, timeout, capture)
         except vault.BadSecret as e:
             return _no(str(e))
-        return _text(_shown(got, bool(capture)), bool(got.refusals))
+        return _text(_shown(got, bool(capture)), bool(got.refusals or got.refused))
 
     async def _generate(self, args: dict[str, Any]) -> dict[str, Any]:
         raw, said = args.get("name"), args.get("description", "")
         if not isinstance(raw, str) or not isinstance(said, str):
             return _no("name and description are text")
         f = self.facts
-        actor = f"agent:{f.stage}"
+        actor = f"agent:{f.agent}"
         try:
             name = _agent_name(raw)
             if self.get().get(name, f.workspace_key) is not None:
@@ -240,8 +231,29 @@ def build_tools(facts: Facts, ctx: Ctx, get: Callable[[], vault.Store]) -> list[
     ]
 
 
+def _granted(facts: Facts, name: str) -> bool:
+    """Whether the run's grant names the secret `name` (`ws:x` or `global:x`, or bare as `ws:`)."""
+    return (NAME, _named(name)) in facts.grant.use
+
+
+def _usable(get: Callable[[], vault.Store], facts: Facts) -> tuple[str, ...]:
+    """The secrets this run may use: those of its workspace with a value whose list of agents
+    names the run's agent. What `issue` puts in the grant's `use`."""
+    return tuple(
+        s.name
+        for s in get().visible(facts.workspace_key)
+        if s.has_value
+        and facts.agent in s.agents
+        and vault.may_use(get().data, facts.agent, facts.workspace_key)
+    )
+
+
 def _leaks(ctx: Ctx, get: Callable[[], vault.Store], facts: Facts) -> str | None:
-    if facts.stage not in LEAK_STAGES:
+    """Asked before any action that pushes (the run's grant holds a branch): before a step, on
+    resume, before integrate, and before a session's own `git push` (its gate asks the guards
+    again, `Gate.before_push`). The unit's work scanned for a value; a hit, or work that cannot be
+    read, refuses."""
+    if not facts.grant.branch:
         return None
     store = get()
     if not any(s.has_value for s in store.visible(facts.workspace_key)):
@@ -257,12 +269,13 @@ def _leaks(ctx: Ctx, get: Callable[[], vault.Store], facts: Facts) -> str | None
         facts.unit,
         facts.directory,
         facts.tree,
-        pull_request=facts.stage == "ship",
+        # The merge's: the pull request's body becomes the squashed commit's message.
+        pull_request=facts.action == "merge",
         unread=unread,
     )
     hits = vault.scan(values, sources)
     base = {"kind": "vault-leak", "workspace": facts.workspace_key, "unit": facts.unit}
-    base |= {"stage": facts.stage, "scan": uuid.uuid4().hex[:12]}
+    base |= {"stage": facts.agent, "scan": uuid.uuid4().hex[:12]}
     for h in hits:
         journal.append({**base, "name": h.name, "where": h.where, "form": h.form})
     if hits:
@@ -278,14 +291,14 @@ def _leaks(ctx: Ctx, get: Callable[[], vault.Store], facts: Facts) -> str | None
 
 
 def _block(get: Callable[[], vault.Store], facts: Facts) -> str:
-    """Names, descriptions and ways of passing for the stage that may use a secret; names alone
+    """Names, descriptions and ways of passing of the secrets the run's grant names; names alone
     for the rest. No value, and nothing on a step taken up again."""
     if facts.resumed:
         return ""
     secrets = get().visible(facts.workspace_key)
     if not secrets:
         return ""
-    usable = [s for s in secrets if facts.stage in s.stages and facts.stage in TOOL_STAGES]
+    usable = [s for s in secrets if _granted(facts, s.name)]
     rest = [f"`{s.name}`" for s in secrets if s not in usable]
     parts = ["# Secrets", ""]
     if usable:
@@ -310,9 +323,19 @@ def agent(ctx: Ctx, store_of: StoreOf | None = None) -> Parts:
         return create_sdk_mcp_server("vault", "1.0.0", build_tools(facts, ctx, get))
 
     return Parts(
-        tools=(Tool("vault", TOOL_NAMES, TOOL_STAGES, make),),
+        tools=(
+            Tool(
+                NAME,
+                "external",
+                "high",
+                NAME,
+                TOOL_NAMES,
+                make,
+                uses=lambda facts: _usable(get, facts),
+            ),
+        ),
         guards=(Guard("vault-leak", lambda facts: _leaks(ctx, get, facts)),),
-        blocks=(Block("vault", lambda facts: _block(get, facts)),),
+        blocks=(Block("vault", lambda facts: _block(get, facts), tool=NAME),),
     )
 
 
@@ -322,7 +345,8 @@ class Meta(TypedDict):
     name: str
     tier: str
     description: str
-    stages: list[str]
+    # Its agents: the ones that may use it.
+    agents: list[str]
     modes: list[str]
     broker: bool
     has_value: bool
@@ -334,8 +358,10 @@ class Secrets(TypedDict):
     # Whether `age` is installed, so a value can be saved.
     age: bool
     name_pattern: str
-    # The stages that may use a secret and the ways to pass one, for the page's checkboxes.
-    stages: list[str]
+    default_agents: list[str]
+    # The agents that may use a secret (the agent keys whose row holds `vault`) and the ways to
+    # pass one, for the page's checkboxes.
+    agents: list[str]
     modes: list[str]
     secrets: list[Meta]
     globals: list[Meta]
@@ -361,7 +387,7 @@ def _meta(s: vault.Secret, key: str) -> Meta:
         "name": s.name,
         "tier": s.tier,
         "description": s.description,
-        "stages": list(s.stages),
+        "agents": list(s.agents),
         "modes": list(s.modes),
         "broker": s.broker,
         "has_value": s.has_value,
@@ -371,7 +397,7 @@ def _meta(s: vault.Secret, key: str) -> Meta:
 
 def _texts(raw: Any) -> tuple[str, ...]:
     if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
-        raise Invalid("stages and modes are lists of names")
+        raise Invalid("agents and modes are lists of names")
     return tuple(raw)
 
 
@@ -451,7 +477,7 @@ class Door:
                 name,
                 ws,
                 description=_one(form, "description"),
-                stages=tuple(form.get("stage", [])),
+                agents=tuple(form.get("agent", [])),
                 modes=modes,
                 broker=broker,
                 actor=HUMAN,
@@ -470,12 +496,12 @@ class Door:
 
     def policy(self, key: str, sent: Mapping[str, object]) -> Meta:
         s = self.secret_of(sent, key)
-        stages, modes = _texts(sent.get("stages")), _texts(sent.get("modes"))
+        agents, modes = _texts(sent.get("agents")), _texts(sent.get("modes"))
         try:
-            done = self.get().set_policy(s.name, s.workspace, stages, modes)
+            done = self.get().set_policy(s.name, s.workspace, agents, modes)
         except vault.BadSecret as e:
             raise Invalid(str(e)) from e
-        self.keep("policy", done, key, stages=list(done.stages), modes=list(done.modes))
+        self.keep("policy", done, key, agents=list(done.agents), modes=list(done.modes))
         return _meta(done, key)
 
     def grant(self, key: str, sent: Mapping[str, object]) -> Meta:
@@ -513,7 +539,8 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
             "workspace": key,
             "age": door.get().can_encrypt(),
             "name_pattern": NAME_PATTERN,
-            "stages": list(vault.VAULT_STAGES),
+            "agents": list(vault.vault_agents()),
+            "default_agents": list(vault.default_agents()),
             "modes": list(vault.MODES),
             "secrets": [_meta(s, key) for s in mine],
             "globals": [_meta(s, key) for s in others],

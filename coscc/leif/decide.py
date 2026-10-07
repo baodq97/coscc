@@ -12,11 +12,11 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
-from coscc.agent import labels, models
-from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, is_prose_stage
+from coscc.agent import models, pack, policy
 from coscc.github import prmachine
 from coscc.leif import spend
 from coscc.store.journal import is_step
+from coscc.units import states
 from coscc.units.board import SHIP_UNRECORDED, open_questions
 from coscc.units.guards import REASONS as GATE_REASONS
 
@@ -29,7 +29,22 @@ POLL_SECONDS = 300.0
 OPEN_FOR = timedelta(hours=24)
 
 # The stages that write code, and so may not run beside another whose files overlap.
-CODE_STAGES = ("impl", "integrate")
+
+
+def is_coder(stage: object) -> bool:
+    """Whether `stage` writes in the unit's branch: a state whose output is written `by: session`.
+    `is_code` adds Gebo, which rewrites the same branch."""
+    return stage in states.states_where(by="session", kind="artifact")
+
+
+def is_code(stage: object) -> bool:
+    return is_coder(stage) or stage == "integrate"
+
+
+def is_merge(stage: object) -> bool:
+    """Whether `stage` is a state the engine's `merge` action runs."""
+    return stage in states.states_where(action="merge")
+
 
 # The stop kinds `a`-`f`, plus an empty shortlist, a draft run again as often as it may, and
 # one waiting for a free place.
@@ -101,7 +116,7 @@ def is_ci_red(answer: Any) -> bool:
 
 def continues(answer: Any) -> bool:
     """`next` names no stage but says the unit's `impl` ended with its file still a draft."""
-    return isinstance(answer, dict) and answer.get("continue") == "impl"
+    return isinstance(answer, dict) and is_coder(answer.get("continue"))
 
 
 def is_recording_ship(answer: Any) -> bool:
@@ -137,28 +152,12 @@ def _listed(questions: Iterable[dict[str, Any]]) -> str:
     return ", ".join(f"{q.get('artifact')} question {q.get('n')}" for q in questions)
 
 
-def skips_exhausted(nxt: Mapping[str, Any], last: dict[str, Any] | None, recorded: bool) -> bool:
-    """A `ship` that ran out of turns is no stop when `next` names a `ship` that only records
-    the merge, unless the step that ran out was itself one (`recorded`)."""
-    last = last or {}
-    return (
-        last.get("kind") == "end"
-        and last.get("stage") == "ship"
-        and last.get("outcome") == "exhausted"
-        and nxt.get("stage") == "ship"
-        and is_recording_ship(nxt)
-        and not recorded
-    )
-
-
 def stop_for(
     unit_row: dict[str, Any],
     nxt: Mapping[str, Any],
     last: dict[str, Any] | None,
     may_ship: bool,
-    exhausted: int = 0,
     unopened: int = 0,
-    recorded: bool = False,
     shipping: bool = False,
 ) -> dict[str, str] | None:
     """The first stop that holds for one unit, as `{kind, reason}`, or `None`.
@@ -166,10 +165,8 @@ def stop_for(
     `unit_row` is the unit as `Core.board` has it; `nxt` is `Steps.next_step`'s answer;
     `last` the unit's latest `end`, `integration`, `screens` or `prmachine.RECORD_KIND` record, or
     `None`. `None` back means no stop, which is not the same as something to run.
-    `exhausted` and `unopened` are how many steps of `last`'s stage ended `exhausted` or
-    `failed` for their reply's opening; at 0 such a step stops at once. `recorded` is whether
-    the step that wrote `last` was a `ship` that only records. `shipping` is whether a `ship`
-    attempt of the unit has not ended.
+    `unopened` is how many steps of `last`'s stage ended `failed` for their reply's opening; at 0
+    such a step stops at once. `shipping` is whether a `ship` attempt of the unit has not ended.
     """
     stage = str(nxt.get("stage") or "")
     action = str(nxt.get("action") or "")
@@ -198,24 +195,19 @@ def stop_for(
     if kind == "integration" and outcome == "needs-person":
         said = "; ".join(str(x) for x in seen.get("needs_person") or []) or "no reason given"
         return _stop("d", f"the last integration needs a person: {said}")
-    # e. The unit's last step did not end `done`. The first time a stage other than `ship` ends
-    # `exhausted` is no stop: it runs again once, and the second time stops; `ship` stops the
-    # first time. The same holds, on its own count, for a prose stage that ended `failed`
-    # because its reply lacked its opening. Otherwise no retry: `failed`, `cancelled`,
-    # `stopped`, an integration that failed or that the autopilot started and was refused for
-    # anything but a state with nothing to integrate, and a `ship` that ran out before `next`
-    # names one that only records the merge. An integration refused with nothing to integrate is
-    # no last word: what follows is decided as if it had not run.
-    ran_out_once = outcome == "exhausted" and seen.get("stage") != "ship" and exhausted == 1
-    unopened_once = _unopened(last) and unopened == 1
-    skipped = skips_exhausted(nxt, last, recorded)
-    if (
-        kind == "end"
-        and outcome != "done"
-        and not ran_out_once
-        and not unopened_once
-        and not skipped
-    ):
+    # e. The unit's last step did not end `done`. A step that paused at a ceiling stops with its
+    # own code: only a person raises the ceiling or reruns it. The first time a prose stage ends
+    # `failed` because its reply lacked its opening is no stop: it runs again once. Otherwise no
+    # retry: `failed`, `cancelled`, `stopped`, an integration that failed or that the autopilot
+    # started and was refused for anything but a state with nothing to integrate. An
+    # integration refused with nothing to integrate is no last word: what follows is decided as
+    # if it had not run.
+    if kind == "end" and outcome == "paused-budget":
+        return {
+            **_stop("e", f"the last {seen.get('stage')} step paused at its ceiling"),
+            "code": "budget-reached",
+        }
+    if kind == "end" and outcome != "done" and not (_unopened(last) and unopened == 1):
         return _stop(
             "e", f"the last {seen.get('stage')} step ended {outcome or 'without an outcome'}"
         )
@@ -253,7 +245,7 @@ def stop_for(
         return None if shipping else _stop("e", SHIP_UNRECORDED)
 
     # c. `ship`, while the workspace has not allowed it.
-    if stage == "ship" and not may_ship:
+    if is_merge(stage) and not may_ship:
         return _stop("c", "ship waits for a person: the autopilot may not ship in this workspace")
 
     # A draft whose questions are all answered, or an impl that left its file a draft, is a stage
@@ -288,7 +280,7 @@ def since_integration(
             continue
         if r.get("kind") == "integration":
             after = []
-        elif after is not None and r.get("kind") == "start" and r.get("stage") == "review":
+        elif after is not None and r.get("kind") == "start" and states.is_review(r.get("stage")):
             after = None
         elif after is not None:
             after.append(r)
@@ -300,41 +292,34 @@ def after_own_integration(
     last_integration: dict[str, Any] | None,
     after: list[dict[str, Any]] | None,
     nxt: Mapping[str, Any],
-    exhausted: int = 0,
 ) -> tuple[str, dict[str, str] | None] | None:
     """What follows CI red on the autopilot's own pushed integration.
 
     `integration` is the board's integration block of the unit, `last_integration` its latest
     `integration` record, `after` what `since_integration` returns, `nxt` `next`'s answer.
-    `("impl", None)` runs the `impl` `next` names, once; `("", stop)` is a stop `e`; `None`
-    leaves the unit to the rest of the pass. Gebo is never started again. `exhausted` is how
-    many `impl` steps of the unit ended `exhausted`: while it is 1, the one that ran out is
-    not the one `impl`, which runs once more.
+    `(stage, None)` runs the stage `next` names, once; `("", stop)` is a stop `e`; `None`
+    leaves the unit to the rest of the pass. Gebo is never started again.
     """
     last_integration = last_integration or {}
     if started_by(last_integration) != "autopilot" or last_integration.get("outcome") != "pushed":
         return None
     red_state = (integration or {}).get("state") == "red-after-integration"
-    fixing = nxt.get("stage") == "impl"
+    fixing = is_coder(nxt.get("stage"))
     red_next = fixing and is_ci_red(nxt)
     again = _stop("e", "CI is still red after the autopilot's last integration")
     if after is None:
         return ("", again) if red_state else None
-    ran, short, by = 0, 0, ""
+    ran, by = 0, ""
     for r in after:
-        if r.get("stage") != "impl":
+        if not is_coder(r.get("stage")):
             continue
         if r.get("kind") == "start":
             by = started_by(r)
             ran += 1 if by == "autopilot" else 0
-        elif r.get("kind") == "end" and r.get("outcome") == "exhausted" and by == "autopilot":
-            short += 1
-    if exhausted == 1:
-        ran -= min(short, 1)
     if ran >= IMPL_PER_INTEGRATION and (red_state or red_next):
         return ("", _stop("e", STILL_RED))
     if red_state and fixing:
-        return ("impl", None)
+        return (str(nxt.get("stage")), None)
     if red_state:
         return ("", again)
     return None
@@ -356,44 +341,32 @@ def today(now: datetime) -> str:
     return spend.local_day(now.isoformat())
 
 
-def spent_today(
-    records: Iterable[dict[str, Any]], now: datetime, budget: Mapping[str, Any] | None = None
-) -> dict[str, Any]:
+def spent_today(records: Iterable[dict[str, Any]], now: datetime) -> dict[str, Any]:
     """`spent_on` the machine's day of `now`. An `end` with no `cost_usd` is counted at its estimate, not as the cap reached."""
-    return spent_on(records, today(now), budget)
+    return spent_on(records, today(now))
 
 
-def reservation(stage: str, budget: Mapping[str, Any] | None = None) -> float:
+def reservation(stage: str) -> float:
     """What a step of `stage` is counted at before it ends: the largest dollar ceiling any
-    label can give it, as `models.ceilings` resolves it from the `budget:` overrides by row
-    (`budget`), so a raised ceiling is held in full."""
+    label can give it, as `models.ceilings` resolves it from its row, so a raised ceiling is
+    held in full."""
     return float(
         max(
-            models.ceilings(stage, label, {}, budget or {})["max_budget_usd"] or 0.0
-            for label in (None, labels.NOVEL)
+            models.ceilings(stage, label)["max_budget_usd"] or 0.0 for label in (None, policy.NOVEL)
         )
     )
 
 
-def estimate(stage: str, budget: Mapping[str, Any] | None = None) -> float:
+def estimate(stage: str) -> float:
     """What an `end` of `stage` with no `cost_usd` is counted at: its reservation, or, for a
-    stage no grant gives a budget, the largest budget in the grant table or the overrides
-    (read, never copied)."""
-    own = reservation(stage, budget)
+    stage no row gives a budget, the largest any row gives (read, never copied)."""
+    own = reservation(stage)
     if own > 0:
         return own
-    return float(
-        max(
-            [float(g.max_budget_usd or 0.0) for g in GRANTS.values()]
-            + [float(b) for _, b in NOVEL_CEILINGS.values()]
-            + [float(b) for b in (budget or {}).values()]
-        )
-    )
+    return max(reservation(k) for k in pack.rows())
 
 
-def spent_on(
-    records: Iterable[dict[str, Any]], day: str, budget: Mapping[str, Any] | None = None
-) -> dict[str, Any]:
+def spent_on(records: Iterable[dict[str, Any]], day: str) -> dict[str, Any]:
     """`{known, estimated, estimated_count}`: every `end` of the machine's `day`, whoever
     started it, every workspace. An `end` with no `cost_usd` counts at `estimate` of its
     stage. An `integration` record is never added: a Gebo session's cost is on its own `end`."""
@@ -402,7 +375,7 @@ def spent_on(
         if r.get("kind") != "end" or spend.local_day(r.get("at")) != day:
             continue
         if r.get("cost_usd") is None:
-            estimated += estimate(str(r.get("stage") or ""), budget)
+            estimated += estimate(str(r.get("stage") or ""))
             count += 1
         else:
             known += float(r["cost_usd"])
@@ -430,15 +403,14 @@ def reserved(
     records: Iterable[dict[str, Any]],
     now: datetime,
     active: Iterable[tuple[str, str, str]] = (),
-    budget: Mapping[str, Any] | None = None,
 ) -> float:
     """What the steps running now are counted at: every open `start`, and every step this
     process holds (`(workspace, unit, stage)`) that has not written its `start` yet."""
     opened = open_starts(records, now)
-    total = sum(reservation(str(r.get("stage") or ""), budget) for r in opened.values())
+    total = sum(reservation(str(r.get("stage") or "")) for r in opened.values())
     for workspace, unit, stage in active:
         if (workspace, unit) not in opened:
-            total += reservation(stage, budget)
+            total += reservation(stage)
     return total
 
 
@@ -490,7 +462,7 @@ def pick(
             continue
         if len(busy) >= max_parallel:
             break
-        shipping = next((t for t in taken if c["stage"] == "ship" and t["stage"] == "ship"), None)
+        shipping = next((t for t in taken if is_merge(c["stage"]) and is_merge(t["stage"])), None)
         if shipping is not None:
             held[c["unit"]] = ("ship-busy", shipping["unit"])
             continue
@@ -498,8 +470,8 @@ def pick(
             (
                 t
                 for t in taken
-                if c["stage"] in CODE_STAGES
-                and t["stage"] in CODE_STAGES
+                if is_code(c["stage"])
+                and is_code(t["stage"])
                 and overlaps(c.get("files"), t.get("files"))
             ),
             None,
@@ -507,7 +479,7 @@ def pick(
         if crossing is not None:
             held[c["unit"]] = ("overlap", crossing["unit"])
             continue
-        if c["stage"] == "impl" and c["unit"] not in with_pr:
+        if is_coder(c["stage"]) and c["unit"] not in with_pr:
             blocking = next(
                 (
                     p
@@ -611,20 +583,6 @@ def reruns_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stag
     return count
 
 
-def exhausted_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
-    """How many steps of `stage` on `unit` ended `exhausted`, whoever started them and over the whole run log."""
-    return sum(
-        1
-        for r in records
-        if r.get("kind") == "end"
-        and r.get("outcome") == "exhausted"
-        and is_step(r)
-        and r.get("workspace") == workspace
-        and r.get("unit") == unit
-        and r.get("stage") == stage
-    )
-
-
 def _lacks_opening(record: dict[str, Any]) -> bool:
     """The `detail` `opening_reason` opens with (`coscc/runner/reply.py`), for the record's own
     stage; a repair turn that failed too keeps it on the first line."""
@@ -639,14 +597,14 @@ def _unopened(last: dict[str, Any] | None) -> bool:
     return (
         last.get("kind") == "end"
         and last.get("outcome") == "failed"
-        and is_prose_stage(str(last.get("stage") or ""))
+        and policy.row_for(str(last.get("stage") or "")).prose
         and _lacks_opening(last)
     )
 
 
 def unopened_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
     """How many steps of `stage` on `unit` ended `failed` because their reply lacked its
-    opening, counted as `exhausted_of` counts; the two counts are apart."""
+    opening, over the whole run log, whoever started them."""
     return sum(
         1
         for r in records
@@ -796,7 +754,7 @@ def full_stop(stage: str, max_parallel: int) -> dict[str, str]:
 # --- what the intent's outcome is measured by ----------------------------
 
 # The stages before `intent` is accepted, and those that are not a unit's stage at all.
-_BEFORE = ("idea", "intent", "estimate")
+_BEFORE = (*states.opening_states(), "estimate")
 
 
 def started_by(record: Mapping[str, Any]) -> str:
@@ -843,7 +801,7 @@ def measure(
         if kind == "end":
             last_end[unit] = str(r.get("outcome") or "")
             if (
-                r.get("stage") == "review"
+                states.is_review(r.get("stage"))
                 and r.get("outcome") == "done"
                 and "pass" in (r.get("verdicts") or [])
             ):

@@ -94,6 +94,10 @@ def from_db(cos_dir: str):
     config = from_env()
     if not config.working_dir:
         return None
+    from coscc.agent import pack
+
+    # The processes the snapshot hands over are read from the app's own packs.
+    pack.ROOT = config.data_dir
     data = Data(config.data_dir)
     store = Store(config.working_dir, data)
     rows = [(e.name, str(store.path_of(e.name))) for e in store.entries()]

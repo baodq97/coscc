@@ -16,7 +16,6 @@ import httpx
 
 from coscc import vault
 from coscc.http import auth
-from coscc.agent import policy
 from coscc.features import vault as feature
 from coscc.vault.store import NAME
 from tests.features.vault import test_vault as base
@@ -77,7 +76,7 @@ class MetadataRoutes(Http):
         got = (await self.get("/api/vault/secrets")).json()
         self.assertEqual(got["workspace"], self.key)
         self.assertEqual(
-            (got["stages"], got["modes"]), (list(vault.VAULT_STAGES), list(vault.MODES))
+            (got["agents"], got["modes"]), (list(vault.vault_agents()), list(vault.MODES))
         )
         self.assertIs(got["age"], True)
         self.assertEqual({s["name"] for s in got["secrets"]}, {"ws:db", "global:tok"})
@@ -92,7 +91,7 @@ class MetadataRoutes(Http):
                     "name",
                     "tier",
                     "description",
-                    "stages",
+                    "agents",
                     "modes",
                     "broker",
                     "has_value",
@@ -118,13 +117,13 @@ class TheOneRouteAValueGoesInBy(Http):
     async def test_a_form_post_makes_a_secret_and_answers_its_name_with_no_value_anywhere(self):
         value = "brand-new/Value+1=&z"
         r = await self.form(
-            name="fresh", tier="ws", description="fresh one", value=value, stage="impl", mode="env"
+            name="fresh", tier="ws", description="fresh one", value=value, agent="impl", mode="env"
         )
         self.assertEqual((r.status_code, r.json()), (200, {"saved": "ws:fresh", "short": False}))
         made = self.store.get("ws:fresh", self.key)
         assert made is not None
         self.assertEqual(
-            (made.description, made.stages, made.modes), ("fresh one", ("impl",), ("env",))
+            (made.description, made.agents, made.modes), ("fresh one", ("impl",), ("env",))
         )
         self.assertEqual(self.store.open("ws:fresh", self.key), value.encode())
         (line,) = [r for r in self.vault_lines() if r["name"] == "ws:fresh"]
@@ -149,7 +148,7 @@ class TheOneRouteAValueGoesInBy(Http):
         self.assertEqual(made.granted, ())
 
     async def test_a_short_value_is_said_short_and_a_broker_secret_keeps_ssh_only(self):
-        r = await self.form(name="tiny", value="abc", broker="1", mode="env", stage="impl")
+        r = await self.form(name="tiny", value="abc", broker="1", mode="env", agent="impl")
         self.assertTrue(r.json()["short"])
         made = self.store.get("ws:tiny", self.key)
         assert made is not None
@@ -174,7 +173,7 @@ class TheOneRouteAValueGoesInBy(Http):
         await self.form(name="deploy", value=key.decode().replace("\n", "\r\n"), broker="1")
         self.assertEqual(self.store.open("ws:deploy", self.key), key)
         self.store.set_policy("ws:deploy", self.key, ("impl",), ("ssh",))
-        facts = self.facts(commands=(*policy.IMPL_COMMANDS, "ssh-add"))
+        facts = self.facts()
         args = {"command": "ssh-add -l", "uses": [{"name": "ws:deploy", "mode": "ssh"}]}
         got = await self.call(facts, "vault_exec", args)
         self.assertEqual(got["exit_code"], 0, got)
@@ -201,32 +200,32 @@ class TheOneRouteAValueGoesInBy(Http):
 
 
 class TheJsonRoutes(Http):
-    async def test_policy_changes_stages_and_modes_and_writes_one_line(self):
+    async def test_policy_changes_agents_and_modes_and_writes_one_line(self):
         r = await self.send(
-            "/api/vault/policy", name="ws:db", stages=["impl", "spike"], modes=["env"]
+            "/api/vault/policy", name="ws:db", agents=["impl", "spike"], modes=["env"]
         )
         self.assertEqual(
-            (r.status_code, r.json()["stages"], r.json()["modes"]),
-            (200, ["impl", "spike"], ["env"]),
+            (r.status_code, r.json()["agents"], r.json()["modes"]),
+            (200, ["spike", "impl"], ["env"]),
         )
         (line,) = self.vault_lines()
         self.assertEqual(
-            (line["action"], line["actor"], line["stages"], line["modes"]),
-            ("policy", "human:owner", ["impl", "spike"], ["env"]),
+            (line["action"], line["actor"], line["agents"], line["modes"]),
+            ("policy", "human:owner", ["spike", "impl"], ["env"]),
         )
 
     async def test_a_policy_the_store_refuses_is_400_and_writes_nothing(self):
         for sent in (
-            {"stages": ["deploy"], "modes": ["env"]},
-            {"stages": ["impl"], "modes": ["carrier-pigeon"]},
-            {"stages": "impl", "modes": []},
+            {"agents": ["deploy"], "modes": ["env"]},
+            {"agents": ["impl"], "modes": ["carrier-pigeon"]},
+            {"agents": "impl", "modes": []},
             {"modes": []},
         ):
             r = await self.send("/api/vault/policy", name="ws:db", **sent)
             self.assertEqual(r.status_code, 400, sent)
             self.assertIn("error", r.json())
         self.assertEqual(self.vault_lines(), [])
-        self.assertEqual(self.store.get("ws:db", self.key).stages, ("impl",))
+        self.assertEqual(self.store.get("ws:db", self.key).agents, ("impl",))
 
     async def test_grant_and_revoke_move_a_global_secret_in_and_out_of_the_workspace(self):
         r = await self.send("/api/vault/grant", name="global:other")
@@ -246,7 +245,7 @@ class TheJsonRoutes(Http):
             self.assertEqual((await self.send(path, name="ws:db")).status_code, 400)
             self.assertEqual((await self.send(path, name="global:none")).status_code, 400)
         self.assertEqual(
-            (await self.send("/api/vault/policy", name="ws:none", stages=[], modes=[])).status_code,
+            (await self.send("/api/vault/policy", name="ws:none", agents=[], modes=[])).status_code,
             400,
         )
 
@@ -273,13 +272,13 @@ class WithTheVaultOff(Http):
             await self.get("/api/vault/secrets"),
             await self.get("/api/vault/leaks", unit="0001_thing"),
             await self.form(name="new", value="v-value-1234"),
-            await self.send("/api/vault/policy", name="ws:db", stages=["impl"], modes=["env"]),
+            await self.send("/api/vault/policy", name="ws:db", agents=["impl"], modes=["env"]),
             await self.send("/api/vault/grant", name="global:other"),
         ]
         self.assertEqual([r.status_code for r in refused], [400] * 5)
         self.assertTrue(all("off" in r.json()["error"] for r in refused))
         self.assertIsNone(self.store.get("ws:new", self.key))
-        self.assertEqual(self.store.get("ws:db", self.key).stages, ("impl",))
+        self.assertEqual(self.store.get("ws:db", self.key).agents, ("impl",))
         self.assertEqual(self.vault_lines(), [])
         revoked = await self.send("/api/vault/revoke", name="global:tok")
         self.assertEqual((revoked.status_code, revoked.json()["granted"]), (200, False))
@@ -289,7 +288,7 @@ class WithTheVaultOff(Http):
 
     async def test_the_tool_guard_and_block_go_with_it(self):
         await self.turn_off()
-        parts = self.core.steps.hooks.for_step("impl", str(self.ws))
+        parts = self.core.steps.hooks.on(str(self.ws))
         self.assertEqual([t.server for t in parts.tools], [])
         self.assertEqual([g.name for g in parts.guards], [])
         self.assertEqual([b.name for b in parts.blocks if b.name == "vault"], [])
@@ -313,7 +312,7 @@ class NoRouteGivesAValueBack(Http):
             await self.form(name="Bad Name", value=fresh),
             await self.form(name="x", value=""),
             await self.send(
-                "/api/vault/policy", name="ws:db", stages=["impl"], modes=["env", "file"]
+                "/api/vault/policy", name="ws:db", agents=["impl"], modes=["env", "file"]
             ),
             await self.send("/api/vault/grant", name="global:other"),
             await self.send("/api/vault/revoke", name="global:other"),

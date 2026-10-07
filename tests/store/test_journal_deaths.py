@@ -97,7 +97,6 @@ class EveryWayAStepDies(unittest.TestCase):
                     unit=UNIT,
                     stage="spec",
                     artifact="spec.md",
-                    stages=STAGES,
                     mode="manual",
                     running=running,
                 ):
@@ -168,7 +167,7 @@ class EveryWayAStepDies(unittest.TestCase):
         self.assertEqual((end["outcome"], end["stopped_by"]), ("stopped", "owner"))
         self._says_what_the_end_says(end, cost_known=False)
 
-    def test_c_exhausted(self):
+    def test_c_paused_at_a_ceiling(self):
         end = self._step(
             {
                 "session_id": "s",
@@ -176,7 +175,7 @@ class EveryWayAStepDies(unittest.TestCase):
                 "cost": {"turns": 7, "cost_usd": 0.4},
             }
         )
-        self.assertEqual(end["outcome"], "exhausted")
+        self.assertEqual(end["outcome"], "paused-budget")
         self.assertEqual((end["cli_turns"], end["cost_usd"]), (7, 0.4))
         self._says_what_the_end_says(end, cost_known=True)
 

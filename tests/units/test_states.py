@@ -3,7 +3,7 @@
 Two of these carry most of the weight and they pull in opposite directions.
 
 `TheDefaultIsTheSetInUseToday` reads the loop's stage table **by running it** and
-compares its stage table to `coscc/units/states.json` field by field. A hand-written expectation
+compares its stage table to the set the pack's processes make, field by field. A hand-written expectation
 would keep passing after the two drift apart, which is the failure `tests/units/test_board.py`
 already argues against for the same reason.
 
@@ -18,9 +18,8 @@ import unittest
 from pathlib import Path
 
 from tests.units.test_meta import loop
-from coscc.agent import harness
+from coscc.agent import pack
 from coscc.units import states
-from coscc.units import guards
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -69,18 +68,26 @@ class TheDefaultIsTheSetInUseToday(unittest.TestCase):
         # `coscc/loop/model.py` `settled`. Counted on this, so a disagreement here moves
         # 0013's whole number.
         machine = states.default()
-        for state in ("accepted", "skipped", "done"):
+        for state in ("accepted", "skipped"):
             self.assertTrue(machine.is_settled(state), state)
-        for state in ("draft", "rejected", machine.absent):
+        for state in ("draft", "rejected", "done", machine.absent):
             self.assertFalse(machine.is_settled(state), state)
 
     def test_the_definition_lives_inside_the_package_so_a_wheel_can_carry_it(self):
         # `coscc/agent/harness.py` had to learn this lesson at the cost of a unit. A default
         # sitting outside `coscc/` is a default a wheel does not ship.
-        self.assertTrue(harness.STATES_PATH.is_file(), harness.STATES_PATH)
+        path = pack.BUILTIN / pack.PROCESS_FILE
+        self.assertTrue(path.is_file(), path)
         package = Path(states.__file__).resolve().parents[1]
-        self.assertEqual(harness.STATES_PATH.parent, package / "units")
+        self.assertTrue(path.is_relative_to(package / "packs"), path)
         self.assertEqual(package.name, "coscc")
+
+    def test_a_status_follows_from_what_the_state_is(self):
+        machine = states.default()
+        self.assertEqual(machine.stage("review").statuses[1], "changes-requested")
+        self.assertIn("skipped", machine.stage("spec").statuses)
+        self.assertNotIn("skipped", machine.stage("plan").statuses)
+        self.assertTrue(machine.stage("idea").optional)
 
 
 class ADifferentStateSetIsAnsweredFromItsData(unittest.TestCase):
@@ -116,6 +123,33 @@ class ADifferentStateSetIsAnsweredFromItsData(unittest.TestCase):
         self.assertNotIn("intent.md", reason)
 
 
+class AStatusIsKeyedByTheUnitsProcess(unittest.TestCase):
+    def test_a_skip_in_one_process_is_not_a_skip_in_another(self):
+        machine = states.Machine.of(
+            {
+                "name": "m",
+                "absent": "none",
+                "settled": ["accepted", "skipped"],
+                "stages": [
+                    {"name": "a", "artifact": "a.md", "statuses": ["draft", "accepted", "skipped"]}
+                ],
+                "by_process": {
+                    "p/skips": {"a.md": ["draft", "accepted", "skipped"]},
+                    "p/keeps": {"a.md": ["draft", "accepted"]},
+                },
+            }
+        )
+        self.assertIsNone(machine.refuse("a.md", "skipped", "p/skips"))
+        self.assertIn("cannot be 'skipped'", machine.refuse("a.md", "skipped", "p/keeps") or "")
+        # No process named (or an artifact the process lacks): the union, as before.
+        self.assertIsNone(machine.refuse("a.md", "skipped"))
+
+    def test_the_built_in_review_may_ask_for_changes_in_both_processes(self):
+        machine = states.default()
+        for ref in pack.processes():
+            self.assertTrue(machine.allows("review.md", "changes-requested", ref), ref)
+
+
 class ThePackagedFilesAreCoherent(unittest.TestCase):
     """A mistake in either file would pass silently and report nothing, so the files are held to
     what the code that reads them assumes."""
@@ -126,16 +160,10 @@ class ThePackagedFilesAreCoherent(unittest.TestCase):
         self.assertLessEqual(machine.settled, every)
         self.assertNotIn(machine.absent, every)
 
-    def test_every_lane_names_a_guard_that_may_decide_each_transition(self):
-        lanes = states.default_lanes()
-        self.assertIn("full", lanes.lanes)
-        for lane in lanes.lanes.values():
-            for stage, _ in lane.path:
-                self.assertIsNotNone(states.default().stage(stage), stage)
-            for machine, transitions in guards.TRANSITIONS.items():
-                for transition, allowed in transitions.items():
-                    self.assertIn(lane.guard_for(machine, transition), allowed, transition)
-        self.assertGreater(lanes.ci_poll_seconds, 0)
+    def test_every_state_of_every_process_is_a_stage_of_the_set(self):
+        for ref, process in pack.processes().items():
+            for name in process["states"]:
+                self.assertIsNotNone(states.default().stage(name), f"{ref}.{name}")
 
 
 if __name__ == "__main__":

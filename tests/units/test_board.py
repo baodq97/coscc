@@ -16,11 +16,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.units.test_meta import WithSnapshot, loop, snapshot_of
+from tests.units.test_meta import loop, seed
 from coscc.units import board as _board
-
-board = WithSnapshot(_board)
 from coscc.agent import harness
+from coscc.store.db import Data
 from coscc.loop import run as loop_run
 from coscc.units.board import (
     COLLAPSED_STATES,
@@ -31,28 +30,119 @@ from coscc.units.board import (
     shown_state,
     unit_state,
 )
+from coscc.units.meta import UnitMeta
 
 REPO = Path(__file__).resolve().parents[2]
 
-_ROUND = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
+
+def _record_rounds(meta: UnitMeta, key: str, name: str, rounds) -> None:
+    with meta.data.write() as conn:
+        for one in rounds:
+            meta.record_round(conn, key, name, one)
+
+
+def snap(root, units: dict[str, dict], peers=()) -> dict:
+    """The snapshot of the store `root`, from explicit rows: `units` is `{unit: seed kwargs}`
+    (`seed` of test_meta, plus `answers=[(artifact, ref, text, name, date, via)]` and
+    `rounds=[round_(...)]`); `peers` is
+    `[(name, store, units)]`. A store is keyed by its path, in a throwaway database."""
+    with tempfile.TemporaryDirectory() as d:
+        meta = UnitMeta(Path(d) / "work", Data(Path(d) / "data"))
+        own = str(Path(root).resolve())
+        stores = {own: units, **{str(Path(s).resolve()): u for _, s, u in peers}}
+        for key, rows in stores.items():
+            for name, row in rows.items():
+                row = dict(row)
+                answers = row.pop("answers", ())
+                rounds = row.pop("rounds", ())
+                seed(meta, key, name, **row)
+                _record_rounds(meta, key, name, rounds)
+                for artifact, ref, text, by, date, via in answers:
+                    meta.add_answer(key, name, artifact, ref, text, "person", by, date, via)
+        return meta.snapshot(own, {n: str(Path(s).resolve()) for n, s, _ in peers})
+
+
+def accepted(*artifacts: str) -> dict[str, str]:
+    return {a: "accepted" for a in artifacts}
+
+
+UP_TO_PR = accepted("intent.md", "spec.md", "plan.md", "impl.md", "pr.md")
+FINISHED = dict(statuses=UP_TO_PR, type="feat", shipped=True)
+
+
+def repo_state() -> dict:
+    """This repository's units, each one a finished unit."""
+    names = sorted(d.name for d in (REPO / ".cos").iterdir() if d.is_dir())
+    return snap(REPO, {n: FINISHED for n in names})
+
+
+board = _board
+
+
+def round_(n: int, verdict: str, *findings: tuple[str, str, str]) -> dict:
+    """A review round as `record_round` takes it: `findings` are `(id, state, text)`."""
+    return {
+        "n": n,
+        "run": "r",
+        "head": "aaaaaaa",
+        "object": {
+            "verdict": verdict,
+            "screens": [],
+            "findings": [
+                {
+                    "id": i,
+                    "state": state,
+                    "fixed_in": "",
+                    "severity": "high",
+                    "criterion": "",
+                    "path": "a.py",
+                    "lines": "",
+                    "text": text,
+                }
+                for i, state, text in findings
+            ],
+        },
+    }
+
+
 AWAITING_PERSON = {
     "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
     "spec.md": "Status: accepted.\n",
     "plan.md": "Status: accepted.\n",
-    "impl.md": "# Impl\nStatus: accepted.\n\n## Needs a person\n\n- F2: no budget for --paid\n- F3: no gh\n",
+    "impl.md": "# Impl\nStatus: accepted.\n",
     "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
-    "review.md": "# R\nStatus: changes-requested.\n"
-    + _ROUND.format(n=1, v="changes-requested", f="- F2 [open] b\n- F3 [open] c")
-    + _ROUND.format(n=2, v="needs-person", f="- F2 [needs-person] b\n- F3 [needs-person] c")
-    + "\n## Answers\n\n### F2\nAnswered by: P. Date: 2026-09-24. Via: product.\n\nran it\n",
+    "review.md": "# R\nStatus: changes-requested.\n",
 }
 
-UNFINISHED_ROUND = {
-    **{k: v for k, v in AWAITING_PERSON.items() if k != "review.md"},
-    "impl.md": "# Impl\nStatus: accepted.\n",
-    "review.md": "# R\nStatus: changes-requested.\n"
-    + _ROUND.format(n=1, v="changes-requested", f="- F1 [open] a\n- F2 [open] b\n- F3 [open] c")
-    + _ROUND.format(n=2, v="changes-requested", f="- F2 [open] b"),
+UNFINISHED_ROUND = AWAITING_PERSON
+
+_AT_REVIEW = dict(statuses={**UP_TO_PR, "review.md": "changes-requested"}, type="fix")
+_UNFINISHED = {
+    **_AT_REVIEW,
+    "rounds": [
+        round_(
+            1, "changes-requested", ("F1", "open", "a"), ("F2", "open", "b"), ("F3", "open", "c")
+        ),
+        round_(2, "changes-requested", ("F2", "open", "b")),
+    ],
+}
+AWAITING_ROWS = {
+    **_AT_REVIEW,
+    "answers": [("review.md", "F2", "ran it", "P", "2026-09-24", "product")],
+    "rounds": [
+        round_(
+            1,
+            "changes-requested",
+            ("F2", "open", "no budget for --paid"),
+            ("F3", "open", "no gh"),
+        ),
+        round_(
+            2,
+            "needs-person",
+            ("F2", "needs-person", "no budget for --paid"),
+            ("F3", "needs-person", "no gh"),
+        ),
+    ],
 }
 
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
@@ -68,7 +158,7 @@ def _by_stage(u) -> dict:
 
 class TheRepositoryReadsAsABoard(unittest.TestCase):
     def test_every_unit_carries_all_eight_stages(self):
-        data = run(board.read(REPO))
+        data = run(board.read(REPO, state=repo_state()))
         self.assertEqual(data["stages"], STAGES)
         self.assertEqual(data["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
         for unit in data["units"]:
@@ -78,8 +168,8 @@ class TheRepositoryReadsAsABoard(unittest.TestCase):
     def test_the_next_action_is_carried_through_not_recomputed(self):
         # Two answers to "what next" is exactly the drift `board.py` exists to avoid, so
         # the value must be the script's, verbatim.
-        data = run(board.read(REPO))
-        unit = next(u for u in data["units"] if _by_stage(u)["plan"] == "done")
+        data = run(board.read(REPO, state=repo_state()))
+        unit = next(u for u in data["units"] if _by_stage(u)["ship"] == "accepted")
         self.assertEqual(unit["next"], "finished")
         self.assertFalse(unit["blocked"])
 
@@ -100,19 +190,20 @@ class ThePhaseIsCarriedFromTheScript(unittest.TestCase):
             unit = Path(d) / ".cos" / "0001_fresh"
             unit.mkdir(parents=True)
             (unit / "idea.md").write_text("# Idea: fresh\nAuthor: x. Status: accepted.\n")
-            data = run(board.read(d))
+            state = snap(d, {"0001_fresh": dict(statuses={"idea.md": "accepted"})})
+            data = run(board.read(d, state=state))
             [u] = data["units"]
             self.assertEqual(u["phase"], "pre-intent")
             self.assertEqual(u["problems"], [])
 
     def test_every_unit_in_this_repository_has_started(self):
-        data = run(board.read(REPO))
+        data = run(board.read(REPO, state=repo_state()))
         self.assertEqual({u["phase"] for u in data["units"]}, {"started"})
 
 
 class AnEmptyWorkspaceIsAnAnswerNotAFailure(unittest.TestCase):
     def test_a_directory_that_is_not_there_names_itself(self):
-        data = run(board.read("/nonexistent-workspace-for-a-test"))
+        data = run(board.read("/nonexistent-workspace-for-a-test", state=_board.EMPTY_STATE))
         self.assertEqual(data["units"], [])
         self.assertIn("no such directory", data["empty_because"])
 
@@ -140,7 +231,7 @@ class TheWorkspaceCopyOfTheLoopIsNeverRun(unittest.TestCase):
             here = os.getcwd()
             os.chdir(workspace)
             try:
-                data = run(board.read(workspace))
+                data = run(board.read(workspace, state=_board.EMPTY_STATE))
             finally:
                 os.chdir(here)
 
@@ -155,7 +246,7 @@ class AnUnreadableBoardRaisesRatherThanReturningEmpty(unittest.TestCase):
         # the first when it means the second is the failure this test names.
         with mock.patch.object(loop_run, "argv", return_value=["/nonexistent/python", "-m", "x"]):
             with self.assertRaises(Unavailable) as caught:
-                run(board.read(REPO))
+                run(board.read(REPO, state=_board.EMPTY_STATE))
         self.assertIn("could not run coscc.loop", str(caught.exception))
 
     def test_a_loop_that_does_not_answer_is_unavailable_not_an_empty_board(self):
@@ -196,7 +287,7 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
     def test_a_blocked_gate_comes_back_blocked_and_carries_the_reasons(self):
         # A unit that does not exist cannot have an accepted intent, so every stage after
         # the first is blocked -- and the reasons are what a caller has to be able to show.
-        allowed, said = run(board.gate(REPO, "9999_no-such-unit-here", "ship"))
+        allowed, said = run(board.gate(REPO, "9999_no-such-unit-here", "ship", state=repo_state()))
         self.assertFalse(allowed)
         self.assertTrue(said.strip(), "a blocked gate that says nothing explains nothing")
 
@@ -208,8 +299,9 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as tmp:
             # A root with no `.cos/` reads fine -- it is a known answer, no units.
-            self.assertEqual(run(board.read(tmp))["count"], 0)
-            allowed, said = run(board.gate(tmp, "0001_nothing-here", "spec"))
+            empty = snap(tmp, {})
+            self.assertEqual(run(board.read(tmp, state=empty))["count"], 0)
+            allowed, said = run(board.gate(tmp, "0001_nothing-here", "spec", state=empty))
             self.assertFalse(allowed)
             self.assertTrue(said.strip())
 
@@ -234,14 +326,39 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
         """
         with mock.patch.object(loop_run, "argv", return_value=["/nonexistent/python", "-m", "x"]):
             with self.assertRaises(Unavailable):
-                run(board.gate(REPO, "0001_no-session-management", "spec"))
+                run(
+                    board.gate(REPO, "0001_no-session-management", "spec", state=_board.EMPTY_STATE)
+                )
+
+    def test_a_fix_its_intent_record_hands_a_fix_comes_back_in_the_fast_lane(self):
+        """The lane the loop decides reaches `Gate.lane`, which the step hands the prompt."""
+        fix = {
+            "reproduction": "python -m pytest x",
+            "expected": {"source": "coscc/units/guards.py:19-30", "text": "Every code is named."},
+            "actual": "One is missing.",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / ".cos" / "0001_a-clear-fix"
+            d.mkdir(parents=True)
+            (d / "intent.md").write_text("# I\nAuthor: t. Type: fix. Status: accepted.\n")
+            key = str(Path(tmp).resolve())
+            meta = UnitMeta(Path(tmp) / "work", Data(Path(tmp) / "data"))
+            seed(meta, key, "0001_a-clear-fix", statuses=accepted("intent.md"), type="fix")
+            submitted = {"run": "r", "revision": "h", "object": {"judgement": "ready", "fix": fix}}
+            with meta.data.write() as conn:
+                meta.record_result(conn, key, "0001_a-clear-fix", "intent", "intent.md", submitted)
+            snap = meta.snapshot(key, {})
+            got = run(_board.gate(tmp, "0001_a-clear-fix", "impl", state=snap))
+            allowed, said = got
+            self.assertTrue(allowed, said)
+            self.assertEqual(got.lane, "fast")
 
     def test_an_open_gate_comes_back_open_and_says_so(self):
         # A unit closed under the old loop: every stage behind it is settled, so any
         # stage's gate is open. Chosen by shape, not by number.
-        data = run(board.read(REPO))
-        unit = next(u for u in data["units"] if _by_stage(u)["plan"] == "done")
-        allowed, said = run(board.gate(REPO, unit["name"], "impl"))
+        data = run(board.read(REPO, state=repo_state()))
+        unit = next(u for u in data["units"] if _by_stage(u)["ship"] == "accepted")
+        allowed, said = run(board.gate(REPO, unit["name"], "impl", state=repo_state()))
         self.assertTrue(allowed, said)
         self.assertIn("open", said.lower())
 
@@ -249,54 +366,65 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
 class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
     """The run button's stage is the loop's `next` answer, copied through."""
 
-    def _unit(self, tmp: str, files: dict[str, str]) -> str:
+    def _unit(self, tmp: str, files: dict[str, str], **rows) -> str:
+        """The unit's files (prose) and, as `self.state`, its rows."""
         name = "0001_what-comes-next"
         d = Path(tmp) / ".cos" / name
         d.mkdir(parents=True)
         for f, text in files.items():
             (d / f).write_text(text)
+        self.state = snap(tmp, {name: rows})
         return name
 
     def _script_says(self, tmp: str, name: str, *extra: str) -> dict:
-
         out = loop(
-            "--root", tmp, "--state", "-", "next", name, *extra, input=json.dumps(snapshot_of(tmp))
+            "--root", tmp, "--state", "-", "next", name, *extra, input=json.dumps(self.state)
         ).stdout
         return json.loads(out)
 
     def test_a_unit_that_is_not_there_is_unavailable(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(Unavailable):
-                run(board.next_step(tmp, "0009_not-here"))
+                run(board.next_step(tmp, "0009_not-here", state=snap(tmp, {})))
 
     def test_the_stage_is_the_one_the_script_printed(self):
         chains = [
-            {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"},
-            {"intent.md": "# I\nAuthor: t. Type: fix. Status: draft.\n"},
-            {
-                "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
-                "spec.md": "Status: skipped.\n",
-                "plan.md": "Status: accepted.\n",
-            },
-            {
-                "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
-                "spec.md": "Status: accepted.\n",
-                "plan.md": "Status: accepted.\n",
-                "impl.md": "Status: accepted.\n",
-                "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
-                "review.md": "# R\nStatus: changes-requested.\n\n## Round 1\n\n"
-                "Reviewed: aaaaaaa. Verdict: changes-requested.\n\n### Findings\n\n- F1 [open] x\n",
-            },
+            (
+                {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"},
+                accepted("intent.md"),
+            ),
+            ({"intent.md": "# I\nAuthor: t. Type: fix. Status: draft.\n"}, {"intent.md": "draft"}),
+            (
+                {
+                    "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+                    "spec.md": "Status: skipped.\n",
+                    "plan.md": "Status: accepted.\n",
+                },
+                {**accepted("intent.md", "plan.md"), "spec.md": "skipped"},
+            ),
+            (
+                {
+                    "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+                    "spec.md": "Status: accepted.\n",
+                    "plan.md": "Status: accepted.\n",
+                    "impl.md": "Status: accepted.\n",
+                    "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
+                    "review.md": "# R\nStatus: changes-requested.\n\n## Round 1\n\n"
+                    "Reviewed: aaaaaaa. Verdict: changes-requested.\n\n### Findings\n\n"
+                    "- F1 [open] x\n",
+                },
+                {**UP_TO_PR, "review.md": "changes-requested"},
+            ),
         ]
-        for files in chains:
+        for files, statuses in chains:
             with self.subTest(files=sorted(files)), tempfile.TemporaryDirectory() as tmp:
-                name = self._unit(tmp, files)
+                name = self._unit(tmp, files, statuses=statuses, type="fix")
                 script = self._script_says(tmp, name)
-                got = run(board.next_step(tmp, name))
+                got = run(board.next_step(tmp, name, state=self.state))
                 self.assertEqual(got["stage"], script["stage"])
                 self.assertEqual(got["action"], script["action"])
                 # `read` carries the file-only stage for the card, from the same script.
-                [u] = run(board.read(tmp))["units"]
+                [u] = run(board.read(tmp, state=self.state))["units"]
                 self.assertEqual(
                     u["next_stage"], script["stage"] if files.get("review.md") is None else ""
                 )
@@ -325,22 +453,24 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
             return await original(argv, timeout, stdin)
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", spy):
-            self._unit(tmp, {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"})
-            run(board.read(tmp))
+            self._unit(
+                tmp,
+                {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"},
+                statuses=accepted("intent.md"),
+                type="fix",
+            )
+            run(board.read(tmp, state=self.state))
         self.assertEqual(
             [a[a.index("--root") + 2 :] for a in calls], [["--state", "-", "status", "--json"]]
         )
 
 
-def _store(d: Path, units: dict[str, dict[str, str]], ideas: dict[str, str] | None = None) -> Path:
+def _store(d: Path, units: dict[str, dict[str, str]]) -> Path:
     for name, files in units.items():
         unit = d / ".cos" / name
         unit.mkdir(parents=True)
         for f, text in files.items():
             (unit / f).write_text(text, encoding="utf-8")
-    for f, text in (ideas or {}).items():
-        (d / ".cos" / "ideas").mkdir(parents=True, exist_ok=True)
-        (d / ".cos" / "ideas" / f).write_text(text, encoding="utf-8")
     return d
 
 
@@ -353,23 +483,31 @@ class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
     def test_a_dependency_is_read_across_workspaces_and_copied(self):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             _store(Path(a), {"0001_x": {"intent.md": "# I\nType: feat. Status: accepted.\n"}})
+            rows_x = {"0001_x": dict(statuses=accepted("intent.md"), type="feat")}
+            rows_y = {
+                "0001_y": dict(statuses=accepted("intent.md", "spec.md", "plan.md"), type="feat")
+            }
             _store(
                 Path(b),
                 {
                     "0001_y": {
-                        "intent.md": "# I\nType: feat. Status: accepted.\nIdea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x.\n",
+                        "intent.md": "# I\nType: feat. Status: accepted.\n",
                         **_TO_IMPL,
                     }
                 },
-                {
-                    "0001_f.md": "# Idea: f\nStatus: accepted.\n\n## Units\n\n- a/0001_x.\n- b/0001_y. Depends on: a/0001_x.\n"
-                },
             )
-            state = snapshot_of(b, [("a", a), ("b", b)])
+            state = snap(b, rows_y, [("a", a, rows_x), ("b", b, rows_y)])
+            # The rows the press wrote when it opened the unit.
+            state["units"]["b/0001_y"]["links"] = {
+                "idea": "b/ideas/0001_f.md",
+                "dependsOn": ["a/0001_x"],
+            }
             data = run(board.read(b, state=state))
             nxt = run(board.next_step(b, "0001_y", state=state))
         [u] = data["units"]
-        self.assertEqual((u["idea"], u["repo"], u["why"]), ("ideas/0001_f.md", "b", "dependency"))
+        self.assertEqual((u["idea"], u["why"]), ("b/ideas/0001_f.md", "dependency"))
+        self.assertNotIn("repo", u)
+        self.assertNotIn("ideas", data)
         self.assertEqual(
             u["depends_on"],
             [
@@ -379,9 +517,6 @@ class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
                     "why": "not merged: the app holds no merge of it",
                 }
             ],
-        )
-        self.assertEqual(
-            data["ideas"][0]["units"][1], {"ref": "b/0001_y", "depends_on": ["a/0001_x"]}
         )
         self.assertEqual(
             (nxt["stage"], nxt["why"], nxt["action"]),
@@ -405,6 +540,17 @@ class TheGateHandsOnACleanRebase(unittest.TestCase):
             self.assertIsNone(_board._rebased(bad), bad)
         self.assertEqual(_board.Gate(True, "open", (), both).rebased, both)
         self.assertIsNone(_board.Gate(True, "open").rebased)
+
+
+class TheGateHandsOnTheLane(unittest.TestCase):
+    """`gate --json`'s `via` reaches the app: `fast` only when the walk took `fast-lane`."""
+
+    def test_the_lane_is_fast_only_when_the_loop_says_fast(self):
+        self.assertEqual(_board._lane({"via": ["fast-lane"]}), "fast")
+        for bad in ({}, {"via": None}, {"via": []}, {"lane": "fast"}, {"via": ["other"]}):
+            self.assertEqual(_board._lane(bad), "full", bad)
+        self.assertEqual(_board.Gate(True, "open", (), None, "fast").lane, "fast")
+        self.assertEqual(_board.Gate(True, "open").lane, "full")
 
 
 class TheStateOfAUnit(unittest.TestCase):
@@ -496,13 +642,28 @@ class TheStateOfAUnit(unittest.TestCase):
         # 7/8: in the window and missing is awaiting, not ready.
         self.assertEqual(self._is(self._unit(at="review", between_pr_and_ship=True)), "awaiting")
 
+    def test_a_stage_held_at_a_ceiling_needs_you_and_says_how_much_was_spent(self):
+        usd = {"stage": "impl", "ceiling": "usd", "usd": 8.0, "max_usd": 8.0}
+        turns = {"stage": "impl", "ceiling": "turns", "turns": 250, "max_turns": 250}
+        got = unit_state(self._unit(paused=usd), None, None)
+        self.assertEqual((got["state"], got["label"]), ("needs-you", "Paused at $8.00 of $8.00"))
+        self.assertEqual(
+            unit_state(self._unit(paused=turns), None, None)["label"], "Paused at 250 of 250 turns"
+        )
+        # A hold a person set comes first: a dropped unit is dropped.
+        dropped = self._unit(paused=usd, hold={"state": "dropped"})
+        self.assertEqual(self._is(dropped), "dropped")
+
     def test_each_cause_of_error(self):
         # (a)
         self.assertEqual(self._is(self._unit(problems=["x"])), "error")
         self.assertEqual(self._is(self._unit(why="unreadable")), "error")
         # (b)
         self.assertEqual(self._is(self._unit(), {"stage": "plan", "outcome": "failed"}), "error")
-        self.assertEqual(self._is(self._unit(), {"stage": "plan", "outcome": "exhausted"}), "error")
+        # A run held at a ceiling waits on a person, and is no error.
+        self.assertEqual(
+            self._is(self._unit(), {"stage": "plan", "outcome": "paused-budget"}), "ready"
+        )
         # (c)
         window = self._unit(at="review", between_pr_and_ship=True)
         self.assertEqual(
@@ -666,9 +827,9 @@ class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
 
     def test_next_step_copies_waiting(self):
         with tempfile.TemporaryDirectory() as tmp:
-            name = self._unit(tmp, AWAITING_PERSON)
+            name = self._unit(tmp, AWAITING_PERSON, **AWAITING_ROWS)
             script = self._script_says(tmp, name)
-            got = run(board.next_step(tmp, name))
+            got = run(board.next_step(tmp, name, state=self.state))
         self.assertEqual(script["waiting"], ["F3"])
         self.assertEqual(got["waiting"], ["F3"])
         self.assertEqual(got["stage"], "")
@@ -678,26 +839,31 @@ class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
             return 0, '{"unit": "u", "stage": "impl", "action": "a", "blocked": true}', ""
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
-            got = run(board.next_step(tmp, "0001_x"))
+            got = run(board.next_step(tmp, "0001_x", state=snap(tmp, {})))
         self.assertEqual(got["waiting"], [])
 
     def test_read_copies_person_findings_and_waiting(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self._unit(tmp, AWAITING_PERSON)
-            [u] = run(board.read(tmp))["units"]
+            self._unit(tmp, AWAITING_PERSON, **AWAITING_ROWS)
+            [u] = run(board.read(tmp, state=self.state))["units"]
         self.assertEqual(
             u["person_findings"],
             [
-                {"id": "F2", "reason": "no budget for --paid", "answered": True},
-                {"id": "F3", "reason": "no gh", "answered": False},
+                {"id": "F2", "reason": "a.py — high — no budget for --paid", "answered": True},
+                {"id": "F3", "reason": "a.py — high — no gh", "answered": False},
             ],
         )
         self.assertEqual(u["waiting"], ["F3"])
 
     def test_a_unit_without_them_reads_as_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self._unit(tmp, {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"})
-            [u] = run(board.read(tmp))["units"]
+            self._unit(
+                tmp,
+                {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"},
+                statuses=accepted("intent.md"),
+                type="fix",
+            )
+            [u] = run(board.read(tmp, state=self.state))["units"]
         self.assertEqual((u["person_findings"], u["waiting"]), ([], []))
 
 
@@ -710,23 +876,25 @@ class TheIdsARoundLeftOutAreCarriedFromTheScript(unittest.TestCase):
 
     def test_next_step_copies_dropped(self):
         with tempfile.TemporaryDirectory() as tmp:
-            name = self._unit(tmp, UNFINISHED_ROUND)
+            name = self._unit(tmp, UNFINISHED_ROUND, **_UNFINISHED)
             script = self._script_says(tmp, name)
-            got = run(board.next_step(tmp, name))
+            got = run(board.next_step(tmp, name, state=self.state))
         self.assertEqual(script["dropped"], ["F1", "F3"])
         self.assertEqual(got["dropped"], ["F1", "F3"])
         self.assertNotRegex(got["action"], r"F\d")
 
     def test_no_dropped_in_the_script_reads_as_none(self):
         with tempfile.TemporaryDirectory() as tmp:
-            name = self._unit(tmp, AWAITING_PERSON)
-            got = run(board.next_step(tmp, name))
+            name = self._unit(tmp, AWAITING_PERSON, **AWAITING_ROWS)
+            got = run(board.next_step(tmp, name, state=self.state))
         self.assertEqual(got["dropped"], [])
 
 
 class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
     """`board.screens` runs the app's the loop's `screens` against a real git repository and store, and
     hands back what it printed."""
+
+    ROWS = {"0001_x": dict(statuses=accepted("intent.md"), type="fix")}
 
     def _repo(self, tmp: str) -> tuple[Path, Path, str]:
         store, repo = Path(tmp) / "store", Path(tmp) / "repo"
@@ -777,7 +945,7 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
             (repo / ".screens" / "manifest.json").write_text(
                 json.dumps({"head": taken, "dirty": False, "addresses": ["/board"], "hits": hits})
             )
-            got = run(board.screens(store, "0001_x", repo))
+            got = run(board.screens(store, "0001_x", repo, state=snap(store, self.ROWS)))
         self.assertEqual(
             got,
             {
@@ -793,7 +961,7 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
     def test_no_manifest_is_no_retake_and_says_why(self):
         with tempfile.TemporaryDirectory() as tmp:
             store, repo, _ = self._repo(tmp)
-            got = run(board.screens(store, "0001_x", repo))
+            got = run(board.screens(store, "0001_x", repo, state=snap(store, self.ROWS)))
         self.assertFalse(got["retake"])
         self.assertIsNone(got["manifest"])
         self.assertIn("manifest.json", got["why"])
@@ -815,7 +983,7 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
     def test_misuse_and_a_loop_that_cannot_start_are_unavailable(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(Unavailable):
-                run(board.screens(tmp, "0009_not-here", tmp))
+                run(board.screens(tmp, "0009_not-here", tmp, state=snap(tmp, {})))
 
         async def cannot_start(argv, timeout, stdin=None):
             raise FileNotFoundError("python")

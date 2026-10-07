@@ -23,12 +23,12 @@ from tests.github.test_prmachine import HEAD, FakeGh, run
 from tests.github.test_prmachine import Fixture as _PrFixture
 from coscc.config import Config
 from coscc.http.app import Core
-from tests.http.test_app import create_sync
+from tests.http.test_app import create_sync, seed_unit
 from coscc.leif import decide
 from coscc.units import board as board_reader
 from coscc.units import guards
 from tests.units.test_board import _store
-from tests.units.test_meta import snapshot_of
+from tests.units.test_board import snap
 from tests.http.test_app import use_sessions
 
 
@@ -60,8 +60,9 @@ class Place1(unittest.TestCase):
         self.core = Core(self.config, _Nobody())
         made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = made["unit"]
-        (Path(made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        (Path(made["path"]) / "intent.md").write_text("# Intent: a problem\n", encoding="utf-8")
+        seed_unit(
+            self.core, str(self.repo), self.unit, statuses={"intent.md": "accepted"}, type="feat"
         )
 
     def _spec(self, says: str, judgement: str) -> dict:
@@ -199,10 +200,14 @@ class _Review(unittest.TestCase):
             ("impl", "Impl"),
             ("pr", "PR"),
         ):
-            extra = " Type: feat." if name == "intent" else ""
-            (self.dir / f"{name}.md").write_text(
-                f"# {title}: a problem\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
+            (self.dir / f"{name}.md").write_text(f"# {title}: a problem\n", encoding="utf-8")
+        seed_unit(
+            self.core,
+            str(self.repo),
+            self.unit,
+            statuses={f"{n}.md": "accepted" for n in ("intent", "spec", "plan", "impl", "pr")},
+            type="feat",
+        )
 
     def _run(self, stage: str, reply: str, **obj) -> dict:
         directory = self.dir
@@ -295,7 +300,7 @@ class Place2(_Review):
         # The file is the app's rendering of the object, the head its own read.
         text = (self.dir / "review.md").read_text(encoding="utf-8")
         self.assertIn(f"Reviewed: {self.head}. Verdict: changes-requested.", text)
-        self.assertIn("- F1 [open] coscc/x.py:3 — high — broken", text)
+        self.assertIn("- F1 [open] coscc/x.py:3 — high — R1 broken", text)
         self.assertIn("### What was checked\n\nEverything.", text)
         self.assertNotIn("0000000", text)
 
@@ -549,14 +554,14 @@ class Place7(unittest.TestCase):
         "runpy.run_module('coscc.loop', run_name='__main__')\n"
     )
 
-    def _next(self, files: dict[str, str], old: str, new: str) -> dict:
+    def _next(self, files: dict[str, str], rows: dict, old: str, new: str) -> dict:
         """`next` for one unit, asked of the loop with `old` reworded in its rules."""
         with tempfile.TemporaryDirectory() as d:
             wrapper = Path(d) / "reworded.py"
             wrapper.write_text(self.REWORDED, encoding="utf-8")
             store = Path(d) / "store"
             _store(store, {"0001_x": files})
-            state = snapshot_of(store)
+            state = snap(store, {"0001_x": rows})
             argv = lambda args: [sys.executable, "-P", str(wrapper), old, new, *args]
             with mock.patch.object(loop_run, "argv", argv):
                 return asyncio.run(board_reader.next_step(store, "0001_x", state=state))
@@ -576,6 +581,7 @@ class Place7(unittest.TestCase):
                 "intent.md": "# I\nType: feat. Status: accepted.\n",
                 "spec.md": "# S\nStatus: rejected.\n",
             },
+            dict(statuses={"intent.md": "accepted", "spec.md": "rejected"}, type="feat"),
             "f\"closed — {s['name']} rejected\"",
             "f\"shut: {s['name']} was turned down\"",
         )
@@ -587,8 +593,11 @@ class Place7(unittest.TestCase):
         nxt = self._next(
             {
                 "intent.md": "# I\nType: feat. Status: accepted.\n",
-                "plan.md": "# P\nStatus: done.\n",
+                "plan.md": "# P\nStatus: accepted.\n",
             },
+            dict(
+                statuses={"intent.md": "accepted", "plan.md": "accepted"}, type="feat", shipped=True
+            ),
             '"action": "finished"',
             '"action": "all done"',
         )

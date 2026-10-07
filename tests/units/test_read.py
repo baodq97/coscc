@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.bus import Bus, Event
+from coscc.bus import Bus
 from coscc.config import Config
 from coscc.github import integrate
 from coscc.kernel import Invalid
@@ -18,7 +18,7 @@ from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
 from coscc.units import scratch
 from tests.leif.test_answers import REVIEW_ONE
-from tests.http.test_app import create_sync
+from tests.http.test_app import create_sync, seed_unit
 from tests.github.test_integration import PR, SLUG, StandIn, git
 from tests.units.test_submit import submits as _submits
 
@@ -55,13 +55,16 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
         self.made = create_sync(self.core, str(self.repo), "a-problem", "some words")
         self.unit = self.made["unit"]
         (Path(self.made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            "# Intent: a problem\n", encoding="utf-8"
+        )
+        seed_unit(
+            self.core, str(self.repo), self.unit, statuses={"intent.md": "accepted"}, type="feat"
         )
 
     def held(self) -> list[dict]:
         """What the board shows as running in this workspace now, one row per attempt."""
         key = self.core.ws.key(str(self.repo))
-        running = self.core.boards.running_here(key, {})
+        running = self.core.boards.running_here(key)
         return [{**row, "unit": unit} for unit, rows in running.items() for row in rows]
 
     def _run(self, stage: str, stop_after: int | None = None, until_ended: bool = False):
@@ -388,15 +391,25 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         made = await self.core.answers.create_unit(self.cwd, SLUG, "fixture")
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            extra = " Type: feat." if name == "intent.md" else ""
-            (directory / name).write_text(
-                f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8"
-            )
+            (directory / name).write_text("# X: fixture\n", encoding="utf-8")
         (directory / "pr.md").write_text(
-            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
-            encoding="utf-8",
+            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}.\n", encoding="utf-8"
+        )
+        seed_unit(
+            self.core,
+            self.cwd,
+            self.unit,
+            statuses=dict.fromkeys(
+                ("intent.md", "spec.md", "plan.md", "impl.md", "pr.md"), "accepted"
+            ),
+            type="feat",
         )
         (directory / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
+        self.core.ws.unit_meta().history.record(
+            self.key, self.unit, "pr.md", "accepted", source="prmachine:opened",
+            guard="branch-named", authority="code",
+            inputs={"number": PR, "url": f"https://github.com/o/r/pull/{PR}", "head": "a" * 40},
+        )  # fmt: skip
         self.hang = False
         self.calls: list[list[str]] = []
         patch = mock.patch.object(integrate, "_gh", self._gh)
@@ -483,8 +496,85 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_change_before_any_read_starts_none(self):
         reads = self.counted()
-        self.core.bus.publish(Event("answer.written", self.key, self.unit))
+        self.core.bus.publish("answer.written", {"workspace": self.key, "unit": self.unit})
         self.assertEqual((reads, self.core.boards.reads), ([], {}))
+
+
+class TheUnitPageCarriesItsOutputs(unittest.TestCase):
+    def test_what_each_agent_handed_back_reaches_the_page(self):
+        from coscc.units.read import detail
+
+        outputs = [
+            {"agent": "spec", "version": 1, "at": "t", "fields": {"judgement": "ready"}},
+        ]
+        unit = {
+            "name": "0001_x",
+            "number": 1,
+            "slug": "x",
+            "state": {"state": "ready", "label": "Ready", "color": "gray"},
+        }
+        got = detail(unit, [], outputs)
+        self.assertEqual(got["outputs"], outputs)
+
+    def test_the_page_carries_the_persons_words_of_the_brief(self):
+        from coscc.units.read import detail
+
+        unit = {
+            "name": "0001_x",
+            "number": 1,
+            "slug": "x",
+            "state": {"state": "a", "label": "A", "color": "gray"},
+        }
+        idea = "# Idea: x\nAuthor: the originator.\n\n## In their own words\n\nMake it faster.\n"
+        self.assertEqual(detail(unit, [], [], brief=idea)["brief"], "Make it faster.")
+        self.assertEqual(detail(unit, [], [])["brief"], "")
+
+
+class TheUnitPageCarriesItsDecisions(unittest.TestCase):
+    UNIT = {
+        "name": "0001_x",
+        "number": 1,
+        "slug": "x",
+        "state": {"state": "ready", "label": "Ready", "color": "gray"},
+    }
+
+    def test_each_decision_reads_as_a_sentence_oldest_first(self):
+        from coscc.units.read import detail
+
+        rows = [
+            {
+                "kind": "rerun",
+                "fields": {"stage": "spec", "stale": {}},
+                "by": "owner",
+                "date": "d1",
+            },
+            {"kind": "more-rounds", "fields": {"rounds": 1}, "by": "owner", "date": "d2"},
+            {"kind": "outcome", "fields": {"result": "met"}, "by": "Leif", "date": "d3"},
+        ]
+        got = detail(self.UNIT, [], [], rows)
+        self.assertEqual(
+            got["decisions"],
+            [
+                {"kind": "rerun", "by": "owner", "date": "d1", "text": "asked spec to run again"},
+                {
+                    "kind": "more-rounds",
+                    "by": "owner",
+                    "date": "d2",
+                    "text": "allowed one more review round",
+                },
+                {
+                    "kind": "outcome",
+                    "by": "Leif",
+                    "date": "d3",
+                    "text": "recorded the outcome: met",
+                },
+            ],
+        )
+
+    def test_a_unit_with_none_has_an_empty_list(self):
+        from coscc.units.read import detail
+
+        self.assertEqual(detail(self.UNIT, [], [])["decisions"], [])
 
 
 class AUnitPageShowsItsRuns(unittest.TestCase):
@@ -502,8 +592,8 @@ class AUnitPageShowsItsRuns(unittest.TestCase):
                     "artifact": "spec.md",
                     "n": 1,
                     "text": "This one",
-                    "by": "Leif",
-                    "authority": "agent",
+                    "by": "delegated",
+                    "name": "Leif",
                 }
             ],
             "worktree": {"branch": "fix/x", "path": "/w/x", "prepare": None},
@@ -520,8 +610,10 @@ class AUnitPageShowsItsRuns(unittest.TestCase):
             },
             {"stage": "plan", "started": "t2", "ended": None, "outcome": None, "cost": {}},
         ]
-        got = detail(unit, timeline)
+        got = detail(unit, timeline, [])
         self.assertEqual((got["runs"][0]["cost_usd"], got["runs"][0]["turns"]), (None, 3))
         self.assertEqual(got["runs"][1]["ended"], "")
-        self.assertEqual(got["answers"][0]["authority"], "agent")
+        self.assertEqual(
+            (got["answers"][0]["by"], got["answers"][0]["name"]), ("delegated", "Leif")
+        )
         self.assertEqual(got["worktree"], {"branch": "fix/x", "path": "/w/x"})

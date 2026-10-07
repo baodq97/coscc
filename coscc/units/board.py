@@ -13,11 +13,12 @@ workspace's `.cos/` with `--root` (`coscc/loop/run.py` starts it). The board rep
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from coscc.loop import run
-from coscc.units import guards
+from coscc.units import guards, states
 
 # The stop `e`, and the board's reason, of a unit `next` reads as merging with no `ship` running.
 SHIP_UNRECORDED = "ship requested a merge and recorded no outcome"
@@ -40,10 +41,12 @@ class Unavailable(Exception):
 
 class Gate(tuple):
     """`gate`'s answer: `(open, what it said)`, and `reasons`, the codes beside the words,
-    which the app branches on. `rebased`, `{reviewed, head}`, only when `ship` opened on a clean rebase."""
+    which the app branches on. `rebased`, `{reviewed, head}`, only when `ship` opened on a clean rebase;
+    `lane`, `fast` only when the loop says the unit is in the fast lane, else `full`."""
 
     reasons: tuple[str, ...]
     rebased: dict[str, str] | None
+    lane: str
 
     def __new__(
         cls,
@@ -51,11 +54,17 @@ class Gate(tuple):
         said: str,
         reasons: tuple[str, ...] = (),
         rebased: dict[str, str] | None = None,
+        lane: str = "full",
     ) -> "Gate":
         answer = super().__new__(cls, (opened, said))
         answer.reasons = tuple(reasons)
         answer.rebased = rebased
+        answer.lane = lane
         return answer
+
+
+def _lane(data: dict[str, Any]) -> str:
+    return "fast" if "fast-lane" in (data.get("via") or ()) else "full"
 
 
 def _rebased(data: dict[str, Any]) -> dict[str, str] | None:
@@ -108,7 +117,7 @@ async def _run(argv: list[str], timeout: float, stdin: str | None = None) -> tup
 
 
 # The snapshot of a store with no units, for a question that needs none: `stages`.
-EMPTY_STATE: dict[str, Any] = {"workspace": "", "workspaces": [], "units": {}, "ideas": {}}
+EMPTY_STATE: dict[str, Any] = {"workspace": "", "workspaces": [], "units": {}}
 
 
 def _source(state: dict[str, Any] | None) -> tuple[list[str], str | None]:
@@ -125,31 +134,11 @@ async def _ask(argv: list[str], timeout: float, stdin: str | None) -> tuple[int,
 
 
 def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each `{ref, merged, why}` of the unit's `Depends on:`, as the loop resolved it."""
+    """Each `{ref, merged, why}` of the unit's dependencies, as the loop resolved it."""
     return [
         {"ref": str(d.get("ref") or ""), "merged": d.get("merged"), "why": str(d.get("why") or "")}
         for d in u.get("dependsOn") or []
         if isinstance(d, dict)
-    ]
-
-
-def _ideas_of(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """The store's ideas, `{id, title, status, units: [{ref, depends_on}], problems}`."""
-    return [
-        {
-            "id": str(i.get("id") or ""),
-            "title": str(i.get("title") or ""),
-            "status": str(i.get("status") or ""),
-            "units": [
-                {
-                    "ref": str(x.get("ref") or ""),
-                    "depends_on": [str(d) for d in x.get("dependsOn") or []],
-                }
-                for x in i.get("units") or []
-            ],
-            "problems": [str(p) for p in i.get("problems") or []],
-        }
-        for i in data.get("ideas") or []
     ]
 
 
@@ -182,6 +171,8 @@ async def read(
         raise Unavailable(f"the loop did not return JSON: {e}") from e
 
     stages = data.get("stages") or []
+    # The loop sends the stages of a process other than the default one under its ref.
+    others = data.get("processes") or {}
     # The stages whose answered draft runs again, as the loop lists them; the app keeps no copy.
     after_answers = [str(s) for s in data.get("afterAnswers") or []]
     units = [
@@ -189,7 +180,12 @@ async def read(
             "name": u.get("name", ""),
             "number": u.get("number"),
             "slug": u.get("slug"),
-            "stages": _stage_rows(stages, u.get("artifacts") or {}),
+            # The process the unit walks, `<pack>/<name>`, as its row records it.
+            "process": str(u.get("process") or ""),
+            # The rows of the unit's own process.
+            "stages": _stage_rows(
+                others.get(str(u.get("process") or "")) or stages, u.get("artifacts") or {}
+            ),
             # Carried through rather than recomputed.
             "next": (u.get("next") or {}).get("action", ""),
             # The same answer as a stage name, read off the files alone, for the card's mode badge.
@@ -209,7 +205,7 @@ async def read(
             "answers": _answers_of(u),
             "open": int(u.get("open") or 0),
             "counted": u.get("counted") or "",
-            # The pull request `pr.md` names and the rounds `review.md` holds, verbatim, so the round a comment carries is the one the gate counted.
+            # The pull request the app recorded and the review rounds, verbatim, so the round a comment carries is the one the gate counted.
             "pr": _pr_of(u),
             "rounds": _rounds_of(u),
             # The findings the last review round confirmed need a person, each `{id, reason, answered}`.
@@ -218,21 +214,21 @@ async def read(
             "between_pr_and_ship": bool(u.get("betweenPrAndShip")),
             # The ids `next` says a person is awaited on.
             "waiting": [str(x) for x in ((u.get("next") or {}).get("waiting") or [])],
-            # The outcome deadline and the last valid `### Outcome` block, as the loop's `unitOutcome` read them.
-            "outcome": _outcome_of(u),
             # The hold a person set (`{state, reason, by, date}`, or None) and the moves allowed from it.
             "hold": u.get("hold") or None,
             "hold_moves": [str(x) for x in u.get("holdMoves") or []],
             # Whether the unit used its review rounds with findings still open, and how many rounds a person granted it.
             "more_rounds": bool(u.get("moreRounds")),
             "rounds_granted": int(
-                ((u.get("artifacts") or {}).get("review.md") or {}).get("roundsGranted") or 0
+                ((u.get("artifacts") or {}).get(states.first_file(kind="review")) or {}).get(
+                    "roundsGranted"
+                )
+                or 0
             ),
             # On each row too, so whoever holds one row from this read sees the same list.
             "after_answers": list(after_answers),
-            # The idea the unit was opened from, its `Repo:`, and each dependency as the loop resolved it.
+            # The idea the unit was opened from, and each dependency as the loop resolved it.
             "idea": str(u.get("idea") or ""),
-            "repo": str(u.get("repo") or ""),
             "depends_on": _depends_on_of(u),
         }
         for u in data.get("units") or []
@@ -243,7 +239,6 @@ async def read(
         "stages": [s["name"] for s in stages],
         "after_answers": after_answers,
         "units": units,
-        "ideas": _ideas_of(data),
         "count": len(units),
         # A healthy workspace can hold no units; that is not a failed read.
         "empty_because": None if units else _why_empty(path),
@@ -308,6 +303,7 @@ async def gate(
             said or f"the gate exited {code} and said nothing",
             _codes(data),
             _rebased(data),
+            _lane(data),
         )
     said = (out_text + err_text).strip()
     return Gate(False, said or f"the gate exited {code} and said nothing")
@@ -404,37 +400,6 @@ async def screens(
         raise Unavailable(f"the loop did not return JSON: {e}") from e
 
 
-async def pr_text(
-    units_root: str | Path, unit: str, timeout: float = TIMEOUT, state: dict[str, Any] | None = None
-) -> dict[str, Any]:
-    """Ask the loop's `pr-text` for the title and body `unit`'s `pr.md` puts on its pull request.
-
-    Returns `{unit, title, body, url, scope, status}` on exit 0, and
-    `{"error": <what the loop said>, "code": n}` otherwise (exit 1 is an answer, not a failure).
-    Raises `Unavailable` as `read` does.
-    """
-    path = Path(units_root)
-    try:
-        source, stdin = _source(state)
-        code, out_text, err_text = await _ask(
-            ["--root", str(path), *source, "pr-text", unit], timeout, stdin
-        )
-    except TimeoutError:
-        raise Unavailable(f"reading pr.md timed out after {timeout:.0f}s") from None
-    except (OSError, ValueError) as e:
-        raise Unavailable(f"could not run coscc.loop: {e}") from e
-
-    if code != 0:
-        return {
-            "error": (err_text or out_text).strip() or f"the loop exited {code}",
-            "code": code,
-        }
-    try:
-        return json.loads(out_text)
-    except (json.JSONDecodeError, ValueError) as e:
-        raise Unavailable(f"the loop did not return JSON: {e}") from e
-
-
 async def rerun(
     units_root: str | Path,
     unit: str,
@@ -443,9 +408,9 @@ async def rerun(
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask the loop's `rerun` which accepted stages of `unit` may run again, or, with `stage`,
-    for the `### Rerun` block to append before running it.
+    which records running it makes stale.
 
-    Returns `{unit, offers, why}` without `stage`, `{unit, stage, later, block}` with one, and
+    Returns `{unit, offers, why}` without `stage`, `{unit, stage, later, stale}` with one, and
     `{"error": <what the loop said>, "code": n}` when it exits non-zero (exit 1 is "not
     offered", an answer). Takes no `--repo`. Raises `Unavailable` as `read` does.
     """
@@ -478,19 +443,27 @@ def _answer_of(unit: dict[str, Any], artifact: str, n: Any) -> dict[str, Any] | 
 
 
 def _questions_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """`questions` as the loop sent them, each with `by` added: who gave the answer in force, `""` when none."""
+    """`questions` as the loop sent them, each with the answer in force's `by` and `name`, `""`
+    when none."""
     out = []
     for q in unit.get("questions") or []:
         if not isinstance(q, dict):
             continue
-        answer = _answer_of(unit, str(q.get("artifact") or ""), q.get("n"))
-        out.append({**q, "by": str((answer or {}).get("by") or "")})
+        answer = _answer_of(unit, str(q.get("artifact") or ""), q.get("n")) or {}
+        out.append(
+            {
+                **q,
+                "recommendation": str(q.get("recommendation") or ""),
+                "by": str(answer.get("by") or ""),
+                "name": str(answer.get("name") or ""),
+            }
+        )
     return out
 
 
 def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """`[{artifact, n, question, by, date, via, text, authority}]`, one per question with an
-    answer in force, in the order of `artifacts`. `authority` is the app's; `""` where it gave none."""
+    """`[{artifact, n, question, by, name, date, via, text}]`, one per question with an answer in
+    force, in the order of `artifacts`. `by` is `person` or `delegated`, as the answer was sent."""
     out = []
     for artifact, a in (unit.get("artifacts") or {}).items():
         for q in (a or {}).get("questions") or []:
@@ -503,10 +476,10 @@ def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
                     "n": q.get("n"),
                     "question": str(q.get("text") or ""),
                     "by": str(answer.get("by") or ""),
+                    "name": str(answer.get("name") or ""),
                     "date": str(answer.get("date") or ""),
                     "via": str(answer.get("via") or ""),
                     "text": str(answer.get("text") or ""),
-                    "authority": str(answer.get("authority") or ""),
                 }
             )
     return out
@@ -528,46 +501,23 @@ def _person_findings_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-_OUTCOME_FIELDS = (
-    ("deadline", "deadline"),
-    ("result", "result"),
-    ("by", "by"),
-    ("date", "date"),
-    ("measured_by", "measuredBy"),
-    ("source", "source"),
-    ("reason", "reason"),
-    ("note", "note"),
-)
-
-
-def _outcome_of(unit: dict[str, Any]) -> dict[str, Any] | None:
-    """The loop's `unitOutcome`, keys in this file's snake_case, or None when it sent none."""
-    o = unit.get("outcome")
-    if not isinstance(o, dict):
-        return None
-    out: dict[str, Any] = {
-        mine: (str(o[theirs]) if o.get(theirs) is not None else None)
-        for mine, theirs in _OUTCOME_FIELDS
-    }
-    out["invalid"] = int(o.get("invalid") or 0)
-    return out
-
-
 def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
-    """`{url, number}` from `pr.md`'s `PR:` line as the loop's `parsePr` read it, or None."""
-    pr = ((unit.get("artifacts") or {}).get("pr.md") or {}).get("pr")
+    """`{url, number}` of the pull request the app recorded, as the loop read it, or None."""
+    pr = ((unit.get("artifacts") or {}).get(states.first_file(action="open-pr")) or {}).get("pr")
     if not isinstance(pr, dict) or not pr.get("url"):
         return None
     return {"url": str(pr["url"]), "number": pr.get("number")}
 
 
 def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each round of `review.md`: its number, verdict and text, as the loop split them.
+    """Each review round: its number, verdict and text, as the loop built them from the rows.
 
-    `findings` and `findings_open` are counted off `parseReview`'s own list; `dropped` and
-    `unfinished` are carried as it set them.
+    `findings` and `findings_open` are counted off the round's own list; `dropped` and
+    `unfinished` are carried as the loop set them.
     """
-    review = ((unit.get("artifacts") or {}).get("review.md") or {}).get("review") or {}
+    review = ((unit.get("artifacts") or {}).get(states.first_file(kind="review")) or {}).get(
+        "review"
+    ) or {}
     out = []
     for r in review.get("rounds") or []:
         if not isinstance(r, dict):
@@ -599,13 +549,6 @@ def _why_empty(path: Path) -> str:
 
 
 # -- the state a card shows ------------------------------------------------------------
-
-
-# The one sentence beside each action whose effect leaves this machine. The full warnings stay in
-# `policy.py` and `.claude/rules/coscc-app.md`.
-CONSEQUENCE = {
-    "integrate": "Rebases this pull request with this machine's gh login; a conflict opens a paid session.",
-}
 
 
 def attention_reason(unit: dict[str, Any]) -> str:
@@ -674,6 +617,13 @@ def _state(state: str, label: str = "") -> dict[str, str]:
     return {"state": state, "label": label or STATE_LABEL[state], "color": STATE_COLOR[state]}
 
 
+def paused_label(p: Mapping[str, Any]) -> str:
+    """What a card says of a run held at a ceiling: which ceiling, and how much of it was spent."""
+    if p.get("ceiling") == "turns":
+        return f"Paused at {p.get('turns')} of {p.get('max_turns')} turns"
+    return f"Paused at ${float(p.get('usd') or 0):.2f} of ${float(p.get('max_usd') or 0):.2f}"
+
+
 def unit_state(
     unit: dict[str, Any], last_end: dict[str, Any] | None, ci: dict[str, Any] | None
 ) -> dict[str, str]:
@@ -697,6 +647,8 @@ def unit_state(
         return _state("dropped")
     if hold == "paused":
         return _state("paused")
+    if unit.get("paused"):
+        return _state("needs-you", paused_label(unit["paused"]))
     if int(unit.get("open") or 0) > 0 or why in ("needs-person", "awaits-person"):
         return _state("needs-you")
     # The buckets `integrate.classify` reads as red. A held answer that is `gh`'s error has no
@@ -708,7 +660,7 @@ def unit_state(
     ]
     failed = (
         last_end is not None
-        and last_end.get("outcome") in ("failed", "exhausted")
+        and last_end.get("outcome") == "failed"
         and last_end.get("stage") == unit.get("at")
     )
     # `ship-merging` with no `ship` running is a merge nothing will record; `shown_state` lays
@@ -726,7 +678,11 @@ def unit_state(
         return _state("awaiting", "Awaiting a dependency")
     # A `review` or `ship` made stale by a rerun waits on CI as a missing one does; a stale
     # `pr.md` in the window is a stage to run, not a wait.
-    due = why == "missing" or (why == "stale" and unit.get("at") in ("review", "ship"))
+    due = why == "missing" or (
+        why == "stale"
+        and unit.get("at")
+        in states.states_where(kind="review") + states.states_where(action="merge")
+    )
     if unit.get("between_pr_and_ship") and due:
         return _state("awaiting")
     return _state("ready")

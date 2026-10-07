@@ -1,5 +1,7 @@
 // How numbers, times and names read on screen: no raw ids, no model strings.
 
+import type { Paused } from "../api.gen";
+
 export function money(x: number | null | undefined, digits = 2): string {
   if (x == null) return "—";
   return "$" + x.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -22,32 +24,6 @@ export function modelName(model: string | null | undefined): string {
   return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}` : model;
 }
 
-export const STAGE_LABEL: Record<string, string> = {
-  idea: "Idea",
-  intent: "Intent",
-  spec: "Spec",
-  spike: "Spike",
-  plan: "Plan",
-  impl: "Build",
-  pr: "Pull request",
-  review: "Review",
-  ship: "Ship",
-  integrate: "Integrate",
-};
-
-/** People see four phases, not nine stages. */
-export const PHASE: Record<string, "Shape" | "Build" | "Check" | "Ship"> = {
-  idea: "Shape",
-  intent: "Shape",
-  spec: "Shape",
-  spike: "Shape",
-  plan: "Shape",
-  impl: "Build",
-  pr: "Check",
-  review: "Check",
-  ship: "Ship",
-};
-
 /** A unit's short code: `COS-162`, from the workspace name and the unit number. */
 export function unitCode(workspace: string, number: number | string): string {
   const prefix = workspace.replace(/[^a-z]/gi, "").slice(0, 3).toUpperCase() || "U";
@@ -58,4 +34,16 @@ export function unitCode(workspace: string, number: number | string): string {
 export function unitTitle(slug: string): string {
   const words = slug.replace(/^\d+_/, "").replace(/-/g, " ");
   return words ? words[0].toUpperCase() + words.slice(1) : slug;
+}
+
+/** What a card says of a run held at a ceiling: `Paused at $1.00 of $2.00`, or `Paused at 40 of 40 turns`. */
+export function pausedAt(p: Paused): string {
+  return p.ceiling === "turns" ? `Paused at ${p.turns ?? "?"} of ${p.max_turns ?? "?"} turns` : `Paused at ${money(p.usd)} of ${money(p.max_usd)}`;
+}
+
+const WHO: Record<string, string> = { manual: "you", person: "you", leif: "Leif", schedule: "the schedule", event: "an event", autopilot: "the autopilot" };
+
+/** Who started a run, in plain words ("you", "Leif", "the schedule"); `""` when unknown. */
+export function startedBy(by: string | null | undefined): string {
+  return by ? (WHO[by] ?? by) : "";
 }

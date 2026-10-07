@@ -14,7 +14,6 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from coscc.store.journal import BELL, BadRecord, Journal, last_runs, totals_of
 from coscc.store.db import Busy
@@ -242,7 +241,7 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             j = Journal(d, d)
             for _ in range(3):
                 j.started("w", "0009_x", "impl", "autonomous")
-                j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
+                j.finished("w", "0009_x", "impl", "failed", turns=121, cost_usd=6.88)
             j.started("w", "0009_x", "impl", "autonomous")
             j.finished("w", "0009_x", "impl", "done", artifact="impl.md")
             self.assertIsNone(j.failed_attempts("w", "0009_x", "impl"))
@@ -260,11 +259,11 @@ class AFailedStepLeavesARecord(unittest.TestCase):
 
             j.started("w", "0009_x", "impl", "autonomous")
             j.attempted("w", "0009_x", "impl", head="aaa", turns=121, cost_usd=6.88)
-            j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
+            j.finished("w", "0009_x", "impl", "failed", turns=121, cost_usd=6.88)
 
             j.started("w", "0009_x", "impl", "autonomous")
             j.attempted("w", "0009_x", "impl", head="bbb", turns=60, cost_usd=4.91)
-            j.finished("w", "0009_x", "impl", "exhausted", turns=60, cost_usd=4.91)
+            j.finished("w", "0009_x", "impl", "failed", turns=60, cost_usd=4.91)
 
             found = j.failed_attempts("w", "0009_x", "impl")
             self.assertIsNotNone(found)
@@ -288,114 +287,18 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             j = Journal(d, d)
             j.started("w", "0009_x", "impl", "autonomous")
             j.attempted("w", "0009_x", "impl", head="old")
-            j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
+            j.finished("w", "0009_x", "impl", "failed", turns=121, cost_usd=6.88)
             j.started("w", "0009_x", "impl", "autonomous")
             j.finished("w", "0009_x", "impl", "failed")  # no attempt row: capture failed
             found = j.failed_attempts("w", "0009_x", "impl")
             self.assertIsNone(found["attempt"])
             self.assertEqual(len(found["earlier"]), 1)
 
-    def _review_that_wrote_nothing(
-        self, j, review_md="none", run="r1", events=None, purge=False, **end
-    ):
-        """An exhausted review's `end`, and the `tool_use` events of its run."""
-        if events is not None:
-            j.data.step_run_open(run, "/w", "w", "0009_x", "review", 1000)
-            j.data.step_events_add(
-                run,
-                [
-                    {"run": run, "seq": n, "at": 1000 + n, "kind": kind, "input": given}
-                    for n, (kind, given) in enumerate(events, 1)
-                ],
-            )
-            if purge:
-                j.data.step_events_purge(10**12, 10**9, "2026-10-01T00:00:00+00:00")
-        j.started("w", "0009_x", "review", "manual", run=run)
-        j.finished(
-            "w",
-            "0009_x",
-            "review",
-            "exhausted",
-            turns=41,
-            cost_usd=4.1,
-            run=run,
-            review_md=review_md,
-            **end,
-        )
-
-    def test_an_exhausted_review_that_wrote_nothing_names_what_it_opened(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            self._review_that_wrote_nothing(
-                j,
-                events=[
-                    ("tool_use", {"file_path": "/w/a.py"}),
-                    ("tool_result", {"file_path": "/w/nope.py"}),
-                    ("tool_use", {"pattern": "def x", "path": "/w/coscc"}),
-                    ("tool_use", {"pattern": "**/*.md"}),
-                    ("tool_use", {"file_path": "/w/a.py"}),
-                    # `events._cut` keeps a long input as the start of its JSON: read if it parses,
-                    # passed over if it does not.
-                    ("tool_use", '{"file_path": "/w/b.py"}'),
-                    ("tool_use", '{"file_path": "/w/cut'),
-                ],
-            )
-            found = j.failed_attempts("w", "0009_x", "review")
-            self.assertEqual(
-                found["opened"],
-                {"paths": ["/w/a.py", "/w/coscc", "**/*.md", "/w/b.py"], "closing": False},
-            )
-
-    def test_it_says_whether_a_closing_turn_ran(self):
-        # With no session id or no head the `end` carries no `closing`.
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            self._review_that_wrote_nothing(j, events=[], closing={"cost_unknown": True})
-            self.assertEqual(
-                j.failed_attempts("w", "0009_x", "review")["opened"], {"paths": [], "closing": True}
-            )
-
-    def test_purged_events_say_so(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            self._review_that_wrote_nothing(
-                j, events=[("tool_use", {"file_path": "/w/a.py"})], purge=True
-            )
-            self.assertEqual(
-                j.failed_attempts("w", "0009_x", "review")["opened"],
-                {"purged": True, "closing": False},
-            )
-            k = Journal(Path(d) / "k", Path(d) / "k")
-            self._review_that_wrote_nothing(k, run="never-recorded")
-            self.assertEqual(
-                k.failed_attempts("w", "0009_x", "review")["opened"],
-                {"purged": True, "closing": False},
-            )
-
-    def test_a_log_that_cannot_be_read_is_a_reason_not_a_refusal(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            self._review_that_wrote_nothing(j, events=[("tool_use", {"file_path": "/w/a.py"})])
-            with mock.patch.object(j.data, "step_tool_uses", side_effect=Busy("locked")):
-                found = j.failed_attempts("w", "0009_x", "review")
-            self.assertIn("Busy", found["opened"]["error"])
-
-    def test_a_review_whose_closing_turn_wrote_a_round_names_nothing(self):
-        with tempfile.TemporaryDirectory() as d:
-            j = Journal(d, d)
-            self._review_that_wrote_nothing(
-                j, review_md="incomplete", events=[("tool_use", {"file_path": "/w/a.py"})]
-            )
-            self.assertNotIn("opened", j.failed_attempts("w", "0009_x", "review"))
-            j.started("w", "0009_x", "plan", "manual")
-            j.finished("w", "0009_x", "plan", "exhausted", run="r1", review_md="none")
-            self.assertNotIn("opened", j.failed_attempts("w", "0009_x", "plan"))
-
     def test_timeline_with_no_attempt_row_still_has_no_kind_attempt(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
             j.started("w", "0009_x", "impl", "autonomous")
-            j.finished("w", "0009_x", "impl", "exhausted", turns=5, cost_usd=0.1)
+            j.finished("w", "0009_x", "impl", "failed", turns=5, cost_usd=0.1)
             self.assertEqual([r["kind"] for r in j.records("w", "0009_x")], ["start", "end"])
 
 
@@ -410,7 +313,7 @@ class LastRunsIsAPureFold(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
             j.started("w", "0009_x", "impl", "autonomous")
-            j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
+            j.finished("w", "0009_x", "impl", "failed", turns=121, cost_usd=6.88)
             j.started("w", "0009_x", "impl", "autonomous")
             j.finished("w", "0009_x", "impl", "done", artifact="impl.md", turns=23, cost_usd=0.66)
             got = last_runs(j.timeline("w", "0009_x"))["impl"]
@@ -619,7 +522,7 @@ class AppendCheckedReadsAndWritesInOneTransaction(unittest.TestCase):
 class TheBellWakesAReaderAndTheReadsNarrow(unittest.TestCase):
     """What the notice stream reads, and what wakes it."""
 
-    SOURCE = ("autopilot-stop", "questions", "end", "ship")
+    SOURCE = ("autopilot-stop", "questions", "end", "merge")
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -661,20 +564,20 @@ class TheBellWakesAReaderAndTheReadsNarrow(unittest.TestCase):
         self.j.append(
             {"kind": "start", "workspace": "w", "unit": "u", "stage": "spec", "mode": "manual"}
         )
-        self.j.append({"kind": "ship", "workspace": "w", "unit": "u", "result": "shipped"})
+        self.j.append({"kind": "merge", "workspace": "w", "unit": "u", "result": "shipped"})
         self.j.append({"kind": "questions", "workspace": "w", "unit": "u"})
         rows = self.j.notice_rows(0, self.SOURCE)
-        self.assertEqual([r["kind"] for _, r in rows], ["end", "ship", "questions"])
+        self.assertEqual([r["kind"] for _, r in rows], ["end", "merge", "questions"])
         ids = [i for i, _ in rows]
         self.assertEqual(ids, sorted(ids))
         self.assertEqual(
-            [r["kind"] for _, r in self.j.notice_rows(ids[0], self.SOURCE)], ["ship", "questions"]
+            [r["kind"] for _, r in self.j.notice_rows(ids[0], self.SOURCE)], ["merge", "questions"]
         )
         self.assertEqual(len(self.j.notice_rows(0, self.SOURCE, limit=1)), 1)
 
     def test_notice_rows_narrow_to_one_workspace(self):
-        self.j.append({"kind": "ship", "workspace": "w", "unit": "u", "result": "shipped"})
-        self.j.append({"kind": "ship", "workspace": "other", "unit": "u", "result": "shipped"})
+        self.j.append({"kind": "merge", "workspace": "w", "unit": "u", "result": "shipped"})
+        self.j.append({"kind": "merge", "workspace": "other", "unit": "u", "result": "shipped"})
         self.assertEqual(
             [r["workspace"] for _, r in self.j.notice_rows(0, self.SOURCE, "w")], ["w"]
         )

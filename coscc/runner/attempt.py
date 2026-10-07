@@ -1,5 +1,5 @@
-"""What a step may do and what it left: the permission gate, the snapshot of a failed attempt,
-and writing the artifact.
+"""What a step left: the branch it may push, the snapshot of a failed attempt, and writing the
+artifact.
 """
 
 from __future__ import annotations
@@ -9,102 +9,30 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import claude_agent_sdk as sdk
 from claude_agent_sdk.types import SystemPromptPreset
 
+from coscc.units import states
 from coscc.git import gitops
 from coscc.agent import sessions as sessions_mod
-from coscc.agent.policy import BACKGROUND_REFUSAL, Grant, decide
 from coscc.runner.reply import (
     ATTEMPT_EXCERPT,
     OpeningError,
     RunError,
-    _unfence,
+    unfence,
     from_title,
     opening_problem,
     opening_reason,
 )
-from coscc.runner.prompt import answers_section, strip_answers, with_answers
 from coscc.runner.review import merge_review
 
 log = logging.getLogger(__name__)
 
 
-class Denials:
-    """Counts what a step was refused, and keeps the first few reasons.
-
-    The count matters: a step told no fifty times worked around it, and the journal is the
-    only place that shows it.
-    """
-
-    KEEP = 5
-
-    def __init__(self) -> None:
-        self.count = 0
-        # Of `count`, the refusals of a run in the background.
-        self.background = 0
-        self.reasons: list[str] = []
-        # Told of every refusal, with what was asked, when a step has a recorder. `KEEP` bounds only
-        # `reasons`.
-        self.listener: Any = None
-
-    def record(self, tool: str, reason: str, tool_input: Any = None) -> None:
-        self.count += 1
-        if BACKGROUND_REFUSAL in reason:
-            self.background += 1
-        if len(self.reasons) < self.KEEP:
-            self.reasons.append(f"{tool}: {reason}")
-        if self.listener is not None:
-            try:
-                self.listener(tool, tool_input, reason)
-            except Exception:
-                # The recorder never reaches the gate.
-                log.exception("a refused tool was not recorded")
-
-
 # # What a board step holding any tool runs on, instead of the empty system prompt the SDK
 # # sends when none is set; without it a step with `Read` and `Grep` searches with `grep`
-# # through Bash. Bare on purpose: it grants nothing (`permission_gate` and the grant's tool
-# # list still decide every call), and tool-less steps and chat never get it. A copy goes out.
+# # through Bash. Bare on purpose: it grants nothing (the gate and the grant's tool list still
+# # hold every call), and tool-less steps and chat never get it. A copy goes out.
 CLAUDE_CODE_PRESET: SystemPromptPreset = {"type": "preset", "preset": "claude_code"}
-
-
-def permission_gate(
-    grant: Grant,
-    workspace: str,
-    denials: Denials,
-    unit_dir: str | None = None,
-    read_also: tuple[str, ...] = (),
-    lease: tuple[str, str] | None = None,
-    scratch: tuple[str, str] | None = None,
-    ram_cap: int = 0,
-):
-    """The callback the SDK asks before every tool call.
-
-    Separate from the tool list on purpose: the list does not cover every source of
-    capability. `read_also`, `lease`, `scratch` and `ram_cap` are passed to `decide` unchanged,
-    and so is the context's `agent_id`, which the CLI sets on a helper's call.
-    """
-
-    async def can_use_tool(tool: str, tool_input: dict, context: Any):
-        reason = decide(
-            grant,
-            tool,
-            tool_input or {},
-            workspace,
-            unit_dir,
-            read_also,
-            lease,
-            getattr(context, "agent_id", None),
-            scratch,
-            ram_cap,
-        )
-        if reason:
-            denials.record(tool, reason, tool_input)
-            return sdk.PermissionResultDeny(message=reason)
-        return sdk.PermissionResultAllow()
-
-    return can_use_tool
 
 
 async def snapshot(cwd: str, session_id: str) -> tuple[dict[str, Any], BaseException | None]:
@@ -252,37 +180,6 @@ def describe_attempt(found: dict[str, Any]) -> str:
                 f"{_fmt_num(e.get('turns'), ' turns')}, cost {_fmt_num(e.get('cost_usd'), ' USD')}"
             )
 
-    # A review that ran out of turns and left no round: what it had opened, read from its events
-    # by `Journal.failed_attempts`. Nothing of it is in `review.md`.
-    opened = found.get("opened")
-    if opened is not None:
-        lines.append("")
-        lines.append(
-            "That review ran out of turns, and "
-            + (
-                "the closing turn the app gave it wrote no round"
-                if opened.get("closing")
-                else "the app could not give it a closing turn"
-            )
-            + ": `review.md` holds nothing from it."
-        )
-        if opened.get("purged"):
-            lines.append(
-                "Which files it opened is not known: its recorded events have been purged."
-            )
-        elif opened.get("error"):
-            lines.append(
-                f"Which files it opened could not be read from its events: {opened['error']}"
-            )
-        elif opened.get("paths"):
-            lines.append(
-                "It opened these files, but no conclusion about any of them was written "
-                "down. Read them again where you need to; do not take them as reviewed:"
-            )
-            lines.extend(f"- {p}" for p in opened["paths"])
-        else:
-            lines.append("Its recorded events name no file it opened.")
-
     return "\n".join(lines)
 
 
@@ -333,29 +230,23 @@ def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | Non
     many pieces the session said it in, for the reason. Synchronous on purpose: see the comment
     where `Runner.run` calls it.
     """
-    # The reply's own `## Answers` never reaches disk; only the section already there does, read
-    # as late as possible (after every `await` of the step, with no yield before the write), so a
-    # block a person appended while the step ran is carried through untouched.
-    body = strip_answers(from_title(_unfence(text), artifact) + "\n")
-    # Asked of what will be written, below the reply's own `## Answers` cut, and before the file
-    # is read: a refusal leaves it byte for byte.
+    body = from_title(unfence(text), artifact) + "\n"
+    # Asked of what will be written, and before the file is read: a refusal leaves it byte for
+    # byte.
     problem = opening_problem(body, artifact)
     if problem:
         # Typed, so `Runner.run` can tell this refusal from the others by its class.
         raise OpeningError(opening_reason(artifact, problem, blocks), problem)
     target = directory / artifact
-    try:
-        raw = target.read_bytes()
-    except FileNotFoundError:
-        raw = b""
-    section = answers_section(raw)
-    above = raw[: len(raw) - len(section)] if section is not None else raw
-    if artifact == "review.md":
-        # `merge_review` never sees the Answers section. A reply that rewrites an earlier round, or
-        # adds none, still raises before anything below is written.
-        body = merge_review(above.decode("utf-8", errors="replace"), body)
+    if artifact in states.files_where(kind="review"):
+        try:
+            existing = target.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            existing = ""
+        # A reply that rewrites an earlier round, or adds none, raises before anything is written.
+        body = merge_review(existing, body)
         # Asked of the merged text so what reaches disk is what was checked.
         problem = opening_problem(body, artifact)
         if problem:
             raise OpeningError(opening_reason(artifact, problem, blocks), problem)
-    target.write_bytes(with_answers(body, section))
+    target.write_bytes(body.encode("utf-8"))

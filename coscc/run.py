@@ -74,12 +74,15 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def served():
-    """What uvicorn serves: the app behind the login guard, which sees every scope."""
+    """What uvicorn serves: the app behind the login guard, which sees every scope. A built-in
+    pack whose rows or processes cannot run stops it here, with every reason (`pack.PackError`)."""
+    from coscc.agent import pack
     from coscc.http.app import build
     from coscc.http.auth import Guard
     from coscc.config import from_env
     from coscc.store.db import Data
 
+    pack.processes()
     config = from_env()
     return Guard(build(config, starting=True), Data(config.data_dir))
 
@@ -160,7 +163,7 @@ def _answer_and_stop(args: list[str]) -> None:
         raise SystemExit(_skip(args[1:]))
     print(
         f"coscc: unrecognised argument {args[0]!r}\n"
-        "usage: coscc [--version | reset-password | state <workspace> | skip <workspace> <unit> spec <reason>]\n"
+        "usage: coscc [--version | reset-password | state <workspace> | skip <workspace> <unit> <state> <reason>]\n"
         "everything else is configuration, and it is read from the environment "
         "(COS_HOST, COS_PORT, COS_WORKING_DIR, ...) -- see docs/install.md",
         file=sys.stderr,
@@ -171,15 +174,13 @@ def _answer_and_stop(args: list[str]) -> None:
 def _state(target: str) -> int:
     """Print the snapshot `coscc.loop --state` reads for workspace `target` (board name or path).
 
-    A store not imported yet is imported first. Workspaces are named as `Workspaces.peer_table`
-    names them: a shared name, or one `valid_name` refuses, gets none.
+    Workspaces are named as `Workspaces.peer_table` names them: a shared name, or one `valid_name` refuses, gets none.
     """
     import json
 
-    from coscc import units
     from coscc.config import from_env
     from coscc.store.db import Data
-    from coscc.units.meta import MetaError, UnitMeta
+    from coscc.units.meta import UnitMeta
 
     config = from_env()
     if not config.working_dir:
@@ -193,14 +194,6 @@ def _state(target: str) -> int:
     if wanted is None:
         return 2
     meta = UnitMeta(config.working_dir, data)
-    try:
-        for key in {wanted, *names.values()}:
-            store = units.root(key, config.data_dir)
-            if (store / units.COS_DIR).is_dir():
-                meta.import_store(key, store)
-    except MetaError as e:
-        print(f"coscc: {e}", file=sys.stderr)
-        return 1
     print(json.dumps(meta.snapshot(wanted, names), ensure_ascii=False))
     return 0
 
@@ -232,29 +225,30 @@ def _workspace(config, data, target: str) -> tuple[dict[str, str], str | None]:
     return names, wanted
 
 
-SKIP_USAGE = "usage: coscc skip <workspace> <unit> spec <reason>"
+SKIP_USAGE = "usage: coscc skip <workspace> <unit> <state that may be skipped> <reason>"
 
 
 def _skip(args: list[str]) -> int:
-    """Record a person's decision to skip a unit's spec.
+    """Record a person's decision to skip one of a unit's states.
 
     Shell-only, so no session can make it. It writes the transition through guard
-    `skip-decision` and no file. Only `spec`: the unit machine has no `skipped` for `plan.md`.
+    `skip-decision` and no file. Only a state its process lets be skipped (`skip`).
     """
+    from coscc.units import states
+
     rest = list(args)
     reason = " ".join(rest[3:]).strip()
-    if len(rest) < 4 or rest[2] != "spec" or not reason:
+    if len(rest) < 4 or rest[2] not in states.skippable() or not reason:
         print(f"coscc: {SKIP_USAGE}", file=sys.stderr)
         return 2
     target, unit = rest[0], rest[1]
 
-    from coscc import units
     from coscc.config import from_env
     from coscc.store.db import Data
     from coscc.store.journal import Journal
     from coscc.units import transitions
     from coscc.units.history import BadTransition
-    from coscc.units.meta import MetaError, UnitMeta
+    from coscc.units.meta import UnitMeta
 
     config = from_env()
     if not config.working_dir:
@@ -268,13 +262,6 @@ def _skip(args: list[str]) -> int:
     if wanted is None:
         return 2
     meta = UnitMeta(config.working_dir, data)
-    try:
-        store = units.root(wanted, config.data_dir)
-        if (store / units.COS_DIR).is_dir():
-            meta.import_store(wanted, store)
-    except MetaError as e:
-        print(f"coscc: {e}", file=sys.stderr)
-        return 1
     with data.connect() as conn:
         known = conn.execute(
             "SELECT 1 FROM unit_meta WHERE root = ? AND workspace = ? AND unit = ?",
@@ -292,7 +279,7 @@ def _skip(args: list[str]) -> int:
             transition="skip",
             workspace=wanted,
             unit=unit,
-            artifact="spec.md",
+            artifact=f"{rest[2]}.md",
             to_state="skipped",
             inputs={"authority": authority, "reason": reason},
             authority=authority,
@@ -308,7 +295,7 @@ def _skip(args: list[str]) -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"coscc: {unit} spec.md skipped by {authority} — {reason}")
+    print(f"coscc: {unit} {rest[2]}.md skipped by {authority} — {reason}")
     return 0
 
 

@@ -78,7 +78,7 @@ export function Sidebar() {
       </nav>
       <div className="side-foot">
         <div className="spend">
-          <div className="spend-top">
+          <div className="spend-top" title="What every project spent today, against the daily cap">
             <span>Today</span>
             <span>
               {cap ? (
@@ -93,7 +93,13 @@ export function Sidebar() {
           <Meter value={cap?.spent ?? 0} max={cap?.limit ?? 1} />
           <div className="ap">
             <span className={`dot ${on.length ? "green" : "amber"}`} />
-            {!boards.length ? "Reading the autopilot…" : on.length ? `Autopilot on in ${on.join(", ")}` : "Autopilot off everywhere"}
+            {!boards.length ? (
+              "Reading the autopilot…"
+            ) : (
+              <Link to="/may-do" title="Autopilot controls">
+                {on.length ? `Autopilot on in ${on.join(", ")}` : "Autopilot off everywhere"}
+              </Link>
+            )}
           </div>
         </div>
         <div className="side-util">
@@ -103,10 +109,10 @@ export function Sidebar() {
           <span className="faint grow" style={{ fontSize: 12 }}>
             Owner
           </span>
-          <Link className="iconbtn" to="/system" title="Design system">
+          <Link className="iconbtn" to="/system" title="Design system" aria-label="Design system">
             <Icon name="palette" size={15} />
           </Link>
-          <button className="iconbtn" onClick={shell.toggleTheme} title="Theme">
+          <button className="iconbtn" onClick={shell.toggleTheme} title="Theme" aria-label={shell.theme === "dark" ? "Switch to the light theme" : "Switch to the dark theme"}>
             <Icon name={shell.theme === "dark" ? "sun" : "moon"} size={15} />
           </button>
         </div>

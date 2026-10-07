@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from coscc.agent import pack
 from coscc.agent.harness import child_env
 from coscc.loop import run
 from coscc.store import db
@@ -20,6 +21,8 @@ from tests.inprocess import in_process
 @pytest.fixture(autouse=True)
 def _own_data_root(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DEFAULT_DIR", str(tmp_path / "cos"))
+    # The owner's layer of the agents' rows lives under the data root an app set; none here.
+    monkeypatch.setattr(pack, "ROOT", None)
 
 
 @pytest.fixture(autouse=True)

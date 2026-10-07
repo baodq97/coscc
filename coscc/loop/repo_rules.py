@@ -17,13 +17,14 @@ from coscc.loop.model import (
     not_a_work_branch,
     out_of_rounds,
     person_answers,
+    pr_of,
     read_unit,
     review_limit,
     review_of,
     rounds_used,
     severity_rule,
-    title_needs,
 )
+from coscc.units import pr_title
 from coscc.loop.probe import (
     DOT,
     NOT_S,
@@ -247,11 +248,9 @@ def review_needs(unit, probe, limit, said=None):
     `unreadable` or `green`."""
     said = {} if said is None else said
     need = []
-    pr = nullish(dig(unit, "artifacts", "pr.md", "pr"))
+    pr = pr_of(unit)
     if not pr:
-        need.append("pr.md names no pull request — the pr stage opens one and writes PR: <url>")
-    # before `probe`, so a title outside the grammar asks no `gh`.
-    need.extend(title_needs(unit))
+        need.append("no pull request is recorded — the pr stage opens one")
     if out_of_rounds(unit, limit):
         need.append(needs_a_person(rounds_used(unit), review_limit(unit, limit)))
     if need or not pr:
@@ -436,8 +435,6 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - `shipNeeds` kep
         )
     if not last["reviewed"]:
         need.append(f"review round {last['n']} names no reviewed commit — Reviewed: <sha>")
-    # as `review`'s, before `probe` and any `gh`.
-    need.extend(title_needs(unit))
     if need:
         return need
 
@@ -445,9 +442,9 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - `shipNeeds` kep
         return [NO_REPO]
     if not unit.get("branch"):
         return ["the unit has no branch — intent.md must declare a Type"]
-    pr = nullish(dig(unit, "artifacts", "pr.md", "pr"))
+    pr = pr_of(unit)
     if not pr:
-        return ["pr.md names no pull request — nothing says what ship would merge"]
+        return ["no pull request is recorded — nothing says what ship would merge"]
     # the pull request is read before the branch is looked for — after
     # `--delete-branch` there may be no ref left, and a merged one needs none. Any state but
     # these two closes the gate as it always did.
@@ -550,15 +547,15 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - `shipNeeds` kep
     if screens:
         return screens
     # , last: when this closes the gate it is the only reason, so `nextStep` may offer
-    # `ship`, which the app starts by putting `pr.md` up. `said["title"]` says so.
-    mine = trim(unit["artifacts"]["pr.md"]["title"])
+    # `ship`, which the app starts by putting the unit's title up. `said["title"]` says so.
+    mine = pr_title(unit["name"], unit.get("type"))
     if view["title"] is not None and trim(view["title"]) == mine:
         return []
     said["title"] = "differs"
     theirs = "no title gh could read" if view["title"] is None else f'the title "{view["title"]}"'
     return [
-        f'#{pr["number"]} carries {theirs}, not pr.md\'s "{mine}" — start ship from the board, '
-        "which puts pr.md onto it first"
+        f'#{pr["number"]} carries {theirs}, not the unit\'s "{mine}" — start ship from the board, '
+        "which puts it onto the pull request first"
     ]
 
 

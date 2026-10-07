@@ -11,7 +11,8 @@ import os
 import sys
 from dataclasses import dataclass, field
 
-from coscc.loop import LOCAL_ONLY, NEEDS_STATE, STATE_READERS, checkout
+from coscc.agent import pack
+from coscc.loop import LOCAL_ONLY, NEEDS_STATE, STATE_READERS, checkout, given
 
 
 @dataclass
@@ -35,10 +36,8 @@ COMMANDS = {
     "new-path": "paths",
     "new-idea": "paths",
     "unit-branch": "branch",
-    "pr-text": "branch",
     "rerun": "rerun",
     "screens": "repo_rules",
-    "meta": "paths",
     "check-branch": "branch",
     "check-tag": "branch",
     "check-version": "branch",
@@ -49,9 +48,8 @@ USAGE = [
     "  reading a .cos/ (these take --root):",
     "    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | "
     "new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | "
-    "pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | "
-    "meta [<unit> [<artifact>]...]",
-    "    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, "
+    "rerun <unit> [<stage>] | screens <unit> [--repo <dir>]",
+    "    status, gate, next, rerun, unit-branch and screens need --state <file|->, "
     "the app's snapshot",
     "  describing this checkout (these do not):",
     "    check-branch [name] | check-tag <tag> | check-version",
@@ -169,6 +167,8 @@ def parse(argv: list[str], err) -> Args | int:
         if state is None:
             err(f"{cmd} {NEEDS_STATE}")
             return 2
+    if state is not None:
+        given(state)
     return Args(cmd or "", rest, cos_dir, repo_dir, limit, state, reserve_from)
 
 
@@ -180,7 +180,9 @@ def main(argv: list[str] | None = None) -> int:
     if isinstance(args, int):
         return args
     module = importlib.import_module(f"coscc.loop.{COMMANDS[args.cmd]}")
-    return module.run(args, out, err)
+    # One question, one look at the packs.
+    with pack.held():
+        return module.run(args, out, err)
 
 
 if __name__ == "__main__":

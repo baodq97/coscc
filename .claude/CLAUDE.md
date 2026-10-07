@@ -1,6 +1,6 @@
 # coscc
 
-A local SDLC harness. `coscc.loop` decides every gate; each stage's rules live in its skill.
+A local SDLC harness. `coscc.loop` decides every gate; agents and processes are data.
 
 ## Commands
 
@@ -10,10 +10,10 @@ uv run ruff format && uv run ruff check --fix  # before commit
 uv run python -m coscc.loop <command>:
   status [--json] · gate <unit> <stage> [--json]   # 0 open, 1 blocked with reasons, 2 misuse
   next <unit> · new-path <slug> · new-idea <slug> · unit-branch <unit>
-  pr-text <unit> · rerun <unit> [<stage>] · check-branch [name] · check-tag <tag> · check-version
+  rerun <unit> [<stage>] · check-branch [name] · check-tag <tag> · check-version
 ```
 
-The deciding commands (`status`, `gate`, `next`, `rerun`, `unit-branch`, `pr-text`) need the
+The deciding commands (`status`, `gate`, `next`, `rerun`, `unit-branch`) need the
 app's snapshot: `uv run coscc state <workspace> | ... --state -`. Most take `--root <dir>`;
 `gate` and `next` take `--repo <dir>`. Branch on `reasons` codes (`coscc/units/guards.py`), never
 on their words.
@@ -38,16 +38,19 @@ every test. Never skip a test or switch a check off: fix the code.
 ## Architecture
 
 A unit is `.cos/NNNN_<slug>/` holding its artifacts; its state is in the app's `cos.db`.
-`coscc.loop` is the one definition of the loop. The app runs every stage.
-`Status: accepted` is the agent's judgement, not a person's approval.
+It walks one process (a pack's `process.json`): each state runs an agent row or an engine
+action. `coscc.loop` decides every way on; the app runs every agent, a grant per run. Agents
+are rows (`coscc/packs/coscc-sdlc/agents/`); the core names no state. A `judgement` (in
+`submit`) is the agent's, not a person's.
 
 ## Things agents get wrong
 
 - Re-asking a gate the prompt answered; at a terminal, ask `uv run python -m coscc.loop gate` and stop on non-zero.
-- No code while `plan.md` is `draft` (accept it in its own commit), or in the `fast` lane while
-  `gate <unit> impl` is closed; there the first commit is the failing test.
-- `plan.md: done` is terminal: set it only after the proof command passed.
-- A skip is a person's: `uv run coscc skip <workspace> <unit> spec <reason>`.
+- No code while `gate <unit> impl` is closed; on the fast-lane branch the first commit is the
+  failing test.
+- Coding an agent's or a state's behaviour in Python: edit its row or process.
+- A skip is a person's: `uv run coscc skip <workspace> <unit> <state> <reason>`, for any state the
+  process marks `skip`.
 - Committing on `main`: cut the branch from `unit-branch` first.
 
 ## Docs (read when it applies)

@@ -199,6 +199,12 @@ TRUNK = "main"
 # # name reaching `git` as an option (`-` or `--` at the front).
 _BRANCH_RE = re.compile(r"^[a-z]+/[a-z0-9]+(?:-[a-z0-9]+)*$")
 
+
+def unit_branch(name: str) -> bool:
+    """Whether `name` is a branch this app cuts for a unit: never the trunk."""
+    return name != TRUNK and bool(_BRANCH_RE.fullmatch(name or ""))
+
+
 # # A remote or trunk name handed to `fetch`. No leading `-`, `/` or `:`, so neither can become
 # # an option or reshape the refspec.
 _REF_PART_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")

@@ -2,7 +2,6 @@
 paths:
   - "coscc/github/prsync.py"
   - "coscc/github/prcomment.py"
-  - "coscc/github/prscope.py"
   - "coscc/git/gh.py"
 ---
 

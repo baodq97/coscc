@@ -2,168 +2,117 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
 import unittest
-from pathlib import Path
 
-from coscc.agent import models
-from coscc.github import prmachine
+from coscc.agent import models, pack, policy
+from tests.agent.edit import set_part
 
-REPO = Path(__file__).resolve().parents[2]
-STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "review"]
-# `agents.json`'s keys: the stages that run a session, then Gebo.
-AGENTS = STAGES + ["integrate"]
-
-
-def row(model=None, effort=None):
-    return {"model": model, "effort": effort}
-
-
-def table(keys=AGENTS, model=None, effort=None, defaults=None, env=None, turns=None, budget=None):
-    over = {
-        "model": model or {},
-        "effort": effort or {},
-        "turns": turns or {},
-        "budget": budget or {},
-    }
-    return models.agent_config(keys, over, defaults or {}, env)
+OPUS = "claude-opus-5-5[1m]"
+SONNET = "claude-sonnet-5-5[1m]"
 
 
 class TheOrderIsOverrideThenDefaultThenCosModel(unittest.TestCase):
-    def test_override_wins(self):
+    def test_the_rows_own_model_says_default(self):
         self.assertEqual(
-            models.resolve("impl", None, {"impl": "o"}, {}, {"impl": row("d")}, "e")[:2],
-            ("o", "override"),
+            models.resolve("impl", None, "e"), (SONNET, "default", "medium", "default")
         )
 
-    def test_default_wins_over_cos_model(self):
-        self.assertEqual(
-            models.resolve("impl", None, {}, {}, {"impl": row("d")}, "e")[:2], ("d", "default")
-        )
+    def test_an_owner_model_says_override_and_wins_over_cos_model(self):
+        pack.write("impl", "model", {"id": "o", "effort": "medium"})
+        found = models.resolve("impl", None, "e")
+        self.assertEqual(found[:2], ("o", "override"))
+        # The effort the owner left alone is still the built-in's.
+        self.assertEqual(found[2:], ("medium", "default"))
 
-    def test_cos_model_only_where_neither_answers(self):
-        defaults, _ = models.load_defaults()
-        t = table(defaults=defaults, env="x")
-        by = {r["key"]: (r["model"], r["model_source"]) for r in t["rows"]}
-        self.assertEqual(by["chat"], ("x", "COS_MODEL"))
-        for stage in STAGES:
-            self.assertEqual(by[stage][1], "default", stage)
+    def test_cos_model_only_where_the_row_has_none(self):
+        self.assertEqual(models.resolve("leif", None, "x"), ("x", "COS_MODEL", None, "none"))
 
     def test_nothing_at_all_is_none(self):
+        self.assertEqual(models.resolve("leif", None, None), (None, "none", None, "none"))
+
+    def test_a_row_the_pack_lacks_takes_its_own(self):
         self.assertEqual(
-            models.resolve("chat", None, {}, {}, {}, None), (None, "none", None, "none")
+            models.resolve("nobody", None, "e", own={"id": "m", "effort": "low"}),
+            ("m", "default", "low", "default"),
         )
 
 
-class TheFiveStepsOfTheModelChoice(unittest.TestCase):
-    """Novel override, novel default, base override, base default, then `COS_MODEL` for the model
-    and nothing for the effort. Each component on its own."""
-
-    DEFAULTS = {"impl": row("base-d", "medium"), "impl:novel": row("novel-d", "high")}
-
-    def test_each_step_in_turn(self):
-        d = self.DEFAULTS
-        full_m = {"impl:novel": "novel-o", "impl": "base-o"}
-        full_e = {"impl:novel": "max", "impl": "low"}
-        r = models.resolve
+class TheNovelVariant(unittest.TestCase):
+    def test_novel_reads_the_variant_and_routine_the_base(self):
         self.assertEqual(
-            r("impl", "novel", full_m, full_e, d, "env"), ("novel-o", "override", "max", "override")
+            models.resolve("impl", "novel", None), (OPUS, "default", "high", "default")
         )
-        self.assertEqual(
-            r("impl", "novel", {"impl": "base-o"}, {"impl": "low"}, d, "env"),
-            ("novel-d", "default", "high", "default"),
-        )
-        self.assertEqual(
-            r("impl", "novel", {"impl": "base-o"}, {"impl": "low"}, {"impl": d["impl"]}, "env"),
-            ("base-o", "override", "low", "override"),
-        )
-        self.assertEqual(
-            r("impl", "novel", {}, {}, {"impl": d["impl"]}, "env"),
-            ("base-d", "default", "medium", "default"),
-        )
-        self.assertEqual(r("impl", "novel", {}, {}, {}, "env"), ("env", "COS_MODEL", None, "none"))
-
-    def test_the_variant_is_read_only_for_novel(self):
         for label in (None, "routine"):
-            self.assertEqual(
-                models.resolve("impl", label, {"impl:novel": "x"}, {}, self.DEFAULTS, None)[:3],
-                ("base-d", "default", "medium"),
-                label,
-            )
+            self.assertEqual(models.resolve("impl", label, None)[:3], (SONNET, "default", "medium"))
+
+    def test_a_novel_override_is_the_variants_only(self):
+        set_part("impl", "variants.novel.model.id", "n")
+        self.assertEqual(models.resolve("impl", "novel", None)[:2], ("n", "override"))
+        self.assertEqual(models.resolve("impl", None, None)[:2], (SONNET, "default"))
+
+    def test_an_owner_model_wins_over_a_variant_they_left_alone(self):
+        # Live in M5: a unit with no plan runs `novel`, and review ran Opus high though the owner
+        # had saved Sonnet low.
+        pack.write("review", "model", {"id": SONNET, "effort": "low"})
+        self.assertEqual(
+            models.resolve("review", "novel", None), (SONNET, "override", "low", "override")
+        )
+        self.assertEqual(models.label_of("review", "coscc-sdlc/short", None)[1], policy.NOVEL)
+
+    def test_owner_ceilings_win_over_a_variant_they_left_alone(self):
+        pack.write("impl", "ceilings", {"turns": 50, "usd": 3.0})
+        found = models.ceilings("impl", policy.NOVEL)
+        self.assertEqual((found["max_turns"], found["max_turns_source"]), (50, "override"))
+        self.assertEqual(found["max_budget_usd"], 3.0)
+
+    def test_a_variant_the_owner_set_still_wins_on_a_novel_step(self):
+        set_part("impl", "model.id", "b")
+        set_part("impl", "variants.novel.model.id", "n")
+        self.assertEqual(models.resolve("impl", None, None)[:2], ("b", "override"))
+        self.assertEqual(models.resolve("impl", "novel", None)[:2], ("n", "override"))
 
 
 class TheTrialTier(unittest.TestCase):
-    """Override, `COS_MODEL`, then the trial, then `models.json`; the effort as it was."""
-
-    DEFAULTS = {"impl": row("base-d", "medium"), "impl:novel": row("novel-d", "high")}
-
-    def test_without_a_trial_model_resolve_is_what_it_was(self):
-        for label in (None, "routine", "novel"):
-            for overrides in ({}, {"impl": "m"}, {"impl:novel": "n"}):
-                for defaults in ({}, self.DEFAULTS):
-                    with self.subTest(label=label, overrides=overrides, defaults=defaults):
-                        args = ("impl", label, overrides, {"impl": "low"}, defaults, "env")
-                        self.assertEqual(
-                            models.resolve(*args), models.resolve(*args, trial_model=None)
-                        )
+    """The owner's model, `COS_MODEL`, then the trial, then the row's own; the effort as it was."""
 
     def test_the_trial_model_sits_between_cos_model_and_default(self):
-        plain = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, None)
-        tried = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, None, trial_model="t")
+        plain = models.resolve("impl", "routine", None)
+        tried = models.resolve("impl", "routine", None, trial_model="t")
         self.assertEqual(tried[:2], ("t", "trial"))
         # Both arms run the default's effort, so the model is the only variable.
         self.assertEqual(tried[2:], plain[2:])
-        overridden = models.resolve(
-            "impl", "routine", {"impl": "o"}, {}, self.DEFAULTS, None, trial_model="t"
-        )
-        self.assertEqual(overridden[:2], ("o", "override"))
-        env = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, "env", trial_model="t")
+        env = models.resolve("impl", "routine", "env", trial_model="t")
         self.assertEqual(env[:2], ("env", "COS_MODEL"))
 
-
-class TheShippedDefaultsMatchTheLoop(unittest.TestCase):
-    """Spec Concerns 2. A stage added to the loop without a default here would quietly run
-    on `COS_MODEL`; a key here for a stage that is gone would change nothing."""
-
-    def test_the_keys_are_exactly_the_stages_the_loop_names(self):
-        out = subprocess.run(
-            [sys.executable, "-m", "coscc.loop", "--state", "-", "status", "--json"],
-            # The stage table needs no unit, so an empty snapshot.
-            input='{"workspace": "", "units": {}}',
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            check=True,
+    def test_an_owner_model_beats_the_trial(self):
+        set_part("impl", "model.id", "o")
+        self.assertEqual(
+            models.resolve("impl", "routine", None, trial_model="t")[:2], ("o", "override")
         )
-        names = [s["name"] for s in json.loads(out.stdout)["stages"]]
-        defaults, problems = models.load_defaults()
-        self.assertEqual(problems, [])
-        base = {k for k in defaults if not k.endswith(models.NOVEL_SUFFIX)}
-        # `estimate` is a row of its own, not a stage the loop names. `pr` and `ship` run no
-        # session and have none.
-        self.assertEqual(base, (set(names) - set(prmachine.STAGES)) | {models.ESTIMATE})
-        # The only variants shipped are these two.
-        self.assertEqual(set(defaults) - base, {"impl:novel", "review:novel"})
-        self.assertEqual(table(names, defaults=defaults)["problems"], [])
 
-    def test_every_default_is_the_1m_variant(self):
-        # Mọi stage phải báo `contextWindow` 1000000, không riêng gì bản nào — mọi id mặc định kết
-        # thúc bằng `[1m]`.
-        defaults, problems = models.load_defaults()
-        self.assertEqual(problems, [])
-        self.assertTrue(defaults, "load_defaults() trả về rỗng")
-        for stage, entry in defaults.items():
-            self.assertTrue(entry["model"].endswith("[1m]"), (stage, entry))
+
+class TheShippedRows(unittest.TestCase):
+    def test_every_shipped_model_is_the_1m_variant(self):
+        # Every stage must report `contextWindow` 1000000: each shipped id ends in `[1m]`.
+        found = 0
+        for key, row in pack.rows().items():
+            if key in ("scout", "worker"):  # helpers name a model alias, not a session's id
+                continue
+            ids = [(row.get("model") or {}).get("id")]
+            for variant in (row.get("variants") or {}).values():
+                ids.append((variant.get("model") or {}).get("id"))
+            for model in filter(None, ids):
+                found += 1
+                self.assertTrue(model.endswith("[1m]"), (key, model))
+        self.assertTrue(found)
 
 
 class TheCeilingsResolveInOnePlace(unittest.TestCase):
-    """Override, else the grant's own, the `SUBMIT_TURNS` floor after either."""
+    """The owner's, else the row's own, the `SUBMIT_TURNS` floor after either."""
 
     def test_default_and_override_each_say_so(self):
         self.assertEqual(
-            models.ceilings("spec", None, {}, {}),
+            models.ceilings("spec", None),
             {
                 "max_turns": 40,
                 "max_turns_source": "default",
@@ -171,32 +120,62 @@ class TheCeilingsResolveInOnePlace(unittest.TestCase):
                 "max_budget_source": "default",
             },
         )
-        found = models.ceilings("spec", None, {"spec": 30}, {"spec": 1.5})
+        set_part("spec", "ceilings.turns", 30)
+        set_part("spec", "ceilings.usd", 1.5)
+        found = models.ceilings("spec", None)
         self.assertEqual((found["max_turns"], found["max_turns_source"]), (30, "override"))
         self.assertEqual((found["max_budget_usd"], found["max_budget_source"]), (1.5, "override"))
 
-    def test_a_grant_with_no_budget_is_none(self):
-        found = models.ceilings("idea", None, {}, {})
+    def test_a_row_with_no_budget_is_none(self):
+        found = models.ceilings("idea", None)
         self.assertEqual((found["max_budget_usd"], found["max_budget_source"]), (None, "none"))
-        # `Grant()`'s one turn, raised to the floor of a stage that submits.
-        self.assertEqual((found["max_turns"], found["max_turns_source"]), (4, "default"))
+        # The row's one turn, raised to the floor of a stage that submits.
+        self.assertEqual(
+            (found["max_turns"], found["max_turns_source"]), (policy.SUBMIT_TURNS, "default")
+        )
 
     def test_the_floor_holds_under_an_override(self):
-        found = models.ceilings("plan", None, {"plan": 1}, {})
-        self.assertEqual((found["max_turns"], found["max_turns_source"]), (4, "override"))
+        set_part("plan", "ceilings.turns", 1)
+        found = models.ceilings("plan", None)
+        self.assertEqual(
+            (found["max_turns"], found["max_turns_source"]), (policy.SUBMIT_TURNS, "override")
+        )
 
-    def test_impl_novel_replaces_novel_ceilings_only_when_overridden(self):
-        self.assertEqual(models.ceilings("impl", "novel", {}, {})["max_turns"], 250)
-        self.assertEqual(models.ceilings("impl", "novel", {}, {})["max_budget_usd"], 16.0)
-        found = models.ceilings("impl", "novel", {"impl:novel": 300}, {"impl:novel": 20.0})
+    def test_impl_novel_has_its_own_ceilings_and_an_override_of_them(self):
+        found = models.ceilings("impl", "novel")
+        self.assertEqual((found["max_turns"], found["max_budget_usd"]), (250, 16.0))
+        pack.write("impl", "ceilings", {"turns": 120, "usd": 12.0})
+        # The owner's ceilings, with the variant's left as built, are the `novel` run's too.
+        self.assertEqual(models.ceilings("impl", "novel")["max_turns"], 120)
+        self.assertEqual(models.ceilings("impl", None)["max_budget_usd"], 12.0)
+        set_part("impl", "variants.novel.ceilings.turns", 300)
+        set_part("impl", "variants.novel.ceilings.usd", 20.0)
+        found = models.ceilings("impl", "novel")
         self.assertEqual((found["max_turns"], found["max_budget_usd"]), (300, 20.0))
-        # The base row's override is not the `novel` run's.
-        self.assertEqual(models.ceilings("impl", "novel", {"impl": 10}, {})["max_turns"], 250)
-        self.assertEqual(models.ceilings("impl", None, {"impl": 10}, {})["max_turns"], 10)
+        self.assertEqual(found["max_turns_source"], "override")
+
+    def test_putting_none_back_restores_the_builtin(self):
+        set_part("spec", "ceilings.turns", 30)
+        old, new = set_part("spec", "ceilings.turns", None)
+        self.assertEqual((old, new), (30, 40))
+        self.assertEqual(models.ceilings("spec", None)["max_turns_source"], "default")
+
+
+class TheConfigRowIsWhatThePageShows(unittest.TestCase):
+    def test_it_is_what_a_run_gets_under_its_label(self):
+        found = models.config_row("impl", None, "novel")
+        self.assertEqual((found["model"], found["effort"]), (OPUS, "high"))
+        self.assertEqual(found["ceilings"], models.ceilings("impl", "novel"))
+        set_part("impl", "model.effort", "high")
+        self.assertEqual(models.config_row("impl", None)["effort_source"], "override")
+
+    def test_a_row_without_a_model_takes_cos_model(self):
+        found = models.config_row("leif", "x")
+        self.assertEqual((found["model"], found["model_source"]), ("x", "COS_MODEL"))
 
 
 class TheBoundsOfAnOverride(unittest.TestCase):
-    """Out of bounds is refused, and a stored one is skipped and named."""
+    """Out of bounds is refused."""
 
     def test_each_bound(self):
         good = [
@@ -233,24 +212,63 @@ class TheBoundsOfAnOverride(unittest.TestCase):
             self.assertIsNone(found, (field, value))
             self.assertTrue(reason, (field, value))
 
-    def test_a_stored_value_out_of_bounds_is_a_problem(self):
-        rows = {
-            "turns:spec": json.dumps(30),
-            "turns:plan": json.dumps(900),
-            "turns:impl": "{",
-            "turns:review": json.dumps("30"),
-        }
-        found, problems = models.overrides_from(rows, models.TURNS_PREFIX)
-        self.assertEqual(found, {"spec": 30})
-        self.assertEqual(len(problems), 3)
-        found, problems = models.overrides_from(
-            {"budget:spec": json.dumps(2.5), "budget:plan": json.dumps(99)}, models.BUDGET_PREFIX
-        )
-        self.assertEqual((found, len(problems)), ({"spec": 2.5}, 1))
 
-    def test_a_key_no_row_takes_is_a_problem(self):
-        t = table(turns={"review:novel": 10, "chat": 10, "deploy": 10}, budget={"estimate": 1.0})
-        self.assertEqual(len(t["problems"]), 4, t["problems"])
+LOOP = "coscc-sdlc/full"
+SHORT = "coscc-sdlc/short"
+
+
+def _plan(variant: str = "routine", *files: str) -> dict:
+    """A plan record as `UnitMeta.plan` returns it."""
+    return {"variant": variant, "files": list(files or ("coscc/units/board.py",)), "steps": [],
+            "rests_on": []}  # fmt: skip
+
+
+class TheLabelIsThePlansRecord(unittest.TestCase):
+    def test_the_security_surface_is_these_four(self):
+        self.assertEqual(
+            models.SECURITY_SURFACE,
+            (
+                "coscc/agent/policy.py",
+                "coscc/agent/sessions.py",
+                "coscc/loop/rules.py",
+                ".claude/settings.json",
+            ),
+        )
+
+    def test_before_or_at_plan_there_is_no_label(self):
+        for stage in ("idea", "intent", "spec", "plan"):
+            self.assertEqual(models.label_of(stage, LOOP, _plan()), (None, None, None))
+
+    def test_a_file_of_the_security_surface_forces_novel(self):
+        for path in models.SECURITY_SURFACE:
+            self.assertEqual(
+                models.label_of("impl", LOOP, _plan("routine", path)),
+                ("routine", "novel", "forced"),
+                path,
+            )
+
+    def test_no_record_runs_as_novel(self):
+        self.assertEqual(models.label_of("impl", LOOP, None), ("missing", "novel", "missing"))
+
+    def test_declared(self):
+        self.assertEqual(
+            models.label_of("impl", LOOP, _plan("routine")),
+            ("routine", "routine", "declared"),
+        )
+        self.assertEqual(
+            models.label_of("review", LOOP, _plan("novel")), ("novel", "novel", "declared")
+        )
+
+    def test_with_no_plan_in_its_process_a_row_with_variants_runs_novel_and_others_have_none(self):
+        for stage in ("impl", "review"):
+            self.assertEqual(models.label_of(stage, SHORT, None), ("missing", "novel", "missing"))
+        for stage in ("intent", "pr", "ship"):
+            self.assertEqual(models.label_of(stage, SHORT, None), (None, None, None), stage)
+        self.assertEqual(models.label_of("spec", SHORT, _plan()), (None, None, None))
+
+    def test_a_ceiling_never_moves_the_label(self):
+        """A run that hit a ceiling pauses and a raise goes on in it: no dearer row takes over."""
+        self.assertEqual(models.label_of("impl", LOOP, _plan())[2], "declared")
 
 
 if __name__ == "__main__":

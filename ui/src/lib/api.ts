@@ -9,6 +9,9 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** A refusal's own words, one per reason (`{error, code, reasons[]}`), and its code. */
+    readonly reasons: string[] = [],
+    readonly code = "",
   ) {
     super(message);
   }
@@ -16,12 +19,14 @@ export class ApiError extends Error {
 
 async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
   // A form (`URLSearchParams`) goes as it is; the browser names its type.
+  // A file (`Blob`) goes as it is, under its own type (a pack's zip).
   const form = body instanceof URLSearchParams;
+  const file = body instanceof Blob;
   const res = await fetch(path, {
     method,
     credentials: "same-origin",
-    headers: body === undefined || form ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : form ? body : JSON.stringify(body),
+    headers: body === undefined || form ? undefined : { "Content-Type": file ? body.type || "application/octet-stream" : "application/json" },
+    body: body === undefined ? undefined : form || file ? body : JSON.stringify(body),
   });
   if (res.status === 401) {
     location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
@@ -29,7 +34,10 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
   }
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new ApiError(res.status, (data && (data.error || data.detail)) || res.statusText);
+  if (!res.ok) {
+    const reasons: unknown[] = data && Array.isArray(data.reasons) ? data.reasons : [];
+    throw new ApiError(res.status, (data && (data.error || data.detail)) || res.statusText, reasons.map(String), (data && data.code) || "");
+  }
   return data as T;
 }
 
@@ -66,7 +74,7 @@ export const api = {
     const qs = new URLSearchParams(url.rest).toString();
     return call<Get[P]>("GET", qs ? `${url.path}?${qs}` : url.path);
   },
-  /** `body` is JSON, or a `URLSearchParams` sent as a form (the vault's one door for a value). */
+  /** `body` is JSON, a `URLSearchParams` sent as a form (the vault's one door for a value), or a file. */
   post: <T>(path: string, body: unknown) => call<T>("POST", path, body),
   /**
    * Post and read the answer's NDJSON lines to the end, for a route whose stream does the work

@@ -5,21 +5,39 @@ import { useState } from "react";
 import type { Question } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { allUnits, useBoards, type PlacedUnit } from "../lib/boards";
-import { STAGE_LABEL, ago, unitCode, unitTitle } from "../lib/format";
+import { liveQuestions } from "../lib/model";
+import { ago, unitCode, unitTitle } from "../lib/format";
 import { Icon } from "../lib/icons";
+import { stageLabel } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
 import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
-import { Track } from "./UnitPage";
+
+/** What the page shows: a link to an item that is not waiting is "missing", whether or not others wait. */
+export function inboxView(waiting: number, asked: boolean, found: boolean): "empty" | "missing" | "list" {
+  if (asked && !found) return "missing";
+  return waiting ? "list" : "empty";
+}
 
 export function Inbox({ workspace, number }: { workspace?: string; number?: string }) {
   const { boards, loading } = useBoards();
   const waiting = allUnits(boards)
-    .filter((u) => u.open > 0)
+    .filter((u) => liveQuestions(u) > 0)
     .sort((a, b) => b.updated.localeCompare(a.updated));
-  const chosen = waiting.find((u) => u.workspace.name === workspace && u.number === Number(number)) ?? waiting[0];
+  const asked = workspace !== undefined && number !== undefined;
+  const found = waiting.find((u) => u.workspace.name === workspace && u.number === Number(number));
+  const chosen = found ?? (asked ? undefined : waiting[0]);
 
   if (loading) return <div className="page"><SkeletonRows rows={4} /></div>;
-  if (!waiting.length)
+  const view = inboxView(waiting.length, asked, Boolean(found));
+  if (view === "missing")
+    return (
+      <div className="page mid">
+        <Empty icon="search" title="Not found in what needs you" actions={<Button kind="primary" onClick={() => navigate("/inbox")}>Back to Needs you</Button>}>
+          {unitCode(workspace ?? "", Number(number))} has no question waiting on you: it may be answered, dropped or shipped.
+        </Empty>
+      </div>
+    );
+  if (view === "empty")
     return (
       <div className="page mid">
         <Empty icon="inbox" title="Nothing needs you">
@@ -57,7 +75,9 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
           </div>
         ))}
       </div>
-      <div className="rp">{chosen && <Questions unit={chosen} />}</div>
+      <div className="rp">
+        {chosen && <Questions unit={chosen} />}
+      </div>
     </div>
   );
 }
@@ -75,14 +95,9 @@ function Questions({ unit }: { unit: PlacedUnit }) {
           {unitCode(unit.workspace.name, unit.number)}
         </Link>
         {unit.type && <Chip square tone="plain">{unit.type}</Chip>}
-        {stage && <Chip square>{STAGE_LABEL[stage] ?? stage}</Chip>}
+        {stage && <Chip square>{stageLabel(stage)}</Chip>}
       </div>
       <h1 className="title" style={{ fontSize: 19, marginTop: 12 }}>{unitTitle(unit.name)}</h1>
-      {d && (
-        <div style={{ marginTop: 14 }}>
-          <Track stages={d.stages} now={stage} done={false} waiting />
-        </div>
-      )}
       {detail.state === "error" ? (
         <ErrorState error={detail.error} onRetry={detail.reload} />
       ) : !d ? (
@@ -109,11 +124,13 @@ function QuestionCard({ unit, question, index, of, onAnswered }: { unit: PlacedU
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  const send = async () => {
+  const recommended = question.recommendation.trim();
+  // Your press: the typed answer, or the recommendation taken as it is.
+  const send = async (answer: string) => {
     setSending(true);
     setError(null);
     try {
-      await api.post("/api/units/answer", { cwd: unit.workspace.path, unit: unit.name, artifact: question.artifact, question: question.n, answer: text.trim() });
+      await api.post("/api/units/answer", { cwd: unit.workspace.path, unit: unit.name, artifact: question.artifact, question: question.n, answer, by: "person" });
       setText("");
       onAnswered();
     } catch (e) {
@@ -130,22 +147,34 @@ function QuestionCard({ unit, question, index, of, onAnswered }: { unit: PlacedU
           Question {index} of {of} · {question.artifact}
         </div>
         <div className="qtext">{question.text.replace(/\*\*/g, "")}</div>
+        {recommended && (
+          <div className="callout accent" style={{ marginTop: 12 }}>
+            <Icon name="wand" size={15} />
+            <div className="grow">
+              <b>Recommended</b>
+              <div style={{ marginTop: 2 }}>{recommended}</div>
+            </div>
+            <Button disabled={sending} onClick={() => send(recommended)}>
+              Take it
+            </Button>
+          </div>
+        )}
         <textarea
           className="ta"
           rows={3}
           style={{ marginTop: 14, fontSize: 13 }}
-          placeholder="Your answer…"
+          placeholder={recommended ? "Or your own answer…" : "Your answer…"}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim()) send();
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim()) send(text.trim());
           }}
         />
         {error && <div style={{ color: "var(--red)", marginTop: 8, fontSize: 12.5 }}>{error.message}</div>}
         <div className="row" style={{ marginTop: 12 }}>
           <span className="faint" style={{ fontSize: 12 }}>The agent reads it as your decision.</span>
           <span className="grow" />
-          <Button kind="primary" disabled={!text.trim() || sending} onClick={send}>
+          <Button kind="primary" disabled={!text.trim() || sending} onClick={() => send(text.trim())}>
             {sending ? "Answering…" : "Answer"}
           </Button>
         </div>

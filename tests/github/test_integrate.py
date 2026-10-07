@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.github import integrate as ig
+from tests.runner.test_step import asks
 from tests.units.test_submit import submits as _submits
 
 HEAD = "a" * 40
@@ -503,25 +504,24 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
     """Plan step 7, with a stand-in `stream`: what the session is handed, and what it yields."""
 
     def test_the_session_gets_the_gate_and_the_ceilings(self):
-        import asyncio
 
-        from coscc.agent.policy import grant_for
+        from coscc.agent.policy import row_for
 
         seen: dict = {}
 
         class FakeSessions:
             async def stream(self, cwd, prompt, session_id, **kw):
                 seen.update(kw, cwd=cwd)
-                gate = kw["can_use_tool"]
-                seen["push_ok"] = await gate(
+                gate = kw["gate"]
+                seen["push_ok"] = await asks(
+                    gate,
                     "Bash",
                     {"command": f"git push --force-with-lease=feat/x:{HEAD} origin feat/x"},
-                    None,
                 )
-                seen["push_bad"] = await gate(
-                    "Bash", {"command": "git push --force origin feat/x"}, None
+                seen["push_bad"] = await asks(
+                    gate, "Bash", {"command": "git push --force origin feat/x"}
                 )
-                seen["submit"] = await gate("mcp__cos__submit", {}, None)
+                seen["submit"] = await asks(gate, "mcp__cos__submit", {})
                 yield ("chunk", "[needs-person] C vs D")
                 await _submits(kw, needs_person=[{"commit": "", "why": "A vs B"}])
                 yield ("done", {"session_id": "s", "cost": {"usd": 0.1}})
@@ -529,31 +529,14 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         from coscc.units import submit
 
         collector = submit.Collector("integrate")
-
-        async def go():
-            out = []
-            async for item in ig.run_gebo(
-                FakeSessions(),
-                tree="/t",
-                workspace="/w",
-                prompt="p",
-                grant=grant_for("integrate"),
-                read_also=(),
-                lease=("feat/x", HEAD),
-                model=None,
-                channel=collector,
-            ):
-                out.append(item)
-            return out
-
-        out = asyncio.run(go())
+        out, end = self._gebo(FakeSessions(), row_for("integrate"), collector)
         self.assertEqual(seen["max_turns"], 120)
         self.assertEqual(seen["cwd"], "/t")
-        self.assertEqual(type(seen["push_ok"]).__name__, "PermissionResultAllow")
-        self.assertEqual(type(seen["push_bad"]).__name__, "PermissionResultDeny")
-        self.assertEqual(type(seen["submit"]).__name__, "PermissionResultAllow")
-        end = out[-1][1]
-        self.assertEqual(end["reply"], "[needs-person] C vs D")
+        self.assertEqual(seen["workspace"], "/w")
+        self.assertEqual(seen["push_ok"], "")
+        self.assertIn("lease", seen["push_bad"])
+        self.assertEqual(seen["submit"], "")
+        self.assertEqual(out[0], ("chunk", "[needs-person] C vs D"))
         self.assertEqual(end["denials"], 1)
         # The object's words, never the reply's.
         self.assertEqual(ig.needs_person_of(collector.object()), ["A vs B"])
@@ -563,34 +546,52 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         )
 
     def test_gebo_counts_the_background_runs_it_was_refused(self):
-        from coscc.agent.policy import grant_for
+        from coscc.agent.policy import row_for
 
         class FakeSessions:
             async def stream(self, cwd, prompt, session_id, **kw):
-                await kw["can_use_tool"]("Bash", {"command": "npm test &"}, None)
-                await kw["can_use_tool"](
-                    "Bash", {"command": "git push --force origin feat/x"}, None
-                )
+                await asks(kw["gate"], "Bash", {"command": "npm test &"})
+                await asks(kw["gate"], "Bash", {"command": "git push --force origin feat/x"})
                 await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {}})
 
-        async def go():
-            return [
-                item
-                async for item in ig.run_gebo(
-                    FakeSessions(),
-                    tree="/t",
-                    workspace="/w",
-                    prompt="p",
-                    grant=grant_for("integrate"),
-                    read_also=(),
-                    lease=("feat/x", HEAD),
-                    model=None,
-                )
-            ]
+        from coscc.units import submit
 
-        end = asyncio.run(go())[-1][1]
+        _, end = self._gebo(FakeSessions(), row_for("integrate"), submit.Collector("integrate"))
         self.assertEqual((end["denials"], end["background"]), (2, 1))
+
+    def _gebo(self, sessions, row, collector):
+        """Gebo's session as `Integration.integrate_gebo` runs it, and its `end` row."""
+        import tempfile
+
+        from coscc.runner import run as run_mod
+        from coscc.store.journal import Journal
+
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = Journal(tmp, Path(tmp) / "data")
+
+            async def go():
+                return [
+                    item
+                    async for item in run_mod.run(
+                        run_mod.Agent("integrate", row, preset=True),
+                        run_mod.Input(
+                            "/t",
+                            "p",
+                            "w",
+                            workspace_dir="/w",
+                            unit="u",
+                            branch="feat/x",
+                            lease=HEAD,
+                            channel=collector,
+                        ),
+                        ctx=run_mod.Ctx(sessions, journal),
+                    )
+                ]
+
+            out = asyncio.run(go())
+            [end] = [r for r in journal.records("w") if r["kind"] == "end"]
+        return out, end
 
     def test_gebo_is_told_once(self):
         """Gebo's session ends with its turn, as a board step's does."""

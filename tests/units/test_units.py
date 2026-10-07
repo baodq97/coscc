@@ -14,9 +14,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.units.test_meta import snapshot_of
 from coscc import units
+from coscc.store.db import Data
 from coscc.units import BadUnit, CannotCreate
+from coscc.units.meta import UnitMeta
+from tests.units.test_meta import seed
 
 WS = "/tmp/a-workspace"
 
@@ -26,6 +28,14 @@ class Fixture(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.data = self._tmp.name
+
+    def snapshot(self, unit: str | None = None, type: str | None = None, **statuses: str) -> dict:
+        """The app's snapshot of the store, `unit` stated as rows (`statuses` is `{artifact: state}`)."""
+        key = units.key(units.root(WS, self.data))
+        meta = UnitMeta(Path(self.data) / "work", Data(Path(self.data) / "meta"))
+        if unit:
+            seed(meta, key, unit, statuses=statuses, type=type)
+        return meta.snapshot(key, {})
 
 
 class OneFunctionAnswersWhereUnitsLive(Fixture):
@@ -138,18 +148,23 @@ class NumbersTakenInTheHostRepositoryCount(Fixture):
 class TheBriefBecomesTheIdea(Fixture):
     """`plan.md` `## OQ1, settled before planning`."""
 
-    def test_it_is_written_as_idea_md_with_a_status_the_loop_accepts(self):
+    def test_it_is_written_as_idea_md_with_no_status_line(self):
         made = units.create(WS, "a-problem", "Nút Run không nói gì khi hỏng.", self.data)
         text = (Path(made["path"]) / "idea.md").read_text(encoding="utf-8")
         self.assertIn("Nút Run không nói gì khi hỏng.", text)
-        self.assertIn("Status: accepted.", text)
+        self.assertNotIn("Status:", text)
 
     def test_the_loop_reads_it_back_as_an_accepted_idea(self):
-        # The only check that matters: the loop has to agree it is a readable artifact,
-        # because a file it calls broken blocks the unit rather than helping it.
+        # The only check that matters: the loop has to agree the unit is readable once the app has
+        # recorded the idea accepted, because a unit it calls broken is blocked rather than helped.
         made = units.create(WS, "a-problem", "some words", self.data)
         store = units.root(WS, self.data)
-        printed = units._cos(store, "--state", "-", "status", stdin=json.dumps(snapshot_of(store)))
+        key = str(Path(store).resolve())
+        with tempfile.TemporaryDirectory() as d:
+            meta = UnitMeta(Path(d) / "work", Data(Path(d) / "data"))
+            seed(meta, key, made["unit"], statuses={"idea.md": "accepted"})
+            snapshot = meta.snapshot(key, {}, None)
+        printed = units._cos(store, "--state", "-", "status", stdin=json.dumps(snapshot))
         self.assertIn(made["unit"], printed)
         row = next(line for line in printed.splitlines() if made["unit"] in line)
         self.assertEqual(row.split("|")[2].strip(), "A", row)
@@ -166,24 +181,23 @@ class TheBranchNameComesFromTheIntent(Fixture):
         # it reads and false of the unit. Measured 2026-09-22.
         made = units.create(WS, "a-problem", "", self.data)
         with self.assertRaises(CannotCreate) as caught:
-            units.branch_name(WS, made["unit"], self.data, snapshot_of(units.root(WS, self.data)))
+            units.branch_name(WS, made["unit"], self.data, self.snapshot())
         message = str(caught.exception)
         self.assertIn("intent.md", message)
         self.assertNotIn("No such work unit", message)
 
     def test_it_reads_the_type_the_intent_declares(self):
         made = units.create(WS, "a-problem", "", self.data)
-        (Path(made["path"]) / "intent.md").write_text(
-            "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
-        )
+        (Path(made["path"]) / "intent.md").write_text("# Intent: a problem\n", encoding="utf-8")
+        state = self.snapshot(made["unit"], type="fix", **{"intent.md": "accepted"})
         self.assertEqual(
-            units.branch_name(WS, made["unit"], self.data, snapshot_of(units.root(WS, self.data))),
+            units.branch_name(WS, made["unit"], self.data, state),
             "fix/a-problem",
         )
 
     def test_a_unit_that_is_not_there_is_refused_before_any_command_runs(self):
         with self.assertRaises(CannotCreate) as caught:
-            units.branch_name(WS, "0099_nothing", self.data, snapshot_of(units.root(WS, self.data)))
+            units.branch_name(WS, "0099_nothing", self.data, self.snapshot())
         self.assertIn("0099_nothing", str(caught.exception))
 
 

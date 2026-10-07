@@ -25,36 +25,29 @@ class Routes(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
-    async def test_decided_lists_answers_given_for_the_owner_newest_first(self):
+    async def test_decided_lists_only_delegated_answers_newest_first(self):
+        def answer(n, text, by, name, date, artifact="spec.md"):
+            return {
+                "artifact": artifact,
+                "n": n,
+                "text": text,
+                "by": by,
+                "name": name,
+                "date": date,
+            }
+
         board = {
             "units": [
                 {
                     "name": "0001_x",
                     "answers": [
-                        {
-                            "artifact": "spec.md",
-                            "n": 1,
-                            "text": "mine",
-                            "by": "owner",
-                            "authority": "person",
-                            "date": "2026-10-03",
-                        },
-                        {
-                            "artifact": "spec.md",
-                            "n": 2,
-                            "text": "Leif's",
-                            "by": "Leif (CoS), for the originator",
-                            "authority": "person",
-                            "date": "2026-10-02",
-                        },
-                        {
-                            "artifact": "plan.md",
-                            "n": 1,
-                            "text": "inferred",
-                            "by": "someone",
-                            "authority": "agent",
-                            "date": "2026-10-04",
-                        },
+                        answer(1, "mine", "person", "owner", "2026-10-03"),
+                        answer(2, "Leif's", "delegated", "Leif", "2026-10-02"),
+                        # A person's press that names Leif is still a person's.
+                        answer(
+                            3, "typed", "person", "Leif (CoS), for the originator", "2026-10-05"
+                        ),
+                        answer(1, "inferred", "delegated", "an agent", "2026-10-04", "plan.md"),
                     ],
                 }
             ]
@@ -63,7 +56,9 @@ class Routes(unittest.IsolatedAsyncioTestCase):
             self.app.state.core.boards, "get", mock.AsyncMock(return_value=board)
         ):
             r = await self.client.get("/api/decided", params={"cwd": self.cwd})
+        rows = r.json()
         self.assertEqual(
-            [(d["text"], d["date"]) for d in r.json()],
-            [("inferred", "2026-10-04"), ("Leif's", "2026-10-02")],
+            [(d["text"], d["name"], d["date"]) for d in rows],
+            [("inferred", "an agent", "2026-10-04"), ("Leif's", "Leif", "2026-10-02")],
         )
+        self.assertTrue(all(d["unit"] == "0001_x" and "name" in d for d in rows))

@@ -19,8 +19,9 @@ SMALL, LARGE, ROUNDS, FINDINGS = 8, 300, 5, 4
 
 
 def review(unit: str) -> str:
-    """A `review.md` of `ROUNDS` rounds, each asking for changes on `FINDINGS` findings."""
-    out = f"# Review: {unit}\nAuthor: t. Status: changes-requested.\n"
+    """A `review.md` of `ROUNDS` rounds, each with `FINDINGS` findings, as prose: the text the
+    board must not carry."""
+    out = f"# Review: {unit}\n"
     for n in range(1, ROUNDS + 1):
         found = "\n".join(
             f"- F{i} [fixed {n:07x}] a long sentence about what the reviewer found, number {i}"
@@ -31,6 +32,34 @@ def review(unit: str) -> str:
             f"### Findings\n\n{found}\n\n### What was not reviewed\n\nNothing.\n"
         )
     return out
+
+
+def rounds(unit: str) -> list[dict]:
+    """`ROUNDS` review rounds, each asking for changes on `FINDINGS` findings, as the review stage submits them."""
+    return [
+        {
+            "n": n,
+            "run": f"r{n}",
+            "head": f"{n:07x}",
+            "object": {
+                "verdict": "changes-requested",
+                "findings": [
+                    {
+                        "id": f"F{i}",
+                        "state": "fixed",
+                        "fixed_in": f"{n:07x}",
+                        "severity": "low",
+                        "criterion": "R1",
+                        "path": "",
+                        "lines": "",
+                        "text": f"a long sentence about what the reviewer found, number {i}",
+                    }
+                    for i in range(1, FINDINGS + 1)
+                ],
+            },
+        }
+        for n in range(1, ROUNDS + 1)
+    ]
 
 
 class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
@@ -67,17 +96,48 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
         core = Core(config, StandIn(None))
         self.cores.append(core)
         first = Path((await core.answers.create_unit(cwd, "scale-0", "fixture"))["path"])
-        for n in range(units):
-            unit = f"{n + 1:04d}_scale-{n}"
-            directory = first.parent / (first.name if n == 0 else unit)
-            directory.mkdir(exist_ok=True)
-            for stage in ("intent", "spec", "plan", "impl"):
-                extra = " Type: feat." if stage == "intent" else ""
-                status = "done" if stage == "plan" else "accepted"
-                (directory / f"{stage}.md").write_text(
-                    f"# X: {unit}\nAuthor: t.{extra} Status: {status}.\n", encoding="utf-8"
-                )
-            (directory / "review.md").write_text(review(unit), encoding="utf-8")
+        meta = core.ws.unit_meta()
+        key = core.ws.key(cwd)
+        # One transaction for every unit: `seed` commits one by one, which 300 units cannot afford.
+        names = [first.name if n == 0 else f"{n + 1:04d}_scale-{n}" for n in range(units)]
+        for unit in names:
+            (first.parent / unit).mkdir(exist_ok=True)
+            (first.parent / unit / "review.md").write_text(review(unit), encoding="utf-8")
+        stated = dict.fromkeys(("intent.md", "spec.md", "plan.md", "impl.md"), "accepted")
+        stated["review.md"] = "changes-requested"
+        with meta.data.write() as conn:
+            for unit in names:
+                meta.add_unit(conn, key, unit)
+                for submitted in rounds(unit):
+                    meta.record_round(conn, key, unit, submitted)
+            meta.history.record_in(
+                conn,
+                [
+                    {
+                        "workspace": key,
+                        "unit": unit,
+                        "artifact": artifact,
+                        "to_state": state,
+                        "actor": "test",
+                        "session": "test",
+                        "source": "test",
+                    }
+                    for unit in names
+                    for artifact, state in stated.items()
+                ]
+                + [
+                    {
+                        "workspace": key,
+                        "unit": unit,
+                        "artifact": "ship.md",
+                        "to_state": "accepted",
+                        "source": "prmachine:merged",
+                        "guard": "merge-read",
+                        "authority": "code",
+                    }
+                    for unit in names
+                ],
+            )
         return core, cwd
 
     async def ended(self, core: Core) -> None:

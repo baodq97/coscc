@@ -140,6 +140,7 @@ class WhatIsRecorded(unittest.TestCase):
         self.assertEqual(
             {k: v for k, v in config.items() if k not in events.COMMON},
             {
+                "granted": [],
                 "model": "m",
                 "model_source": "override",
                 "effort": None,
@@ -160,6 +161,27 @@ class WhatIsRecorded(unittest.TestCase):
             rec.denied("Bash", {"command": "rm -rf /"}, "not granted")
         self.assertEqual([e["kind"] for e in rec.events], ["denied"] * 7)
         self.assertEqual(rec.events[0]["reason"], "not granted")
+
+    def test_a_helpers_events_carry_its_agent_id(self):
+        rec = recorder()
+        rec.message(assistant("m1", ToolUseBlock("call-1", "Agent", {"description": "step a"})))
+        rec.message(SystemMessage("task_started", {"task_id": "agent-7", "tool_use_id": "call-1"}))
+        helper = assistant("m2", ToolUseBlock("t2", "Edit", {"file_path": "a.py"}))
+        helper.parent_tool_use_id = "call-1"
+        rec.message(helper)
+        rec.message(assistant("m3", TextBlock("back")))
+        marked = [(e["kind"], e.get("agent_id")) for e in rec.events if e["kind"] != "system"]
+        self.assertEqual(
+            marked,
+            [
+                ("turn", None),
+                ("tool_use", None),
+                ("turn", "agent-7"),
+                ("tool_use", "agent-7"),
+                ("turn", None),
+                ("text", None),
+            ],
+        )
 
     def test_a_message_that_breaks_the_recorder_is_counted_not_raised(self):
         rec = recorder()

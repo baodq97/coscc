@@ -1,4 +1,4 @@
-"""Tests for where the rules are found, and for the check that would have caught v0.2.2.
+"""Tests for the check that would have caught v0.2.2: a wheel that installs and runs nothing.
 
 The wheel tests build real zip files rather than mocking `zipfile`, because what is being
 tested is an agreement about **path strings inside an archive** — and a mock agrees with
@@ -13,7 +13,6 @@ import zipfile
 from pathlib import Path
 
 from coscc.agent import harness
-from coscc.agent.harness import MissingRules
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -29,92 +28,19 @@ def _wheel(path: Path, names, stamp: str = GOOD_STAMP) -> Path:
     return path
 
 
+PACK = "coscc/packs/coscc-sdlc"
 RUNNABLE = (
-    "coscc/_harness/skills/write-spec/SKILL.md",
+    f"{PACK}/.claude-plugin/plugin.json",
+    f"{PACK}/agents/spec.md",
+    f"{PACK}/skills/write-spec/SKILL.md",
     "coscc/_studio/index.html",
-    # Committed rather than generated, unlike the two above, and checked anyway: an installed copy
+    # Committed rather than generated, unlike the studio, and checked anyway: an installed copy
     # cannot tell how a missing file came to be missing.
-    "coscc/units/states.json",
-    "coscc/units/lanes.json",
-    "coscc/agent/models.json",
-    "coscc/agent/agents.json",
+    "coscc/packs/coscc-sdlc/process.json",
     # The commit the board shows is read from here.
     STAMP,
     "coscc/__init__.py",
 )
-
-
-class TheCheckoutFindsItsOwnRules(unittest.TestCase):
-    def test_this_checkout_resolves_every_skill(self):
-        # Running from a checkout, `root()` is `.claude/`. If this fails, the fallback is
-        # broken and every developer's Board is broken with it.
-        found = sorted(p.parent.name for p in harness.skills_dir().glob(f"*/{harness.SKILL_FILE}"))
-        self.assertIn("write-spec", found)
-
-    def test_with_no_packaged_tree_it_resolves_the_skills_the_repo_commits(self):
-        # `PACKAGE_HARNESS` is blanked rather than trusted to be absent. This test failed
-        # the first time it ran for exactly that reason: a wheel had been built in this
-        # checkout, `coscc/_harness/` was still on disk, and the packaged copy won -- which
-        # is the documented behaviour and a hazard in its own right (see
-        # `.claude/rules/coscc-app.md`). A test that only passes on a clean tree is a test
-        # that reports the tree, not the code.
-        original = harness.PACKAGE_HARNESS
-        harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
-        try:
-            self.assertFalse(harness.is_packaged())
-            self.assertEqual(harness.root(), REPO / ".claude")
-            self.assertEqual(harness.skills_dir(), REPO / ".claude" / "skills")
-        finally:
-            harness.PACKAGE_HARNESS = original
-
-
-class RulesThatCannotBeFoundStopTheStep(unittest.TestCase):
-    def test_read_skill_raises_rather_than_returning_empty(self):
-        # An empty string here is what let a step run, spend quota, and leave a record identical to
-        # a step that had its rules.
-        with self.assertRaises(MissingRules):
-            harness.read_skill("write-no-such-stage", "no-such-stage")
-
-    def test_the_refusal_names_every_path_it_looked_at(self):
-        with self.assertRaises(MissingRules) as caught:
-            harness.read_skill("write-nope", "nope")
-        message = str(caught.exception)
-        self.assertIn("write-nope", message)
-        self.assertIn("nope", message)
-        self.assertIn(str(harness.skills_dir()), message)
-
-    def test_the_first_name_that_exists_wins(self):
-        self.assertIn("# Write a spec", harness.read_skill("write-spec", "spec"))
-
-
-class ThePackagedCopyWins(unittest.TestCase):
-    def packaged_as(self, packaged: Path):
-        original = harness.PACKAGE_HARNESS
-        harness.PACKAGE_HARNESS = packaged
-        self.addCleanup(setattr, harness, "PACKAGE_HARNESS", original)
-
-    def test_root_prefers_the_package_when_its_skills_are_there(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            packaged = Path(tmp) / "_harness"
-            (packaged / "skills" / "write-spec").mkdir(parents=True)
-            (packaged / "skills" / "write-spec" / "SKILL.md").write_text(
-                "# packaged", encoding="utf-8"
-            )
-            self.packaged_as(packaged)
-            self.assertTrue(harness.STATES_PATH.is_file())
-            self.assertTrue(harness.is_packaged())
-            self.assertEqual(harness.root(), packaged)
-            self.assertEqual(harness.read_skill("write-spec"), "# packaged")
-
-    def test_a_package_without_skills_falls_back_rather_than_half_resolving(self):
-        # A packaged tree that exists but is empty must not win. Half a harness resolving
-        # is worse than none: it would find no skills and blame the checkout.
-        with tempfile.TemporaryDirectory() as tmp:
-            empty = Path(tmp) / "_harness"
-            empty.mkdir()
-            self.packaged_as(empty)
-            self.assertFalse(harness.is_packaged())
-            self.assertEqual(harness.root(), harness.CHECKOUT_HARNESS)
 
 
 class AWheelIsChecked(unittest.TestCase):
@@ -124,14 +50,23 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertEqual(harness.wheel_complaints(wheel), [])
 
     def test_the_v0_2_2_shape_is_caught(self):
-        # Exactly what shipped: page present, harness absent. Three releases passed
+        # Exactly what shipped: page present, skills absent. Three releases passed
         # every check there was, and this is the check there was not.
         with tempfile.TemporaryDirectory() as tmp:
-            names = [n for n in RUNNABLE if "_harness" not in n]
+            names = [n for n in RUNNABLE if "/skills/" not in n]
             wheel = _wheel(Path(tmp) / "v022.whl", names)
             complaints = harness.wheel_complaints(wheel)
             self.assertEqual(len(complaints), 1, complaints)
             self.assertIn("SKILL.md", complaints[0])
+
+    def test_a_wheel_without_the_agents_rows_is_caught(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for gone in ("/agents/", "plugin.json"):
+                with self.subTest(gone=gone):
+                    names = [n for n in RUNNABLE if gone not in n]
+                    complaints = harness.wheel_complaints(_wheel(Path(tmp) / "w.whl", names))
+                    self.assertEqual(len(complaints), 1, complaints)
+                    self.assertIn("no agent would run", complaints[0])
 
     def test_a_wheel_without_the_studio_is_caught(self):
         # The page would answer 503 on an install that is otherwise whole.
@@ -142,39 +77,21 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertEqual(len(complaints), 1, complaints)
             self.assertIn("_studio/index.html", complaints[0])
 
-    def test_a_wheel_without_the_state_set_is_caught(self):
+    def test_a_wheel_without_the_processes_is_caught(self):
         # `coscc/units/states.py` has nothing to validate a transition against, so the log can
         # neither be read nor written. The wheel installs and the page renders.
         with tempfile.TemporaryDirectory() as tmp:
-            names = [n for n in RUNNABLE if not n.endswith("states.json")]
+            names = [n for n in RUNNABLE if not n.endswith("process.json")]
             wheel = _wheel(Path(tmp) / "nostates.whl", names)
             complaints = harness.wheel_complaints(wheel)
             self.assertEqual(len(complaints), 1, complaints)
-            self.assertIn("states.json", complaints[0])
+            self.assertIn("process.json", complaints[0])
 
     def test_skills_are_counted_not_named(self):
         # Nine is today's number. A tenth skill must not need this file edited.
         with tempfile.TemporaryDirectory() as tmp:
-            names = list(RUNNABLE) + ["coscc/_harness/skills/write-tenth/SKILL.md"]
+            names = list(RUNNABLE) + [f"{PACK}/skills/write-tenth/SKILL.md"]
             wheel = _wheel(Path(tmp) / "ten.whl", names)
-            self.assertEqual(harness.wheel_complaints(wheel), [])
-
-    def test_a_wheel_carrying_settings_is_refused(self):
-        # `plan.md` Risk 6: the copy step takes two named directories, never `.claude/`
-        # whole, and a wheel is published.
-        with tempfile.TemporaryDirectory() as tmp:
-            names = list(RUNNABLE) + ["coscc/_harness/settings.local.json"]
-            wheel = _wheel(Path(tmp) / "leak.whl", names)
-            complaints = harness.wheel_complaints(wheel)
-            self.assertTrue(any("settings" in c for c in complaints), complaints)
-
-    def test_a_skill_named_after_settings_is_not_mistaken_for_one(self):
-        # The first version of the leak check matched the substring "settings" anywhere in
-        # the path, which would have refused a release over a perfectly ordinary skill. A
-        # check that fires on correct input gets deleted, and then it checks nothing.
-        with tempfile.TemporaryDirectory() as tmp:
-            names = list(RUNNABLE) + ["coscc/_harness/skills/write-settings/SKILL.md"]
-            wheel = _wheel(Path(tmp) / "skill.whl", names)
             self.assertEqual(harness.wheel_complaints(wheel), [])
 
     def test_a_wheel_without_a_build_stamp_is_refused(self):

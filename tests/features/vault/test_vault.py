@@ -6,6 +6,7 @@ the real one. `Bed` is the fixture `test_vault_http.py` builds on.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import stat
 import subprocess
@@ -17,12 +18,11 @@ from unittest import mock
 
 from coscc import vault
 from coscc.http import plugin
-from coscc.agent import policy
 from coscc.http.app import build
 from coscc.config import Config
 from coscc.store.db import Data
 from coscc.features import vault as feature
-from coscc.kernel import Facts, Runs
+from coscc.kernel import Facts, Grant, Runs
 from tests.features.ctx import ctx_for
 
 AGE = """#!{python}
@@ -99,8 +99,8 @@ class Bed(unittest.IsolatedAsyncioTestCase):
         self.store.grant("global:tok", self.key)
         self.make("global:other", OTHER, "", "not for proj", ("impl",))
 
-    def make(self, name, value, workspace, description, stages=("impl",)):
-        self.store.create(name, workspace, description, stages=stages)
+    def make(self, name, value, workspace, description, agents=("impl",)):
+        self.store.create(name, workspace, description, agents=agents)
         self.store.put(name, workspace, value)
 
     def values(self) -> dict[str, bytes]:
@@ -136,15 +136,26 @@ class Bed(unittest.IsolatedAsyncioTestCase):
             "workspace": str(self.ws),
             "workspace_key": self.key,
             "unit": "0001_thing",
-            "stage": stage,
+            "agent": stage,
             "run": "r1",
             "tree": str(work),
             "directory": directory,
             "scratch": None,
-            "commands": policy.IMPL_COMMANDS,
             "resumed": False,
+            # The engine action a state is: the merge's body becomes the squashed commit message.
+            "action": {"ship": "merge", "pr": "open-pr"}.get(stage, ""),
         }
-        return Facts(**{**fields, **over})
+        base = Facts(**{**fields, **over})
+        if "grant" in over:
+            return base
+        # What `issue` gives the run: the secrets listed for its agent, when its row holds the
+        # vault; a push for the PR machine's steps and Gebo's.
+        holds = stage in vault.vault_agents()
+        use = feature._usable(lambda: self.store, base) if holds else ()
+        branch = "feat/x" if stage in ("pr", "ship", "integrate") else ""
+        return dataclasses.replace(
+            base, grant=Grant(use=tuple((feature.NAME, n) for n in use), branch=branch)
+        )
 
     def tools(self, facts: Facts) -> dict:
         found = feature.build_tools(facts, self.ctx, lambda: self.store)
@@ -181,25 +192,48 @@ class TheToolsTakeNoValue(Bed):
         self.assertEqual(names_in(tools["vault_generate"].input_schema), {"name", "description"})
         self.assertEqual(names_in(tools["vault_list"].input_schema), set())
 
-    def test_the_parts_are_one_server_one_guard_and_one_block(self):
+    def test_the_parts_are_one_catalog_entry_one_guard_and_one_block(self):
         parts = feature.agent(self.ctx, lambda _ctx: self.store)
         (tool,) = parts.tools
         self.assertEqual(
-            (tool.server, tool.names, tool.stages), ("vault", feature.TOOL_NAMES, ("impl", "spike"))
+            (tool.name, tool.server, tool.names, tool.effect),
+            ("vault", "vault", feature.TOOL_NAMES, "external"),
         )
         self.assertEqual([g.name for g in parts.guards], ["vault-leak"])
-        self.assertEqual([b.name for b in parts.blocks], ["vault"])
+        self.assertEqual([(b.name, b.tool) for b in parts.blocks], [("vault", "vault")])
         server = tool.make(self.facts())
         self.assertEqual((server["type"], server["name"]), ("sdk", "vault"))
 
-    def test_the_app_offers_the_tool_to_impl_and_spike_and_to_no_prose_stage(self):
+    def test_the_app_offers_the_tool_to_a_row_naming_it_and_to_no_prose_stage(self):
+        from coscc.agent import policy
+
         hooks = self.core.steps.hooks
-        for stage in ("impl", "spike"):
-            self.assertEqual(
-                [t.server for t in hooks.for_step(stage, str(self.ws)).tools], ["vault"]
-            )
-        for stage in ("plan", "spec", "review", "pr"):
-            self.assertEqual(hooks.for_step(stage, str(self.ws)).tools, ())
+        for key in ("impl", "spike"):
+            held = hooks.held(policy.row_for(key), str(self.ws))
+            self.assertEqual([t.name for t in held], ["vault"])
+        for key in ("plan", "spec", "review", "pr", "intent", "integrate"):
+            self.assertEqual(hooks.held(policy.row_for(key), str(self.ws)), ())
+
+
+class TheGrantNamesOnlyTheSecretsListedForTheAgent(Bed):
+    """`Tool.uses`: what `issue` puts in the run's `use`; nothing the secret's list leaves out."""
+
+    def test_a_secret_not_listed_for_the_agent_gives_no_use(self):
+        (tool,) = feature.agent(self.ctx, lambda _ctx: self.store).tools
+        assert tool.uses is not None
+        self.assertEqual(tool.uses(self.facts("impl")), ("ws:db",))
+        self.assertEqual(tool.uses(self.facts("spike")), ("global:tok",))
+        self.assertEqual(tool.uses(self.facts("review")), ())
+
+    async def test_a_run_whose_grant_does_not_name_it_cannot_use_it(self):
+        marker = self.root / "tree" / "ran"
+        bare = self.facts(grant=Grant())
+        args = {"command": "mkdir ran", "uses": [{"name": "ws:db", "mode": "env"}]}
+        got = await self.call(bare, "vault_exec", args)
+        self.assertEqual([r["code"] for r in got["refusals"]], ["not-in-grant"])
+        self.assertFalse(marker.exists())
+        listed = await self.call(bare, "vault_list", {})
+        self.assertFalse(any(r["usable_now"] for r in listed["secrets"]))
 
 
 class ListingSecrets(Bed):
@@ -259,18 +293,34 @@ class ExecutingACommand(Bed):
         )
         self.assertFalse(marker.exists())
 
-    async def test_a_line_the_grant_refuses_is_command_refused_with_its_words(self):
-        for line in ("curl http://example.invalid", f"cat {self.store.dir}/x", "cat ~/x $(id)"):
+    async def test_a_line_critical_refuses_is_command_refused_with_its_words(self):
+        marker = self.root / "marker"
+        for line in (
+            f"cat {self.store.dir}/x",
+            f"cat {self.store.identity}",
+            f"base64 {self.store.identity} > {marker}",
+            "cat ~/x $(id)",
+            "cat ~/x `id`",
+            "diff <(ls) a",
+            "git push origin main",
+            "gh pr merge 7",
+            "rm -rf /etc/x",
+            "echo 'unclosed",
+            f"touch {marker} &",
+        ):
             got = await self.call(self.facts(), "vault_exec", {"command": line})
             self.assertEqual(got["result"], "command-refused", line)
             self.assertTrue(got["reason"], line)
+        self.assertFalse(marker.exists())
 
-    async def test_a_command_the_workspace_added_to_the_list_is_run(self):
-        facts = self.facts(commands=(*policy.IMPL_COMMANDS, "id"))
-        got = await self.call(facts, "vault_exec", {"command": "id -u"})
-        self.assertEqual(got["exit_code"], 0)
+    async def test_a_refused_line_goes_back_as_an_error_and_a_run_does_not(self):
+        run = self.tools(self.facts())["vault_exec"].handler
+        self.assertIs((await run({"command": "git push origin main"})).get("is_error"), True)
+        self.assertNotIn("is_error", await run({"command": "true"}))
+
+    async def test_a_command_no_list_names_is_run(self):
         got = await self.call(self.facts(), "vault_exec", {"command": "id -u"})
-        self.assertEqual(got["result"], "command-refused")
+        self.assertEqual(got["exit_code"], 0)
 
     async def test_a_spike_runs_in_its_own_directory(self):
         scratch = self.root / "scratch"
@@ -436,6 +486,23 @@ class TheGuardHoldsWhatCarriesAValueOut(Bed):
         self.assertIn("ws:db", said)
         self.assert_clean(("said", said))
 
+    def test_an_impls_own_push_is_refused_at_its_gate_on_a_leak(self):
+        from coscc.agent.helpers import Denials, Gate
+        from coscc.agent.policy import GUARDED
+
+        self.tree()
+        self.leak(DB)
+        facts = self.facts("impl")
+        grant = dataclasses.replace(
+            facts.grant, branch="feat/x", secrets=("/data/cos.db",), tools=("Bash",)
+        )
+        facts = dataclasses.replace(facts, grant=grant)
+        gate = Gate(grant, Denials(), before_push=lambda: self.core.steps.hooks.refusal(facts))
+        said = gate.refused("Bash", {"command": "git push origin feat/x"}, None)
+        self.assertTrue(said.startswith(f"{GUARDED}: vault-leak: "), said)
+        self.assertIn("ws:db", said)
+        self.assert_clean(("said", said))
+
     def test_commits_or_a_pull_request_that_cannot_be_read_hold_the_step(self):
         self.facts()
         words = feature._leaks(self.ctx, lambda: self.store, self.facts("pr"))
@@ -448,7 +515,7 @@ class TheGuardHoldsWhatCarriesAValueOut(Bed):
 
     def test_a_run_log_that_cannot_be_read_holds_the_step(self):
         ctx = ctx_for(
-            runs=Runs(lambda: None, None),
+            runs=Runs(lambda: None),
             units=self.ctx.units,
             settings=self.ctx.settings,
             store=self.ctx.store,
@@ -482,10 +549,57 @@ class ThePromptBlock(Bed):
         )
 
     def test_the_kernel_renders_the_block_for_a_workspace_with_the_vault_on(self):
-        blocks = self.core.steps.hooks.for_step("impl", str(self.ws)).blocks
+        blocks = self.core.steps.hooks.on(str(self.ws)).blocks
         (block,) = [b for b in blocks if b.name == "vault"]
         self.assertIn("ws:db", block.render(self.facts()))
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheVaultListsEveryPacksAgents(unittest.TestCase):
+    def test_an_owners_agent_that_holds_the_vault_is_listed(self):
+        from coscc.agent import pack
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(pack, "ROOT", d):
+            self.assertNotIn("keeper", vault.vault_agents())
+            pack.new_row("keeper", "Keeper", "impl")
+            self.assertIn("keeper", vault.vault_agents())
+            pack.new_row("looker", "Looker", None)
+            self.assertNotIn("looker", vault.vault_agents())
+
+
+class AnImportedAgentGetsNoSecretByDefault(unittest.TestCase):
+    def setUp(self):
+        from coscc.agent import pack
+
+        self.pack = pack
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.d = d.name
+        p = mock.patch.object(pack, "ROOT", d.name)
+        p.start()
+        self.addCleanup(p.stop)
+        # An imported copy of impl: it writes in the branch and holds the vault.
+        folder = pack.packs_dir() / "theirs"
+        (folder / ".claude-plugin").mkdir(parents=True)
+        (folder / ".claude-plugin" / "plugin.json").write_text('{"name": "theirs"}')
+        (folder / "agents").mkdir()
+        text = (pack.BUILTIN / "agents" / "impl.md").read_text()
+        (folder / "agents" / "coder.md").write_text(text.replace('name: "Uruz"', 'name: "Coder"'))
+
+    def test_not_a_default_and_not_usable_while_its_pack_is_off(self):
+        self.assertIn("coder", vault.vault_agents())
+        self.assertNotIn("coder", vault.default_agents())
+        data = Data(self.d)
+        self.assertFalse(vault.may_use(data, "coder", "/ws"))
+        self.pack.set_packs(data, "/ws", "theirs", on=True)
+        self.assertTrue(vault.may_use(data, "coder", "/ws"))
+
+    def test_a_removed_agent_leaves_no_secret_to_its_key(self):
+        store = vault.Store(Data(self.d))
+        store.create("ws:db", "/ws", "x", agents=("impl", "coder"))
+        store.forget_agents({"coder"})
+        self.assertEqual(store.get("ws:db", "/ws").agents, ("impl",))
+        self.assertEqual(store.named_agents(), {"impl"})

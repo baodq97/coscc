@@ -2,9 +2,9 @@
 
 Only reads comments (`gh pr view --json comments`) and adds one (`gh pr comment`). Never calls
 `gh pr review` (that is an approval decision) and never edits or deletes a comment. The body
-is built only from text already in `review.md`.
+is built only from the round's rows: its verdict, the criteria it graded and its findings.
 
-The pull request is named by the URL in `pr.md`, so no repository is guessed and a deleted
+The pull request is named by the URL the PR machine recorded, so no repository is guessed and a deleted
 branch does not matter; `gh.PR_URL_RE` keeps a `-` prefix from reaching `gh` as a flag.
 
 One comment per round: the body's last line is a marker, and a comment already carrying this

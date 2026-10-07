@@ -31,6 +31,7 @@ from coscc.http import plugin
 from coscc.http.app import Core, build
 from coscc.kernel import Invalid
 from coscc.loop import run
+from tests.http.test_app import seed_unit
 
 REPO = Path(__file__).resolve().parents[3]
 ID = ("-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false")
@@ -185,12 +186,29 @@ class Fixture:
         for slug, kind, pr in (("one-thing", "feat", 11), ("two-thing", "fix", 12)):
             made = await service.answers.create_unit(self.cwd, slug, "fixture")
             directory = Path(made["path"])
-            (directory / "intent.md").write_text(
-                f"# Intent: {slug}\nAuthor: t. Type: {kind}. Status: accepted.\n", encoding="utf-8"
+            (directory / "intent.md").write_text(f"# Intent: {slug}\n", encoding="utf-8")
+            (directory / "pr.md").write_text(f"# PR: {slug}\n", encoding="utf-8")
+            seed_unit(
+                service,
+                self.cwd,
+                made["unit"],
+                statuses={"intent.md": "accepted"},
+                type=kind,
             )
-            (directory / "pr.md").write_text(
-                f"# PR: {slug}\nPR: https://github.com/o/r/pull/{pr}. Status: accepted.\n",
-                encoding="utf-8",
+            # The pull request is the PR machine's `open` row.
+            service.ws.unit_meta().history.record(
+                service.ws.key(self.cwd),
+                made["unit"],
+                "pr.md",
+                "accepted",
+                source="prmachine:open",
+                guard="branch-named",
+                authority="code",
+                inputs={
+                    "number": pr,
+                    "url": f"https://github.com/o/r/pull/{pr}",
+                    "head": "a" * 40,
+                },
             )
 
     def gh_state(self) -> dict:

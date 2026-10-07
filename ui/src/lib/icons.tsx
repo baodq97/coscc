@@ -1,6 +1,8 @@
 // Stroke icons on a 16px grid, agent runes drawn as strokes (system fonts carry no runes), and
 // Leif's mark. Taken from the chosen design (direction A).
 
+import { agentFace } from "./pack";
+
 const PATHS: Record<string, string> = {
   home: '<path d="M2.5 7.2 8 2.8l5.5 4.4V13a.7.7 0 0 1-.7.7H9.6V10H6.4v3.7H3.2a.7.7 0 0 1-.7-.7z"/>',
   inbox:
@@ -19,6 +21,7 @@ const PATHS: Record<string, string> = {
   warn: '<path d="M8 2.3 14 13H2z"/><path d="M8 6.5v3"/><circle cx="8" cy="11.3" r=".5"/>',
   check: '<path d="m3.2 8.4 3 3 6.6-6.8"/>',
   x: '<path d="m4 4 8 8M12 4l-8 8"/>',
+  menu: '<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>',
   clock: '<circle cx="8" cy="8" r="5.8"/><path d="M8 4.8V8l2.2 1.4"/>',
   arrow: '<path d="M3 8h10M9 4l4 4-4 4"/>',
   chevd: '<path d="m4 6 4 4 4-4"/>',
@@ -52,28 +55,6 @@ export function Icon({ name, size = 16, className = "ic" }: { name: IconName; si
   );
 }
 
-const RUNES: Record<string, string> = {
-  idea: "M8 2.5 12.5 8 8 13.5 3.5 8z",
-  intent: "M8 2v12M5 6l6 4",
-  spec: "M11 3 5 8l6 5",
-  spike: "M5.5 2v12M5.5 2.5 9 5.5l2.8-2.5M5.5 13.5 9 10.5l2.8 2.5",
-  plan: "M5.5 2v12M5.5 2.2l5.5 2.9-5.5 2.9 5.5 5.8",
-  impl: "M4.5 14V2.2l7 3.6V14",
-  pr: "M5.5 2v12M5.5 2.5l5.5 3.5M5.5 6.5l5.5 3.5",
-  review: "M8 2v12M4.2 5.8 8 2l3.8 3.8",
-  ship: "M8 2 12 6 4 13.5M8 2 4 6l8 7.5",
-  integrate: "M3.5 2.5l9 11M12.5 2.5l-9 11",
-  dagaz: "M3 2.5v11l10-11v11z",
-};
-
-export function Rune({ stage, size = 14 }: { stage: string; size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={RUNES[stage] ?? RUNES.idea} />
-    </svg>
-  );
-}
-
 export function LeifMark({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true">
@@ -90,10 +71,34 @@ export function LeifAvatar({ size = "" }: { size?: "" | "lg" | "xl" }) {
   );
 }
 
+// System fonts carry no runes, so a glyph the pack gives is drawn as strokes, keyed by the glyph.
+const RUNES: Record<string, string> = {
+  "ᛜ": "M8 2.5 12.5 8 8 13.5 3.5 8z",
+  "ᚾ": "M8 2v12M5 6l6 4",
+  "ᚲ": "M11 3 5 8l6 5",
+  "ᛈ": "M5.5 2v12M5.5 2.5 9 5.5l2.8-2.5M5.5 13.5 9 10.5l2.8 2.5",
+  "ᚱ": "M5.5 2v12M5.5 2.2l5.5 2.9-5.5 2.9 5.5 5.8",
+  "ᚢ": "M4.5 14V2.2l7 3.6V14",
+  "ᛏ": "M8 2v12M4.2 5.8 8 2l3.8 3.8",
+  "ᚷ": "M3.5 2.5l9 11M12.5 2.5l-9 11",
+  "ᛞ": "M3 2.5v11l10-11v11z",
+};
+
+export function Rune({ glyph, size = 14 }: { glyph: string; size?: number }) {
+  return RUNES[glyph] ? (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={RUNES[glyph]} />
+    </svg>
+  ) : (
+    <span style={{ fontSize: size - 2, lineHeight: 1 }}>{glyph}</span>
+  );
+}
+
+/** An agent's glyph, as its row writes it. */
 export function AgentAvatar({ stage, title, size = "" }: { stage: string; title?: string; size?: "" | "lg" | "xl" }) {
   return (
     <span className={`av ${size}`} title={title}>
-      <Rune stage={stage} size={size === "xl" ? 20 : size === "lg" ? 16 : 12} />
+      <Rune glyph={agentFace(stage).glyph} size={size === "xl" ? 20 : size === "lg" ? 16 : 12} />
     </span>
   );
 }

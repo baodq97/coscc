@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 from coscc.github import prmachine
 from coscc.leif import decide
 from coscc.units.board import open_questions
-from coscc.agent.policy import GRANTS, NOVEL_CEILINGS
+from coscc.agent import pack
+from tests.agent.edit import set_part
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
 # `next`'s two actions for `ship`, one after the merge and one before it.
@@ -79,7 +80,8 @@ class AUnitWaitingOnADependency(unittest.TestCase):
         self.assertIn("dependency", decide.REASONS)
         # Anything else with no stage is still the stop `f` it was.
         self.assertEqual(
-            decide.stop_for(unit(), nxt("", "fix the idea link — x"), None, False)["kind"], "f"
+            decide.stop_for(unit(), nxt("", "finish and accept intent.md"), None, False)["kind"],
+            "f",
         )
 
 
@@ -139,7 +141,7 @@ class Stops(unittest.TestCase):
         self.assertIn("both sides edit x.py", got["reason"])
 
     def test_e_a_step_that_did_not_end_done(self):
-        for outcome in ("failed", "exhausted", "stopped"):
+        for outcome in ("failed", "stopped"):
             got = decide.stop_for(
                 unit(), nxt("impl", "x"), {"kind": "end", "stage": "impl", "outcome": outcome}, True
             )
@@ -150,90 +152,37 @@ class Stops(unittest.TestCase):
             )
         )
 
-    def test_e_a_first_exhausted_step_is_no_stop(self):
-        ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
-        self.assertIsNone(
-            decide.stop_for(unit(), nxt("plan", "write-plan"), ran_out, False, exhausted=1)
-        )
-
-    def test_e_an_exhausted_ship_stops_the_first_time(self):
-        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
-        self.assertEqual(
-            decide.stop_for(unit(), nxt("ship", "ship"), ran_out, True, exhausted=1)["kind"], "e"
-        )
-
-    def test_e_an_exhausted_ship_is_no_stop_before_a_recording_ship(self):
-        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
-        for count in (1, 3):
-            self.assertIsNone(
-                decide.stop_for(unit(), RECORDING, ran_out, True, exhausted=count), count
-            )
-
-    def test_e_an_exhausted_ship_still_stops_before_a_merging_ship(self):
-        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
-        self.assertEqual(
-            decide.stop_for(unit(), MERGING, ran_out, True, exhausted=1),
-            {"kind": "e", "reason": "the last ship step ended exhausted"},
-        )
-
-    def test_e_a_recording_ship_that_ran_out_stops(self):
-        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
-        self.assertEqual(
-            decide.stop_for(unit(), RECORDING, ran_out, True, exhausted=1, recorded=True),
-            {"kind": "e", "reason": "the last ship step ended exhausted"},
-        )
-
     def test_e_failed_cancelled_and_stopped_ships_stop_before_a_recording_ship(self):
         for outcome in ("failed", "cancelled", "stopped"):
             last = {"kind": "end", "stage": "ship", "outcome": outcome}
-            self.assertEqual(
-                decide.stop_for(unit(), RECORDING, last, True, exhausted=1)["kind"], "e", outcome
-            )
-
-    def test_skips_exhausted_only_for_a_ship_end(self):
-        self.assertFalse(
-            decide.skips_exhausted(
-                RECORDING, {"kind": "end", "stage": "plan", "outcome": "exhausted"}, False
-            )
-        )
-        self.assertFalse(
-            decide.skips_exhausted(
-                RECORDING, {"kind": "integration", "stage": "ship", "outcome": "exhausted"}, False
-            )
-        )
-        self.assertFalse(decide.skips_exhausted(RECORDING, None, False))
-        self.assertTrue(
-            decide.skips_exhausted(
-                RECORDING, {"kind": "end", "stage": "ship", "outcome": "exhausted"}, False
-            )
-        )
+            self.assertEqual(decide.stop_for(unit(), RECORDING, last, True)["kind"], "e", outcome)
 
     def test_e_failed_cancelled_and_stopped_stop_whatever_the_count(self):
         for outcome in ("failed", "cancelled", "stopped"):
             last = {"kind": "end", "stage": "plan", "outcome": outcome}
             self.assertEqual(
-                decide.stop_for(unit(), nxt("plan", "write-plan"), last, False, exhausted=1)[
-                    "kind"
-                ],
+                decide.stop_for(unit(), nxt("plan", "write-plan"), last, False)["kind"],
                 "e",
                 outcome,
             )
 
-    def test_e_a_first_exhausted_step_still_meets_every_other_stop(self):
-        ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
-        qs = [{"artifact": "plan.md", "n": 1, "answered": False, "counted": True}]
-        cases = [
-            (unit(qs), nxt("plan", "write-plan"), ran_out, "a"),
-            (unit(), nxt("", "answer F1", waiting=["F1"]), ran_out, "b"),
-            (unit(), nxt("", "finish and accept plan.md"), ran_out, "f"),
-            (unit(), nxt("", "paused — x", hold={"state": "paused"}), ran_out, None),
-            (unit(), nxt("ship", "ship"), {**ran_out, "stage": "review"}, "c"),
-        ]
-        for row_, next_, last, kind in cases:
-            got = decide.stop_for(row_, next_, last, False, exhausted=1)
-            self.assertEqual((got or {}).get("kind"), kind, next_)
+    def test_e_a_step_paused_at_its_ceiling_stops_with_its_own_code(self):
+        """The autopilot never raises a ceiling: only a person goes on, or reruns the stage."""
+        for stage in ("impl", "plan", "ship"):
+            paused = {"kind": "end", "stage": stage, "outcome": "paused-budget"}
+            got = decide.stop_for(unit(), nxt(stage, "x"), paused, True)
             self.assertEqual(
-                got, decide.stop_for(row_, next_, {**last, "outcome": "done"}, False), next_
+                got,
+                {
+                    "kind": "e",
+                    "reason": f"the last {stage} step paused at its ceiling",
+                    "code": "budget-reached",
+                },
+            )
+            # Nor does a second one, or a recording ship, pass it by.
+            self.assertEqual(
+                decide.stop_for(unit(), RECORDING, paused, True, unopened=1)["code"],
+                "budget-reached",
             )
 
     def test_e_an_integration_that_failed_or_that_the_autopilot_had_refused(self):
@@ -500,30 +449,6 @@ class Stops(unittest.TestCase):
         ]
         self.assertEqual(decide.after_own_integration(red, mine, theirs, fix), ("impl", None))
 
-    def test_after_own_integration_a_first_exhausted_impl_is_not_the_one(self):
-        """The autopilot's `impl` that ran out runs once more; the one after it counts, and a second
-        that runs out is not forgiven."""
-        red = {"state": "red-after-integration"}
-        mine = {"kind": "integration", "outcome": "pushed", "started_by": "autopilot"}
-        fix = nxt("impl", "CI is red on #7: t — back to impl", reasons=["ci-red"])
-        start = {"kind": "start", "stage": "impl", "started_by": "autopilot"}
-        out = {"kind": "end", "stage": "impl", "outcome": "exhausted"}
-        done = {**out, "outcome": "done"}
-        still = ("", {"kind": "e", "reason": decide.STILL_RED})
-        self.assertEqual(
-            decide.after_own_integration(red, mine, [start, out], fix, 1), ("impl", None)
-        )
-        self.assertEqual(decide.after_own_integration(red, mine, [start, out], fix), still)
-        self.assertEqual(
-            decide.after_own_integration(red, mine, [start, out, start, done], fix, 1), still
-        )
-        self.assertEqual(
-            decide.after_own_integration(red, mine, [start, out, start, out], fix, 2), still
-        )
-        # A person's `impl` that ran out was never counted, and forgives nothing.
-        theirs = [{**start, "started_by": "person"}, out, start, done]
-        self.assertEqual(decide.after_own_integration(red, mine, theirs, fix, 1), still)
-
     def test_is_ci_red_reads_the_code_and_not_the_words(self):
         self.assertTrue(
             decide.is_ci_red(nxt("impl", "anything", reasons=["changes-requested", "ci-red"]))
@@ -567,9 +492,9 @@ class Stops(unittest.TestCase):
         )
         # And the count of the other reason forgives nothing here.
         self.assertEqual(
-            decide.stop_for(
-                unit(), nxt("plan", "write-plan"), self.UNOPENED, False, exhausted=1, unopened=2
-            )["kind"],
+            decide.stop_for(unit(), nxt("plan", "write-plan"), self.UNOPENED, False, unopened=2)[
+                "kind"
+            ],
             "e",
         )
 
@@ -594,19 +519,6 @@ class Stops(unittest.TestCase):
         self.assertTrue(decide.is_ci_pending(said))
         self.assertIsNone(decide.stop_for(unit(), said, None, True))
         self.assertFalse(decide.is_ci_pending(nxt("impl", "x", reasons=["ci-red"])))
-
-    def test_e_a_second_exhausted_step_stops_with_the_same_words(self):
-        ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
-        self.assertEqual(
-            decide.stop_for(unit(), nxt("plan", "write-plan"), ran_out, False, exhausted=2),
-            {"kind": "e", "reason": "the last plan step ended exhausted"},
-        )
-
-    def test_e_a_recording_ship_still_meets_c(self):
-        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
-        self.assertEqual(
-            decide.stop_for(unit(), RECORDING, ran_out, False, exhausted=1)["kind"], "c"
-        )
 
     def test_a_second_opening_failure_stops_e_with_the_same_words(self):
         self.assertEqual(
@@ -658,18 +570,26 @@ class TheDaysMoney(unittest.TestCase):
         self.assertEqual((got["chosen"], got["capped"]), ([], [spec]))
 
     def test_a_raised_budget_is_reserved_and_estimated_in_full(self):
-        self.assertEqual(decide.reservation("impl", {"impl:novel": 50.0}), 50.0)
-        self.assertEqual(decide.reservation("impl", {"impl": 30.0}), 30.0)
-        self.assertEqual(decide.reservation("spec", {"spec": 12.5}), 12.5)
-        self.assertEqual(decide.reservation("integrate", {"integrate": 20.0}), 20.0)
+        set_part("impl", "variants.novel.ceilings.usd", 50.0)
+        self.assertEqual(decide.reservation("impl"), 50.0)
+        set_part("impl", "variants.novel.ceilings.usd", None)
+        pack.write("impl", "ceilings", {"turns": 120, "usd": 30.0})
+        self.assertEqual(decide.reservation("impl"), 30.0)
+        set_part("spec", "ceilings.usd", 12.5)
+        self.assertEqual(decide.reservation("spec"), 12.5)
+        set_part("integrate", "ceilings.usd", 20.0)
+        self.assertEqual(decide.reservation("integrate"), 20.0)
         # A lowered one is held at what it now is.
-        self.assertEqual(decide.reservation("review", {"review": 1.0}), 1.0)
+        set_part("review", "ceilings.usd", 1.0)
+        self.assertEqual(decide.reservation("review"), 1.0)
         rows = [{"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"}]
-        got = decide.spent_on(rows, decide.today(NOW), {"impl": 40.0})
-        self.assertEqual(got["estimated"], 40.0)
-        self.assertEqual(decide.estimate("idea", {"spec": 45.0}), 45.0)
+        pack.write("impl", "ceilings", {"turns": 120, "usd": 40.0})
+        self.assertEqual(decide.spent_on(rows, decide.today(NOW))["estimated"], 40.0)
+        set_part("spec", "ceilings.usd", 45.0)
+        self.assertEqual(decide.estimate("idea"), 45.0)
+        set_part("spec", "ceilings.usd", 9.0)
         start = {"kind": "start", "workspace": "w", "unit": "0010_a", "stage": "spec", "at": at()}
-        self.assertEqual(decide.reserved([start], NOW, (), {"spec": 9.0}), 9.0)
+        self.assertEqual(decide.reserved([start], NOW), 9.0)
 
     def test_an_end_without_cost_counts_its_stages_ceiling(self):
         rows = [
@@ -683,9 +603,11 @@ class TheDaysMoney(unittest.TestCase):
         )
 
     def test_a_stage_without_a_ceiling_counts_the_tables_largest(self):
-        largest = max(
-            [g.max_budget_usd for g in GRANTS.values()] + [b for _, b in NOVEL_CEILINGS.values()]
-        )
+        ceilings = []
+        for found in pack.rows().values():
+            ceilings.append(found.get("ceilings") or {})
+            ceilings += [v.get("ceilings") or {} for v in (found.get("variants") or {}).values()]
+        largest = max(c.get("usd") or 0.0 for c in ceilings)
         self.assertGreater(largest, 0)
         self.assertEqual(decide.estimate("idea"), largest)
         self.assertEqual(largest, 16.0)
@@ -1339,29 +1261,6 @@ class AfterARefusal(unittest.TestCase):
         self.assertEqual(stop, {"kind": "f", "reason": "integrate was refused: invalid"})
 
 
-class ExhaustedOf(unittest.TestCase):
-    """How many times a stage ran out, the count `stop_for`'s e reads."""
-
-    def test_counts_every_exhausted_end_of_the_stage_whoever_started_it(self):
-        rows = [
-            row(
-                "end", stage="plan", outcome="exhausted", started_by="person", terminal="max_turns"
-            ),
-            row("end", stage="plan", outcome="exhausted", started_by="autopilot", budget_usd=1.0),
-        ]
-        self.assertEqual(decide.exhausted_of(rows, "w", "0001_a", "plan"), 2)
-
-    def test_another_workspace_unit_stage_or_outcome_is_not_counted(self):
-        rows = [
-            row("end", stage="plan", outcome="exhausted", workspace="other"),
-            row("end", unit="0002_b", stage="plan", outcome="exhausted"),
-            row("end", stage="spec", outcome="exhausted"),
-            row("end", stage="plan", outcome="failed"),
-            row("start", stage="plan"),
-        ]
-        self.assertEqual(decide.exhausted_of(rows, "w", "0001_a", "plan"), 0)
-
-
 UNOPENED_DETAIL = "plan.md lacks its opening: no `Status:` line in its header"
 
 
@@ -1382,20 +1281,12 @@ class UnopenedOf(unittest.TestCase):
             unopened_row(workspace="other"),
             unopened_row(unit="0002_b"),
             unopened_row(stage="spec"),
-            unopened_row(outcome="exhausted"),
+            unopened_row(outcome="stopped"),
             unopened_row(detail="the session returned nothing"),
             unopened_row(detail="spec.md lacks its opening: no `# Spec:` title"),
             row("start", stage="plan"),
         ]
         self.assertEqual(decide.unopened_of(rows, "w", "0001_a", "plan"), 0)
-
-    def test_the_two_counts_do_not_read_each_other(self):
-        rows = [
-            unopened_row(),
-            row("end", stage="plan", outcome="exhausted", detail=UNOPENED_DETAIL),
-        ]
-        self.assertEqual(decide.exhausted_of(rows, "w", "0001_a", "plan"), 1)
-        self.assertEqual(decide.unopened_of(rows, "w", "0001_a", "plan"), 1)
 
     def test_counts_every_such_failed_end_whoever_started_it(self):
         rows = [unopened_row(started_by="person"), unopened_row(1, started_by="autopilot")]
@@ -1407,11 +1298,11 @@ def unopened_stop(seconds=0, stage="plan", unit="0001_a", note=""):
 
 
 def ran_out_row(seconds=0, stage="plan", unit="0001_a"):
-    return row("end", unit, stage, seconds, outcome="exhausted")
+    return row("end", unit, stage, seconds, outcome="paused-budget")
 
 
 def ran_out_stop(seconds=0, stage="plan", unit="0001_a", note=""):
-    return stop_row("e", seconds, unit, f"the last {stage} step ended exhausted" + note)
+    return stop_row("e", seconds, unit, f"the last {stage} step paused at its ceiling" + note)
 
 
 class AWorkspaceStopIsNoUnitsStop(unittest.TestCase):

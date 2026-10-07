@@ -17,20 +17,20 @@ from coscc.units import board as board_reader
 from coscc.git import gh, gitops
 from coscc.units import hold as hold_rules
 from coscc.units import more_rounds as more_rounds_rules
-from coscc.agent import agents, policy
-from coscc.github import prcomment, prscope, prsync
+from coscc.agent import agents, pack, policy
+from coscc.github import prcomment, prmachine, prsync
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
-from coscc.units.meta import MetaError, UnitMeta
+from coscc.units.meta import By, UnitMeta
 from coscc.store.journal import BadRecord, Journal
 from coscc.store.db import Busy
-from coscc.units import submit
+from coscc.units import states, submit
 from coscc.units import transitions
 from coscc.runner.queue import Attempt, describe
 from coscc import units
 from coscc.units import scratch, worktrees
-from coscc.units import BadUnit, CannotCreate, ideas
+from coscc.units import BadUnit, CannotCreate
 from coscc.leif import decide
 from coscc.leif.autopilot import autopilot_values
 from coscc.runner.queue import Refused
@@ -40,24 +40,14 @@ from coscc.config import Config
 from coscc.units.workspaces import Workspaces
 from coscc.runner.queue import Holds
 from coscc.units.ideas import Ideas
-from coscc.bus import Bus, Event
+from coscc.bus import Bus
 
 log = logging.getLogger(__name__)
 
-# The three results a `### Outcome` block may carry, as a person types them, and the word
-# the loop's `parseOutcome` reads each one as.
+# The three results an outcome may carry, as a person types them, and the word each is kept as.
 OUTCOME_RESULTS = {"đạt": "met", "trượt": "missed", "không đo được": "unmeasurable"}
-
-
-def opens_with(by: Any, names: Any) -> bool:
-    """`by` opens with one of `names`, case aside, and the name ends there or at a character
-    that is not a letter: `Leif (CoS)` does, `Leifson` does not."""
-    b = str(by or "").strip().casefold()
-    for n in names:
-        n = str(n or "").strip().casefold()
-        if n and b.startswith(n) and (len(b) == len(n) or not b[len(n)].isalpha()):
-            return True
-    return False
+# Whose decision an answer is: the two values `by` takes.
+BY: tuple[By, ...] = ("person", "delegated")
 
 
 def _to_send(found: dict[str, Any]) -> str:
@@ -185,8 +175,9 @@ class Answers:
                 "reason": "the round has no number",
             }
         pr_url = (found.get("pr") or {}).get("url") or ""
-        # The `review` agent as the table names it now, overrides included.
-        reviewer = self.agent("review")
+        process = str(found.get("process") or "")
+        review = next(iter(states.states_where(kind="review", process=process)), "")
+        reviewer = self.agent(pack.agent_for(process or pack.DEFAULT_PROCESS, review) or "")
         result = await prcomment.post(
             unit,
             n,
@@ -200,7 +191,7 @@ class Answers:
             "kind": "pr-comment",
             "workspace": self.ws.key(cwd),
             "unit": unit,
-            "stage": "review",
+            "stage": review,
             "round": n,
             "pr": pr_url,
             "outcome": result.state,
@@ -220,54 +211,46 @@ class Answers:
     async def sync_pr(
         self, cwd: str, unit: str, pr_before: str | None, stage: str = "pr"
     ) -> dict[str, Any]:
-        """Put `pr.md`'s title and body onto its pull request. Never raises.
+        """Put the unit's title and body onto its pull request. Never raises.
 
         Called by `drive` after a `pr` step that was not stopped, and by `run_step` before
-        it asks the gate of a `ship` step; `stage` names which. The words are `coscc.loop
-        pr-text`'s; `prsync` compares and writes. A `pr.md` that is not accepted or names no
-        pull request is `skipped` with no `gh` call. One `pr-sync` row says how it went
-        (`existed` is `None` when the lookup before a `pr` step could not answer). After a
-        `pr` step `prscope` reads the pull request's own counts into the row as `scope`;
-        no gate reads it. `pr.md` is never touched.
+        it asks the gate of a `ship` step; `stage` names which. The pull request is the PR
+        machine's row, the title `pr_title`, the body `body_of`; `prsync` compares and writes.
+        One with no pull request `open` or `merge-requested` is `skipped` with no `gh` call. One
+        `pr-sync` row says how it went (`existed` is `None` when the lookup before a `pr` step
+        could not answer). `pr.md` is never touched.
         """
-        url, outcome, detail = "", "failed", ""
-        scope: dict[str, Any] | None = None
+        url, outcome, detail, process = "", "failed", "", ""
         try:
-            text = await board_reader.pr_text(
-                self.ws.units_root(cwd), unit, state=self.ws.snapshot(cwd, [unit])
-            )
-            url = str(text.get("url") or "")
-            if "error" in text:
-                outcome, detail = "skipped", str(text["error"])
-            elif text.get("status") != "accepted":
-                outcome, detail = (
-                    "skipped",
-                    f"pr.md is {text.get('status') or 'without a status'}, not accepted",
-                )
+            key = self.ws.key(cwd)
+            now = prmachine.state(self.ws.unit_meta().history, key, unit)
+            url = str(now.get("url") or "")
+            snap = self.ws.snapshot(cwd, [unit])
+            known = (snap.get("units") or {}).get(f"{snap.get('workspace')}/{unit}") or {}
+            type_ = known.get("type")
+            process = str(known.get("process") or "")
+            if now["state"] not in prmachine.WATCHED:
+                outcome, detail = "skipped", f"the pull request is {now['state']}, not open"
             elif not url or not gh.PR_URL_RE.match(url):
-                outcome, detail = "skipped", f"pr.md names no pull request URL: {url!r}"
+                outcome, detail = "skipped", f"no pull request URL is recorded: {url!r}"
             else:
                 where = str(Path(cwd).expanduser().resolve())
                 result = await prsync.sync(
-                    url, text.get("title"), str(text.get("body") or ""), where
+                    url, units.pr_title(unit, type_), prmachine.body_of(unit), where
                 )
                 outcome, detail = result.state, result.reason
-                if stage == "pr":
-                    scope = await prscope.read(url, text.get("scope"), where)
-        except Unavailable as e:
+        except (Invalid, Unavailable) as e:
             detail = str(e)
         except Exception as e:
             # The step is done whatever this does.
             log.exception("the %s of %s could not be read", stage, unit)
             detail = str(e) or type(e).__name__
         record: dict[str, Any] = {"unit": unit, "stage": stage, "pr": url}
-        if stage == "pr":
+        if states.action_of(process, stage) == "open-pr":
             record["existed"] = None if pr_before is None else bool(pr_before)
         record["outcome"] = outcome
         if outcome in ("failed", "skipped"):
             record["detail"] = detail
-        if scope is not None:
-            record["scope"] = scope
         journal = self.ws.journal()
         if journal is not None:
             try:
@@ -279,54 +262,102 @@ class Answers:
     async def ingest(
         self, cwd: str, unit: str, done: dict[str, Any], wrote: str | None = None
     ) -> dict[str, Any]:
-        """The one read of a unit's files after a step that finished, prose or not: what
-        changed goes into `cos.db` through `coscc.loop meta`.
+        """The record a finished step handed back, written to `cos.db`; no file is read.
 
-        The step still ends as it ended, but a failure is not dropped: the `done` item
-        carries `ingest_error`, and a `unit_unknowns` row tells the snapshot.
-
-        A step whose run submitted a stage result takes its artifact's status and questions
-        from that object, through `transitions.apply` and guard `stage-result`, never from
-        the file. A guard that closes is a failure like any other here.
+        A run that ended `done` and submitted for `wrote` goes through `transitions.apply` and
+        guard `stage-result` (or `review-round`); any other step writes nothing. The step still
+        ends as it ended, but a failure is not dropped: the `done` item carries `ingest_error`,
+        and a `unit_unknowns` row tells the snapshot. A guard that closes is a failure here.
         """
-        if done.get("outcome") != "done":
+        submitted: dict[str, Any] = done.get("submitted") or {}
+        if not (wrote and done.get("outcome") == "done" and submitted):
             return {}
         meta = self.ws.unit_meta()
         workspace = self.ws.key(cwd)
         stage = str(done.get("stage") or "")
-        submitted = done.get("submitted") if wrote else None
         try:
-            await asyncio.to_thread(
-                meta.ingest,
-                workspace,
-                self.ws.units_root(cwd),
-                unit,
-                actor=f"stage:{stage}",
-                session=str(done.get("session_id") or "") or UNKNOWN,
-                source=f"run:{stage}",
-                wrote=None if submitted else wrote,
-                decided=(wrote,) if wrote and submitted else (),
-            )
-            if wrote and submitted:
-                apply = self._apply_round if stage == submit.ROUND else self._apply_result
-                await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
+            snap = self.ws.snapshot(cwd, [unit])
+            known = (snap.get("units") or {}).get(f"{snap.get('workspace')}/{unit}") or {}
+            kind = states.kind_of(str(known.get("process") or ""), stage)
+            apply = self._apply_round if kind == "review" else self._apply_result
+            await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
             return {}
-        except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
-            # One fixed sentence on the card and the step, the error in the log: `MetaError`
-            # carries the loop's stderr or its argv, `Busy` the database's path.
-            # A `BadTransition` names a status and nothing else.
-            log.warning("%s in %s could not be read after its step: %s", unit, workspace, e)
+        except (BadTransition, Busy, sqlite3.Error) as e:
+            # One fixed sentence on the card and the step, the error in the log: `Busy` carries
+            # the database's path, a `BadTransition` names a status and nothing else.
+            log.warning("%s in %s could not be recorded after its step: %s", unit, workspace, e)
             if isinstance(e, BadTransition):
-                reason = str(e) or "a status it read is not one the app records"
-            elif isinstance(e, (Busy, sqlite3.Error)):
-                reason = "the database could not be written"
+                reason = str(e) or "a status it handed back is not one the app records"
             else:
-                reason = "its files could not be read"
+                reason = "the database could not be written"
             try:
                 meta.ingest_failed(workspace, unit, reason)
             except Busy, sqlite3.Error, OSError:
                 pass
             return {"ingest_error": reason}
+
+    async def _open_unit(
+        self, cwd: str, unit: str, brief: bool, process: str, idea: str = "", depends_on: str = ""
+    ) -> dict[str, Any]:
+        """A new unit's `unit_meta` row, its `idea` and `depends` rows when opened from an idea,
+        and, given a brief, its `idea.md` accepted through guard `unit-created`, in one
+        transaction. A failure is told as `ingest` tells it."""
+        meta = self.ws.unit_meta()
+        workspace = self.ws.key(cwd)
+        deps = [depends_on] if depends_on else []
+
+        def opening(conn: sqlite3.Connection) -> None:
+            meta.add_unit(conn, workspace, unit, process)
+            if idea:
+                meta.link(conn, workspace, unit, idea, deps)
+
+        try:
+            await asyncio.to_thread(self._write_opening, meta, workspace, unit, brief, opening)
+            return {}
+        except (BadTransition, Busy, sqlite3.Error, OSError) as e:
+            log.warning("%s in %s could not be opened: %s", unit, workspace, e)
+            if isinstance(e, BadTransition):
+                reason = str(e) or "its first state was refused"
+            else:
+                reason = "the database could not be written"
+            try:
+                meta.ingest_failed(workspace, unit, reason)
+            except Busy, sqlite3.Error, OSError:
+                pass
+            return {"ingest_error": reason}
+
+    def _write_opening(
+        self,
+        meta: UnitMeta,
+        workspace: str,
+        unit: str,
+        brief: bool,
+        opening: Callable[[sqlite3.Connection], None],
+    ) -> None:
+        if not brief:
+            with meta.data.write() as conn:
+                opening(conn)
+            return
+        journal = self.ws.journal() or Journal(meta.root, self.config.data_dir)
+        applied = transitions.apply(
+            meta.history,
+            journal,
+            machine="unit",
+            transition="create",
+            workspace=workspace,
+            unit=unit,
+            artifact=states.brief_file(),
+            to_state="accepted",
+            inputs={"brief": True},
+            authority="code",
+            actor="app:create",
+            source="app:create",
+            also=opening,
+        )
+        if not applied.open:
+            raise BadTransition(
+                f"guard {applied.guard} refused {unit}: {', '.join(applied.reasons)}"
+            )
 
     def _apply_result(
         self,
@@ -413,16 +444,15 @@ class Answers:
         not undo the unit: the result says why under `worktree.error`.
 
         With `idea`, the unit is one side of a shared idea. Everything is checked before a
-        number is taken; the unit gets no `idea.md`, and the idea gets one line under
-        `## Units`. A failed append leaves a unit the idea does not list, which the loop
-        reports and whose `impl` it keeps shut.
+        number is taken; the unit gets no `idea.md`, and its `idea` and `depends` rows in
+        `unit_links` are what ties it to the idea (the idea file is never written).
         """
         self.ws.check(cwd)
+        process = self.ws.new_unit_process(cwd)
         if depends_on and not idea:
-            raise Invalid(
-                "depends_on needs an idea: it names a unit already under the idea's Units."
-            )
-        linked = self.ideas.idea_link(cwd, idea, brief, depends_on) if idea else None
+            raise Invalid("depends_on needs an idea: it names another unit of the same idea.")
+        if idea:
+            self.ideas.idea_link(cwd, idea, brief, depends_on)
         root = Path(cwd).expanduser().resolve()
         async with self._create_locks.setdefault(units.key(cwd), asyncio.Lock()):
             reserve = [root]
@@ -443,19 +473,19 @@ class Answers:
                 }
             except (CannotCreate, BadUnit) as e:
                 raise Invalid(str(e)) from e
-            if linked is not None:
-                try:
-                    ideas.append_unit(linked["path"], linked["ws"], made["unit"], depends_on)
-                except OSError as e:
-                    raise Invalid(
-                        f"{made['unit']} was made, but {idea} could not list it: {e}"
-                    ) from e
-                made["idea"] = idea
-                self.ideas.refresh_ideas(linked["home"])
-            # The new unit's row, and its `idea.md`'s status.
+            # The new unit's row, its idea's rows, and its `idea.md` accepted when it has a brief.
             made.update(
-                await self.ingest(cwd, made["unit"], {"outcome": "done", "stage": "create"})
+                await self._open_unit(
+                    cwd, made["unit"], bool(made.get("brief")), process, idea, depends_on
+                )
             )
+            if idea:
+                if "ingest_error" in made:
+                    raise Invalid(
+                        f"{made['unit']} was made, but its idea link was not kept: "
+                        f"{made['ingest_error']}"
+                    )
+                made["idea"] = idea
             try:
                 made["worktree"] = await worktrees.ensure(
                     cwd, made["unit"], None, self.config.data_dir
@@ -499,37 +529,44 @@ class Answers:
         artifact: str,
         question: Any,
         answer: str,
-        answered_by: str,
+        by: Any,
+        name: str = "",
     ) -> dict[str, Any]:
-        """A person answers one item under an artifact's `## Open questions`.
+        """One answer to an open question of an artifact.
 
         The answer is a row in `cos.db`; the artifact is not touched. What counts as a
         question and whether it is answered is the loop's decision, read through one board
         read. Not an approval; it starts nothing itself, though with the autopilot on the
-        pass it nudges may start the next stage. `answered_by` is whatever name the caller
-        typed: a claim, not an identity.
+        pass it nudges may start the next stage. `by` is whose decision it is, `person` (a
+        person's press) or `delegated` (decided for them), and is required: an answer without
+        it is refused, never taken as a person's. `name` is whatever name the caller typed,
+        `owner` when none: a claim, not an identity. No gate reads either.
 
         `question` may be `"F<n>"`, a finding the loop lists in the unit's `personFindings`;
         then `artifact` must be `review.md`. That row is read by `coscc.loop next` and the
         `ship` gate.
         """
         self.ws.check(cwd)
-        name = str(answered_by or "").strip() or OWNER
+        if by not in BY:
+            raise Invalid(f"say whose decision the answer is: by is {' or '.join(BY)}, got {by!r}")
+        name = str(name or "").strip() or OWNER
         done = await self._append_answers(
             cwd,
             unit,
             [(artifact, question, answer)],
+            by,
             name,
             "product",
         )
         written = done["written"][0]
         # The answer itself starts nothing; a pass may, if the switch is on.
-        self.bus.publish(Event("answer.written", self.ws.key(cwd), unit))
+        self.bus.publish("answer.written", {"workspace": self.ws.key(cwd), "unit": unit})
         return {
             "unit": unit,
             "artifact": written["artifact"],
             "question": written["question"],
-            "answered_by": name,
+            "by": by,
+            "name": name,
             "date": done["date"],
         }
 
@@ -538,12 +575,13 @@ class Answers:
         cwd: str,
         unit: str,
         items: list[tuple[str, Any, str]],
-        answered_by: str,
+        by: By,
+        name: str,
         via: str,
     ) -> dict[str, Any]:
         """The one place that records an answer: `items` is `[(artifact, question, text)]`, all
         checked and written under one hold of `_answer_lock` and one board read. A refusal
-        raises. Returns `{written: [{artifact, question}], date}`. Each row is a `person`'s.
+        raises. Returns `{written: [{artifact, question}], date}`. Each row carries `by`.
         """
         today = date.today().isoformat()
         written: list[dict[str, Any]] = []
@@ -566,11 +604,11 @@ class Answers:
                     artifact,
                     question,
                     str(answer or "").strip("\n"),
-                    answered_by,
+                    name,
                 )
                 written.append({"artifact": artifact, "question": finding or number})
                 texts.append(text)
-            self._record_answers(cwd, unit, found, written, texts, answered_by, today, via)
+            self._record_answers(cwd, unit, found, written, texts, by, name, today, via)
 
         return {"written": written, "date": today}
 
@@ -581,6 +619,7 @@ class Answers:
         found: dict[str, Any],
         written: list[dict[str, Any]],
         texts: list[str],
+        by: By,
         name: str,
         today: str,
         via: str,
@@ -604,11 +643,11 @@ class Answers:
                     w["artifact"],
                     w["question"],
                     text,
+                    by,
                     name,
                     today,
                     via,
                     conn=conn,
-                    authority="person",
                 )
 
         journal = self.ws.journal()
@@ -635,7 +674,7 @@ class Answers:
                         "artifact": artifact,
                         "question": w["question"],
                         "via": via,
-                        "authority": "person",
+                        "by": by,
                         "status": row.get("status", ""),
                         "completes": decide.answer_completes(found, artifact, given[artifact]),
                         "autopilot": on,
@@ -667,7 +706,7 @@ class Answers:
         # `question` is what `_named` returned: an int or `F<n>`.
         finding = question if isinstance(question, str) else ""
         if finding:
-            if artifact != "review.md":
+            if artifact not in states.files_where(kind="review"):
                 raise Invalid(
                     f"a finding is answered in review.md, not {artifact}. {_to_send(found)}"
                 )
@@ -712,7 +751,7 @@ class Answers:
         if (
             held is not None
             and held["machine"] == "step"
-            and not policy.is_prose_stage(held["stage"])
+            and not policy.row_for(held["stage"]).prose
         ):
             row = next(
                 (r for r in found.get("stages") or [] if r.get("stage") == held["stage"]), None
@@ -724,7 +763,7 @@ class Answers:
                 )
         return number, finding, text.strip()
 
-    async def record_outcome(  # noqa: PLR0915 - still to split
+    async def record_outcome(
         self,
         cwd: str,
         unit: str,
@@ -735,11 +774,8 @@ class Answers:
         note: str = "",
         recorded_by: str = "",
     ) -> dict[str, Any]:
-        """Record whether a finished unit met its intent's outcome.
-
-        Same lock, board read and refusal when a section follows `## Answers` as `answer()`,
-        and appended, so every byte above the block stays as the stage left it. The block is
-        `### Outcome` under `intent.md`'s `## Answers`; the loop reads whether it is valid.
+        """Record whether a finished unit met its intent's outcome: one `outcome` row in
+        `unit_decisions`, under the same lock and board read as `answer()`. No file is touched.
 
         Not an approval; no gate reads it. `recorded_by` and `measured_by` are names somebody
         typed, so both are claims. `source` is not checked against anything.
@@ -780,46 +816,21 @@ class Answers:
                 raise Invalid("the result needs a source: where the figure it rests on came from")
             if kind == "unmeasurable" and not why:
                 raise Invalid("the result needs a reason: why it could not be measured")
-            # As in `answer()`: a heading would end this block early or open another.
-            if any(line.lstrip().startswith("#") for line in [src, why, *text.splitlines()]):
-                raise Invalid("no line of an outcome may start with #")
-
-            path = self.ws.unit_dir(cwd, unit) / "intent.md"
-            try:
-                existing = path.read_text(encoding="utf-8")
-            except OSError as e:
-                raise Invalid(f"could not read intent.md: {e}") from e
-            lines = existing.splitlines()
-            heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
-            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1 :]):
-                raise Invalid(
-                    "intent.md has a section after its ## Answers, so a block appended at "
-                    "the end would not be read as an outcome"
-                )
-
             today = date.today().isoformat()
-            block = ""
-            if existing and not existing.endswith("\n"):
-                block += "\n"
-            if heading is None:
-                block += "\n## Answers\n"
-            block += (
-                "\n### Outcome\n"
-                f"Answered by: {name}. Date: {today}. Via: product.\n\n"
-                f"Result: {word}\n"
-                f"Measured by: {measurer}\n"
-            )
-            if src:
-                block += f"Source: {src}\n"
-            if why:
-                block += f"Reason: {why}\n"
-            if text.strip():
-                block += f"\n{text}\n"
+            fields = {
+                "result": kind,
+                "measured_by": measurer,
+                "source": src,
+                "reason": why,
+                "note": text.strip(),
+            }
             try:
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(block)
-            except OSError as e:
-                raise Invalid(f"could not write intent.md: {e}") from e
+                self.ws.unit_meta().add_decision(
+                    self.ws.key(cwd), unit, "outcome", fields, name, today, "product"
+                )
+            except (Busy, sqlite3.Error, OSError) as e:
+                log.warning("the outcome of %s was not recorded: %s", unit, e)
+                raise Invalid("the outcome was not recorded") from e
 
         return {
             "unit": unit,
@@ -828,36 +839,6 @@ class Answers:
             "recorded_by": name,
             "date": today,
         }
-
-    async def append_to_answers(self, path: Path, block: str, what: str) -> None:
-        """Append `block` to the end of `path`, under its `## Answers`, opening that section
-        when the file has none; never rewrites a byte above it. Under `_answer_lock`.
-        `what` names the block in the refusal when a section follows `## Answers`, where an
-        appended block would not be read."""
-        name = path.name
-        async with self._answer_lock:
-            try:
-                existing = path.read_text(encoding="utf-8")
-            except OSError as e:
-                raise Invalid(f"could not read {name}: {e}") from e
-            lines = existing.splitlines()
-            heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
-            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1 :]):
-                raise Invalid(
-                    f"{name} has a section after its ## Answers, so a block appended at "
-                    f"the end would not be read as {what}"
-                )
-            text = ""
-            if existing and not existing.endswith("\n"):
-                text += "\n"
-            if heading is None:
-                text += "\n## Answers\n"
-            text += block
-            try:
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(text)
-            except OSError as e:
-                raise Invalid(f"could not write {name}: {e}") from e
 
     async def hold(self, cwd: str, unit: str, to: str, reason: str, by: str) -> dict[str, Any]:
         """A person pauses, drops or resumes a unit (`to`: paused, dropped, active).
@@ -942,7 +923,7 @@ class Answers:
         finally:
             if mark is not None:
                 self.holds.attempts.move(mark, "ended", outcome)
-        self.bus.publish(Event("hold.moved", key, unit))
+        self.bus.publish("hold.moved", {"workspace": key, "unit": unit})
         return {
             "unit": unit,
             "from": from_,
@@ -968,8 +949,8 @@ class Answers:
     async def more_rounds(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """A person allows one more review round to a unit that used all of its.
 
-        Appends one `### More rounds` block under `review.md ## Answers`, never rewriting a
-        byte above it. Whether the unit is out of rounds is the loop's `moreRounds`. Not an
+        Records one `more-rounds` row in `unit_decisions`; no file is touched. Whether the unit
+        is out of rounds is the loop's `moreRounds`. Not an
         approval; it starts nothing and does not wake the autopilot. `by` is `owner` when
         none. Refused while a step or an integration of this unit runs; it holds that same
         mark itself while it writes.
@@ -978,7 +959,7 @@ class Answers:
         if not unit:
             raise Invalid("name a work unit")
         by = str(by or "").strip() or OWNER
-        directory = self.ws.unit_dir(cwd, unit)
+        self.ws.unit_dir(cwd, unit)
         key = self.ws.key(cwd)
         # Checked and taken in one transaction, as in `hold`.
         held, mark = self._short_attempt("rounds", key, unit)
@@ -993,9 +974,13 @@ class Answers:
             if said:
                 raise Invalid(said)
             today = date.today().isoformat()
-            await self.append_to_answers(
-                directory / "review.md", more_rounds_rules.block(by, today), "a round"
-            )
+            try:
+                self.ws.unit_meta().add_decision(
+                    key, unit, "more-rounds", {"rounds": 1}, by, today, "product"
+                )
+            except (Busy, sqlite3.Error, OSError) as e:
+                log.warning("the round for %s was not recorded: %s", unit, e)
+                raise Invalid("the round was not recorded") from e
             outcome = "done"
         finally:
             if mark is not None:

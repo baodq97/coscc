@@ -1,0 +1,914 @@
+// One agent: every part of its row, each shown as built in or as you edited it, in six tabs.
+// Edits gather in one draft; the save bar sends each changed part, and the app checks the row
+// as it would then stand before writing anything. The next run uses what was saved.
+
+import { useState, type ReactNode } from "react";
+import type { AgentPage as Page, AgentRow, CatalogTool, RunGroup, RunView } from "../api.gen";
+import { api, ApiError } from "../lib/api";
+import { refreshPacks } from "../lib/pack";
+import { sandboxed, sandboxLine, sandboxOf } from "../lib/build";
+import { ago, modelName, startedBy, money, unitCode, unitTitle } from "../lib/format";
+import { Link, navigate } from "../lib/router";
+import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
+import { useIndex } from "../lib/pack";
+import { AgentGlyph, WorkspaceSwitch, attention, inWorkspace, triggerWords, useAgents } from "./Agents";
+
+export const TABS = [
+  { key: "configuration", label: "Configuration" },
+  { key: "tools", label: "Tools" },
+  { key: "io", label: "Input/Output" },
+  { key: "trigger", label: "Trigger" },
+  { key: "prompt", label: "Prompt & skills" },
+  { key: "runs", label: "Runs & $" },
+] as const;
+type Tab = (typeof TABS)[number]["key"];
+
+const MODELS = ["claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]", "claude-haiku-4-5"];
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const DATA: Record<string, string> = {
+  idea: "the shared idea",
+  siblings: "sibling checkouts",
+  mentions: "units this one names",
+  "plan-map": "the plan's files as they stand",
+  drift: "what main changed since the plan",
+  integration: "the last integration",
+  screens: "the screenshots",
+  interventions: "what people stepped in for since its last run",
+  proposals: "the proposals already made",
+};
+export const EFFECT: Record<string, string> = {
+  read: "Reads",
+  "write-worktree": "Writes the worktree",
+  "write-app": "Writes the app's records",
+  external: "Runs commands",
+};
+export const TIER: Record<string, "plain" | "amber" | "red"> = { low: "plain", medium: "amber", high: "red" };
+
+type Draft = Record<string, unknown>;
+
+/** `get({a: {b: 1}}, ["a", "b"])` is 1; a missing step is undefined. */
+export function get(tree: unknown, path: string[]): unknown {
+  return path.reduce<unknown>((t, k) => (t && typeof t === "object" ? (t as Record<string, unknown>)[k] : undefined), tree);
+}
+
+/** `tree` with `path` set to `value`, or removed when `value` is undefined; parents left empty go too. */
+export function put(tree: unknown, path: string[], value: unknown): unknown {
+  if (!path.length) return value;
+  const obj = tree && typeof tree === "object" ? { ...(tree as Record<string, unknown>) } : {};
+  const [k, ...rest] = path;
+  const next = put(obj[k], rest, value);
+  if (next === undefined || (next && typeof next === "object" && !Array.isArray(next) && !Object.keys(next).length)) delete obj[k];
+  else obj[k] = next;
+  return Object.keys(obj).length ? obj : undefined;
+}
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/** The draft's parts that differ from what is saved: what the save bar sends. */
+export function changes(draft: Draft, saved: Record<string, unknown>): string[] {
+  return Object.keys(draft).filter((k) => !same(draft[k], saved[k]));
+}
+
+const LABELS: Record<string, string> = {
+  "model.id": "model",
+  "model.effort": "effort",
+  "model.trial": "trial arms",
+  "ceilings.turns": "turns",
+  "ceilings.usd": "spend",
+  "variants.novel.model.id": "new-ground model",
+  "variants.novel.model.effort": "new-ground effort",
+  "variants.novel.ceilings.turns": "new-ground turns",
+  "variants.novel.ceilings.usd": "new-ground spend",
+};
+
+function leaves(v: unknown, path: string[] = []): [string, unknown][] {
+  return v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length
+    ? Object.entries(v).flatMap(([k, x]) => leaves(x, [...path, k]))
+    : [[path.join("."), v]];
+}
+
+/** The parts of the draft that differ from what is saved, named as the page names them (`effort`, `spend`), not by their record's keys. */
+export function changedParts(draft: Draft, saved: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const k of changes(draft, saved)) {
+    const now = new Map(leaves(draft[k], [k]));
+    const was = new Map(leaves(saved[k], [k]));
+    const hit = [...new Set([...now.keys(), ...was.keys()])].filter((p) => !same(now.get(p), was.get(p)));
+    out.push(...hit.map((p) => LABELS[p] ?? (p.startsWith("skill:") ? `${p.slice(6)} skill` : p)));
+  }
+  return [...new Set(out)];
+}
+
+export function AgentPage({ name, tab = "configuration" }: { name: string; tab?: string }) {
+  const { ws, list, workspace, cwd, agents } = useAgents();
+  const [draft, setDraft] = useState<Draft>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<{ field: string; message: string } | null>(null);
+  // A page a save handed back, for the workspace it was saved in.
+  const [freshAt, setFreshAt] = useState<{ cwd: string; page: Page } | null>(null);
+  const fresh = freshAt?.cwd === cwd ? freshAt.page : null;
+  const setFresh = (p: Page) => setFreshAt({ cwd, page: p });
+  const [asking, setAsking] = useState(false);
+  const [refused, setRefused] = useState<string[]>([]);
+  const [done, setDone] = useState(false);
+  const page = fresh ?? agents.data;
+  const a = page?.rows.find((r) => r.key === name);
+  if (agents.state === "error" && !page) return <ErrorState error={agents.error} onRetry={agents.reload} />;
+  if (!page) return <div className="page"><SkeletonRows rows={5} /></div>;
+  if (!a)
+    return (
+      <div className="page">
+        <Empty icon="team" title="No such agent" actions={<Button onClick={() => navigate(inWorkspace("/agents", workspace))}>All agents</Button>}>
+          The team has no {name}.
+        </Empty>
+      </div>
+    );
+
+  const saved: Record<string, unknown> = { ...a.row };
+  for (const s of a.skills) saved[`skill:${s.name}`] = s.text;
+  const builtin: Record<string, unknown> = { ...a.builtin };
+  for (const s of a.skills) builtin[`skill:${s.name}`] = s.builtin;
+  const pending = changes(draft, saved);
+  const value = (k: string) => (k in draft ? draft[k] : saved[k]);
+  // `v` may be a function of the part as it then stands, so two quick edits both land.
+  const edit = (k: string, v: unknown | ((now: unknown) => unknown)) => {
+    setError(null);
+    setDone(false);
+    setDraft((d) => ({ ...d, [k]: typeof v === "function" ? v(k in d ? d[k] : saved[k]) : v }));
+  };
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    let failed = false;
+    for (const field of pending) {
+      try {
+        const v = draft[field];
+        const next = await api.post<Page>("/api/agents/field", { key: a.key, field, value: v === undefined || (!a.own && same(v, builtin[field])) ? null : v, cwd });
+        setFresh(next);
+        setDraft((d) => {
+          const { [field]: _, ...rest } = d;
+          return rest;
+        });
+      } catch (e) {
+        setError({ field, message: (e as Error).message });
+        failed = true;
+        break;
+      }
+    }
+    setBusy(false);
+    setDone(!failed);
+  };
+  const own = a.own;
+  const remove = async () => {
+    setBusy(true);
+    setRefused([]);
+    try {
+      await api.post<Page>("/api/agents/delete", { key: a.key, cwd });
+      refreshPacks();
+      navigate(inWorkspace("/agents", workspace));
+    } catch (e) {
+      setRefused(e instanceof ApiError && e.reasons.length ? e.reasons : [(e as Error).message]);
+      setAsking(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const ctx: Ctx = { a, page, value, edit, saved, builtin, editable: a.editable && !busy, error, cwd, setPage: setFresh };
+  const t: Tab = TABS.some((x) => x.key === tab) ? (tab as Tab) : "configuration";
+  const look = attention(a);
+
+  return (
+    <div className="page mid agent-page">
+      <div className="row" style={{ gap: 12, alignItems: "flex-start" }}>
+        <AgentGlyph a={a} size="xl" />
+        <div className="grow">
+          <h1 className="title">
+            {a.row.name ?? a.key} <span className="faint mono" style={{ fontSize: 13 }}>{a.key}</span>
+          </h1>
+          <div className="muted">{a.row.description || triggerWords(a, page.rows)}</div>
+          <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+            <Chip square tone="plain">Runs {triggerWords(a, page.rows)}</Chip>
+            {look && <Chip square tone={look.tone}>{look.label}</Chip>}
+            {own ? <Chip square tone="accent">Yours</Chip> : a.edited.length > 0 ? <Chip square tone="accent">{a.edited.length} part{a.edited.length > 1 ? "s" : ""} edited</Chip> : <Chip square tone="plain">as built in</Chip>}
+          </div>
+        </div>
+        {own && (
+          <div className="row" style={{ gap: 6 }}>
+            {asking ? (
+              <>
+                <span className="faint" style={{ fontSize: 12.5 }}>Delete {a.key} for good?</span>
+                <Button size="sm" kind="danger" disabled={busy} onClick={remove}>{busy ? "Deleting…" : "Yes, delete"}</Button>
+                <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>Keep it</Button>
+              </>
+            ) : (
+              <Button size="sm" kind="ghost" onClick={() => setAsking(true)}>Delete</Button>
+            )}
+          </div>
+        )}
+        <WorkspaceSwitch list={list} workspace={workspace} to={`/agents/${a.key}/${t}`} />
+        <div className="agent-spend">
+          <b>{money(a.cost_30d)}</b> <span className="faint">in 30 days</span>
+          <div className="faint" style={{ fontSize: 12 }}>{a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}</div>
+        </div>
+      </div>
+      {refused.length > 0 && (
+        <div className="card card-b problems">
+          <b>Not deleted:</b>
+          <ul>{refused.map((p) => <li key={p}>{p}</li>)}</ul>
+        </div>
+      )}
+      {a.problems.length > 0 && (
+        <div className="card card-b problems">
+          <b>Its runs are refused until this is fixed:</b>
+          <ul>{a.problems.map((p) => <li key={p}>{p}</li>)}</ul>
+        </div>
+      )}
+
+      <div className="tabs agent-tabs" style={{ marginTop: 18 }}>
+        {TABS.map((x) => (
+          <Link key={x.key} to={inWorkspace(`/agents/${a.key}/${x.key}`, workspace)} className={x.key === t ? "on" : ""}>
+            {x.label}
+          </Link>
+        ))}
+      </div>
+
+      {t === "configuration" && <Configuration {...ctx} />}
+      {t === "tools" && <Tools {...ctx} />}
+      {t === "io" && <InputOutput {...ctx} />}
+      {t === "trigger" && <Trigger {...ctx} />}
+      {t === "prompt" && <Prompt {...ctx} />}
+      {t === "runs" && <Runs a={a} page={page} names={Object.fromEntries((ws.data?.workspaces ?? []).map((w) => [w.path, w.name]))} />}
+
+      {done && pending.length === 0 && !error && (
+        <div className="savebar" role="status">
+          <span className="grow" style={{ fontSize: 13 }}>Saved. The next run uses it.</span>
+          <Button kind="ghost" size="sm" onClick={() => setDone(false)}>Close</Button>
+        </div>
+      )}
+      {(pending.length > 0 || error) && (
+        <div className="savebar">
+          <span className="grow" style={{ fontSize: 13 }}>
+            {error ? <span className="savebar-err">Not saved: {error.message}</span> : `${pending.length} unsaved change${pending.length > 1 ? "s" : ""}: ${changedParts(draft, saved).join(", ")}`}
+          </span>
+          <Button kind="ghost" size="sm" disabled={busy} onClick={() => { setDraft({}); setError(null); setDone(false); }}>
+            Discard
+          </Button>
+          {pending.length > 0 && (
+            <Button kind="primary" size="sm" disabled={busy} onClick={save}>
+              {busy ? "Saving…" : "Save"}
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type Ctx = {
+  a: AgentRow;
+  page: Page;
+  value: (k: string) => unknown;
+  edit: (k: string, v: unknown | ((now: unknown) => unknown)) => void;
+  saved: Record<string, unknown>;
+  builtin: Record<string, unknown>;
+  editable: boolean;
+  error: { field: string; message: string } | null;
+  cwd: string;
+  setPage: (p: Page) => void;
+};
+
+/** One part of a row: its label, where it comes from (built in, edited, unsaved) and a reset. */
+function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; label: string; hint?: string; children: ReactNode }) {
+  const [top, ...rest] = path.split(".");
+  const now = get(ctx.value(top), rest);
+  const saved = get(ctx.saved[top], rest);
+  const base = get(ctx.builtin[top], rest);
+  const source = !same(now, saved) ? "unsaved" : same(saved, base) ? "built-in" : "edited";
+  return (
+    <div className="field">
+      <div>
+        <div className="lab">{label}</div>
+        <div className="hint">
+          {(source === "unsaved" || (!ctx.a.own && source === "edited")) && <Chip square tone={source === "edited" ? "accent" : "amber"}>{source}</Chip>}
+          {!ctx.a.own && source !== "built-in" && ctx.editable && (
+            <button className="linkish" onClick={() => ctx.edit(top, (now: unknown) => put(now, rest, base))}>
+              Reset to built-in
+            </button>
+          )}
+        </div>
+        {hint && <div className="hint">{hint}</div>}
+      </div>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
+        {children}
+        {ctx.error?.field === top && <div className="field-err">{ctx.error.message}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** The model choices for a field holding `current`: the known ids, the current one if it is
+ * another, each named as a person reads it; the empty choice runs the default. */
+export function modelOptions(current: string | undefined, empty: string): { value: string; label: string }[] {
+  const ids = current && !MODELS.includes(current) ? [...MODELS, current] : MODELS;
+  return [{ value: "", label: empty }, ...ids.map((m) => ({ value: m, label: modelName(m) }))];
+}
+
+function ModelSelect({ ctx, path, empty }: { ctx: Ctx; path: string; empty: string }) {
+  const [top, ...rest] = path.split(".");
+  const v = get(ctx.value(top), rest);
+  const current = v == null || v === "" ? undefined : String(v);
+  return (
+    <select
+      className="input sm"
+      style={{ width: 260, maxWidth: "100%" }}
+      value={current ?? ""}
+      disabled={!ctx.editable}
+      onChange={(e) => ctx.edit(top, (now: unknown) => put(now, rest, e.target.value === "" ? undefined : e.target.value))}
+    >
+      {modelOptions(current, empty).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function Text({ ctx, path, width = 260, placeholder }: { ctx: Ctx; path: string; width?: number; placeholder?: string }) {
+  const [top, ...rest] = path.split(".");
+  const v = get(ctx.value(top), rest);
+  return (
+    <input
+      className="input sm"
+      style={{ width, maxWidth: "100%" }}
+      value={v == null ? "" : String(v)}
+      placeholder={placeholder}
+      disabled={!ctx.editable}
+      list={path.endsWith("model.id") || path === "model.id" ? "models" : undefined}
+      onChange={(e) => ctx.edit(top, (now: unknown) => put(now, rest, e.target.value === "" ? undefined : e.target.value))}
+    />
+  );
+}
+
+function NumberField({ ctx, path, prefix }: { ctx: Ctx; path: string; prefix?: string }) {
+  const [top, ...rest] = path.split(".");
+  const v = get(ctx.value(top), rest);
+  return (
+    <span className="row" style={{ gap: 4 }}>
+      {prefix && <span className="faint">{prefix}</span>}
+      <input
+        className="input sm"
+        inputMode="decimal"
+        style={{ width: 90 }}
+        value={v == null ? "" : String(v)}
+        disabled={!ctx.editable}
+        onChange={(e) => {
+          const s = e.target.value.trim();
+          const n = Number(s);
+          ctx.edit(top, (now: unknown) => put(now, rest, s === "" ? undefined : Number.isFinite(n) ? n : s));
+        }}
+      />
+    </span>
+  );
+}
+
+function Effort({ ctx, path }: { ctx: Ctx; path: string }) {
+  const [top, ...rest] = path.split(".");
+  const v = get(ctx.value(top), rest);
+  return (
+    <div className="seg">
+      {EFFORTS.map((e) => (
+        <button key={e} className={v === e ? "on" : ""} disabled={!ctx.editable} onClick={() => ctx.edit(top, (now: unknown) => put(now, rest, e))}>
+          {e}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Configuration(ctx: Ctx) {
+  const { a, page } = ctx;
+  const has = (k: string) => ctx.saved[k] !== undefined || ctx.builtin[k] !== undefined;
+  const trial = get(ctx.value("model"), ["trial"]) as string[] | undefined;
+  const modelId = get(ctx.value("model"), ["id"]) as string | undefined;
+  // The row's own model or ceilings, edited with its new-ground variant left alone, rule a new-ground step too.
+  const shadowed = ["model", "ceilings"].filter((k) => a.edited.includes(k) && !a.edited.includes("variants"));
+  const ran = (c: AgentRow["config"]) =>
+    `Runs on ${modelName(c.model)}${c.model_source === "COS_MODEL" ? " (COS_MODEL)" : ""}${c.effort ? `, ${c.effort} effort` : ""}, at most ${c.ceilings.max_turns ?? "—"} turn${c.ceilings.max_turns === 1 ? "" : "s"} and ${c.ceilings.max_budget_usd != null ? money(c.ceilings.max_budget_usd) : "no $ ceiling"}.`;
+  return (
+    <>
+      <datalist id="models">{MODELS.map((m) => <option key={m} value={m} />)}</datalist>
+      <div className="sec-h">Who it is</div>
+      <div className="card card-b">
+        <Part ctx={ctx} path="name" label="Name" hint="Signed on its commits and artifacts.">
+          <Text ctx={ctx} path="name" width={200} />
+        </Part>
+        <Part ctx={ctx} path="glyph" label="Glyph">
+          <Text ctx={ctx} path="glyph" width={120} />
+        </Part>
+        <Part ctx={ctx} path="description" label="Description">
+          <Text ctx={ctx} path="description" width={520} />
+        </Part>
+      </div>
+
+      <div className="sec-h">
+        How it runs <span className="faint">{ran(a.config)}</span>
+      </div>
+      <div className="card card-b">
+        <Part ctx={ctx} path="model.id" label="Model" hint={`${modelId ? `Id ${modelId}. ` : ""}${page.cos_model ? `Empty: ${modelName(page.cos_model)}, from COS_MODEL.` : "Empty: the CLI's default."}`}>
+          <ModelSelect ctx={ctx} path="model.id" empty="Default" />
+        </Part>
+        <Part ctx={ctx} path="model.effort" label="Effort">
+          <Effort ctx={ctx} path="model.effort" />
+        </Part>
+        {has("ceilings") && (
+          <>
+            <Part ctx={ctx} path="ceilings.turns" label="Turns at most">
+              <NumberField ctx={ctx} path="ceilings.turns" />
+            </Part>
+            <Part ctx={ctx} path="ceilings.usd" label="Spend at most">
+              <NumberField ctx={ctx} path="ceilings.usd" prefix="$" />
+            </Part>
+          </>
+        )}
+        {trial && (
+          <Part ctx={ctx} path="model.trial" label="Trial arms" hint="A routine step runs on one of the two, by unit.">
+            {[0, 1].map((i) => (
+              <span key={i} className="col" style={{ gap: 2 }}>
+                <input
+                  className="input sm"
+                  style={{ width: 260, maxWidth: "100%" }}
+                  list="models"
+                  aria-label={`Trial arm ${i + 1}`}
+                  value={trial[i] ?? ""}
+                  disabled={!ctx.editable}
+                  onChange={(e) => ctx.edit("model", (now: unknown) => put(now, ["trial"], trial.map((m, j) => (j === i ? e.target.value : m))))}
+                />
+                <span className="faint" style={{ fontSize: 12 }}>{modelName(trial[i])}</span>
+              </span>
+            ))}
+          </Part>
+        )}
+        {has("warning") && (
+          <Part ctx={ctx} path="warning" label="Said before a run" hint="Shown beside the button that starts it.">
+            <Text ctx={ctx} path="warning" width={620} />
+          </Part>
+        )}
+      </div>
+
+      {a.novel && (
+        <>
+          <div className="sec-h">
+            On new ground <span className="faint">a step its plan marks novel. {ran(a.novel)}</span>
+            {shadowed.length > 0 && <div className="faint" style={{ fontSize: 12.5, fontWeight: 400 }}>Your edit of {shadowed.join(" and ")} above rules these steps too, until you set them here.</div>}
+          </div>
+          <div className="card card-b">
+            <Part ctx={ctx} path="variants.novel.model.id" label="Model" hint={get(ctx.value("variants"), ["novel", "model", "id"]) ? `Id ${get(ctx.value("variants"), ["novel", "model", "id"])}` : undefined}>
+              <ModelSelect ctx={ctx} path="variants.novel.model.id" empty="As above" />
+            </Part>
+            <Part ctx={ctx} path="variants.novel.model.effort" label="Effort">
+              <Effort ctx={ctx} path="variants.novel.model.effort" />
+            </Part>
+            <Part ctx={ctx} path="variants.novel.ceilings.turns" label="Turns at most">
+              <NumberField ctx={ctx} path="variants.novel.ceilings.turns" />
+            </Part>
+            <Part ctx={ctx} path="variants.novel.ceilings.usd" label="Spend at most">
+              <NumberField ctx={ctx} path="variants.novel.ceilings.usd" prefix="$" />
+            </Part>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+function Tools(ctx: Ctx) {
+  const { a, page } = ctx;
+  const tools = (ctx.value("tools") as Record<string, unknown> | undefined) ?? {};
+  const output = (ctx.value("output") as { by?: string; kind?: string } | undefined) ?? {};
+  const readsOnly = output.by === "app";
+  const helper = a.group === "helper";
+  const helpers = page.rows.filter((r) => r.group === "helper");
+  const chosen = (ctx.value("helpers") as string[] | undefined) ?? [];
+  const triggered = a.group === "triggered";
+  const set = (t: string, p: unknown) => {
+    const next = { ...tools };
+    if (p === "off") delete next[t];
+    else next[t] = p;
+    ctx.edit("tools", next);
+  };
+  // A row a trigger starts holds Bash only inside the OS sandbox.
+  const choices = (t: CatalogTool) => (triggered && t.name === "Bash" ? ["sandboxed", "off"] : ["allow", "ask", "off"]);
+  const why = (t: CatalogTool) =>
+    readsOnly && t.effect !== "read" ? "The app writes this agent's output from its reply, so it holds only reading tools." : helper && t.name === "Agent" ? "A helper starts no helper." : "";
+  return (
+    <>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Allow gives the tool to its runs; Ask offers it and refuses every call until a person can be asked; Off leaves it out. No setting here lifts the app's critical blocks.
+      </p>
+      {(readsOnly || helper) && (
+        <p className="muted">{readsOnly ? "The app writes this agent's output from its reply, so it holds only reading tools." : "A helper starts no helper."}</p>
+      )}
+      <div className="card">
+        {page.catalog.map((t) => {
+          const box = sandboxOf(tools[t.name]);
+          const p = box ? "sandboxed" : String(tools[t.name] ?? "off");
+          const no = why(t);
+          return (
+            <div key={t.name} className="tool-line">
+              <span className="tname">
+                <b className="mono">{t.name}</b>
+                {t.feature && (
+                  <span className="faint"> · {t.feature === t.name ? "feature" : `from ${t.feature}`}{t.on ? "" : ", off in this workspace"}</span>
+                )}
+              </span>
+              <span className="tmeta">
+                <Chip square tone="plain">{EFFECT[t.effect] ?? t.effect}</Chip>
+                <Chip square tone={TIER[t.tier] ?? "plain"}>{t.tier} risk</Chip>
+                {!same(tools[t.name] ?? "off", (a.builtin.tools ?? {})[t.name] ?? "off") && <Chip square tone="accent">edited</Chip>}
+              </span>
+              <span className="seg">
+                {choices(t).map((x) => (
+                  <button key={x} className={p === x ? "on" : ""} disabled={!ctx.editable || (x !== "off" && !!no)} onClick={() => set(t.name, x === "sandboxed" ? sandboxed(box?.join(", ") ?? "") : x)}>
+                    {x}
+                  </button>
+                ))}
+              </span>
+              {box && (
+                <span className="tool-why">
+                  <div>{sandboxLine(box)}</div>
+                  <label>
+                    Network{" "}
+                    <input
+                      key={box.join(", ")}
+                      className="mono"
+                      defaultValue={box.join(", ")}
+                      placeholder="127.0.0.1:3000"
+                      disabled={!ctx.editable}
+                      onBlur={(e) => e.target.value !== box.join(", ") && set(t.name, sandboxed(e.target.value))}
+                    />
+                  </label>
+                </span>
+              )}
+              {t.name === "Agent" && p !== "off" && (
+                <span className="tool-why">
+                  Starts:{" "}
+                  {helpers.map((h) => (
+                    <label key={h.key} className="check">
+                      <input
+                        type="checkbox"
+                        checked={chosen.includes(h.key)}
+                        disabled={!ctx.editable}
+                        onChange={(e) => ctx.edit("helpers", e.target.checked ? [...chosen, h.key] : chosen.filter((x) => x !== h.key))}
+                      />{" "}
+                      {h.row.name ?? h.key}
+                    </label>
+                  ))}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {ctx.error && ["tools", "helpers"].includes(ctx.error.field) && <div className="field-err">{ctx.error.message}</div>}
+    </>
+  );
+}
+
+type Input = { artifacts: string[]; outputs: string[]; answers: boolean; findings: boolean; data: string[] };
+
+function InputOutput(ctx: Ctx) {
+  const { withAgent } = useIndex();
+  const input = ctx.value("input") as Input | undefined;
+  const base = (ctx.builtin.input as Input | undefined) ?? { artifacts: [], outputs: [], answers: false, findings: false, data: [] };
+  const set = (k: keyof Input, v: unknown) => input && ctx.edit("input", { ...input, [k]: v });
+  const named = (list: string[], n: string) => list.find((x) => x.replace(/\?$/, "") === n);
+  const toggleArtifact = (n: string, on: boolean) => {
+    if (!input) return;
+    const rest = input.artifacts.filter((x) => x.replace(/\?$/, "") !== n);
+    set("artifacts", on ? [...rest, named(base.artifacts, n) ?? n] : rest);
+  };
+  return (
+    <>
+      <div className="sec-h">What it is handed</div>
+      <div className="card card-b">
+        {!input ? (
+          <div className="faint">Nothing of a unit: this agent is given what its engine hands it.</div>
+        ) : (
+          <>
+            <Part ctx={ctx} path="input.artifacts" label="Artifacts" hint="Whole, as the unit's folder holds them.">
+              {withAgent.map((n) => (
+                <label key={n} className="check">
+                  <input type="checkbox" checked={!!named(input.artifacts, n)} disabled={!ctx.editable} onChange={(e) => toggleArtifact(n, e.target.checked)} /> {n}
+                </label>
+              ))}
+            </Part>
+            <Part ctx={ctx} path="input.data" label="The app's data">
+              {Object.entries(DATA).map(([k, words]) => (
+                <label key={k} className="check" title={words}>
+                  <input type="checkbox" checked={input.data.includes(k)} disabled={!ctx.editable} onChange={(e) => set("data", e.target.checked ? [...input.data, k] : input.data.filter((x) => x !== k))} /> {k}
+                </label>
+              ))}
+            </Part>
+            <Part ctx={ctx} path="input.answers" label="Answers and findings">
+              <label className="check">
+                <input type="checkbox" checked={input.answers} disabled={!ctx.editable} onChange={(e) => set("answers", e.target.checked)} /> the unit's answers
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={input.findings} disabled={!ctx.editable} onChange={(e) => set("findings", e.target.checked)} /> open review findings
+              </label>
+            </Part>
+          </>
+        )}
+      </div>
+      <div className="sec-h">What it hands back</div>
+      <div className="card card-b">
+        <JsonPart ctx={ctx} field="output" label="Output" hint="What it submits: its kind, version and fields. A field another stage reads cannot be removed." />
+      </div>
+    </>
+  );
+}
+
+function JsonPart({ ctx, field, label, hint }: { ctx: Ctx; field: string; label: string; hint: string }) {
+  const v = ctx.value(field);
+  const [text, setText] = useState(() => JSON.stringify(v ?? null, null, 2));
+  const [bad, setBad] = useState("");
+  const shown = bad ? text : JSON.stringify(v ?? null, null, 2);
+  return (
+    <Part ctx={ctx} path={field} label={label} hint={hint}>
+      <textarea
+        className="editor mono"
+        rows={Math.min(24, shown.split("\n").length + 1)}
+        value={bad ? text : shown}
+        disabled={!ctx.editable}
+        spellCheck={false}
+        onChange={(e) => {
+          setText(e.target.value);
+          try {
+            ctx.edit(field, JSON.parse(e.target.value));
+            setBad("");
+          } catch (err) {
+            setBad((err as Error).message);
+          }
+        }}
+      />
+      {bad && <div className="field-err">Not JSON yet: {bad}</div>}
+    </Part>
+  );
+}
+
+function Trigger(ctx: Ctx) {
+  const { a, page } = ctx;
+  const t = a.row.trigger ?? {};
+  if (a.group !== "triggered")
+    return (
+      <div className="card card-b">
+        <div className="field">
+          <div>
+            <div className="lab">Runs</div>
+            <div className="hint"><Chip square tone="plain">read-only</Chip></div>
+          </div>
+          <div>
+            <b>{triggerWords(a, page.rows)}</b>
+            <div className="muted" style={{ marginTop: 6 }}>
+              {t.state
+                ? `A unit that reaches that state, in a process that has it, runs this agent when you, or the autopilot, press Run.`
+                : t.engine
+                  ? "The app opens it itself; no unit state starts it."
+                  : a.group === "helper"
+                  ? "Another agent starts it inside its own run."
+                  : "Nothing runs it yet: put it in a step of a process (What Leif may do, New process)."}{" "}
+              {a.group === "helper" ? "" : "Which agent a built-in state runs is fixed for now."}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  return (
+    <div className="card card-b">
+      <div className="field">
+        <div>
+          <div className="lab">Runs</div>
+        </div>
+        <div>
+          <b>{triggerWords(a, page.rows)}</b>
+          <div className="muted" style={{ marginTop: 6 }}>It only reads; what it hands back waits for you on Up next.</div>
+        </div>
+      </div>
+      {a.on !== null && <OnHere {...ctx} />}
+      {t.schedule && (
+        <Part ctx={ctx} path="trigger.schedule.hours" label="Every" hint="Hours between two runs here, counted from the last.">
+          <NumberField ctx={ctx} path="trigger.schedule.hours" />
+          <span className="muted" style={{ alignSelf: "center" }}>hours</span>
+        </Part>
+      )}
+      {t.event?.after_hours !== undefined && (
+        <Part ctx={ctx} path="trigger.event.after_hours" label="Wait" hint="Hours after the event before it runs.">
+          <NumberField ctx={ctx} path="trigger.event.after_hours" />
+          <span className="muted" style={{ alignSelf: "center" }}>hours</span>
+        </Part>
+      )}
+      {t.manual && <RunNow {...ctx} />}
+    </div>
+  );
+}
+
+/** On or off in this workspace: whether its schedule or event runs it here. */
+function OnHere({ a, cwd, setPage }: Ctx) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = async (on: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      setPage(await api.post<Page>("/api/agents/state", { cwd, key: a.key, on }));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="field">
+      <div>
+        <div className="lab">In this workspace</div>
+        <div className="hint">{a.on ? "Runs on its own here." : "Runs here only when you press Run now."}</div>
+      </div>
+      <div>
+        <div className="seg" role="group" aria-label="On or off in this workspace">
+          <button className={a.on ? "on" : ""} aria-pressed={!!a.on} disabled={busy} onClick={() => set(true)}>On</button>
+          <button className={a.on ? "" : "on"} aria-pressed={!a.on} disabled={busy} onClick={() => set(false)}>Off</button>
+        </div>
+        {error && <div className="field-err">{error}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** One paid run now, asked once with its ceiling named. */
+function RunNow(ctx: Ctx) {
+  const input = ctx.value("input") as Input | undefined;
+  if (input?.artifacts.length || input?.outputs.length)
+    return (
+      <div className="field">
+        <div>
+          <div className="lab">Run now</div>
+        </div>
+        <div className="muted">It reads one unit: run it from that unit's page.</div>
+      </div>
+    );
+  return <RunNowButton {...ctx} />;
+}
+
+function RunNowButton({ a, cwd }: Ctx) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  const usd = a.config.ceilings.max_budget_usd;
+  const run = async () => {
+    if (!asking) return setAsking(true);
+    setBusy(true);
+    setSaid(null);
+    try {
+      await api.post("/api/agents/run", { cwd, key: a.key });
+      setSaid({ ok: true, text: "Started. Its run shows under Runs & $ once it ends." });
+      setAsking(false);
+    } catch (e) {
+      setSaid({ ok: false, text: (e as Error).message });
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="field">
+      <div>
+        <div className="lab">Run now</div>
+        <div className="hint">One paid, read-only run{usd ? `, at most ${money(usd)}` : ""}.</div>
+      </div>
+      <div>
+        <div className="row" style={{ gap: 8 }}>
+          <Button size="sm" kind={asking ? "primary" : ""} icon="bolt" disabled={busy} onClick={run}>
+            {busy ? "Starting…" : asking ? `Spend up to ${money(usd ?? 0)} on a run?` : "Run now"}
+          </Button>
+          {asking && !busy && (
+            <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>
+              Cancel
+            </Button>
+          )}
+        </div>
+        {said && <div className={said.ok ? "muted" : "field-err"} style={{ marginTop: 6 }}>{said.text}</div>}
+      </div>
+    </div>
+  );
+}
+
+function Prompt(ctx: Ctx) {
+  const { a } = ctx;
+  return (
+    <>
+      <div className="sec-h">System prompt</div>
+      <div className="card card-b">
+        <TextPart ctx={ctx} field="body" label="Its role" hint="Given to every run before anything else." rows={6} />
+      </div>
+      <div className="sec-h">
+        Skills <span className="faint">the rules it is given for its stage; a skill's text is shared by every agent that names it</span>
+      </div>
+      <div className="card card-b">
+        {a.skills.length === 0 && <div className="faint">It names no skill.</div>}
+        {a.skills.map((s) => (
+          <TextPart key={s.name} ctx={ctx} field={`skill:${s.name}`} label={s.name} rows={18} mono />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function TextPart({ ctx, field, label, hint, rows, mono }: { ctx: Ctx; field: string; label: string; hint?: string; rows: number; mono?: boolean }) {
+  const v = ctx.value(field);
+  return (
+    <Part ctx={ctx} path={field} label={label} hint={hint}>
+      <textarea
+        className={`editor ${mono ? "mono" : ""}`}
+        rows={rows}
+        value={typeof v === "string" ? v : ""}
+        disabled={!ctx.editable}
+        spellCheck={!mono}
+        onChange={(e) => ctx.edit(field, e.target.value)}
+      />
+    </Part>
+  );
+}
+
+/** What one setting record says, in words. */
+function settingWords(s: RunGroup["settings"][number]): string {
+  return s.new == null ? `${s.field} reset` : `${s.field} edited`;
+}
+
+
+/** One run's row: where it opens (only a run with a kept log, or its unit), and what it says. A
+ * skip and a run without a log are not links. */
+export function runRow(r: RunView, ws: string): { to: string; code: string; title: string; muted: boolean } {
+  const n = Number(r.unit.slice(0, 4));
+  const code = r.unit ? unitCode(ws, n) : "—";
+  if (r.skipped) return { to: "", code, title: `Skipped — ${r.detail || "nothing to do"}`, muted: true };
+  const title = r.unit ? unitTitle(r.unit) : (r.started_by ? `Run by ${startedBy(r.started_by)}` : "Run");
+  if (r.run) return { to: `/run/${ws}/${r.run}`, code, title, muted: false };
+  if (r.unit) return { to: `/unit/${ws}/${n}`, code, title, muted: false };
+  return { to: "", code, title: `${title} — no log kept`, muted: true };
+}
+
+function Runs({ a, page, names }: { a: AgentRow; page: Page; names: Record<string, string> }) {
+  if (!a.groups.length)
+    return (
+      <Empty icon="clock" title="No runs in 30 days">
+        A run shows here with the definition it ran, so an edit's effect can be compared.
+      </Empty>
+    );
+  return (
+    <>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Runs of the last 30 days, grouped by the definition they ran; an edit starts a new group. Total {money(a.cost_30d)} over {a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}.
+      </p>
+      {a.groups.map((g, i) => (
+        <div key={i} className="card run-group">
+          <div className="card-h">
+            <span className="grow">
+              {g.row_hash === a.row_hash ? "As it stands now" : g.row_hash ? "An earlier definition" : g.runs.length ? "Before definitions were recorded" : "Saved, not run yet"}{" "}
+              {g.row_hash && <span className="faint mono" title={g.row_hash}>#{g.row_hash.slice(0, 6)}</span>}
+            </span>
+            <span className="faint" style={{ fontWeight: 500 }}>
+              {g.runs.length} run{g.runs.length === 1 ? "" : "s"} · {money(g.cost_usd)} · {g.turns} turn{g.turns === 1 ? "" : "s"}
+            </span>
+          </div>
+          {g.settings.length > 0 && (
+            <div className="run-settings">
+              {g.settings.map((s, j) => (
+                <span key={j} className="faint">
+                  {settingWords(s)} {ago(s.at)}
+                  {j < g.settings.length - 1 ? " · " : ""}
+                </span>
+              ))}
+            </div>
+          )}
+          {g.runs.map((r) => {
+            const row = runRow(r, names[r.workspace] ?? "");
+            const body = (
+              <>
+                {r.unit && <span className="id">{row.code}</span>}
+                <span className="t" style={row.muted ? { color: "var(--text-3)", fontWeight: 400 } : undefined}>{row.title}</span>
+                <span className="meta">
+                  {r.outcome !== "done" && <Chip square tone="red">{r.outcome}</Chip>}
+                  {r.cost_usd != null ? money(r.cost_usd) : ""} · {ago(r.at)}
+                </span>
+              </>
+            );
+            const key = r.workspace + r.unit + r.at;
+            return row.to ? (
+              <Link key={key} to={row.to} className="lrow">{body}</Link>
+            ) : (
+              <div key={key} className="lrow">{body}</div>
+            );
+          })}
+        </div>
+      ))}
+    </>
+  );
+}

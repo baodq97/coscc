@@ -32,7 +32,7 @@ full:
   about that step.
 
 **A session the app opens does not read your Claude Code settings.** Since `0088` every
-session — each stage, chat, an integration, a proposal of estimates — starts with no
+session — each agent's run, chat, an integration, a proposal of estimates — starts with no
 settings source: nothing from `~/.claude/settings.json` or `settings.local.json`, no MCP
 server, no personal skill or plugin, and none of the `env` block in those files. Its
 environment is the service's. So a proxy (`ANTHROPIC_BASE_URL`), or any other variable a
@@ -162,21 +162,16 @@ the tab has no session. Reloading it lands on `/setup` or `/login`; a tab loaded
 release on goes to `/login` by itself when its session ends. A browser that cached the old
 page may show the old board until that reload too.
 
-**Upgrading past the release that adds per-stage models changes which model runs.**
-`COS_MODEL` no longer decides the model of the eight stages: each now ships with a default
-(`claude-opus-5-5[1m]` for idea, intent, spec, plan and review; `claude-sonnet-5-5[1m]` for
-impl, pr and ship), and the *Agents* page (`/agents`) overrides any of them
-without a restart. `COS_MODEL` answers only chat and any stage with no default. If you had
-set it to pin every stage, set those stages on that screen instead.
+**Each agent's model is its row's.** The built-in pack ships every agent with a model (the
+`[1m]` variants, a 1,000,000-token context window), and the *Agents* page (`/agents`)
+changes any of them without a restart; the change is kept in your own pack layer under the
+data root. `COS_MODEL` answers only a row with no model. A model you set there does not move
+when a release changes the built-in default.
 
-**Since `0031_shipped-model-defaults-cap-every-stage-at-200k`, every shipped default is the
-`[1m]` variant** — a 1,000,000-token context window instead of 200,000. The non-`[1m]` ids
-this section named before that unit capped every stage at 200k with nobody having decided
-that on purpose: `impl` on `claude-sonnet-5` was measured auto-compacting twice around
-167k tokens (`.cos/0031_shipped-model-defaults-cap-every-stage-at-200k/idea.md`). An
-**override already saved in Settings does not move with this default**: anyone who had
-overridden a stage to an id with no `[1m]` suffix stays at 200k for that stage until they
-change or remove that override themselves.
+**Upgrading from 0.15 migrates the database in one step** (schema 12 to the current one) and
+moves any per-stage model, effort or ceiling setting into that layer. A database older than
+0.15 is refused: upgrade through 0.15 first. Back up `cos.db` before the upgrade; an older
+build cannot read the migrated one.
 
 ## Options
 

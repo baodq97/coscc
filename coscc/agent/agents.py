@@ -1,32 +1,24 @@
-"""Who a stage's session is: its glyph, name, meaning and role, resolved in one place.
+"""Who an agent is: its glyph, name, meaning and role, read from its row (`coscc/agent/pack.py`).
 
-Each field resolves override first (an `agent:<key>` row of the `prefs` table), then default
-(`agents.json`, shipped with the package). Label, address and commit attribution are built
-here so only a name that passed `check_field` reaches a trailer. Bad data never raises: it
-falls back and is named in `problems`.
+The meaning is the row's `description`, the role its body. Label, address and commit attribution
+are built here from a name `pack.check` passed.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 from typing import Any
 
-DEFAULT_PATH = Path(__file__).resolve().parent / "agents.json"
+from coscc.agent import pack
 
-PREFIX = "agent:"
 FIELDS = ("glyph", "name", "meaning", "role")
+# Where each field lives in a row.
+WHERE = {"glyph": "glyph", "name": "name", "meaning": "description", "role": pack.BODY}
 
 OVERRIDE = "override"
 DEFAULT = "default"
 
-# ASCII only, so a name is safe as the local part of the trailer's address.
-_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
-NAME_MAX = 24
-GLYPH_MAX = 2
-MEANING_MAX = 60
-ROLE_MAX = 200
 
 DOMAIN = "agents.coscc.invalid"
 
@@ -36,134 +28,31 @@ _AUTHOR = re.compile(r"(?:^|\s)Author:\s*(.*?)(?:\.\s+[A-Z][\w-]*(?: [a-z][\w-]*
 _ANSWERS = "## Answers"
 
 
-def check_field(field: str, value: Any) -> str:
-    """Why `value` may not be `field`'s, or `""`. The duplicate-name rule needs the other
-    rows (`Agents.set_agent_field`)."""
-    if field not in FIELDS:
-        return f"no such field: {field} (use one of {', '.join(FIELDS)})"
-    if not isinstance(value, str):
-        return f"{field} must be text"
-    if field == "name":
-        if not 1 <= len(value) <= NAME_MAX or not _NAME.fullmatch(value):
-            return (
-                f"name must be 1 to {NAME_MAX} ASCII letters, digits or hyphens, "
-                "starting with a letter"
-            )
-    elif field == "glyph":
-        if not 1 <= len(value) <= GLYPH_MAX or any(c.isspace() for c in value):
-            return f"glyph must be 1 or {GLYPH_MAX} characters with no space"
-    else:
-        limit = MEANING_MAX if field == "meaning" else ROLE_MAX
-        if len(value) > limit:
-            return f"{field} must be at most {limit} characters"
-        if "\n" in value or "\r" in value:
-            return f"{field} must be one line"
-    return ""
-
-
-def load_defaults(path: str | Path | None = None) -> tuple[dict[str, dict[str, str]], list[str]]:
-    """The shipped rows, `{key: {field: value}}` in the file's order, and what was wrong
-    with them. A field that breaks `check_field` is dropped, and a row with no `name` or
-    `glyph` left is skipped. Never raises."""
-    where = Path(path) if path is not None else DEFAULT_PATH
-    try:
-        raw = json.loads(where.read_text(encoding="utf-8"))
-    except OSError as e:
-        return {}, [f"{where.name} could not be read: {e}"]
-    except ValueError as e:
-        return {}, [f"{where.name} is not JSON: {e}"]
-    rows = raw.get("agents") if isinstance(raw, dict) else None
-    if not isinstance(rows, dict):
-        return {}, [f'{where.name} has no "agents" object']
-    out: dict[str, dict[str, str]] = {}
-    problems: list[str] = []
-    for key, entry in rows.items():
-        if not isinstance(entry, dict):
-            problems.append(f"{where.name}: {key!r} is not an agent entry: {entry!r}")
-            continue
-        row: dict[str, str] = {}
-        for field in FIELDS:
-            value = entry.get(field, "")
-            if value == "" and field in ("meaning", "role"):
-                row[field] = ""
-                continue
-            reason = check_field(field, value)
-            if reason:
-                problems.append(f"{where.name}: {key!r}: {reason}, ignored")
-                value = ""
-            row[field] = value
-        if not row["name"] or not row["glyph"]:
-            problems.append(f"{where.name}: {key!r} has no name or no glyph, skipped")
-            continue
-        out[str(key)] = row
-    return out, problems
-
-
-def overrides_from(raw_rows: dict[str, str]) -> tuple[dict[str, dict[str, str]], list[str]]:
-    """Parse `agent:<key>` rows as `Data.pref_rows(PREFIX)` returns them. A field that breaks
-    `check_field` is skipped and named; the row's other fields still count. Never raises."""
-    out: dict[str, dict[str, str]] = {}
-    problems: list[str] = []
-    for key, raw in sorted(raw_rows.items()):
-        if not key.startswith(PREFIX):
-            continue
-        name = key[len(PREFIX) :]
-        try:
-            value = json.loads(raw)
-        except TypeError, ValueError:
-            problems.append(f"{key}: the stored value is not JSON ({raw!r}), ignored")
-            continue
-        if not isinstance(value, dict):
-            problems.append(f"{key}: the stored value is not an object ({value!r}), ignored")
-            continue
-        fields: dict[str, str] = {}
-        for field, given in value.items():
-            reason = check_field(str(field), given)
-            if reason:
-                problems.append(f"{key}: {reason}, ignored")
-                continue
-            fields[str(field)] = given
-        if fields:
-            out[name] = fields
-    return out, problems
-
-
-def resolve(
-    key: str, defaults: dict[str, dict[str, str]], overrides: dict[str, dict[str, str]]
-) -> dict[str, Any] | None:
-    """One row, each field override first, then default, with `source` saying which.
-    `None` for a key the defaults do not have: an override alone makes no agent."""
-    base = defaults.get(key)
-    if base is None:
+def agent_for(key: str) -> dict[str, Any] | None:
+    """`key`'s identity, each field with `source` (`override` when the owner's layer sets it), or
+    `None` for a key no row names."""
+    found = pack.row(key)
+    if found is None:
         return None
-    mine = overrides.get(key) or {}
     row: dict[str, Any] = {"key": key, "source": {}}
     for field in FIELDS:
-        if field in mine:
-            row[field], row["source"][field] = mine[field], OVERRIDE
-        else:
-            row[field], row["source"][field] = base.get(field, ""), DEFAULT
+        where = WHERE[field]
+        row[field] = str(found.get(where) or "")
+        row["source"][field] = OVERRIDE if where in found["edited"] else DEFAULT
     return row
 
 
-def agent_for(
-    key: str, overrides: dict[str, dict[str, str]] | None = None
-) -> dict[str, Any] | None:
-    """The resolved row for `key`, or `None` for one the table does not know."""
-    return resolve(key, load_defaults()[0], overrides or {})
+def shown(key: str) -> bool:
+    """Whether the Agents page lists `key` as an agent: a row a process state or Gebo's integration
+    opens."""
+    trigger = (pack.row(key) or {}).get("trigger") or {}
+    return bool(pack.states_of(key)) or trigger.get("engine") == "integrate"
 
 
-def table(overrides: dict[str, dict[str, str]]) -> dict[str, Any]:
-    """Every row Settings shows, in the default file's order, and every problem found.
-
-    An override for a key the defaults do not have changes nothing, and says so."""
-    defaults, problems = load_defaults()
-    rows = [resolve(key, defaults, overrides) for key in defaults]
-    problems += [
-        f"{PREFIX}{k}: no agent called {k!r}, ignored"
-        for k in sorted(overrides)
-        if k not in defaults
-    ]
+def table() -> dict[str, Any]:
+    """Every agent the page lists, in the pack's order, and every problem found."""
+    rows = [agent_for(k) for k in pack.rows() if shown(k)]
+    problems = [f"{k}: {p}" for k, r in pack.rows().items() for p in r["problems"]]
     return {"rows": rows, "problems": problems}
 
 
@@ -190,14 +79,13 @@ def settings_json(row: dict[str, Any]) -> str:
 
 
 def identity_section(row: dict[str, Any]) -> str:
-    """The section a prompt opens with. An empty field is left out of its sentence."""
-    glyph, name, meaning, role = (str(row.get(f) or "") for f in FIELDS)
+    """The section a prompt opens with. An empty field is left out of its sentence. The role is the
+    row's body, the system prompt, so it is not said again here."""
+    glyph, name, meaning = (str(row.get(f) or "") for f in ("glyph", "name", "meaning"))
     who = " ".join(p for p in (glyph, name) if p)
     if meaning:
         who += f" ({meaning})"
     lines = ["# Who you are", "", f"You are {who}, the agent of the {row['key']} stage."]
-    if role:
-        lines.append(f"Your role: {role}")
     lines += [
         "",
         "Where the rules below ask for your name and do not spell it out, write exactly "
@@ -207,11 +95,11 @@ def identity_section(row: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def of_record(record: dict[str, Any], overrides: dict[str, dict[str, str]] | None = None) -> str:
-    """A record's own `agent`; for an older one, its stage's name in today's table; else `""`."""
-    if record.get("agent"):
-        return str(record["agent"])
-    row = agent_for(str(record.get("stage") or ""), overrides)
+def of_record(record: dict[str, Any]) -> str:
+    """A record's own `agent_name`; else its stage's name in today's rows; else `""`."""
+    if record.get("agent_name"):
+        return str(record["agent_name"])
+    row = agent_for(str(record.get("stage") or ""))
     return str(row["name"]) if row else ""
 
 

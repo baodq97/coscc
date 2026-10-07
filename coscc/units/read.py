@@ -18,17 +18,28 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
-from coscc.agent import agents
-from coscc.agent.policy import grant_for
+from coscc.agent import agents, pack
+from coscc.agent.policy import row_for
 from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.git import gitops
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, now
-from coscc.store.journal import last_runs, timelines_of, totals_of
-from coscc.units import BadUnit, Invalid, backlog, scratch, worktrees
+from coscc.store.journal import last_runs, paused_stage, timelines_of, totals_of
+from coscc.units import BadUnit, Invalid, backlog, contracts, scratch, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable, attention_reason, unit_state
+from coscc.units.meta import (
+    By,
+    DecisionKind,
+    OutputRecord,
+    RoundCriterion,
+    RoundFinding,
+    RoundGrades,
+    Verdict,
+)
+from coscc.units.meta import Decision as DecisionRow
+from coscc.units.proposals import Proposal
 from coscc.units.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
@@ -123,6 +134,24 @@ class PullRequest(TypedDict):
     url: str
 
 
+# The reason code (`guards.REASONS`) of a stage paused at its ceiling.
+BUDGET_REACHED = "budget-reached"
+
+
+class Paused(TypedDict):
+    """A run that stopped at a ceiling and kept its session: the `stage`, which `ceiling` it hit
+    (`turns` or `usd`), what it spent and both ceilings. The unit is held: `code` is
+    `budget-reached`, what a plain run of the stage is refused with."""
+
+    stage: str
+    code: str
+    ceiling: str
+    usd: float | None
+    max_usd: float | None
+    turns: int | None
+    max_turns: int | None
+
+
 class Card(TypedDict):
     """A unit as a list shows it: what it is, where it stands and what it cost. The whole unit
     is the board's (`Board.read`)."""
@@ -144,10 +173,15 @@ class Card(TypedDict):
     # When its last run ended, or empty: what a list sorts by.
     updated: str
     attention_reason: str
+    # The process the unit walks, `<pack>/<name>`.
+    process: str
+    # What the next stage declares it needs and the unit lacks: the step is refused until it is there.
+    missing: list[str]
     idea: str
-    repo: str
     rank: int | None
     effort: str | None
+    # Set while the stage the unit is at waits on a raised ceiling.
+    paused: Paused | None
 
 
 class Cap(TypedDict):
@@ -264,10 +298,27 @@ def card(u: Mapping[str, Any]) -> Card:
             default="",
         ),
         "attention_reason": str(u.get("attention_reason") or ""),
+        "process": str(u.get("process") or ""),
+        "missing": [str(m) for m in u.get("missing") or []],
         "idea": str(u.get("idea") or ""),
-        "repo": str(u.get("repo") or ""),
         "rank": backlog_.get("rank"),
         "effort": backlog_.get("effort"),
+        "paused": paused(u.get("paused")),
+    }
+
+
+def paused(p: Mapping[str, Any] | None) -> Paused | None:
+    """A timeline row's `paused` (`journal.paused_of`) with its stage, as a card carries it."""
+    if not p:
+        return None
+    return {
+        "stage": _text(p.get("stage")),
+        "code": BUDGET_REACHED,
+        "ceiling": _text(p.get("ceiling")),
+        "usd": number(p.get("usd")),
+        "max_usd": number(p.get("max_usd")),
+        "turns": count(p.get("turns")),
+        "max_turns": count(p.get("max_turns")),
     }
 
 
@@ -323,8 +374,12 @@ class Question(TypedDict):
     artifact: str
     n: int
     text: str
+    # The answer the agent that asked recommends, `""` when it gave none.
+    recommendation: str
     answered: bool
+    # The `by` and `name` of the answer in force, `""` while unanswered.
     by: str
+    name: str
 
 
 class Answer(TypedDict):
@@ -332,11 +387,30 @@ class Answer(TypedDict):
     n: int
     question: str
     text: str
-    by: str
-    # Who decided: `person` or `agent-inferred`.
-    authority: str
+    # Whose decision: `person` (a person's press) or `delegated` (decided for them), as sent.
+    by: By
+    # The name the answer was sent with: a claim, not an identity.
+    name: str
     via: str
     date: str
+
+
+class Decision(TypedDict):
+    """A person's rerun, more rounds or outcome, as the unit's history shows it."""
+
+    kind: DecisionKind
+    by: str
+    date: str
+    text: str
+
+
+def _decision_text(d: DecisionRow) -> str:
+    fields = d["fields"]
+    if d["kind"] == "rerun":
+        return f"asked {fields.get('stage')} to run again"
+    if d["kind"] == "more-rounds":
+        return "allowed one more review round"
+    return f"recorded the outcome: {fields.get('result')}"
 
 
 class Round(TypedDict):
@@ -345,12 +419,23 @@ class Round(TypedDict):
     findings: int
     findings_open: int
     unfinished: bool
+    criteria: list[RoundCriterion]
+    items: list[RoundFinding]
 
 
 class Dependency(TypedDict):
     ref: str
     why: str
     merged: bool
+
+
+class RunPart(TypedDict):
+    """One part of a session that a ceiling paused and a raise went on from."""
+
+    run: str
+    ended: str
+    cost_usd: float | None
+    paused: Paused | None
 
 
 class UnitRun(TypedDict):
@@ -367,11 +452,57 @@ class UnitRun(TypedDict):
     cost_usd: float | None
     turns: int | None
     run: str
+    # The parts its prompt was handed (`start.envelope`), `[]` when it records none.
+    envelope: list[str]
+    # Set while it waits on a raised ceiling.
+    paused: Paused | None
+    # The parts of this one session that ended at a ceiling before a raise went on, oldest first.
+    parts: list[RunPart]
+    raised_by: str
 
 
 class Worktree(TypedDict):
     branch: str
     path: str
+
+
+class OutcomeProposal(TypedDict):
+    id: int
+    title: str
+    state: str
+
+
+class Outcome(TypedDict):
+    """What a shipped unit's page shows of its outcome: the row a *Grade outcome* press runs (its
+    key, name and $ ceiling), its latest verdict, and the proposals the grader made of it."""
+
+    grader: str
+    name: str
+    usd: float | None
+    verdict: Verdict | None
+    proposals: list[OutcomeProposal]
+
+
+def grader() -> tuple[str, Mapping[str, Any]] | None:
+    """The row a person presses to grade a unit's outcome: the first whose output is a `verdict`
+    and whose trigger says `manual`."""
+    for key, row in pack.rows().items():
+        if (row.get("output") or {}).get("kind") == "verdict" and pack.triggered(row, "manual"):
+            return key, row
+    return None
+
+
+def outcome(
+    key: str, row: Mapping[str, Any], verdict: Verdict | None, made: Sequence[Proposal]
+) -> Outcome:
+    usd = (row.get("ceilings") or {}).get("usd")
+    return {
+        "grader": key,
+        "name": str(row.get("name") or key),
+        "usd": float(usd) if isinstance(usd, (int, float)) else None,
+        "verdict": verdict,
+        "proposals": [{"id": p["id"], "title": p["title"], "state": p["state"]} for p in made],
+    }
 
 
 class Detail(TypedDict):
@@ -388,6 +519,14 @@ class Detail(TypedDict):
     worktree: Worktree | None
     # The holds the loop allows now: `paused`, `dropped`, `active` (a resume).
     hold_moves: list[str]
+    # What each agent last handed back, with the contract version it was written to.
+    outputs: list[OutputRecord]
+    # A person's reruns, more rounds and outcomes, oldest first.
+    decisions: list[Decision]
+    # Its graded outcome, `None` when no row grades outcomes.
+    outcome: Outcome | None
+    # The originator's own words that opened the unit (its `idea.md`), empty when it has none.
+    brief: str
 
 
 def _text(v: Any) -> str:
@@ -404,8 +543,19 @@ def count(v: Any) -> int | None:
     return int(v) if isinstance(v, int) and not isinstance(v, bool) else None
 
 
-def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> Detail:
-    """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`) as a page shows it."""
+def detail(
+    unit: Mapping[str, Any],
+    timeline: Sequence[Mapping[str, Any]],
+    outputs: list[OutputRecord],
+    decisions: Sequence[DecisionRow] = (),
+    graded: Mapping[int, RoundGrades] | None = None,
+    outcome: Outcome | None = None,
+    brief: str = "",
+) -> Detail:
+    """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`), its `outputs`
+    (`UnitMeta.outputs`), its `decisions` (`UnitMeta.decisions`) and what each review round graded
+    and found (`UnitMeta.graded`) as a page shows it."""
+    graded = graded or {}
 
     def last(r: Mapping[str, Any] | None) -> LastRun | None:
         if not r:
@@ -435,8 +585,10 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
                 "artifact": _text(q.get("artifact")),
                 "n": int(q.get("n") or 0),
                 "text": _text(q.get("text")),
+                "recommendation": _text(q.get("recommendation")),
                 "answered": bool(q.get("answered")),
                 "by": _text(q.get("by")),
+                "name": _text(q.get("name")),
             }
             for q in unit.get("questions") or []
         ],
@@ -446,8 +598,8 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
                 "n": int(a.get("n") or 0),
                 "question": _text(a.get("question")),
                 "text": _text(a.get("text")),
-                "by": _text(a.get("by")),
-                "authority": _text(a.get("authority")),
+                "by": "person" if a.get("by") == "person" else "delegated",
+                "name": _text(a.get("name")),
                 "via": _text(a.get("via")),
                 "date": _text(a.get("date")),
             }
@@ -460,6 +612,8 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
                 "findings": int(r.get("findings") or 0),
                 "findings_open": int(r.get("findings_open") or 0),
                 "unfinished": bool(r.get("unfinished")),
+                "criteria": graded.get(int(r.get("n") or 0), {"criteria": []})["criteria"],
+                "items": graded.get(int(r.get("n") or 0), {"items": []})["items"],
             }
             for r in unit.get("rounds") or []
         ],
@@ -488,6 +642,22 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
                 if r.get("turns_reported", True)
                 else None,
                 "run": _text(r.get("run")),
+                "envelope": [str(p) for p in r.get("envelope") or []],
+                "paused": paused({**p, "stage": r.get("stage")})
+                if (p := r.get("paused"))
+                else None,
+                "parts": [
+                    {
+                        "run": _text(part.get("run")),
+                        "ended": _text(part.get("ended")),
+                        "cost_usd": number((part.get("cost") or {}).get("cost_usd")),
+                        "paused": paused({**pp, "stage": r.get("stage")})
+                        if (pp := part.get("paused"))
+                        else None,
+                    }
+                    for part in r.get("parts") or []
+                ],
+                "raised_by": _text(r.get("raised_by")),
             }
             for r in timeline
         ],
@@ -495,7 +665,20 @@ def detail(unit: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]]) -> De
         if tree
         else None,
         "hold_moves": [str(m) for m in unit.get("hold_moves") or []],
+        "outputs": outputs,
+        "outcome": outcome,
+        "brief": brief_words(brief),
+        "decisions": [
+            {"kind": d["kind"], "by": d["by"], "date": d["date"], "text": _decision_text(d)}
+            for d in decisions
+        ],
     }
+
+
+def brief_words(idea_md: str) -> str:
+    """The person's words in an `idea.md` the app wrote (`## In their own words`), else the file as it is."""
+    head = "## In their own words"
+    return idea_md.split(head, 1)[1].strip() if head in idea_md else idea_md.strip()
 
 
 def _brief_rounds(units_: list[dict[str, Any]]) -> None:
@@ -526,8 +709,7 @@ async def _in_thread[T](fn: Callable[..., T], *args: Any) -> T:
 class Board:
     """The board of every workspace, read once each and held.
 
-    `unfinished(key)` lists a workspace's unfinished attempts (what is running); `overrides()`
-    the agent table's changes; `open_prs(cwd)` asks `gh` for the open pull requests (a list, or
+    `unfinished(key)` lists a workspace's unfinished attempts (what is running); `open_prs(cwd)` asks `gh` for the open pull requests (a list, or
     its error as a string); `attach(cwd, data, journal, key, prs, fresh)` adds what sits above
     `units`: each unit's `integration`, and returns the function that starts the CI asks that
     read found missing, which the read calls last.
@@ -539,14 +721,12 @@ class Board:
         ws: Workspaces,
         bus: Bus,
         unfinished: Callable[[str], list[Any]],
-        overrides: Callable[[], dict[str, Any]],
         open_prs: Callable[[str], Awaitable[list[dict[str, Any]] | str]],
         attach: Callable[..., Awaitable[Callable[[], None]]],
     ) -> None:
         self.config = config
         self.ws = ws
         self.unfinished = unfinished
-        self.overrides = overrides
         self.open_prs = open_prs
         self.attach = attach
         # By journal key: the last board read, `{cwd, data, read_at}`; the one read running;
@@ -572,17 +752,19 @@ class Board:
             "answer.written",
             "hold.moved",
             "mode.set",
+            "unit.shipped",
         ):
             bus.subscribe(name, self._on_event)
 
     def _on_event(self, event: Event) -> None:
-        if event.going_down or event.workspace not in self.held:
+        key = event.payload.get("workspace", "")
+        if event.payload.get("going_down") or key not in self.held:
             return
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             return
-        self.refresh(self.held[event.workspace]["cwd"], again=True)
+        self.refresh(self.held[key]["cwd"], again=True)
 
     async def get(self, cwd: str, which: Literal["new", "held", "next"] = "new") -> dict[str, Any]:
         """The board of `cwd`.
@@ -705,8 +887,13 @@ class Board:
         Waits on no network once the workspace's open pull requests were asked once: `gh` is
         answered from what is held and asked again in the background. A `fresh` read waits on
         those asks instead, for whoever needs the state as it is now. What reads `cos.db` runs
-        off the event loop. One `log.info` line says how long each part took.
+        off the event loop. One `log.info` line says how long each part took. The packs are
+        looked at once for the whole read.
         """
+        with pack.held():
+            return await self._read(cwd, fresh)
+
+    async def _read(self, cwd: str, fresh: bool) -> dict[str, Any]:
         self.ws.check(cwd)
         read_at = now()
         took: dict[str, float] = {}
@@ -728,13 +915,6 @@ class Board:
         lap("loop")
         _brief_rounds(data["units"])
         data["read_at"] = read_at
-        name = self.ws.name(cwd)
-        for unit in data["units"]:
-            if unit.get("repo") and name and unit["repo"] != name:
-                unit["problems"] = [
-                    *unit["problems"],
-                    f"Repo: {unit['repo']} is not this workspace, {name}.",
-                ]
 
         journal = self.ws.journal()
         key = self.ws.key(cwd)
@@ -758,7 +938,7 @@ class Board:
             backlog.undetermined(timelines, data["units"]),
         )
         per_unit = folded.pop("per_unit")
-        data["backlog"] = {**folded, "propose_warning": grant_for("estimate").warning}
+        data["backlog"] = {**folded, "propose_warning": row_for("estimate").warning}
         for unit in data["units"]:
             unit["backlog"] = per_unit.get(unit["name"]) or {
                 "rank": None,
@@ -776,6 +956,18 @@ class Board:
                 row["last_run"] = unit_last_runs.get(row["stage"])
             unit["cost"] = totals_of(timelines.get(unit["name"], [])) if journal is not None else {}
             unit["attention_reason"] = attention_reason(unit)
+            stage = str(unit.get("next_stage") or "")
+            unit["missing"] = (
+                contracts.missing(
+                    stage,
+                    self.ws.unit_dir(cwd, unit["name"]),
+                    state["units"].get(f"{state['workspace']}/{unit['name']}"),
+                )
+                if stage
+                else []
+            )
+            if unit["missing"]:
+                unit["attention_reason"] = f"{stage} needs {' and '.join(unit['missing'])}"
 
         lap("fold")
         await self._attach_worktrees(cwd, data["units"])
@@ -786,7 +978,11 @@ class Board:
         lap("integration")
         for unit in data["units"]:
             # From the timelines read above: no second scan of the run log.
-            ended = [r for r in timelines.get(unit["name"], []) if r.get("ended") is not None]
+            rows = timelines.get(unit["name"], [])
+            ended = [r for r in rows if r.get("ended") is not None]
+            # What waits on a raised ceiling: the unit's own stage, whose latest run ended there.
+            latest = paused_stage(rows, str(unit.get("at") or ""))
+            unit["paused"] = {**latest, "stage": unit["at"]} if latest else None
             unit["state"] = unit_state(
                 unit, ended[-1] if ended else None, unit.pop("ci_held", None)
             )
@@ -802,7 +998,7 @@ class Board:
         )
         return data
 
-    def running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    def running_here(self, key: str) -> dict[str, list[dict[str, Any]]]:
         """`running`'s `running`, from memory alone: what `guide_block` reads too."""
         running: dict[str, list[dict[str, Any]]] = {}
         for entry in self.unfinished(key):
@@ -813,7 +1009,7 @@ class Board:
                 if entry["machine"] == "integration"
                 else entry["machine"]
             )
-            row = None if kind == "rebase" else agents.agent_for(entry["stage"], overrides)
+            row = None if kind == "rebase" else agents.agent_for(entry["stage"])
             agent = {"glyph": row["glyph"], "name": row["name"]} if row else None
             running.setdefault(entry["unit"], []).append(
                 {
@@ -851,8 +1047,7 @@ class Board:
         self.ws.check(cwd)
         key = self.ws.key(cwd)
         # Through the one lookup, so an override shows here too. Read once per call.
-        overrides = self.overrides()
-        running = self.running_here(key, overrides)
+        running = self.running_here(key)
         out: dict[str, Any] = {"running": running, "unknown_end": {}}
         journal = self.ws.journal()
         if journal is None:
@@ -871,7 +1066,7 @@ class Board:
                 {
                     "stage": r["stage"],
                     "started": r["started"],
-                    "agent": agents.of_record(r, overrides),
+                    "agent": agents.of_record(r),
                 }
                 for r in found["open"]
                 if r.get("started")

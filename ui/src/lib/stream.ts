@@ -1,13 +1,21 @@
-// The app's one live channel. `/api/stream` only says that something changed; a screen then
+// The app's one live channel. `/api/stream` mostly says that something changed; a screen then
 // reads what it shows again. One EventSource serves the whole page, and the browser reconnects
 // it by itself. The server ends each stream after a while with an `end` event; a reconnect
 // after anything else counts as a change to everything, since events may have been missed.
 
 import { useEffect, useRef } from "react";
 
-export type Change = { subject: string; workspace: string; unit: string };
+type OfUnit = { workspace: string; unit: string };
+/** A subject and the payload it declares (`SCHEMAS` in `coscc/bus.py`). */
+export type Change = { subject: string } & (
+  | (OfUnit & { going_down: boolean }) // an attempt's move, `<machine>.<state>`
+  | (OfUnit & { sha: string; at: string }) // `unit.shipped`
+  | OfUnit // `answer.written`, `hold.moved`, `mode.set`, `retake.ended`, `integration.escalated`
+  | { workspace: string } // `shortlist.saved`
+  | { session: string } // `chat-turn.ended`
+);
 
-const EVERYTHING: Change = { subject: "", workspace: "", unit: "" };
+const EVERYTHING: Change = { subject: "", workspace: "" };
 const listeners = new Set<(c: Change) => void>();
 let source: EventSource | null = null;
 
@@ -46,7 +54,8 @@ export function onChange(listener: (c: Change) => void): () => void {
 
 /** A change that a screen showing `subjects` (prefixes, `""` for all) in `workspace` cares about. */
 export function matches(change: Change, subjects: string[], workspace = ""): boolean {
-  const mine = !workspace || !change.workspace || change.workspace === workspace;
+  const of = "workspace" in change ? change.workspace : "";
+  const mine = !workspace || !of || of === workspace;
   return mine && subjects.some((s) => change.subject.startsWith(s));
 }
 

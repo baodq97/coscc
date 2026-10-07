@@ -16,10 +16,23 @@ from pathlib import Path
 
 import pytest
 
-from coscc.loop import STAGE_NAMES
-from coscc.loop.model import above_answers, read_unit
+from coscc.loop import proc_of
+from coscc.loop.model import read_unit
 from coscc.loop.rules import gate_answer, next_answer
-from tests.loop.conftest import UnitStore, entry, env, expect, git_repo, python
+from tests.loop.conftest import (
+    UnitStore,
+    entry,
+    env,
+    expect,
+    finding_row,
+    git_repo,
+    pr_row,
+    python,
+    rerun_row,
+    round_row,
+)
+
+STAGE_NAMES = proc_of(None).names
 
 KIND = {
     "idea.md": "Idea",
@@ -50,68 +63,68 @@ def accepted(upto: str = "ship.md", **over: str | None) -> dict[str, str | None]
     return arts
 
 
-def pr_text(name: str, status: str | None) -> str:
-    """A `pr.md` with a title the pr stage would accept, naming the pull request."""
-    return f"# PR: feat({name[:4]}): add the thing\nAuthor: test. Status: {status}.\n\n{PR}"
-
-
 def put(
     s: UnitStore,
     name: str,
     arts: dict[str, str | None],
     texts: dict[str, str] | None = None,
     extra_files: dict[str, str] | None = None,
+    pr: bool = True,
     **kw,
 ) -> None:
-    """Writes each artifact and records it in the snapshot; `texts` replaces a file's text."""
+    """Writes each artifact and records it in the snapshot; `texts` replaces a file's text. A
+    `pr.md` comes with the pull request the PR machine recorded, unless `pr` is false."""
     texts = texts or {}
-    files = {
-        f: texts.get(f, pr_text(name, st) if f == "pr.md" else text(f, st))
-        for f, st in arts.items()
-    }
+    files = {f: texts.get(f, text(f, st)) for f, st in arts.items()}
+    if pr and "pr.md" in arts:
+        kw.setdefault("pr_md", pr_row(7))
     files.update(extra_files or {})
     s.unit(name, files, entry(arts, **kw))
 
 
-def round_(n: int, verdict: str, *findings: str, sha: str = "aaaaaaa") -> str:
-    lines = "\n".join(findings)
-    return f"## Round {n}\nReviewed: {sha}. Verdict: {verdict}.\n\n### Findings\n{lines}\n\n"
+def review(status: str) -> str:
+    return text("review.md", status)
 
 
-def review(status: str, *rounds: str, tail: str = "") -> str:
-    return text("review.md", status, body="\n".join(rounds) + tail)
-
-
-F1 = "- F1 [open] src/a.py:3 — high — hàm trả sai kết quả khi đầu vào rỗng"
-F2 = "- F2 [open] src/b.py:9 — medium — thiếu kiểm tra"
-UNMEASURED = "## Concerns\n- [unmeasured] U1 tốc độ đọc mười nghìn dòng chưa đo\n"
-FENCE = "```\n$ time run\n3.2s\n```\n"
-PR = "PR: https://github.com/o/r/pull/7\n"
-MORE = (
-    "\n## Answers\n### More rounds\nDecided by: Phong. Date: 2026-10-01. Via: board.\nRounds: 2\n"
-)
-NEEDS = "## Needs a person\n- F1: cần quyết định về giấy phép dữ liệu\n"
-FIX_INTENT = (
-    "# Intent: lỗi\nAuthor: test. Status: accepted. Type: fix.\n\n"
-    "## Reproduction\n```\n$ run\nboom\n```\n\n## Expected\nSource: src/a.py:1-3\n"
-    "trả về 3\n\n## Actual\ntrả về 2\n"
-)
+FIX_INTENT = "# Intent: lỗi\nAuthor: test. Status: accepted. Type: fix.\n"
+# What intent's record hands over for a fix to enter the fast lane, and impl's to leave it.
+FIX = {
+    "reproduction": "$ run\nboom",
+    "expected": {"source": "src/a.py:1-3", "text": "trả về 3"},
+    "actual": "trả về 2",
+}
+FIX_RECORD = {"result": {"judgement": "ready", "fix": FIX}}
+LEFT_RECORD = {"result": {"judgement": "ready", "left_lane": "nguồn nói khác"}}
 ASKED = "## Open questions\n1. Ai chịu trách nhiệm cho phần này?\n"
 ANSWER = {"artifact": "intent.md", "n": 1, "id": None, "text": "Người dùng.", **PERSON}
 
 
-def spike_text(status: str, verdict: str | None, rnd: int = 1, fence: bool = True) -> str:
-    said = "" if verdict is None else f"Verdict: {verdict}.\n"
-    body = f"## U1\n{said}\n{FENCE if fence else ''}"
-    return text("spike.md", status, head=f"Round: {rnd}.", body=body)
+def spike_md(verdict: str | None, rnd: int = 1) -> dict:
+    return {
+        "round": rnd,
+        "result": {"verdicts": [{"id": "U1", "verdict": verdict}] if verdict else []},
+    }
 
 
-def rerun_block(stage: str, **stale: str) -> str:
-    lines = "".join(f"Stale: {f} sha256:{d}\n" for f, d in stale.items())
-    return (
-        "\n## Answers\n### Rerun\nRequested by: Phong. Date: 2026-09-29. Via: board.\n"
-        f"Stage: {stage}.\n{lines}"
+SPEC_U = {"result": {"unmeasured": ["U1"]}}
+
+
+def row(n: int, verdict: str, *findings: tuple[str, str], sha: str = "aaaaaaa") -> dict:
+    """A review round row: `findings` are `(id, label)`."""
+    return round_row(
+        n,
+        verdict,
+        sha,
+        *(
+            finding_row(i, label, "high", "cần quyết định", "src/a.py", "3")
+            for i, label in findings
+        ),
     )
+
+
+def rounds(*rows: dict) -> dict:
+    """`review.md`'s entry fields: the rounds the app holds."""
+    return {"review_md": {"rounds": list(rows), "record": 4}}
 
 
 def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a rule
@@ -130,7 +143,7 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
     put(s, "0007_paused", accepted("plan.md"), holds=[{"state": "paused", **HOLD}])
     put(s, "0008_dropped", accepted("plan.md"), holds=[{"state": "dropped", **HOLD}])
     put(s, "0009_rejected", accepted("intent.md", **{"spec.md": "rejected"}))
-    put(s, "0010_finished", accepted("plan.md", **{"plan.md": "done"}))
+    put(s, "0010_finished", accepted("plan.md"), shipped=True)
     put(
         s,
         "0011_agent-skip",
@@ -149,73 +162,69 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
         accepted("intent.md", **{"spec.md": "skipped"}),
         spec_md={"authority": "person"},
     )
-    it = text("intent.md", "accepted")
-    sp = text("spec.md", "accepted")
     put(
         s,
         "0014_stale",
         accepted("plan.md"),
-        texts={"intent.md": it + rerun_block("intent", **{"spec.md": above_answers(sp)})},
+        spec_md={"record": 2},
+        reruns=[rerun_row("intent", date="2026-09-29", spec_md=2)],
     )
-    sp_u = text("spec.md", "accepted", body=UNMEASURED)
-    put(s, "0015_spike-missing", accepted("spec.md"), texts={"spec.md": sp_u})
+    put(s, "0015_spike-missing", accepted("spec.md"), spec_md=SPEC_U)
     put(s, "0016_spike-draft", accepted("spec.md", **{"spike.md": "draft"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("draft", "holds")})  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md("holds"))  # fmt: skip
     put(s, "0017_spike-fails", accepted("spec.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", "fails")})  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md("fails"))  # fmt: skip
     put(s, "0018_spike-fails-twice", accepted("spec.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", "fails", rnd=2)})  # fmt: skip
-    put(s, "0019_spike-no-fence", accepted("spec.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", "holds", fence=False)})  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md("fails", 2))  # fmt: skip
     put(s, "0020_spike-no-verdict", accepted("spec.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", None)})  # fmt: skip
-    cite = text("plan.md", "accepted", body="Dựa trên spike.md ## U1.\n")
+        spec_md=SPEC_U, spike_md=spike_md(None))  # fmt: skip
     put(s, "0021_spike-ok", accepted("plan.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", "holds"), "plan.md": cite})  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md("holds"), plan_md={"result": {"rests_on": ["U1"]}})  # fmt: skip
     put(s, "0022_spike-no-cite", accepted("plan.md", **{"spike.md": "accepted"}),
-        texts={"spec.md": sp_u, "spike.md": spike_text("accepted", "holds")})  # fmt: skip
-    put(s, "0023_spike-unnamed", accepted("spec.md"),
-        texts={"spec.md": text("spec.md", "accepted", body="## Concerns\n- [unmeasured] chưa có mã\n")})  # fmt: skip
+        spec_md=SPEC_U, spike_md=spike_md("holds"))  # fmt: skip
     put(s, "0024_spike-skipped-spec", accepted("intent.md", **{"spec.md": "skipped"}),
-        texts={"spec.md": text("spec.md", "skipped", body=UNMEASURED)}, spec_md={"authority": "person"})  # fmt: skip
-    put(s, "0025_fast-lane", {"intent.md": "accepted"}, texts={"intent.md": FIX_INTENT}, type="fix")
+        texts={"spec.md": text("spec.md", "skipped")}, spec_md={"authority": "person", **SPEC_U})  # fmt: skip
+    put(s, "0025_fast-lane", {"intent.md": "accepted"}, texts={"intent.md": FIX_INTENT},
+        type="fix", intent_md=FIX_RECORD)  # fmt: skip
     put(s, "0026_fast-lane-impl", {"intent.md": "accepted", "impl.md": "accepted"},
-        texts={"intent.md": FIX_INTENT}, type="fix")  # fmt: skip
+        texts={"intent.md": FIX_INTENT}, type="fix", intent_md=FIX_RECORD)  # fmt: skip
     put(s, "0027_fast-lane-left", accepted("plan.md", **{"impl.md": "draft"}),
-        texts={"intent.md": FIX_INTENT, "impl.md": text("impl.md", "draft", head="Lane: full.")}, type="fix")  # fmt: skip
+        texts={"intent.md": FIX_INTENT}, type="fix", intent_md=FIX_RECORD, impl_md=LEFT_RECORD)  # fmt: skip
     put(s, "0028_review-missing", accepted("pr.md"))
     put(s, "0029_review-draft", accepted("pr.md", **{"review.md": "draft"}))
-    pr: dict[str, str] = {}
     put(s, "0030_changes-requested", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", round_(1, "changes-requested", F1))})  # fmt: skip
-    three = [round_(n, "changes-requested", F1, sha=f"{n}{n}{n}{n}{n}{n}{n}") for n in (1, 2, 3)]
+        **rounds(row(1, "changes-requested", ("F1", "open"))))  # fmt: skip
+    three = [
+        row(n, "changes-requested", ("F1", "open"), sha=f"{n}{n}{n}{n}{n}{n}{n}") for n in (1, 2, 3)
+    ]
     put(s, "0031_out-of-rounds", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", *three)})  # fmt: skip
+        **rounds(*three))  # fmt: skip
     put(s, "0032_more-rounds", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", *three, tail=MORE)})  # fmt: skip
+        **rounds(*three), rounds_granted=2)  # fmt: skip
     put(s, "0033_unfinished", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", round_(1, "changes-requested", F1, F2),
-                                         round_(2, "changes-requested", F2, sha="bbbbbbb"))})  # fmt: skip
+        **rounds(row(1, "changes-requested", ("F1", "open"), ("F2", "open")),
+                 row(2, "changes-requested", ("F2", "open"), sha="bbbbbbb")))  # fmt: skip
     put(s, "0034_incomplete", accepted("pr.md", **{"review.md": "draft"}),
-        texts={**pr, "review.md": review("draft", round_(1, "incomplete"))})  # fmt: skip
-    needs = round_(1, "needs-person", "- F1 [needs-person] src/a.py:3 — high — cần quyết định")
-    impl_claim = {"impl.md": text("impl.md", "accepted", body=NEEDS)}
+        **rounds(row(1, "incomplete")))  # fmt: skip
+    claim = {"impl_md": {"result": {"needs_person": ["F1"]}}}
+    asked = rounds(row(1, "needs-person", ("F1", "needs-person")))
+    open_one = rounds(row(1, "changes-requested", ("F1", "open")))
     put(s, "0035_awaits-person", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, **impl_claim, "review.md": review("changes-requested", needs)})  # fmt: skip
-    put(s, "0036_awaits-no-reason", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", needs)})  # fmt: skip
+        **claim, **asked)  # fmt: skip
+    put(s, "0036_awaits-unclaimed", accepted("pr.md", **{"review.md": "changes-requested"}),
+        **asked)  # fmt: skip
     put(s, "0037_person-answered", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, **impl_claim, "review.md": review("changes-requested", needs)},
+        **claim, **asked,
         answers=[{**ANSWER, "artifact": "review.md", "n": None, "id": "F1"}])  # fmt: skip
     put(s, "0038_every-claimed", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, **impl_claim, "review.md": review("changes-requested", round_(1, "changes-requested", F1))})  # fmt: skip
+        **claim, **open_one)  # fmt: skip
     put(s, "0039_ship-refused", accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
-        texts={**pr, "review.md": review("accepted", round_(1, "pass")),
-               "ship.md": text("ship.md", "draft", head="Round: 1.", body="## What went out\nRefused: not up to date\n")})  # fmt: skip
+        ship_md={"merge": {"round": 1, "refused": "not up to date"}},
+        **rounds(row(1, "pass")))  # fmt: skip
     put(s, "0040_ship-draft-old", accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
-        texts={**pr, "review.md": review("accepted", round_(1, "pass"))})  # fmt: skip
+        **rounds(row(1, "pass")))  # fmt: skip
     put(s, "0041_ship-missing", accepted("review.md"),
-        texts={**pr, "review.md": review("accepted", round_(1, "pass"))})  # fmt: skip
+        **rounds(row(1, "pass")))  # fmt: skip
     put(s, "0042_draft-answered", {"intent.md": "draft"},
         texts={"intent.md": text("intent.md", "draft", body=ASKED)},
         intent_md={"questions": [{"n": 1, "text": "Ai chịu trách nhiệm cho phần này?"}]}, answers=[ANSWER])  # fmt: skip
@@ -223,23 +232,12 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
         texts={"intent.md": text("intent.md", "draft", body=ASKED)},
         intent_md={"questions": [{"n": 1, "text": "Ai chịu trách nhiệm cho phần này?"}]})  # fmt: skip
     put(s, "0044_waits-on-dependency", accepted("plan.md"),
-        links={"idea": None, "repo": None, "dependsOn": ["0006_impl-missing"]})  # fmt: skip
+        links={"idea": None, "dependsOn": ["0006_impl-missing"]})  # fmt: skip
     put(s, "0045_depends-unknown", accepted("plan.md"),
-        links={"idea": None, "repo": "ws", "dependsOn": ["0999_ghost", "ma/lformed", "ws/0045_depends-unknown"]})  # fmt: skip
+        links={"idea": None, "dependsOn": ["0999_ghost", "ma/lformed", "ws/0045_depends-unknown"]})  # fmt: skip
     put(s, "0046_depends-merged", accepted("plan.md"),
-        links={"idea": None, "repo": "ws", "dependsOn": ["0047_merged-one", "other/0001_far"]})  # fmt: skip
-    put(s, "0047_merged-one", accepted("ship.md", **{"plan.md": "done"}), merged=True)
-    put(s, "0048_idea-unreadable", accepted("plan.md"),
-        links={"idea": "ideas/0001_big.md", "repo": "ws", "dependsOn": None})  # fmt: skip
-    s.ideas["ws"] = [
-        {
-            "id": "0001_big",
-            "problems": ["lists a unit twice"],
-            "units": [{"ref": "ws/0049_idea-mismatch", "dependsOn": ["0047_merged-one"]}],
-        }  # fmt: skip
-    ]
-    put(s, "0049_idea-mismatch", accepted("plan.md"),
-        links={"idea": "ideas/0001_big.md", "repo": "ws", "dependsOn": None})  # fmt: skip
+        links={"idea": None, "dependsOn": ["0047_merged-one", "other/0001_far"]})  # fmt: skip
+    put(s, "0047_merged-one", accepted("ship.md"), merged=True)
     put(s, "0050_no-status-line", {"intent.md": "accepted", "spec.md": None})
     put(s, "0051_odd-status", {"intent.md": "accepted", "spec.md": "wip", "plan.md": "constructor"})
     put(s, "0052_unknowns", accepted("spec.md"),
@@ -259,19 +257,12 @@ def build(s: UnitStore) -> None:  # noqa: PLR0915 - one list of units, each a ru
     put(s, "0060_stray", accepted("spec.md"), extra_files={"notes.txt": "x\n"})
     s.unit("scratch", {"intent.md": text("intent.md", "accepted")}, None)
     put(s, "0061_review-limit-one", accepted("pr.md", **{"review.md": "changes-requested"}),
-        texts={**pr, "review.md": review("changes-requested", round_(1, "changes-requested", F1))})  # fmt: skip
-    put(
-        s,
-        "0067_pr-bad-title",
-        accepted("pr.md"),
-        texts={"pr.md": text("pr.md", "accepted", body=PR)},
-    )
-    rv = review("accepted", round_(1, "pass"))
-    sh = text("ship.md", "accepted")
-    put(s, "0068_stale-review", accepted("review.md"),
-        texts={"intent.md": it + rerun_block("pr", **{"review.md": above_answers(rv)}), "review.md": rv})  # fmt: skip
-    put(s, "0069_stale-ship", accepted("ship.md"),
-        texts={"intent.md": it + rerun_block("pr", **{"ship.md": above_answers(sh)}), "review.md": rv, "ship.md": sh})  # fmt: skip
+        **rounds(row(1, "changes-requested", ("F1", "open"))))  # fmt: skip
+    put(s, "0067_pr-unrecorded", accepted("pr.md"), pr=False)
+    put(s, "0068_stale-review", accepted("review.md"), **rounds(row(1, "pass")),
+        reruns=[rerun_row("pr", date="2026-09-29", review_md=4)])  # fmt: skip
+    put(s, "0069_stale-ship", accepted("ship.md"), **rounds(row(1, "pass")),
+        ship_md={"record": 5}, reruns=[rerun_row("pr", date="2026-09-29", ship_md=5)])  # fmt: skip
     put(s, "0062_impl-draft", accepted("plan.md", **{"impl.md": "draft"}))
     put(s, "0063_pr-draft", accepted("impl.md", **{"pr.md": "draft"}))
     put(s, "0064_pr-rejected", accepted("impl.md", **{"pr.md": "rejected"}))
@@ -302,21 +293,21 @@ _NAMES = [
         (5, "plan-missing"), (6, "impl-missing"), (7, "paused"), (8, "dropped"),
         (9, "rejected"), (10, "finished"), (11, "agent-skip"), (12, "agent-skip-named"),
         (13, "person-skip"), (14, "stale"), (15, "spike-missing"), (16, "spike-draft"),
-        (17, "spike-fails"), (18, "spike-fails-twice"), (19, "spike-no-fence"),
+        (17, "spike-fails"), (18, "spike-fails-twice"),
         (20, "spike-no-verdict"), (21, "spike-ok"), (22, "spike-no-cite"),
-        (23, "spike-unnamed"), (24, "spike-skipped-spec"), (25, "fast-lane"),
+        (24, "spike-skipped-spec"), (25, "fast-lane"),
         (26, "fast-lane-impl"), (27, "fast-lane-left"), (28, "review-missing"),
         (29, "review-draft"), (30, "changes-requested"), (31, "out-of-rounds"),
         (32, "more-rounds"), (33, "unfinished"), (34, "incomplete"), (35, "awaits-person"),
-        (36, "awaits-no-reason"), (37, "person-answered"), (38, "every-claimed"),
+        (36, "awaits-unclaimed"), (37, "person-answered"), (38, "every-claimed"),
         (39, "ship-refused"), (40, "ship-draft-old"), (41, "ship-missing"),
         (42, "draft-answered"), (43, "draft-asking"), (44, "waits-on-dependency"),
         (45, "depends-unknown"), (46, "depends-merged"), (47, "merged-one"),
-        (48, "idea-unreadable"), (49, "idea-mismatch"), (50, "no-status-line"),
+        (50, "no-status-line"),
         (51, "odd-status"), (52, "unknowns"), (53, "closed-with-hold"), (54, "bad-hold-move"),
         (55, "resumed"), (56, "hold-no-reason"), (57, "no-type"), (58, "bad-type"),
         (59, "app-only"), (60, "stray"), (61, "review-limit-one"), (62, "impl-draft"),
-        (63, "pr-draft"), (64, "pr-rejected"), (65, "plan-draft"), (66, "idea-and-intent"), (67, "pr-bad-title"), (68, "stale-review"), (69, "stale-ship"),
+        (63, "pr-draft"), (64, "pr-rejected"), (65, "plan-draft"), (66, "idea-and-intent"), (67, "pr-unrecorded"), (68, "stale-review"), (69, "stale-ship"),
     ]
 ]  # fmt: skip
 UNITS = [*_NAMES, "scratch"]
@@ -337,10 +328,10 @@ def test_status_table_of_every_shape(world):
     assert "Problems (report these" in r.out
 
 
-def test_status_json_prints_whole_units_and_the_ideas(world):
+def test_status_json_prints_whole_units(world):
     r = expect(world.argv("status", "--json"))
     body = json.loads(r.out)
-    assert body["ideas"][0]["id"] == "0001_big"
+    assert "ideas" not in body
     assert len(body["units"]) == len(UNITS)
     assert any(u.get("moreRounds") for u in body["units"])
 
@@ -349,15 +340,6 @@ def test_status_of_an_empty_store(store):
     r = expect(store.argv("status"))
     assert r.out == "No work units yet. `write-intent` opens one.\n"
     expect(store.argv("status", "--json"))
-
-
-def test_status_of_an_empty_store_lists_the_idea_problems(store):
-    (store.cos / "ideas").mkdir()
-    store.ideas["ws"] = [{"id": "0001_big", "problems": ["no Units section", "x"], "units": []}]
-    r = expect(store.argv("status"))
-    assert "  - ideas/0001_big: no Units section" in r.out
-    r = expect(store.argv("status", "--json"))
-    assert json.loads(r.out)["ideas"][0]["problems"][0] == "no Units section"
 
 
 def test_status_with_a_unit_missing_from_the_snapshot(store):
@@ -476,7 +458,6 @@ def test_the_units_hand_out_every_code_files_alone_can(world):
         ("0011_agent-skip", "plan", ["agent-cannot-skip"]),
         ("0014_stale", "plan", ["stale"]),
         ("0044_waits-on-dependency", "impl", ["waiting-on"]),
-        ("0048_idea-unreadable", "impl", ["unreadable"]),
         ("0028_review-missing", "review", ["gate-closed"]),
         ("0017_spike-fails", "plan", ["spike-fails"]),
         ("0015_spike-missing", "plan", ["missing", "spike-missing"]),
@@ -588,21 +569,20 @@ class AnImplLeftInDraftIsToBeContinued(unittest.TestCase):
 
 
 class AShipThatAskedForAMergeIsMergingNotRefused(unittest.TestCase):
-    """`ship.md` draft with `Round:` and no `Refused:` line: ship asked GitHub to merge and has
-    not written the outcome yet."""
+    """`ship.md` draft with a round and no refusal: ship asked GitHub to merge and has not
+    recorded the outcome yet."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
         self.addCleanup(self._dir.cleanup)
         self.store = UnitStore(Path(self._dir.name) / "store")
 
-    def _put(self, name: str, went_out: str) -> None:
+    def _put(self, name: str, refused: str | None) -> None:
         put(self.store, name, accepted("pr.md", **{"review.md": "accepted", "ship.md": "draft"}),
-            texts={"review.md": review("accepted", round_(1, "pass")),
-                   "ship.md": text("ship.md", "draft", head="Round: 1.", body=f"## What went out\n{went_out}")})  # fmt: skip
+            ship_md={"merge": {"round": 1, "refused": refused}}, **rounds(row(1, "pass")))  # fmt: skip
 
     def test_status_and_next_say_merging_and_never_ship_refused(self):
-        self._put("0001_a", "Merge requested.\n")
+        self._put("0001_a", None)
         [row] = json.loads(python(self.store.argv("status", "--json")).out)["units"]
         self.assertEqual(
             row["next"],
@@ -621,8 +601,8 @@ class AShipThatAskedForAMergeIsMergingNotRefused(unittest.TestCase):
             ("", "ship is merging #7 — wait", ["ship-merging"]),
         )
 
-    def test_a_refused_line_is_still_ship_refused(self):
-        self._put("0001_a", "Refused: not up to date\n")
+    def test_a_recorded_refusal_is_still_ship_refused(self):
+        self._put("0001_a", "not up to date")
         state = json.loads(self.store.state().read_text())
         unit = read_unit(str(self.store.cos / "0001_a"), "0001_a", state)
         self.assertEqual(next_answer(unit)["reasons"], ["ship-refused"])

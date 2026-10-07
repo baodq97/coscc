@@ -43,15 +43,19 @@ from coscc.kernel import (
     Parts,
     State,
     Tool,
-    check_command,
     cos_dir,
-    files_of,
-    grant_for,
     now,
 )
-from coscc.units.turnstats import changes_requested, impl_ends, read_chars, shipped_units
+from coscc.units.turnstats import (
+    changes_requested,
+    impl_ends,
+    is_coder,
+    read_chars,
+    review_text,
+    shipped_units,
+)
 from coscc.units.turnstats import pairs as turn_pairs
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import date
 from fastapi import APIRouter, Request
 from pathlib import Path
@@ -460,7 +464,7 @@ def report(
     ]
     alone = units_by_arm((r.unit, r.arm) for r in inside)
     mixed = {r.unit for r in inside} - alone["on"] - alone["off"]
-    impl = {r.run: r for r in inside if r.stage == "impl"}
+    impl = {r.run: r for r in inside if is_coder(r.stage)}
 
     kept: dict[str, list[Step]] = {a: [] for a in ARMS}
     dropped = dict.fromkeys(ARMS, 0)
@@ -490,8 +494,6 @@ RUNS_TABLE = (
     "unit TEXT NOT NULL, stage TEXT NOT NULL, arm TEXT NOT NULL, sha TEXT NOT NULL, "
     "map_chars INTEGER NOT NULL, wait_ms INTEGER NOT NULL, error TEXT NOT NULL, at TEXT NOT NULL)"
 )
-MAP_STAGES = ("impl", "review")
-TOOL_STAGES = ("impl",)
 TOOL_NAMES = ("find", "callers", "impact")
 # Seconds one query may take. State, not measured: the spike's queries took well under one.
 QUERY_S = 60.0
@@ -543,18 +545,19 @@ def _map(ctx: Ctx, facts: Facts, binary: Path, ready: Ready) -> str:
         return call(home, binary, op, ready.root, args, QUERY_S)
 
     changed = changed_files(facts.tree, ready.sha)
-    if facts.stage == "review":
+    if not facts.grant.write:
+        # A run that only reads (a review) gets the diff's map; one that writes, the plan's.
         return review_map(ask, ready.sha, changed, old_hunks(facts.tree, ready.sha))
-    plan = facts.directory / "plan.md"
-    named = files_of(plan.read_text(encoding="utf-8")) if plan.is_file() else None
-    return impl_map(ask, ready.sha, changed, sorted(named or ()))
+    named = facts.plan["files"] if facts.plan else []
+    return impl_map(ask, ready.sha, changed, sorted(set(named)))
 
 
 async def _render(ctx: Ctx, facts: Facts) -> str:
-    """The map for the `on` arm, nothing for the `off` one; either way one record of the run."""
+    """The map for the `on` arm, nothing for the `off` one; either way one record of the run.
+    Asked only for a run whose row holds `codegraph` (the block's `tool`)."""
     arm = ctx.settings.arm(facts.workspace, facts.unit)
     idx = _indexes(ctx)
-    if facts.stage not in MAP_STAGES or arm is None or idx.lock():
+    if arm is None or idx.lock():
         return ""
     text = error = sha = ""
     wait_ms = 0
@@ -574,7 +577,7 @@ async def _render(ctx: Ctx, facts: Facts) -> str:
     else:
         sha = idx.status(facts.workspace_key).sha
     row = Row(
-        facts.run, facts.workspace_key, facts.unit, facts.stage, arm, sha, len(text), wait_ms,
+        facts.run, facts.workspace_key, facts.unit, facts.agent, arm, sha, len(text), wait_ms,
         error, now(),
     )  # fmt: skip
     await asyncio.to_thread(_record, ctx, row)
@@ -582,8 +585,8 @@ async def _render(ctx: Ctx, facts: Facts) -> str:
 
 
 def _ready_for(ctx: Ctx, facts: Facts) -> bool:
-    """The tools go to an `on`-arm impl run while the index is ready and the engine not found
-    broken. The engine is checked at the first call, so a resumed run gets them too."""
+    """The tools go to an `on`-arm run whose row holds them while the index is ready and the
+    engine not found broken. The engine is checked at the first call, so a resumed run gets them too."""
     if ctx.settings.arm(facts.workspace, facts.unit) != "on" or _indexes(ctx).lock():
         return False
     return _where(ctx, facts.workspace_key) is not None
@@ -607,11 +610,6 @@ def build_tools(ctx: Ctx, facts: Facts) -> list[SdkMcpTool[Any]]:
         if where is None or not isinstance(binary, Path):
             return _text("The code index is not ready; use Read and Grep.", True)
         root, sha = where
-        grant = replace(grant_for(facts.stage), commands=facts.commands)
-        for line in (f"{binary} {home / 'bridge.mjs'}", f"git diff --name-only {sha}"):
-            words = check_command(grant, line)
-            if words:
-                return _text(f"Refused: {words}", True)
 
         def ask(op: str, args: Mapping[str, object]) -> object:
             return call(home, binary, op, root, args, QUERY_S)
@@ -671,17 +669,20 @@ def agent(ctx: Ctx) -> Parts:
         return create_sdk_mcp_server(NAME, "1.0.0", build_tools(ctx, facts))
 
     def ended(event: Event) -> None:
+        workspace = event.payload.get("workspace", "")
         with ctx.store.connect() as conn:
             found = conn.execute(
-                "SELECT path FROM codegraph_index WHERE workspace = ?", (event.workspace,)
+                "SELECT path FROM codegraph_index WHERE workspace = ?", (workspace,)
             ).fetchone()
         if found and ctx.settings.enabled(found[0]):
-            _indexes(ctx).schedule(event.workspace)
+            _indexes(ctx).schedule(workspace)
 
     ctx.bus.subscribe("integration.ended", ended)
     return Parts(
-        tools=(Tool(NAME, TOOL_NAMES, TOOL_STAGES, make, when=lambda f: _ready_for(ctx, f)),),
-        blocks=(Block("codegraph-map", lambda facts: _render(ctx, facts)),),
+        tools=(
+            Tool(NAME, "read", "low", NAME, TOOL_NAMES, make, when=lambda f: _ready_for(ctx, f)),
+        ),
+        blocks=(Block("codegraph-map", lambda facts: _render(ctx, facts), tool=NAME),),
     )
 
 
@@ -738,9 +739,9 @@ def _rounds(
     """The changes-requested rounds of each unit shipped in the window whose review is there."""
     out: dict[str, int] = {}
     for unit in shipped_units(conn, key, *window):
-        review = cos_dir(key, ctx.store.root) / unit / "review.md"
-        if review.is_file():
-            out[unit] = changes_requested(review.read_text(encoding="utf-8"))
+        text = review_text(cos_dir(key, ctx.store.root) / unit)
+        if text:
+            out[unit] = changes_requested(text)
     return out
 
 

@@ -1,9 +1,10 @@
 """The work-unit loop, decided in Python, command by command.
 
 `python -m coscc.loop <command>` takes the loop's arguments and prints its answers,
-byte for byte as the app reads them. This module holds what every part shares: the stages and the other
-constants the loop defines, and the few helpers that keep JavaScript's semantics where Python's
-differ — `trim`, the `${}` of a template string, `?.` on a dict, `JSON.stringify`.
+byte for byte as the app reads them. This module holds what every part shares: the unit's process as
+the loop walks it (`Proc`), the other constants the loop defines, and the few helpers that keep
+JavaScript's semantics where Python's differ — `trim`, the `${}` of a template string, `?.` on a
+dict, `JSON.stringify`.
 """
 
 from __future__ import annotations
@@ -13,9 +14,11 @@ import re
 import subprocess
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
-from coscc.units import UNIT_RE, states
+from coscc.agent import pack
+from coscc.units import UNIT_RE
+from coscc.units.contracts import BranchType
 from coscc.units.guards import DECIDERS, REASONS
 
 __all__ = ["DECIDERS", "REASONS", "UNIT_RE"]
@@ -41,58 +44,202 @@ def checkout() -> Path:
 
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", re.ASCII)
 
-# `status --json` prints these. Names, files, statuses and `optional` are `states.json`'s; what is
-# here is only what the loop adds to a stage: the hint it prints, the lanes it runs on, `when`.
-_ADDED: dict[str, dict[str, Any]] = {
-    "idea": {"hint": "write-idea"},
-    "intent": {"hint": "write-intent — the unit has no intent.md"},
-    "spec": {"lanes": ["full"], "hint": "write-spec — it assesses whether to skip first"},
-    "spike": {
-        "lanes": ["full"],
-        "when": "unmeasured",
-        "hint": "write-spike — spec.md has [unmeasured] items",
-    },
-    "plan": {"lanes": ["full"], "hint": "write-plan"},
-    "impl": {"hint": "write-impl — implementation starts"},
-    "pr": {"hint": "pr"},
-    "review": {"hint": "write-review"},
-    "ship": {"hint": "ship"},
-}
-STAGES: list[dict[str, Any]] = [
-    {
-        "name": s.name,
-        "file": s.artifact,
-        **({"optional": True} if s.optional else {}),
-        **{k: v for k, v in _ADDED[s.name].items() if k != "hint"},
-        "hint": _ADDED[s.name]["hint"],
-        "statuses": list(s.statuses),
-    }
-    for s in states.default().stages
-]
 
-STAGE_ALIAS = {"implement": "impl"}
-STAGE_NAMES = [s["name"] for s in STAGES]
-ARTIFACTS = [s["file"] for s in STAGES]
-VALID: dict[str, Any] = {s["file"]: s["statuses"] for s in STAGES}
-SPIKE = next(s for s in STAGES if s.get("when") == "unmeasured")
+def conditions(when) -> list[pack.Condition]:
+    """A `when`: one condition or a list of them, all to hold."""
+    if when is None:
+        return []
+    return list(when) if isinstance(when, list) else [when]
 
 
-def stage_of(name):
-    """`stageOf`: the stage named, through `STAGE_ALIAS`, or `None`."""
-    want = STAGE_ALIAS.get(name, name) if isinstance(name, str) else name
-    return next((s for s in STAGES if s["name"] == want), None)
+class Proc:
+    """A process of the pack as the loop walks it.
+
+    `stages` is what `status --json` prints of each state, in the process's order: its name, its
+    artifact, `optional`, `when` (the field every way into it is conditioned on), the hint and
+    the statuses. `info` keeps the rest: `next`, `agent`, `action`, the agent's output `kind`,
+    `by` and `fields`, `rerun`, `skip`. The roles are what a state *is*: `review` (output kind
+    `review`), `fixer` (where a review sends changes back), `pr` and `merge` (the actions),
+    `spike` (its way on is guarded by `spike-holds`) and `rests` (where that way leads),
+    `measured` (the state whose output field `measure` decides whether `spike` runs), `opener`
+    (the first state that is not optional), `waits` (entered on `dependency-merged`) and `fast`
+    (the `fast-lane` branch: from, to, the states it passes over, the fields that send it back).
+    """
+
+    def __init__(self, ref: str, found: pack.Resolved):
+        raw, rows = found["process"], found["rows"]
+        self.ref = ref
+        self.start: str = raw["start"]
+        self.info: dict[str, dict[str, Any]] = {}
+        for name, st in raw["states"].items():
+            row = rows.get(str(st.get("agent"))) or {}
+            output = row.get("output") or {}
+            self.info[name] = {
+                "next": list(st.get("next") or []),
+                "agent": st.get("agent"),
+                "action": st.get("action"),
+                "kind": output.get("kind"),
+                "by": output.get("by"),
+                "fields": pack.output_fields(row),
+                "rerun": list(st.get("rerun") or []),
+                "skip": st.get("skip"),
+                "optional": bool(st.get("optional")),
+                "hint": st.get("hint") or name,
+                "statuses": list(pack.statuses(st, rows)),
+            }
+        self.order = list(self.info)
+        into: dict[str, list[dict[str, Any]]] = {n: [] for n in self.order}
+        for name, i in self.info.items():
+            for e in i["next"]:
+                into[e["to"]].append({**e, "from": name})
+        self.into = into
+        self.stages: list[dict[str, Any]] = []
+        for name, i in self.info.items():
+            s: dict[str, Any] = {"name": name, "file": f"{name}.md"}
+            if i["optional"]:
+                s["optional"] = True
+            when = self._when(name)
+            if when:
+                s["when"] = when
+            s["hint"] = i["hint"]
+            s["statuses"] = i["statuses"]
+            self.stages.append(s)
+        self.by_name = {s["name"]: s for s in self.stages}
+        self.names = list(self.by_name)
+        self.files = [s["file"] for s in self.stages]
+        self.valid = {s["file"]: s["statuses"] for s in self.stages}
+        self.review: str | None = self._first(lambda i: i["kind"] == "review")
+        self.fixer: str | None = (
+            next(
+                (
+                    e["to"]
+                    for e in self.info[self.review]["next"]
+                    for c in conditions(e.get("when"))
+                    if c.get("field") == "verdict" and c.get("is") == "changes-requested"
+                ),
+                None,
+            )
+            if self.review
+            else None
+        )
+        self.pr: str | None = self._first(lambda i: i["action"] == "open-pr")
+        self.merge: str | None = self._first(lambda i: i["action"] == "merge")
+        guarded = self._guarded("spike-holds")
+        self.spike: str | None = guarded[0][0] if guarded else None
+        self.rests: str | None = guarded[0][1] if guarded else None
+        self.measured: str | None = None
+        self.measure: str | None = None
+        for e in into.get(self.spike, []) if self.spike else []:
+            for c in conditions(e.get("when")):
+                if "field" in c:
+                    self.measured, self.measure = e["from"], c["field"]
+        self.opener = next(n for n in self.order if not self.info[n]["optional"])
+        self.waits = {to for _, to in self._guarded("dependency-merged")}
+        fast = self._guarded("fast-lane")
+        self.fast: dict[str, Any] | None = None
+        if fast:
+            source, target = fast[0]
+            passed, at = [], self.info[source]["next"][-1]["to"]
+            while at != target and at not in passed:
+                passed.append(at)
+                at = self.info[at]["next"][-1]["to"] if self.info[at]["next"] else target
+            over = set(passed)
+            todo = list(passed)
+            while todo:
+                for e in self.info[todo.pop()]["next"]:
+                    if e["to"] != target and e["to"] not in over:
+                        over.add(e["to"])
+                        todo.append(e["to"])
+            back = [
+                c["field"]
+                for e in self.info[target]["next"]
+                if e["to"] in passed
+                for c in conditions(e.get("when"))
+                if "field" in c
+            ]
+            self.fast = {
+                "from": source, "to": target, "passed": passed, "over": over, "back": back,
+            }  # fmt: skip
+
+    def _first(self, test) -> str | None:
+        return next((n for n, i in self.info.items() if test(i)), None)
+
+    def _guarded(self, guard: str) -> list[tuple[str, str]]:
+        """`(from, to)` of every way on that asks `guard`."""
+        return [
+            (n, e["to"])
+            for n, i in self.info.items()
+            for e in i["next"]
+            if any(c.get("guard") == guard for c in conditions(e.get("when")))
+        ]
+
+    def _when(self, name: str) -> str | None:
+        """The field every way into `name` is conditioned on being non-empty, if one is."""
+        fields = {
+            c.get("field") if c.get("is") == "non-empty" else None
+            for e in self.into[name]
+            for c in (conditions(e.get("when")) or [{}])
+        }
+        if len(fields) == 1 and None not in fields and self.into[name]:
+            return fields.pop()
+        return None
+
+    def file(self, name: str | None) -> str:
+        return f"{name}.md" if name else ""
+
+    def at(self, name: str | None) -> int:
+        return self.order.index(name) if name in self.info else -1
+
+    def rerun(self, how: str) -> list[str]:
+        """The states a person may run again `fresh`, or that run again on `answers`."""
+        return [n for n, i in self.info.items() if how in i["rerun"]]
 
 
-RERUNNABLE = ["intent", "spec", "spike", "plan", "pr"]
-# `RERUN_STAGES`: what `status --json` carries as `afterAnswers`.
-RERUN_STAGES = ["intent", "spec", "spike", "plan", "impl"]
+DEFAULT = pack.DEFAULT_PROCESS
+_PROCS: dict[tuple[str, str], Proc] = {}
+# The processes the snapshot hands over (`pack.resolved`): every one a unit records that is not
+# built in. The loop reads no pack file under the data root.
+GIVEN: dict[str, pack.Resolved] = {}
+
+
+def given(state) -> None:
+    """Take the processes of snapshot `state`, in place of the last one's."""
+    found = state.get("processes") if isinstance(state, dict) else None
+    GIVEN.clear()
+    GIVEN.update(found if isinstance(found, dict) else {})
+
+
+def known(ref) -> pack.Resolved | None:
+    """`{process, rows, hash}` of `ref`: the snapshot's, else the built-in pack's; `None` when
+    neither has it."""
+    if not isinstance(ref, str):
+        return None
+    if ref in GIVEN:
+        return GIVEN[ref]
+    found = pack.builtin_processes().get(ref)
+    return None if found is None else {"process": found, "rows": pack.builtin_rows()}
+
+
+def proc_of(ref) -> Proc:
+    """The process `ref` names, read once per definition; the default one for a unit that names
+    none or one no pack has."""
+    found = known(ref)
+    if found is None:
+        ref, found = DEFAULT, known(DEFAULT)
+    assert found is not None
+    at = (ref, str(found.get("hash") or ""))
+    if at not in _PROCS:
+        _PROCS[at] = Proc(ref, found)
+    return _PROCS[at]
+
+
 SPIKE_ROUNDS = 2
 REVIEW_ROUNDS = 3
-BRANCH_TYPES = ["feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci", "revert"]
+BRANCH_TYPES = list(get_args(BranchType))
 SLUG_MAX = 60
 IDEAS = "ideas"
 LOCAL_ONLY = {"check-branch", "check-tag", "check-version"}
-STATE_READERS = ["status", "gate", "next", "rerun", "unit-branch", "pr-text", "screens"]
+STATE_READERS = ["status", "gate", "next", "rerun", "unit-branch", "screens"]
 NEEDS_STATE = "needs the coscc app: pass --state <file|-> (uv run coscc state <workspace>)"
 
 

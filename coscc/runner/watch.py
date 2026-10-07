@@ -1,5 +1,5 @@
-"""Watching a running step: the events it recorded, a page at a time or followed live.
-Held by `Core`."""
+"""Watching a run, any agent's, with a unit or none: the events it recorded, a page at a time or
+followed live. Held by `Core`."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, NotRequired, TypedDict
 
 from coscc.runlog import events
+from coscc.runner.run import LIVE
 from coscc.store.db import Data
 from coscc.store.db import Busy
 from coscc.kernel import Invalid
@@ -23,6 +24,8 @@ class StepEvent(TypedDict):
     seq: int
     at: int
     kind: str
+    # A helper's event: the `agent_id` of the helper that made it.
+    agent_id: NotRequired[str]
     role: NotRequired[str]
     text: NotRequired[str]
     thinking: NotRequired[str]
@@ -34,6 +37,10 @@ class StepEvent(TypedDict):
     content: NotRequired[Any]
     tool: NotRequired[str]
     reason: NotRequired[str]
+    # A `denied`'s: the grant the refusal lacked (`policy.lacked`), "" when its rule names none.
+    lacked: NotRequired[str]
+    # A `config`'s: what the run was granted, one phrase each (`policy.granted`).
+    granted: NotRequired[list[str]]
     n: NotRequired[int]
     model: NotRequired[str | None]
     effort: NotRequired[str | None]
@@ -60,15 +67,19 @@ class EventsPage(TypedDict):
     last_at: int | None
     events_lost: int
     purged_at: str | None
+    # Who pressed it (`person`, `autopilot`, ...), from the run's `start`; on the first page.
+    started_by: NotRequired[str]
+    # From the run's `end` in the run log, once it has one (on the first page): how it ended, why,
+    # and a `draft` kind's object (Dagaz's), which nothing else keeps.
+    outcome: NotRequired[str]
+    detail: NotRequired[str]
+    draft: NotRequired[dict[str, Any]]
 
 
 class Watch:
-    def __init__(
-        self, config: Config, ws: Workspaces, recorders: dict[str, events.Recorder]
-    ) -> None:
+    def __init__(self, config: Config, ws: Workspaces) -> None:
         self.config = config
         self.ws = ws
-        self.recorders = recorders
 
     # -- watching a step ------------------------------------------------------
     #
@@ -77,40 +88,41 @@ class Watch:
     # path, thought and tool output a step saw.
 
     def _run_of(
-        self, cwd: str, unit: str, run: str
-    ) -> tuple[events.Recorder | None, dict[str, Any] | None]:
-        """The recorder running `run`, or its index row; refused unless it is `unit`'s, in this
-        workspace. `(None, None)` for a `run` the run log names with no index row yet."""
+        self, cwd: str, run: str
+    ) -> tuple[events.Recorder | None, dict[str, Any] | None, str]:
+        """The recorder running `run`, or its index row, and the unit it is of (`""` for none);
+        refused unless it is a run of this workspace. `(None, None, unit)` for a `run` the run
+        log names with no index row yet."""
         self.ws.check(cwd)
         key = self.ws.key(cwd)
         if not run:
             raise Invalid("a run is required")
-        recorder = self.recorders.get(run)
+        recorder = LIVE.get(run)
         if recorder is not None:
-            if (recorder.workspace, recorder.unit) != (key, unit):
-                raise Invalid(f"run {run} is not a step of {unit}")
-            return recorder, None
+            if recorder.workspace != key:
+                raise Invalid(f"run {run} is not a run of this workspace")
+            return recorder, None, recorder.unit
         try:
             row = Data(self.config.data_dir).step_run(run)
         except Busy as e:
             raise Invalid(str(e)) from e
         if row is not None:
-            if (row["workspace"], row["unit"]) != (key, unit):
-                raise Invalid(f"run {run} is not a step of {unit}")
-            return None, row
+            if row["workspace"] != key:
+                raise Invalid(f"run {run} is not a run of this workspace")
+            return None, row, str(row["unit"] or "")
         journal = self.ws.journal()
         try:
-            started = journal.records(key, unit, kind="start") if journal is not None else []
+            started = journal.records(key, kind="start") if journal is not None else []
         except Busy as e:
             raise Invalid(str(e)) from e
-        if any(r.get("run") == run for r in started):
-            return None, None
-        raise Invalid(f"no such run of {unit}: {run}")
+        for r in started:
+            if r.get("run") == run:
+                return None, None, str(r.get("unit") or "")
+        raise Invalid(f"no such run: {run}")
 
     def events_page(
         self,
         cwd: str,
-        unit: str,
         run: str,
         before: int | None = None,
         limit: int = events.PAGE_DEFAULT,
@@ -122,7 +134,7 @@ class Watch:
         `status`: `running` while this process runs it; `purged` once its events were purged;
         `ended` with an end; `ended-unknown` when its index row has none; `none` for a `run`
         the run log names that never got an index row (the app went down before the first write)."""
-        recorder, row = self._run_of(cwd, unit, run)
+        recorder, row, unit = self._run_of(cwd, run)
         limit = max(1, min(events.PAGE_MAX, int(limit)))
         out: dict[str, Any] = {
             "run": run,
@@ -173,12 +185,43 @@ class Watch:
             found = []
         out["events"] = found
         out["first_seq"] = found[0]["seq"] if found else None
+        if before is None and seq is None:
+            out["started_by"] = self._started_by(self.ws.key(cwd), run, unit)
+            if recorder is None:
+                out.update(self._ended(self.ws.key(cwd), run, unit))
+        return out
+
+    def _started_by(self, workspace: str, run: str, unit: str) -> str:
+        journal = self.ws.journal()
+        if journal is None:
+            return ""
+        try:
+            starts = journal.records(workspace, unit, kinds=("start",))
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        start = next((r for r in reversed(starts) if r.get("run") == run), None)
+        return str(start.get("started_by") or "") if start else ""
+
+    def _ended(self, workspace: str, run: str, unit: str) -> dict[str, Any]:
+        """What the run's `end` says: `outcome`, `detail` and a `draft`; `{}` with no `end` yet."""
+        journal = self.ws.journal()
+        if journal is None:
+            return {}
+        try:
+            ends = journal.records(workspace, unit, kinds=("end",))
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        end = next((r for r in reversed(ends) if r.get("run") == run), None)
+        if end is None:
+            return {}
+        out = {"outcome": str(end.get("outcome") or ""), "detail": str(end.get("detail") or "")}
+        if isinstance(end.get("draft"), dict):
+            out["draft"] = end["draft"]
         return out
 
     async def follow_events(
         self,
         cwd: str,
-        unit: str,
         run: str,
         after: int = 0,
         gather: float = 0.0,
@@ -189,9 +232,9 @@ class Watch:
 
         Subscribes before it reads what is there. `gather` > 0 holds each batch up to that many
         seconds; an empty batch comes every `IDLE_WAKE` seconds so a caller can notice it should stop."""
-        recorder, _ = self._run_of(cwd, unit, run)
+        recorder, _, _ = self._run_of(cwd, run)
         if recorder is None:
-            yield ("status", self.events_page(cwd, unit, run, limit=1))
+            yield ("status", self.events_page(cwd, run, limit=1))
             return
         q, backlog = recorder.subscribe(int(after))
         try:
@@ -202,7 +245,7 @@ class Watch:
                 if backlog[-1]["kind"] == "end":
                     return
             if recorder.closed:
-                yield ("status", self.events_page(cwd, unit, run, limit=1))
+                yield ("status", self.events_page(cwd, run, limit=1))
                 return
             loop = asyncio.get_running_loop()
             last = loop.time()

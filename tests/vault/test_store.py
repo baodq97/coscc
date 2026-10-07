@@ -45,21 +45,24 @@ class ANameSaysWhichTierItIsIn(unittest.TestCase):
     def test_the_defaults_are_impl_with_env_and_file(self):
         made = self.store.create("ws:db", "/a", actor="agent:impl")
         self.assertEqual(
-            (made.stages, made.modes, made.created_by), (("impl",), ("env", "file"), "agent:impl")
+            (made.agents, made.modes, made.created_by), (("impl",), ("env", "file"), "agent:impl")
         )
         self.assertFalse(made.has_value)
+
+    def test_a_secret_created_with_no_agent_is_usable_by_nobody(self):
+        self.assertEqual(self.store.create("ws:db", "/a", agents=()).agents, ())
 
     def test_a_broker_secret_is_ssh_only_from_the_start_and_after_a_policy_change(self):
         made = self.store.create("global:jump", "", modes=("env",), broker=True)
         self.assertEqual(made.modes, ("ssh",))
         changed = self.store.set_policy("global:jump", "", ("impl", "spike"), ("env", "file"))
-        self.assertEqual((changed.modes, changed.stages), (("ssh",), ("impl", "spike")))
+        self.assertEqual((changed.modes, changed.agents), (("ssh",), ("spike", "impl")))
 
-    def test_a_policy_names_only_stages_and_modes_that_exist(self):
+    def test_a_policy_names_only_agents_and_modes_that_exist(self):
         self.store.create("ws:db", "/a")
-        for stages, modes in ((("ship",), ("env",)), (("impl",), ("telepathy",))):
-            with self.subTest(stages=stages, modes=modes), self.assertRaises(BadSecret):
-                self.store.set_policy("ws:db", "/a", stages, modes)
+        for agents, modes in ((("ship",), ("env",)), (("impl",), ("telepathy",))):
+            with self.subTest(agents=agents, modes=modes), self.assertRaises(BadSecret):
+                self.store.set_policy("ws:db", "/a", agents, modes)
 
 
 class AGlobalSecretIsGrantedToAWorkspaceByAPerson(unittest.TestCase):

@@ -15,9 +15,8 @@ from unittest import mock
 
 from coscc.bus import Bus
 from coscc.units import board as _board
-from tests.units.test_meta import WithSnapshot
+from tests.units.test_meta import WithSnapshot, seed
 
-board_reader = WithSnapshot(_board)
 from coscc.units import worktrees
 from coscc.config import Config
 from coscc.runner.reply import RunError
@@ -28,17 +27,15 @@ from coscc.agent.sessions import Sessions
 from coscc.units.board import unit_state
 
 SHA = "a" * 40
-PR_MD = "# PR: feat(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân cũ\n"
+PR_MD = "# PR: feat(0001): x\nPR: https://github.com/o/r/pull/7.\n\nthân cũ\n"
 ARTIFACTS = {
+    "idea.md": "# Idea: x\nStatus: accepted.\n\n## In their own words\n\nwords\n",
     "intent.md": "# Intent: x\nType: feat. Status: accepted.\n\n## Open questions\n\n1. Một?\n",
     "spec.md": "# Spec: x\nIntent: intent.md. Status: accepted.\n\nR1.\n",
     "plan.md": "# Plan: x\nStatus: accepted.\n\n1. build it\n",
     "impl.md": "# Impl: x\nStatus: accepted.\n\nbuilt\n",
     "pr.md": PR_MD,
-    "review.md": (
-        "# Review: x\nStatus: accepted.\n\n## Round 1\n\n"
-        f"Reviewed: {SHA}. Verdict: pass.\n\n### Findings\n\n\n\n### What was not reviewed\n\nnothing\n"
-    ),
+    "review.md": ("# Review: x\nStatus: accepted.\n\nRound 1 passed.\n"),
 }
 ANSWERS = "\n## Answers\n\n### Câu 1\nAnswered by: A. Date: 2026-09-26. Via: product.\n\ngiữ\n"
 
@@ -64,14 +61,41 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         for name, text in ARTIFACTS.items():
             (self.dir / name).write_text(text, encoding="utf-8")
         self.store = self.core.ws.units_root(self.cwd)
+        meta, key = self.core.ws.unit_meta(), self.core.ws.key(self.cwd)
+        seed(
+            meta,
+            key,
+            self.unit,
+            statuses={name: "accepted" for name in ARTIFACTS},
+            type="feat",
+            questions={"review.md": ["Một?"]},
+        )
+        # The records a rerun names: the pull request the machine opened, the round the review made.
+        meta.history.record(
+            key,
+            self.unit,
+            "pr.md",
+            "accepted",
+            source="prmachine:open",
+            guard="branch-named",
+            authority="code",
+            inputs={"number": 7, "url": "https://github.com/o/r/pull/7", "head": SHA},
+        )
+        with meta.data.write() as conn:
+            meta.record_round(
+                conn,
+                key,
+                self.unit,
+                {"n": 1, "run": "r", "head": SHA, "object": {"verdict": "pass"}},
+            )
+        self.board = WithSnapshot(_board, lambda: meta.snapshot(key, {Path(key).name: key}))
         self.seen: list[dict] = []
         self.items: list[tuple] = []
 
     def run_step(
         self,
         stage: str,
-        write: str
-        | None = "# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân mới\n",
+        write: str | None = "# PR: x\nPR: https://github.com/o/r/pull/7.\n\nthân mới\n",
         file: str = "pr.md",
         **kw,
     ):
@@ -90,8 +114,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
                 if write is None:
                     raise RunError("a stand-in runner")
                 (directory / file).write_text(write, encoding="utf-8")
-                extra = await k["end_fields"]() if k.get("end_fields") else {}
-                yield ("done", {"outcome": "done", **extra})
+                yield ("done", {"outcome": "done"})
 
         async def tree(*a, **k):
             return {"path": self.cwd, "branch": "feat/awaiting-ship", "base": None}
@@ -100,17 +123,12 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
             return {}
 
         # `pr` runs no session. The PR machine is the real one, with `gh`, the push and the head in
-        # memory; `write` None is a `gh` that cannot be reached.
+        # memory; `write` None is a branch the machine refuses.
         from coscc.git import gitops
         from coscc.github import prmachine
         from tests.github.test_prmachine import FakeGh
 
         gh = FakeGh()
-        if write is None:
-
-            async def gh(argv, cwd, stdin=None):
-                seen.append({"gh": argv})
-                return 1, "", "error connecting to api.github.com"
 
         async def pushed(*a):
             return None
@@ -125,7 +143,8 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
             )
 
         async def on_branch(*a, **k):
-            return "feat/awaiting-ship"
+            # `write` None is a machine that cannot record `open` again: the branch is not the unit's.
+            return "feat/awaiting-ship" if write is not None else "feat/other"
 
         async def go():
             async for item in self.core.steps.run_step(self.cwd, self.unit, stage, **kw):
@@ -140,6 +159,12 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
         ):
             asyncio.run(go())
+
+    def reruns(self) -> list[dict]:
+        meta = self.core.ws.unit_meta()
+        return [
+            d for d in meta.decisions(self.core.ws.key(self.cwd), self.unit) if d["kind"] == "rerun"
+        ]
 
     def intent(self) -> str:
         return (self.dir / "intent.md").read_text(encoding="utf-8")
@@ -156,45 +181,54 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.assertEqual(self.intent(), ARTIFACTS["intent.md"])
 
     def test_rerun_pr_then_next_is_review_and_ship_is_closed(self):
-        open_before, said_before = self.ask(board_reader.gate(self.store, self.unit, "ship"))
+        open_before, said_before = self.ask(self.board.gate(self.store, self.unit, "ship"))
         self.assertNotIn("stale", said_before)
         self.run_step("pr", rerun=True, note="Sửa tiêu đề: nêu R10.")
         self.assertEqual(self.seen, [])
         self.assertEqual((self.items[-1][0], self.items[-1][1]["outcome"]), ("done", "done"))
-        # Exactly one block, appended: not one byte above it moved.
-        text = self.intent()
-        self.assertTrue(text.startswith(ARTIFACTS["intent.md"]))
-        self.assertEqual(text.count("### Rerun"), 1)
-        self.assertIn("Requested by: owner.", text)
-        self.assertNotIn("Sửa tiêu đề", text)
+        # One row, and no byte of intent.md moved.
+        self.assertEqual(self.intent(), ARTIFACTS["intent.md"])
+        [row] = self.reruns()
+        self.assertEqual((row["kind"], row["by"]), ("rerun", "owner"))
+        self.assertEqual(row["fields"]["stage"], "pr")
+        self.assertEqual(set(row["fields"]["stale"]), {"pr.md", "review.md"})
 
-        allowed, said = self.ask(board_reader.gate(self.store, self.unit, "ship"))
+        allowed, said = self.ask(self.board.gate(self.store, self.unit, "ship"))
         self.assertFalse(allowed)
         self.assertIn("review.md is stale: pr was rerun on", said)
         # With no --repo the ship gate was closed before too, but only for want of git and gh.
         self.assertFalse(open_before)
         self.assertIn("no repository given", said_before)
-        nxt = self.ask(board_reader.next_step(self.store, self.unit))
+        nxt = self.ask(self.board.next_step(self.store, self.unit))
         self.assertTrue(nxt["action"].startswith("review.md is stale"), nxt["action"])
         # `pr` was written again, so it is no longer offered by the run button.
         self.assertNotIn("pr.md is stale", nxt["action"])
         # The card reads the stale review as the wait on CI a missing one is.
         row = next(
-            u for u in self.ask(board_reader.read(self.store))["units"] if u["name"] == self.unit
+            u for u in self.ask(self.board.read(self.store))["units"] if u["name"] == self.unit
         )
         self.assertEqual(
             (row["at"], row["why"], row["between_pr_and_ship"]), ("review", "stale", True)
         )
-        # The fixture's `intent.md` leaves Câu 1 open, and *Needs you* is tried first.
+        # The fixture's `review.md` leaves Câu 1 open (the latest artifact asks), and *Needs you* is tried first.
         self.assertEqual(unit_state(row, None, None)["state"], "needs-you")
         got = unit_state({**row, "open": 0}, None, None)
         self.assertEqual(got["state"], "awaiting")
 
+    def test_a_session_stage_rerun_writes_one_row_and_appends_nothing(self):
+        self.run_step("spec", write=ARTIFACTS["spec.md"], file="spec.md", rerun=True)
+        [row] = self.reruns()
+        self.assertEqual(row["fields"]["stage"], "spec")
+        # Only an artifact that holds a record can be made stale: the seeded spec holds none.
+        self.assertEqual(set(row["fields"]["stale"]), {"pr.md", "review.md"})
+        self.assertEqual(self.intent(), ARTIFACTS["intent.md"])
+
     def test_a_rerun_that_never_ran_leaves_the_stage_offered_again(self):
         self.run_step("pr", write=None, rerun=True)
         self.assertEqual(self.items[-1][1]["outcome"], "failed")
-        self.assertEqual(self.intent().count("### Rerun"), 1)
-        nxt = self.ask(board_reader.next_step(self.store, self.unit))
+        self.assertEqual([r["fields"]["stage"] for r in self.reruns()], ["pr"])
+        self.assertEqual(self.intent(), ARTIFACTS["intent.md"])
+        nxt = self.ask(self.board.next_step(self.store, self.unit))
         self.assertEqual(nxt["stage"], "pr")
         self.assertTrue(nxt["action"].startswith("pr.md is stale"), nxt["action"])
 
@@ -231,40 +265,6 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         text = (self.dir / "pr.md").read_text(encoding="utf-8")
         self.assertTrue(text.endswith(ANSWERS))
         self.assertNotEqual(text, PR_MD + ANSWERS)
-
-
-IMPL_DRAFT = "# Impl: x\nStatus: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
-
-
-class ADraftImplThatLosesItsAnswersSaysSo(unittest.TestCase):
-    """An `impl` step writes `impl.md` itself; a `done` that no longer ends with the `## Answers` it
-    started with says `answers_lost`. The app writes nothing back."""
-
-    setUp = APrRunAgainClosesShipUntilAReview.setUp
-    run_step = APrRunAgainClosesShipUntilAReview.run_step
-
-    def impl(self, before: str, after: str) -> dict:
-        for name in ("pr.md", "review.md"):
-            (self.dir / name).unlink()
-        (self.dir / "intent.md").write_text(
-            "# Intent: x\nType: feat. Status: accepted.\n", encoding="utf-8"
-        )
-        (self.dir / "impl.md").write_text(before, encoding="utf-8")
-        self.run_step("impl", write=after, file="impl.md")
-        self.assertEqual(self.items[-1][0], "done")
-        return self.items[-1][1]
-
-    def test_an_impl_that_drops_its_answers_says_answers_lost(self):
-        done = self.impl(IMPL_DRAFT + ANSWERS, IMPL_DRAFT + "\nrewritten\n")
-        self.assertEqual(done.get("answers_kept"), False)
-        self.assertTrue(done.get("answers_lost"))
-        # Nothing wrote the section back.
-        self.assertNotIn("## Answers", (self.dir / "impl.md").read_text(encoding="utf-8"))
-
-    def test_an_impl_that_appends_its_own_answer_block_says_answers_lost(self):
-        own = "\n### Câu 2\nAnswered by: Claude. Date: 2026-09-27. Via: product.\n\ntự trả lời\n"
-        done = self.impl(IMPL_DRAFT + ANSWERS, IMPL_DRAFT + "2. Hai?\n" + ANSWERS + own)
-        self.assertTrue(done.get("answers_lost"))
 
 
 if __name__ == "__main__":

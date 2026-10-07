@@ -1,4 +1,4 @@
-"""The units a unit names, and the two files of each a step of it may read.
+"""The units a unit names, and where the two files of each a step of it is told about are.
 
 A unit names another by its number in its own `idea.md`, in the `## Answers` a prompt shows for
 any of its artifacts, or by a `Depends on:` or backlog `phụ thuộc` relation; nothing else is
@@ -14,9 +14,10 @@ from pathlib import Path
 from typing import Any
 
 from coscc import units
+from coscc.units import states
 
-# The only files of a named unit a step may read.
-FILES = ("idea.md", "intent.md")
+# The files of a named unit a step is told about.
+FILES = tuple(f"{n}.md" for n in states.opening_states())
 
 # Four digits standing alone, and not the year of a `YYYY-MM-DD` date.
 _NUMBER = re.compile(r"(?<!\d)(\d{4})(?!\d|-\d{2}-\d{2}(?!\d))", re.ASCII)
@@ -50,7 +51,7 @@ def mentioned(
             if len(hit) == 1:
                 found.setdefault(("", hit[0]), source)
 
-    numbers(idea, "idea.md")
+    numbers(idea, states.brief_file())
     for artifact, text in answers:
         numbers(text, f"## Answers of {artifact}")
     links = (meta or {}).get("links") or {}
@@ -90,8 +91,7 @@ def read_paths(dirs: Iterable[Path | None]) -> tuple[str, ...]:
 
 
 def note(found: list[dict[str, str]], dirs: list[Path | None]) -> str:
-    """One line per found unit: its name, what named it and the files a step may read; "" for
-    none."""
+    """One line per found unit: its name, what named it and where its files are; "" for none."""
     lines: list[str] = []
     for f, d in zip(found, dirs):
         ref = f"{f['ws']}/{f['unit']}" if f["ws"] else f["unit"]
@@ -107,9 +107,9 @@ def note(found: list[dict[str, str]], dirs: list[Path | None]) -> str:
     if not lines:
         return ""
     return (
-        "This unit names these units. Read, Glob and Grep may open the files listed, as they stand "
-        "in the app's store; every other file of theirs is refused, and so is writing any of them "
-        "or pointing git at them.\n\n" + "\n".join(lines)
+        "This unit names these units; their files, as they stand in the app's store, are "
+        "listed. Read them where the unit's meaning needs them; do not write them.\n\n"
+        + "\n".join(lines)
     )
 
 
@@ -122,12 +122,12 @@ def for_step(
     own: str,
     workspaces: Iterable[Mapping[str, Any]],
     data_dir: str | None = None,
-) -> tuple[tuple[str, ...], str]:
-    """The paths a step of `unit` may read besides its own, and the note naming them."""
+) -> str:
+    """The note naming the units `unit` names and where their files are."""
     try:
         names = [p.name for p in units.cos_dir(workspace, data_dir).iterdir() if p.is_dir()]
     except OSError:
         names = []
     found = mentioned(unit, names, idea, answers, meta, own)
     dirs = directories(workspace, found, workspaces, data_dir)
-    return read_paths(dirs), note(found, dirs)
+    return note(found, dirs)

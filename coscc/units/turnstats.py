@@ -13,7 +13,10 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from pathlib import Path
 from typing import Any
+
+from coscc.units import states
 
 _ROUND = re.compile(r"^## Round \d+", re.M)
 _VERDICT = re.compile(r"Verdict:\s*([\w-]+)")
@@ -26,7 +29,8 @@ def _in(at: str, since: str | None, until: str | None) -> bool:
 def pairs(
     conn: sqlite3.Connection, workspace: str, since: str | None, until: str | None
 ) -> list[dict[str, Any]]:
-    """`{unit, start, end}` for every `impl` step of `workspace` whose time is in the window."""
+    """`{unit, start, end}` for every step of a state that writes in the unit's branch (`by:
+    session`) of `workspace` whose time is in the window."""
     rows = conn.execute(
         "SELECT at, root, unit, stage, kind, record FROM runs "
         "WHERE kind IN ('start', 'end') AND workspace = ? ORDER BY id",
@@ -34,14 +38,15 @@ def pairs(
     ).fetchall()
     last: dict[tuple[str, str], tuple[str, str, dict[str, Any]]] = {}
     out: list[dict[str, Any]] = []
+    coders = states.states_where(by="session", kind="artifact")
     for at, root, unit, stage, kind, record in rows:
         if kind == "start":
             last[(root, unit)] = (at, stage, json.loads(record))
             continue
-        if stage != "impl":
+        if stage not in coders:
             continue
         start = last.get((root, unit))
-        s_at, s_rec = (start[0], start[2]) if start and start[1] == "impl" else (at, {})
+        s_at, s_rec = (start[0], start[2]) if start and start[1] in coders else (at, {})
         if _in(s_at, since, until):
             out.append({"unit": unit, "start": s_rec, "end": json.loads(record)})
     return out
@@ -100,11 +105,13 @@ def read_chars(
 def impl_ends(conn: sqlite3.Connection, workspace: str) -> list[tuple[str, str, bool]]:
     """`(run, unit, purged)` of every step `pairs` gives with no window, from one query and no
     event read: whether `read_chars` has the run is `not purged`. An empty `run` is not in it."""
+    coders = states.states_where(by="session", kind="artifact")
     rows = conn.execute(
         "SELECT json_extract(r.record, '$.run'), r.unit, s.purged_at FROM runs r "
         "LEFT JOIN step_runs s ON s.run = json_extract(r.record, '$.run') "
-        "WHERE r.workspace = ? AND r.kind = 'end' AND r.stage = 'impl' ORDER BY r.id",
-        (workspace,),
+        f"WHERE r.workspace = ? AND r.kind = 'end' AND r.stage IN ({states.marks(coders)}) "
+        "ORDER BY r.id",
+        (workspace, *coders),
     ).fetchall()
     return [(str(run), unit, bool(purged)) for run, unit, purged in rows if run]
 
@@ -119,15 +126,32 @@ def changes_requested(text: str) -> int:
 def shipped_units(
     conn: sqlite3.Connection, workspace: str, since: str | None, until: str | None
 ) -> list[str]:
-    """The units with a `ship.md` -> `accepted` transition in the window, sorted."""
+    """The units whose merge artifact went to `accepted` in the window, sorted."""
+    merges = states.files_where(action="merge")
     return sorted(
         {
             unit
             for unit, at in conn.execute(
                 "SELECT unit, at FROM transitions "
-                "WHERE workspace = ? AND artifact = 'ship.md' AND to_state = 'accepted'",
-                (workspace,),
+                f"WHERE workspace = ? AND artifact IN ({states.marks(merges)}) "
+                "AND to_state = 'accepted'",
+                (workspace, *merges),
             ).fetchall()
             if _in(at, since, until)
         }
     )
+
+
+def review_text(directory: Path) -> str:
+    """The unit's review artifact as it stands, `""` when it has none."""
+    for name in states.files_where(kind="review"):
+        try:
+            return (directory / name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+    return ""
+
+
+def is_coder(stage: str) -> bool:
+    """Whether `stage` is a state that writes in the unit's branch."""
+    return stage in states.states_where(by="session", kind="artifact")

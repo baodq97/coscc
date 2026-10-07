@@ -334,8 +334,11 @@ class TakingUpAfterAnUpdate(_Base):
             rows = self.journal.records(self.key, kind="resume")
             self.assertEqual({r["result"] for r in rows}, {"failed"})
             self.assertTrue(all(r["detail"] for r in rows))
-            # An estimate had a `start`; each ends `failed`. A chat turn had none.
-            self.assertEqual(sorted(e["stage"] for e in self.ends()), ["estimate", "estimate"])
+            # Each had a `start`, and each ends `failed`.
+            self.assertEqual(
+                sorted(e["agent"] for e in self.ends()), ["chat", "chat", "estimate", "estimate"]
+            )
+            self.assertEqual({e["status"] for e in self.ends()}, {"failed"})
 
     def test_a_session_of_a_kind_no_owner_takes_up_ends_failed(self):
         self.paused("precedent")
@@ -404,9 +407,11 @@ class TakingUpAfterAnUpdate(_Base):
         [said] = self.up()
         self.assertEqual(said["result"], "resumed")
         [call] = streamed
-        self.assertEqual((call["session_id"], call["resume_at"], call["max_turns"]), (SID, "u2", 1))
+        self.assertEqual(
+            (call["session_id"], call["resume_at"], call["max_turns"]), (SID, "u2", 10)
+        )
 
-    def test_a_chat_turn_with_its_one_turn_used_is_not_taken_up(self):
+    def test_a_chat_turn_with_its_turns_used_opens_nothing_and_ends_at_its_ceiling(self):
         streamed: list[dict] = []
 
         async def stream(cwd, text, session_id=None, **kw):
@@ -415,14 +420,19 @@ class TakingUpAfterAnUpdate(_Base):
             yield ("done", {"session_id": SID})
 
         self.core.sessions.stream = stream  # type: ignore[method-assign]
-        self.paused("chat", api_calls=1)
-        [said] = self.up()
+        self.paused("chat", api_calls=10)
+
+        async def go():
+            said = await self.core.resume.resume_after_update()
+            await asyncio.gather(*list(resume_mod._TASKS))
+            return said
+
+        [said] = asyncio.run(go())
         self.assertEqual(streamed, [])
-        self.assertEqual(said["result"], "failed")
-        self.assertIn("error_max_turns", said["detail"])
-        [row] = self.journal.records(self.key, kind="resume")
-        self.assertEqual(row["result"], "failed")
-        self.assertEqual(self.ends(), [])
+        self.assertEqual(said["result"], "resumed")
+        [end] = self.ends()
+        self.assertEqual((end["agent"], end["status"]), ("leif", "paused-budget"))
+        self.assertIn("error_max_turns", end["detail"])
 
     def test_a_refused_resume_ends_failed_without_a_new_session(self):
         # The CLI refusing the id, or `Sessions` finding another in `init`, is the end.
@@ -447,7 +457,6 @@ class TakingUpAfterAnUpdate(_Base):
                 unit=self.unit,
                 stage="plan",
                 artifact="plan.md",
-                stages=[],
                 mode="manual",
                 cwd=str(self.tree),
                 resume=record,
@@ -493,6 +502,48 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual(self.core.steps.tasks, {})
 
 
+class AStepTakenUpPushesTheBranchItWasGranted(_Base):
+    """A step taken up again is handed the branch its first start's grant held (its owner's),
+    never what its worktree's `HEAD` stands on now."""
+
+    def test_the_owners_branch_goes_to_the_run(self):
+        seen: list[dict] = []
+
+        class Records:
+            bus = Bus()
+
+            def __init__(self, *a, **kw):
+                pass
+
+            async def run(self, **kw):
+                seen.append(kw)
+                raise Suspended("paused again")
+                yield
+
+        record = self.paused()
+        record["owner"]["branch"] = "feat/a-problem"
+        with mock.patch("coscc.runner.steps.Runner", Records):
+
+            async def go():
+                self.core.steps.resume_step(record)
+                for _ in range(20):
+                    await asyncio.sleep(0)
+
+            asyncio.run(go())
+        self.assertEqual([kw.get("branch") for kw in seen], ["feat/a-problem"])
+        self.assertEqual(seen[0]["owner_extra"]["branch"], "feat/a-problem")
+
+    def test_an_impl_is_granted_the_units_branch_as_the_loop_names_it(self):
+        from coscc import units
+
+        steps = self.core.steps
+        for said, want in (("feat/a-problem", "feat/a-problem"), ("main", ""), ("-x", "")):
+            with mock.patch.object(units, "branch_name", return_value=said):
+                self.assertEqual(asyncio.run(steps._unit_branch(self.cwd, self.unit)), want)
+        with mock.patch.object(units, "branch_name", side_effect=units.CannotCreate("no intent")):
+            self.assertEqual(asyncio.run(steps._unit_branch(self.cwd, self.unit)), "")
+
+
 class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
     def guarded(self, check):
         from coscc.kernel import Guard, Hooks, Parts
@@ -516,7 +567,7 @@ class AFeatureGuardIsAskedBeforeAStepIsTakenUp(_Base):
         self.assertEqual(self.core.attempts.unfinished(self.key, self.unit), [])
         [facts] = seen
         self.assertTrue(facts.resumed)
-        self.assertEqual((facts.unit, facts.stage), (self.unit, "plan"))
+        self.assertEqual((facts.unit, facts.agent), (self.unit, "plan"))
 
 
 class APausedOwnerEndsNothing(_Base):

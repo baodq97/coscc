@@ -3,6 +3,7 @@ condition, the Settings sentence, the bus handler and the report, with a fake in
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import tempfile
 import unittest
@@ -65,8 +66,6 @@ class Setup(unittest.IsolatedAsyncioTestCase):
                 lambda w: self.state,
                 lambda w: self.state != "off",
                 lambda w, unit: arm_of(self.state, unit),
-                None,
-                None,
             ),
         )
         create_tables(data, codegraph.FEATURE.tables)
@@ -76,17 +75,19 @@ class Setup(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patch.stop)
 
     def facts(self, unit: str, stage: str = "impl", run: str = "r1") -> kernel.Facts:
+        """A run of `stage`: an impl's grant writes its tree, a review's reads only."""
+        writes = (str(self.root),) if stage == "impl" else ()
         return kernel.facts(
             workspace="/w/proj",
             workspace_key=KEY,
             unit=unit,
-            stage=stage,
+            agent=stage,
             run=run,
             cwd=str(self.root),
             watch=None,
             directory=self.root,
-            commands=("git", "node"),
             resumed=False,
+            grant=kernel.Grant(cwd=str(self.root), write=writes),
         )
 
     def rows(self) -> list[tuple]:
@@ -106,6 +107,27 @@ class Setup(unittest.IsolatedAsyncioTestCase):
                 "VALUES (?, '/w/proj', 'ready', ?, ?, '/data/_main')",
                 (KEY, SHA, now()),
             )
+
+
+class TheImplMapAsksForThePlanRecordsFiles(Setup):
+    async def test_the_files_are_the_records_not_plan_md(self):
+        (self.root / "plan.md").write_text("## Files that change\n- not/this.py\n")
+        facts = self.facts("0002_a")
+        asked: list = []
+        with (
+            mock.patch.object(codegraph, "changed_files", return_value=[]),
+            mock.patch.object(codegraph, "impl_map", lambda *a: asked.append(a[3]) or "map"),
+        ):
+            plan = {
+                "variant": "routine",
+                "files": ["b.py", "a.py", "b.py"],
+                "steps": [],
+                "rests_on": [],
+            }
+            with_plan = dataclasses.replace(facts, plan=plan)
+            codegraph._map(self.ctx, with_plan, Path("/bin/node"), Ready("/r", SHA, 0))
+            codegraph._map(self.ctx, facts, Path("/bin/node"), Ready("/r", SHA, 0))
+        self.assertEqual(asked, [["a.py", "b.py"], []])
 
 
 class TheToolsGoOnlyToAnOnArmRunWithAReadyIndex(Setup):

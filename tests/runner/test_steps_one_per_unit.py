@@ -23,6 +23,7 @@ from coscc.units import worktrees
 from coscc.http.app import build
 from coscc.config import Config
 from coscc.kernel import Invalid
+from tests.units.test_meta import seed
 from tests.units.test_submit import submits as _submits
 from tests.http.test_app import use_sessions
 
@@ -91,10 +92,17 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
         self.ws = str(workspace)
         made = await self.core.answers.create_unit(self.ws, "raced", "words for the proof")
         (Path(made["path"]) / "intent.md").write_text(
-            "# Intent: x\nAuthor: proof. Type: fix. Status: accepted.\n", encoding="utf-8"
+            "# Intent: x\nAuthor: proof. Type: fix.\n", encoding="utf-8"
         )
         self.unit = made["unit"]
         self.key = self.core.ws.key(self.ws)
+        seed(
+            self.core.ws.unit_meta(),
+            self.key,
+            self.unit,
+            statuses={"intent.md": "accepted"},
+            type="fix",
+        )
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://proof"
         )

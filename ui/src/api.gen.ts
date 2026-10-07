@@ -2,27 +2,48 @@
 
 export type AgentPage = {
   "rows": AgentRow[];
-  "others": ConfigRow[];
+  "catalog": CatalogTool[];
   "problems": string[];
   "cos_model": string | null;
+  "scope": "workspace" | "all";
 };
 
 export type AgentRow = {
   "key": string;
-  "glyph": string;
-  "name": string;
-  "meaning": string;
-  "role": string;
-  "identity_source": Record<string, string>;
+  "pack": string;
+  "own": boolean;
+  "group": "stage" | "engine" | "helper" | "triggered";
+  "row": RowFields;
+  "builtin": RowFields;
+  "edited": string[];
+  "problems": string[];
+  "editable": boolean;
+  "skills": SkillText[];
+  "row_hash": string;
   "config": ConfigRow;
-  "variants": ConfigRow[];
-  "skill": string;
-  "grant": GrantView;
+  "novel": ConfigRow | null;
   "last": RunView | null;
-  "runs": RunView[];
   "runs_30d": number;
   "cost_30d": number;
   "chip": string;
+  "groups": RunGroup[];
+  "on": boolean | null;
+};
+
+export type AgentRun = {
+  "run": string;
+  "unit": string;
+  "at": string;
+  "usd": number | null;
+  "outcome": string;
+};
+
+export type AgentSpend = {
+  "agent": string;
+  "usd": number | null;
+  "steps": number;
+  "unknown": number;
+  "runs": AgentRun[];
 };
 
 export type Answer = {
@@ -30,8 +51,8 @@ export type Answer = {
   "n": number;
   "question": string;
   "text": string;
-  "by": string;
-  "authority": string;
+  "by": "person" | "delegated";
+  "name": string;
   "via": string;
   "date": string;
 };
@@ -107,10 +128,12 @@ export type Card = {
   "at": string;
   "updated": string;
   "attention_reason": string;
+  "process": string;
+  "missing": string[];
   "idea": string;
-  "repo": string;
   "rank": number | null;
   "effort": string | null;
+  "paused": Paused | null;
 };
 
 export type CardState = {
@@ -125,6 +148,15 @@ export type Cards = {
   "units": Card[];
   "autopilot": AutopilotBrief | null;
   "running": Running[];
+};
+
+export type CatalogTool = {
+  "name": string;
+  "effect": string;
+  "tier": string;
+  "server": string;
+  "feature": string;
+  "on": boolean;
 };
 
 export type Ceilings = {
@@ -169,15 +201,20 @@ export type Commit = {
   "subject": string;
 };
 
+export type Condition = {
+  "field"?: string;
+  "is"?: string;
+  "guard"?: string;
+};
+
 export type ConfigRow = {
   "key": string;
-  "fields": string[];
+  "label": string | null;
   "model": string | null;
   "model_source": string;
   "effort": string | null;
   "effort_source": string;
   "ceilings": Ceilings;
-  "overridden": Record<string, boolean>;
 };
 
 export type DaySpend = {
@@ -192,9 +229,15 @@ export type Decided = {
   "n": number;
   "question": string;
   "text": string;
-  "by": string;
-  "authority": string;
+  "name": string;
   "date": string;
+};
+
+export type Decision = {
+  "kind": "rerun" | "more-rounds" | "outcome";
+  "by": string;
+  "date": string;
+  "text": string;
 };
 
 export type Deleted = {
@@ -217,6 +260,10 @@ export type Detail = {
   "runs": UnitRun[];
   "worktree": Worktree | null;
   "hold_moves": string[];
+  "outputs": OutputRecord[];
+  "decisions": Decision[];
+  "outcome": Outcome | null;
+  "brief": string;
 };
 
 export type EstimateBrief = {
@@ -242,14 +289,10 @@ export type EventsPage = {
   "last_at": number | null;
   "events_lost": number;
   "purged_at": string | null;
-};
-
-export type GrantView = {
-  "tools": string[];
-  "commands": string[];
-  "mcp": string[];
-  "submits": boolean;
-  "warning": string;
+  "started_by"?: string;
+  "outcome"?: string;
+  "detail"?: string;
+  "draft"?: Record<string, unknown>;
 };
 
 export type HoldView = {
@@ -265,8 +308,9 @@ export type Insights = {
   "shipped": Shipped[];
   "targets": Target[];
   "by_day": DaySpend[];
-  "by_stage": StageSpend[];
+  "by_agent": AgentSpend[];
   "waste": Waste[];
+  "outcomes": Outcomes;
 };
 
 export type LastRun = {
@@ -285,7 +329,7 @@ export type Meta = {
   "name": string;
   "tier": string;
   "description": string;
-  "stages": string[];
+  "agents": string[];
   "modes": string[];
   "broker": boolean;
   "has_value": boolean;
@@ -304,33 +348,117 @@ export type NextStep = {
   "rerun"?: string;
   "continue"?: string;
   "reasons": string[];
+  "gate"?: string;
+};
+
+export type Outcome = {
+  "grader": string;
+  "name": string;
+  "usd": number | null;
+  "verdict": Verdict | null;
+  "proposals": OutcomeProposal[];
+};
+
+export type OutcomeProposal = {
+  "id": number;
+  "title": string;
+  "state": string;
+};
+
+export type Outcomes = {
+  "due": number;
+  "on_time": number;
+  "graded": number;
+  "met": number;
+  "target_graded": number;
+  "target_met": number;
+  "missed": string[];
+};
+
+export type OutputRecord = {
+  "agent": string;
+  "version": number;
+  "at": string;
+  "fields": Record<string, unknown>;
+};
+
+export type PackShown = {
+  "name": string;
+  "version": string;
+  "description": string;
+  "on": boolean;
+  "process": string;
+  "processes": ProcessShown[];
+  "own": boolean;
+  "imported": boolean;
+  "problems": string[];
+};
+
+export type Paused = {
+  "stage": string;
+  "code": string;
+  "ceiling": string;
+  "usd": number | null;
+  "max_usd": number | null;
+  "turns": number | null;
+  "max_turns": number | null;
+};
+
+export type ProcessShown = {
+  "start": string;
+  "end": string;
+  "states": Record<string, State>;
+  "ref": string;
+  "name": string;
+  "own": boolean;
 };
 
 export type Proposal = {
   "id": number;
-  "run": number;
+  "agent": string;
+  "unit": string;
+  "run": string;
   "type": string;
   "slug": string;
   "title": string;
   "problem": string;
   "sources": Source[];
   "state": string;
-  "unit": string;
+  "made": string;
   "by": string;
   "at": string;
   "decided": string;
   "reason": string;
 };
 
-export type Proposals = {
-  "on": boolean;
-  "proposals": Proposal[];
-  "runs": Run[];
-  "scanning": boolean;
-  "schedule": number;
-  "note": string;
-  "consequence": string;
-  "warning": string;
+export type ProposalRow = {
+  "id": number;
+  "agent": string;
+  "unit": string;
+  "run": string;
+  "type": string;
+  "slug": string;
+  "title": string;
+  "problem": string;
+  "sources": Source[];
+  "state": string;
+  "made": string;
+  "by": string;
+  "at": string;
+  "decided": string;
+  "reason": string;
+  "agent_name": string;
+};
+
+export type ProposalsView = {
+  "proposals": ProposalRow[];
+  "agents": ProposingAgent[];
+};
+
+export type ProposingAgent = {
+  "key": string;
+  "name": string;
+  "on": boolean | null;
 };
 
 export type PullRequest = {
@@ -342,8 +470,10 @@ export type Question = {
   "artifact": string;
   "n": number;
   "text": string;
+  "recommendation": string;
   "answered": boolean;
   "by": string;
+  "name": string;
 };
 
 export type ReleaseUnit = {
@@ -391,19 +521,58 @@ export type Round = {
   "findings": number;
   "findings_open": number;
   "unfinished": boolean;
+  "criteria": RoundCriterion[];
+  "items": RoundFinding[];
 };
 
-export type Run = {
-  "id": number;
-  "at": string;
-  "by": string;
-  "outcome": string;
+export type RoundCriterion = {
+  "criterion": string;
+  "source": string;
+  "met": "yes" | "no" | "unclear";
+  "evidence": string;
+};
+
+export type RoundFinding = {
+  "id": string;
+  "label": string;
+  "severity": string;
+  "criterion": string;
+  "place": string;
+  "text": string;
+};
+
+export type RowFields = {
+  "name"?: string;
+  "glyph"?: string;
+  "description"?: string;
+  "model"?: Record<string, unknown>;
+  "variants"?: Record<string, unknown>;
+  "skills"?: string[];
+  "tools"?: Record<string, unknown>;
+  "helpers"?: string[];
+  "input"?: Record<string, unknown>;
+  "output"?: Record<string, unknown>;
+  "trigger"?: TriggerFields;
+  "default"?: string;
+  "ceilings"?: Record<string, unknown>;
+  "warning"?: string;
+  "consequence"?: string;
+  "body"?: string;
+};
+
+export type RunGroup = {
+  "row_hash": string;
+  "settings": Setting[];
+  "runs": RunView[];
   "cost_usd": number;
-  "taken": number;
-  "cut": number;
-  "rejected": string[];
-  "stopped": boolean;
-  "detail": string;
+  "turns": number;
+};
+
+export type RunPart = {
+  "run": string;
+  "ended": string;
+  "cost_usd": number | null;
+  "paused": Paused | null;
 };
 
 export type RunView = {
@@ -413,6 +582,11 @@ export type RunView = {
   "at": string;
   "turns": number | null;
   "cost_usd": number | null;
+  "row_hash": string;
+  "run": string;
+  "skipped": boolean;
+  "detail": string;
+  "started_by": string;
 };
 
 export type Running = {
@@ -427,14 +601,27 @@ export type Saved = {
   "short": boolean;
 };
 
+export type Schedule = {
+  "hours": number;
+};
+
 export type Secrets = {
   "workspace": string;
   "age": boolean;
   "name_pattern": string;
-  "stages": string[];
+  "default_agents": string[];
+  "agents": string[];
   "modes": string[];
   "secrets": Meta[];
   "globals": Meta[];
+};
+
+export type Setting = {
+  "at": string;
+  "field": string;
+  "old": unknown;
+  "new": unknown;
+  "by": string;
 };
 
 export type Shipped = {
@@ -442,6 +629,7 @@ export type Shipped = {
   "usd": number | null;
   "rounds": number;
   "at": string;
+  "outcome": string;
 };
 
 export type ShortlistSaved = {
@@ -467,9 +655,14 @@ export type Shown = {
   "pilot": boolean;
   "sentence": string;
   "locked": boolean;
-  "schedule"?: number | null;
-  "hours"?: number[];
   "summary"?: string;
+};
+
+export type SkillText = {
+  "name": string;
+  "text": string;
+  "builtin": string;
+  "edited": boolean;
 };
 
 export type Source = {
@@ -477,13 +670,6 @@ export type Source = {
   "kind": string;
   "unit": string;
   "at": string;
-};
-
-export type StageSpend = {
-  "stage": string;
-  "usd": number | null;
-  "steps": number;
-  "unknown": number;
 };
 
 export type StageView = {
@@ -494,11 +680,30 @@ export type StageView = {
   "last_run": LastRun | null;
 };
 
+export type Started = {
+  "agent": string;
+  "started": boolean;
+  "run": string;
+};
+
+export type State = {
+  "agent"?: string;
+  "action"?: string;
+  "optional"?: boolean;
+  "hint"?: string;
+  "label"?: string;
+  "skip"?: string;
+  "rerun"?: string[];
+  "next"?: Way[];
+  "when"?: Condition | Condition[];
+};
+
 export type StepEvent = {
   "run": string;
   "seq": number;
   "at": number;
   "kind": string;
+  "agent_id"?: string;
   "role"?: string;
   "text"?: string;
   "thinking"?: string;
@@ -510,6 +715,8 @@ export type StepEvent = {
   "content"?: unknown;
   "tool"?: string;
   "reason"?: string;
+  "lacked"?: string;
+  "granted"?: string[];
   "n"?: number;
   "model"?: string | null;
   "effort"?: string | null;
@@ -539,6 +746,20 @@ export type Target = {
   "over": string[];
 };
 
+export type TriggerEvent = {
+  "name"?: string;
+  "after_hours"?: number;
+};
+
+export type TriggerFields = {
+  "state"?: string;
+  "engine"?: string;
+  "event"?: TriggerEvent;
+  "schedule"?: Schedule;
+  "manual"?: boolean;
+  "leif"?: boolean;
+};
+
 export type UnitRun = {
   "stage": string;
   "agent": string;
@@ -551,6 +772,10 @@ export type UnitRun = {
   "cost_usd": number | null;
   "turns": number | null;
   "run": string;
+  "envelope": string[];
+  "paused": Paused | null;
+  "parts": RunPart[];
+  "raised_by": string;
 };
 
 export type UpNext = {
@@ -592,12 +817,25 @@ export type UpdateStatus = {
   "actions": string[];
 };
 
+export type Verdict = {
+  "agent": string;
+  "run": string;
+  "at": string;
+  "judgement": string;
+  "criteria": RoundCriterion[];
+};
+
 export type Waste = {
   "kind": string;
   "count": number;
   "usd": number | null;
   "unknown": number;
   "not_recorded": number;
+};
+
+export type Way = {
+  "to": string;
+  "when"?: Condition | Condition[];
 };
 
 export type Window = {
@@ -634,13 +872,14 @@ export type Get = {
   "/api/decided": Decided[];
   "/api/features/shown": Shown[];
   "/api/insights": Insights;
+  "/api/packs": PackShown[];
+  "/api/proposals": ProposalsView;
   "/api/release": ReleaseView | null;
-  "/api/scan/proposals": Proposals;
+  "/api/runs/{run}": EventsPage;
   "/api/settings/autopilot": AutopilotSettings;
   "/api/units": Cards;
   "/api/units/next": NextStep;
   "/api/units/{name}": Detail;
-  "/api/units/{name}/runs/{run}": EventsPage;
   "/api/update": UpdateStatus;
   "/api/vault/leaks": Leaks;
   "/api/vault/secrets": Secrets;

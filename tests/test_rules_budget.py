@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 CLAUDE = REPO / ".claude" / "CLAUDE.md"
 RULES = REPO / ".claude" / "rules"
 DOCS = REPO / ".claude" / "docs"
-SKILLS = REPO / ".claude" / "skills"
+SKILLS = (REPO / ".claude" / "skills", REPO / "coscc" / "packs" / "coscc-sdlc" / "skills")
 APP = RULES / "coscc-app.md"
 UI = RULES / "ui-standard.md"
 WRITING = RULES / "harness-writing.md"
@@ -91,7 +91,7 @@ class TheHarnessIsGenericAndTimeless(unittest.TestCase):
     what changed reads as a log and goes stale."""
 
     def test_no_skill_names_this_repository_or_another_skill(self):
-        skills = sorted(SKILLS.glob("*/SKILL.md"))
+        skills = sorted(p for d in SKILLS for p in d.glob("*/SKILL.md"))
         self.assertTrue(skills)
         for path in skills:
             text = path.read_text(encoding="utf-8")

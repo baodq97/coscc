@@ -1,6 +1,6 @@
 """The recorder each board step carries: what the step does, event by event, for anyone watching.
 
-Every SDK message `Sessions._stream` gets, every refusal `permission_gate` makes, the `config`
+Every SDK message `Sessions._stream` gets, every refusal the session's gate records, the `config`
 a session opened with and the runner's outcome become numbered events, kept in memory for the life of the step, pushed to
 followers, and written to two tables of `cos.db` (never into the run log).
 
@@ -161,13 +161,20 @@ class Recorder:
         self.pending: list[dict[str, Any]] = []
         self.subscribers: set[asyncio.Queue] = set()
         self._message_ids: set[str] = set()
+        # Each helper's `agent_id` by the id of the `Agent` call that started it, and the helper
+        # whose message is being recorded now: every event of it carries that `agent_id`.
+        self._helpers: dict[str, str] = {}
+        self._from = ""
         self._task: asyncio.Task | None = None
         self._opened = False
 
     def _emit(self, kind: str, **fields: Any) -> None:
         try:
             self.seq += 1
-            event = _cut({"run": self.run, "seq": self.seq, "at": now_ms(), "kind": kind, **fields})
+            mark = {"agent_id": self._from} if self._from else {}
+            event = _cut(
+                {"run": self.run, "seq": self.seq, "at": now_ms(), "kind": kind, **mark, **fields}
+            )
             self.events.append(event)
             self.pending.append(event)
             for q in list(self.subscribers):
@@ -191,12 +198,15 @@ class Recorder:
         max_turns_source: str,
         max_budget_usd: float | None,
         max_budget_source: str,
+        granted: list[str] | None = None,
     ) -> None:
         """`config`: what the session was handed, once, as it opens and before any SDK event, and
-        again for the segment of a step taken up after an update. The runner hands the values in;
-        nothing is resolved here."""
+        again for the segment of a step taken up after an update: the values, with where each came
+        from, and what its grant holds (`policy.granted`). The runner hands them in; nothing is
+        resolved here."""
         self._emit(
             "config",
+            granted=list(granted or ()),
             model=model,
             model_source=model_source,
             effort=effort,
@@ -208,8 +218,15 @@ class Recorder:
         )
 
     def message(self, msg: Any) -> None:
-        """One SDK message, as one or more events. Synchronous: no `await` on this path."""
+        """One SDK message, as one or more events; a helper's carry its `agent_id`. Synchronous: no
+        `await` on this path."""
+        parent = str(getattr(msg, "parent_tool_use_id", None) or "")
+        self._from = self._helpers.get(parent, parent)
         try:
+            data = getattr(msg, "data", None)
+            if getattr(msg, "subtype", "") == "task_started" and isinstance(data, dict):
+                if data.get("tool_use_id") and data.get("task_id"):
+                    self._helpers[str(data["tool_use_id"])] = str(data["task_id"])
             before = self.seq
             if isinstance(msg, AssistantMessage):
                 mid = getattr(msg, "message_id", None)
@@ -234,6 +251,8 @@ class Recorder:
                 self._emit("system", **_system_fields(msg))
         except Exception:  # noqa: BLE001 - `_lose` logs the first
             self._lose()
+        finally:
+            self._from = ""
 
     def _lose(self) -> None:
         """One event lost, counted in the `end` row; the first of a run is logged with its
@@ -267,9 +286,10 @@ class Recorder:
         else:
             self._emit("system", **_system_fields(block))
 
-    def denied(self, tool: str, tool_input: Any, reason: str) -> None:
-        """`denied`: one refusal of the grant's gate. Every one, not the first five."""
-        self._emit("denied", tool=tool, input=tool_input, reason=reason)
+    def denied(self, tool: str, tool_input: Any, reason: str, lacked: str = "") -> None:
+        """`denied`: one refusal of the run's gate, with the grant it lacked when the hook's rule
+        names one (`policy.lacked`). Every one, not the first five."""
+        self._emit("denied", tool=tool, input=tool_input, reason=reason, lacked=lacked)
 
     def helper(self, kind: str, fields: Mapping[str, object]) -> None:
         """One of `HELPER_KINDS`, as `coscc/agent/helpers.py` tells it; any other kind is dropped."""
