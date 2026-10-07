@@ -63,6 +63,7 @@ REASONS = (
     "no-round",
     # A step refused before any spend.
     "no-process",
+    "pack-off",
     "state-gone",
     "unit-busy",
     "updating",

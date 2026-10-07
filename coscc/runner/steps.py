@@ -1126,7 +1126,7 @@ class Steps:
         when its declared input is not there yet."""
         found = pack.row(stage)
         effects = {n: t.effect for n, t in self.hooks.catalog().items()}
-        bad = pack.problems(stage, effects if found["edited"] else None) if found else []
+        bad = pack.problems(stage, effects if pack.needs_catalog(found) else None) if found else []
         if bad:
             raise Refused(
                 f"{stage} cannot start: its agent's row cannot run: {'; '.join(bad)}",

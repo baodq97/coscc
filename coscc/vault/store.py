@@ -35,8 +35,25 @@ def vault_agents() -> tuple[str, ...]:
 
 
 def default_agents() -> tuple[str, ...]:
-    """The agents a new secret is kept for: those that write in the unit's branch and hold the vault."""
-    return tuple(k for k in states.coder_agents() if k in vault_agents())
+    """The agents a new secret is kept for: those that write in the unit's branch and hold the
+    vault, of the built-in pack or the owner's own; never an imported pack's."""
+    mine = (pack.manifest()["name"], pack.LOCAL_NAME)
+    return tuple(
+        k
+        for k in states.coder_agents()
+        if k in vault_agents() and (pack.row(k) or {}).get("pack") in mine
+    )
+
+
+def may_use(data: Data, agent: str, workspace: str) -> bool:
+    """Whether `agent` may be handed a secret its list names in `workspace` now: its row holds
+    the vault and its pack is on there."""
+    found = pack.row(agent)
+    return (
+        found is not None
+        and "vault" in pack.tools(found)
+        and pack.pack_on(data, str(found.get("pack") or ""), workspace)
+    )
 
 
 NAME = re.compile(r"(global|ws):[a-z0-9][a-z0-9._-]{0,63}")
@@ -233,6 +250,22 @@ class Store:
 
     def all(self) -> list[Secret]:
         return self._select()
+
+    def forget_agents(self, keys: set[str]) -> None:
+        """Take `keys` off every secret's list: an agent removed leaves nothing to the next row
+        that takes its key."""
+        for s in self.all():
+            kept = tuple(a for a in s.agents if a not in keys)
+            if kept != s.agents:
+                with self.data.write() as conn:
+                    conn.execute(
+                        "UPDATE vault_secrets SET stages = ? WHERE name = ? AND workspace = ?",
+                        (json.dumps(kept), s.name, s.workspace),
+                    )
+
+    def named_agents(self) -> set[str]:
+        """Every agent some secret's list names."""
+        return {a for s in self.all() for a in s.agents}
 
     def visible(self, workspace: str) -> list[Secret]:
         """Its own `ws:` secrets and the `global:` ones granted to it."""

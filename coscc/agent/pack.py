@@ -656,8 +656,39 @@ def _loaded() -> dict[str, dict[str, Any]]:
             row["problems"] = _safely(_fields(row), others)
     procs, problems = _read_processes(owner)
     packs[LOCAL_NAME] = {"manifest": _local_manifest(), "processes": procs, "problems": problems}
-    _CACHE.update(stamp=stamp, rows=rows, packs=packs, processes=_every_process(rows, packs))
+    every = _every_process(rows, packs)
+    names = tuple(dict.fromkeys(k for p in every.values() for k in p["states"]))
+    plain = {k: _fields(r) for k, r in rows.items()}
+    for key, row in rows.items():
+        if not row["problems"] and (row["pack"] != builtin_name or row["edited"]):
+            row["problems"] = _later(key, plain[key], plain, names)
+    _CACHE.update(stamp=stamp, rows=rows, packs=packs, processes=every)
     return rows
+
+
+# What a layer above adds to `check` (`coscc/units/contracts.py`: a row's input and output as the
+# engine reads them), asked of every row not as built: `(key, row, rows, state names) -> reasons`.
+ROW_CHECKS: list[
+    Callable[[str, Mapping[str, Any], Mapping[str, Any], Collection[str]], list[str]]
+] = []
+
+
+def _later(
+    key: str, found: Mapping[str, Any], rows_: Mapping[str, Any], names: Collection[str]
+) -> list[str]:
+    out: list[str] = []
+    for c in ROW_CHECKS:
+        try:
+            out += c(key, found, rows_, names)
+        except (TypeError, AttributeError, ValueError, KeyError) as e:
+            out.append(f"{type(e).__name__}: {e}")
+    return out
+
+
+def needs_catalog(found: Mapping[str, Any]) -> bool:
+    """Whether a row must be checked with the catalog before it runs: one not as the built-in
+    pack ships it (an edit, a whole row of the owner's, an imported pack's)."""
+    return bool(found.get("edited")) or found.get("pack") != manifest()["name"]
 
 
 def _own(path: Path) -> dict[str, Any]:
@@ -862,10 +893,14 @@ def _check_condition(where: str, c: Any, fields: Mapping[str, Any] | None) -> li
     return []
 
 
-def _required_inputs(found: Mapping[str, Any] | None) -> list[str]:
+def _required_inputs(found: Mapping[str, Any] | None) -> list[tuple[str, str]]:
+    """`(state, <name>)` for each artifact a row requires, `(agent, <key>)` for each output."""
     given = (found or {}).get("input") or {}
-    names = [*(given.get("artifacts") or []), *(given.get("outputs") or [])]
-    return [n for n in names if isinstance(n, str) and not n.endswith("?")]
+    names = [
+        *(("state", n) for n in given.get("artifacts") or []),
+        *(("agent", n) for n in given.get("outputs") or []),
+    ]
+    return [(t, n) for t, n in names if isinstance(n, str) and not n.endswith("?")]
 
 
 def _check_state(
@@ -912,18 +947,25 @@ def _check_state(
 
 def _must_reach(
     start: str, states: Mapping[str, Any], nexts: Mapping[str, list[str]], reached: set[str]
-) -> dict[str, set[str]]:
-    """What every path from `start` to each reached state has produced: each state on it, and its
-    agent."""
-    every = {n for k, st in states.items() for n in (k, st.get("agent")) if n}
-    avail = {k: set() if k == start else set(every) for k in reached}
+) -> dict[str, set[tuple[str, str]]]:
+    """What every path from `start` to each reached state has produced: `(state, <name>)` for each
+    state on it and `(agent, <key>)` for its agent, two names apart."""
+
+    def made(k: str) -> set[tuple[str, str]]:
+        agent = states[k].get("agent")
+        return {("state", k), *((("agent", str(agent)),) if agent else ())}
+
+    every = {n for k in states for n in made(k)}
+    avail: dict[str, set[tuple[str, str]]] = {
+        k: set() if k == start else set(every) for k in reached
+    }
     changed = True
     while changed:
         changed = False
         for k in reached - {start}:
             got = set(every)
             for p in (p for p in reached if k in nexts[p]):
-                got &= avail[p] | {p, states[p].get("agent")}
+                got &= avail[p] | made(p)
             if got != avail[k]:
                 avail[k], changed = got, True
     return avail
@@ -975,6 +1017,10 @@ def check_process(name: str, process: Any, rows: Mapping[str, Mapping[str, Any]]
         out.append(f"{name}.end must be str")
     if start not in states:
         out.append(f"{name}: start {start!r} is no state")
+    # A state's name is its artifact's file name: never a path.
+    bad = [f"{name}.{k!r}: {why}" for k in states if (why := key_problem(k, "a state name"))]
+    if bad:
+        return out + bad
     for key, st in states.items():
         out += _check_state(f"{name}.{key}", st, states, rows)
     if out:
@@ -991,15 +1037,15 @@ def check_process(name: str, process: Any, rows: Mapping[str, Mapping[str, Any]]
         out.append(f"{name}: no path reaches the end")
     out += _check_walk(name, states, rows)
     avail = _must_reach(str(start), states, nexts, reached)
-    reviews = {k for k, st in states.items() if _kind(rows, st) == "review"}
+    reviews = {("state", k) for k, st in states.items() if _kind(rows, st) == "review"}
     out += [
         f"{name}.{k}: a review state is not on every path to it"
         for k in reached
         if states[k].get("action") == "merge" and not avail[k] & reviews
     ]
     for k in sorted(reached, key=list(states).index):
-        for n in _required_inputs(rows.get(str(states[k].get("agent")))):
-            if n not in avail[k]:
+        for t, n in _required_inputs(rows.get(str(states[k].get("agent")))):
+            if (t, n) not in avail[k]:
                 out.append(f"{name}.{k}: its input {n} is not produced on every path to it")
     return out
 
@@ -1521,7 +1567,9 @@ def import_zip(
         total += e.file_size
         if e.is_dir():
             continue
-        if stat.S_ISLNK(mode):
+        if e.flag_bits & 1 or e.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            reasons.append(f"{e.filename}: encrypted, or packed other than stored or deflated")
+        elif stat.S_ISLNK(mode):
             reasons.append(f"{e.filename}: a link")
         elif e.filename.startswith("/") or "\\" in e.filename or ".." in e.filename.split("/"):
             reasons.append(f"{e.filename}: not a path inside the pack")
@@ -1542,14 +1590,25 @@ def import_zip(
             for e in entries:
                 if not e.is_dir():
                     _atomic(staging / e.filename, z.read(e))
-        except (zipfile.BadZipFile, OSError, ValueError) as e:
-            raise PackError([f"the zip cannot be unpacked: {e}"]) from None
+        except Exception as e:  # noqa: BLE001 - any failure to unpack a stranger's zip is a refusal
+            raise PackError([f"the zip cannot be unpacked: {type(e).__name__}: {e}"]) from None
         taken = {k: _fields(r) for k, r in rows().items()}
         found, mine, procs, problems = _read_pack(staging, taken, catalog)
+        # A skill only the owner's pack has is theirs too.
+        problems += [
+            f"skills/{p.parent.name}: {p.parent.name} is your own pack's skill"
+            for p in sorted((staging / "skills").glob(f"*/{SKILL_FILE}"))
+            if (owner_dir() / "skills" / p.parent.name / SKILL_FILE).is_file()
+        ]
         name = str(found.get("name") or "")
         if name and (name in pack_names() or (root / name).exists()):
             problems.append(f"{MANIFEST}: name {name} is taken")
         every = {**taken, **mine}
+        names = {
+            *state_names(),
+            *(k for p in procs.values() if isinstance(p, dict) for k in (p.get("states") or {})),
+        }
+        problems += [f"{k}: {why}" for k, r in mine.items() for why in _later(k, r, every, names)]
         problems += [why for k, r in mine.items() for why in (more(k, r) if more else [])]
         for n, p in procs.items():
             try:

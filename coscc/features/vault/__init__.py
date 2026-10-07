@@ -242,7 +242,9 @@ def _usable(get: Callable[[], vault.Store], facts: Facts) -> tuple[str, ...]:
     return tuple(
         s.name
         for s in get().visible(facts.workspace_key)
-        if s.has_value and facts.agent in s.agents
+        if s.has_value
+        and facts.agent in s.agents
+        and vault.may_use(get().data, facts.agent, facts.workspace_key)
     )
 
 

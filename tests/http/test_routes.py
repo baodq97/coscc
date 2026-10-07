@@ -2335,3 +2335,25 @@ class OwnAgentsAndPacksOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p["name"] for p in r.json()], ["coscc-sdlc", "local"])
         r = await self.post("/api/packs", name="coscc-sdlc", delete=True)
         self.assertEqual(r.status_code, 400)
+
+    async def test_an_import_never_takes_a_key_a_vault_secret_names(self):
+        import io
+        import zipfile
+
+        from coscc import vault
+        from coscc.store.db import Data
+
+        store = vault.Store(Data(self.app.state.core.config.data_dir))
+        store.create("ws:db", self.cwd, "x", agents=("impl",))
+        with store.data.write() as conn:
+            conn.execute("UPDATE vault_secrets SET stages = '[\"coder\"]'")
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            z.writestr(".claude-plugin/plugin.json", json.dumps({"name": "x"}))
+            z.writestr(
+                "agents/coder.md",
+                (pack.BUILTIN / "agents" / "scan.md").read_text().replace('"Sowilo"', '"Coder"'),
+            )
+        r = await self.client.post(f"/api/packs/import?cwd={self.cwd}", content=out.getvalue())
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("coder: a vault secret names an agent coder", r.json()["reasons"])
