@@ -746,5 +746,5 @@ a.btn { text-decoration: none; }
 .gap-row > .chip:first-child { justify-content: center; }
 @media (max-width: 560px) { .gap-row { grid-template-columns: minmax(0, 1fr); gap: 4px; } .gap-row > .chip:first-child { justify-self: start; } .gap-row > :last-child { justify-self: start; } }
 .try-it { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r3); }
-.try-out { display: grid; gap: 8px; font-size: 13px; }
+.try-out { display: grid; gap: 8px; font-size: 13px; scroll-margin-bottom: 72px; }
 .try-items { margin: 0; padding-left: 18px; display: grid; gap: 8px; }

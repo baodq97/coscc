@@ -346,9 +346,12 @@ export function TryIt({ cwd, keyName, fields, body }: { cwd: string; keyName: st
 
 function TrialOutput({ cwd, trial }: { cwd: string; trial: Extract<Trial, { at: "ended" }> }) {
   const ws = useResource("/api/workspaces").data?.workspaces.find((w) => w.path === cwd)?.name ?? "";
+  // What it handed back comes into view once the run ends, above the dialog's sticky footer.
+  const at = useRef<HTMLDivElement | null>(null);
+  useEffect(() => at.current?.scrollIntoView({ block: "end" }), [trial.run]);
   const items = (trial.tried as { proposals?: { title?: string; problem?: string }[] } | undefined)?.proposals;
   return (
-    <div className="try-out">
+    <div className="try-out" ref={at}>
       <div className="row" style={{ gap: 8, alignItems: "center" }}>
         <Chip square tone={trial.outcome === "done" ? "green" : "amber"}>{trial.outcome === "done" ? "Ran" : trial.outcome}</Chip>
         <span className="grow faint" style={{ fontSize: 12 }}>{trial.detail}</span>
