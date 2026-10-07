@@ -22,7 +22,12 @@ class TheServiceWiresWhoListensToWhat(unittest.TestCase):
         self.addCleanup(mock.patch.stopall)
 
     def test_every_event_name_has_a_subscriber(self):
+        # An agent run's facts only tell the page (`/api/stream`) to read again; the run holds the
+        # updater itself.
+        heard_by_the_page = {"agent-run.started", "agent-run.ended"}
         for name in NAMES:
+            if name in heard_by_the_page:
+                continue
             with self.subTest(name=name):
                 self.assertTrue(self.core.bus._handlers[name])
 
