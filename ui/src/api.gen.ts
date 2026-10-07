@@ -268,6 +268,11 @@ export type Decided = {
   "date": string;
 };
 
+export type DecidedPage = {
+  "rows": Decided[];
+  "total": number;
+};
+
 export type Decision = {
   "kind": "rerun" | "more-rounds" | "outcome";
   "by": string;
@@ -1042,7 +1047,7 @@ export type Get = {
   "/api/chat/history": ChatHistory;
   "/api/chat/sessions": ChatSessions;
   "/api/codegraph/report": Report;
-  "/api/decided": Decided[];
+  "/api/decided": DecidedPage;
   "/api/features/shown": Shown[];
   "/api/insights": Insights;
   "/api/packs": PackShown[];

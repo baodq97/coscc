@@ -9,7 +9,6 @@ import { FEATURE_UIS } from "./feature";
 import { slugOf } from "../screens/NewWork";
 import { inUnit, merged, runFacts, toolLines, toolSummary } from "../screens/RunLog";
 import { shortcut } from "../shell/Shell";
-import { filterDecided } from "../screens/Decided";
 import { noRuns } from "../screens/Insights";
 import { moved } from "../screens/UpNext";
 import { lastDays } from "../screens/Insights";
@@ -615,16 +614,6 @@ describe("a run's header", () => {
     expect(Object.fromEntries(facts.map((f) => [f.label, f.value]))).toMatchObject({ Outcome: "done", Cost: "$1.50", Turns: "12", Took: "2 min 5 s", "Started by": "the autopilot" });
     expect(runFacts([], { status: "running" })[0].value).toBe("running");
     expect(runFacts([e({ kind: "end", outcome: "cancelled" })], { status: "running" })[0].value).toBe("cancelled");
-  });
-});
-
-describe("the decisions filter", () => {
-  const row = (unit: string, text: string) => ({ unit, text, question: "", name: "Leif", artifact: "spec", n: 1, date: "" }) as never;
-  it("keeps the rows with every word", () => {
-    const rows = [row("0001_a", "use sqlite"), row("0002_b", "use postgres")];
-    expect(filterDecided(rows, "use SQLITE")).toHaveLength(1);
-    expect(filterDecided(rows, "  ")).toHaveLength(2);
-    expect(filterDecided(rows, "0002")).toHaveLength(1);
   });
 });
 

@@ -2,7 +2,7 @@
 // with the question it settled and the unit it moved. Overruling one comes with Leif's backend.
 
 import type { Decided as Row } from "../api.gen";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { unitCode, unitTitle } from "../lib/format";
@@ -11,15 +11,7 @@ import type { Workspace } from "../lib/model";
 import { Link } from "../lib/router";
 import { Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
-/** The rows whose unit, question, answer or decider has every word of `q`. */
-export function filterDecided(rows: Row[], q: string): Row[] {
-  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!words.length) return rows;
-  return rows.filter((r) => {
-    const hay = `${r.unit} ${r.question} ${r.text} ${r.name} ${r.artifact}`.toLowerCase();
-    return words.every((w) => hay.includes(w));
-  });
-}
+const PAGE = 50;
 
 export function Decided() {
   const { boards, loading } = useBoards();
@@ -34,38 +26,59 @@ export function Decided() {
 }
 
 function Project({ workspace, q }: { workspace: Workspace; q: string }) {
-  const decided = useResource("/api/decided", { cwd: workspace.path }, { on: ["answer."] });
-  const rows = filterDecided(decided.data ?? [], q);
-  const days = [...new Set(rows.map((r) => r.date))];
+  const [pages, setPages] = useState(1);
+  useEffect(() => setPages(1), [q]);
+  const decided = useResource("/api/decided", { cwd: workspace.path, q, offset: "0" }, { on: ["answer."] });
+  const total = decided.data?.total ?? 0;
   return (
     <>
       <div className="sec-h">
-        {workspace.name} <span className="faint">{rows.length}</span>
+        {workspace.name} <span className="faint">{total}</span>
       </div>
       {decided.state === "error" ? (
         <ErrorState error={decided.error} onRetry={decided.reload} />
       ) : decided.state === "loading" ? (
         <SkeletonRows rows={3} />
-      ) : !rows.length ? (
+      ) : !total ? (
         <Empty icon="decided" title={q ? "Nothing matches" : "Nothing decided for you here"}>
           {q ? "Try fewer words." : `Every answer in ${workspace.name} is yours.`}
         </Empty>
       ) : (
-        days.slice(0, 7).map((day) => (
-          <div key={day} className="card" style={{ marginBottom: 10 }}>
-            <div className="card-h">
-              <span className="faint" style={{ fontWeight: 500 }}>{day}</span>
-            </div>
-            {rows
-              .filter((r) => r.date === day)
-              .map((r) => (
-                <Item key={`${r.unit}-${r.artifact}-${r.n}`} row={r} workspace={workspace.name} />
-              ))}
-          </div>
-        ))
+        <>
+          <Days rows={decided.data?.rows ?? []} workspace={workspace.name} />
+          {Array.from({ length: pages - 1 }, (_, i) => (
+            <Later key={i} workspace={workspace} q={q} offset={(i + 1) * PAGE} />
+          ))}
+          {pages * PAGE < total && (
+            <button className="btn" style={{ marginBottom: 10 }} onClick={() => setPages(pages + 1)}>
+              Show more
+            </button>
+          )}
+        </>
       )}
     </>
   );
+}
+
+function Later({ workspace, q, offset }: { workspace: Workspace; q: string; offset: number }) {
+  const page = useResource("/api/decided", { cwd: workspace.path, q, offset: String(offset) }, { on: ["answer."] });
+  if (page.state === "error") return <ErrorState error={page.error} onRetry={page.reload} />;
+  return page.data ? <Days rows={page.data.rows} workspace={workspace.name} /> : <SkeletonRows rows={3} />;
+}
+
+function Days({ rows, workspace }: { rows: Row[]; workspace: string }) {
+  return [...new Set(rows.map((r) => r.date))].map((day) => (
+    <div key={day} className="card" style={{ marginBottom: 10 }}>
+      <div className="card-h">
+        <span className="faint" style={{ fontWeight: 500 }}>{day}</span>
+      </div>
+      {rows
+        .filter((r) => r.date === day)
+        .map((r) => (
+          <Item key={`${r.unit}-${r.artifact}-${r.n}`} row={r} workspace={workspace} />
+        ))}
+    </div>
+  ));
 }
 
 function Item({ row, workspace }: { row: Row; workspace: string }) {

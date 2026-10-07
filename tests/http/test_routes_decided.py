@@ -56,9 +56,67 @@ class Routes(unittest.IsolatedAsyncioTestCase):
             self.app.state.core.boards, "get", mock.AsyncMock(return_value=board)
         ):
             r = await self.client.get("/api/decided", params={"cwd": self.cwd})
-        rows = r.json()
+        rows = r.json()["rows"]
         self.assertEqual(
             [(d["text"], d["name"], d["date"]) for d in rows],
             [("inferred", "an agent", "2026-10-04"), ("Leif's", "Leif", "2026-10-02")],
         )
         self.assertTrue(all(d["unit"] == "0001_x" and "name" in d for d in rows))
+
+    async def page(self, units, **params):
+        with mock.patch.object(
+            self.app.state.core.boards, "get", mock.AsyncMock(return_value={"units": units})
+        ):
+            r = await self.client.get("/api/decided", params={"cwd": self.cwd, **params})
+        return r.json()
+
+    @staticmethod
+    def delegated(unit, text, n=1, artifact="spec.md", name="Leif", question="", date=""):
+        answers = [
+            {
+                "artifact": artifact,
+                "n": n,
+                "text": text,
+                "by": "delegated",
+                "name": name,
+                "question": question,
+                "date": date,
+            }
+        ]
+        return {"name": unit, "answers": answers}
+
+    def many(self):
+        return [
+            self.delegated("0001_x", f"answer {i}", n=i, date=f"2026-01-{i % 28 + 1:02d}")
+            for i in range(120)
+        ]
+
+    async def test_a_call_returns_at_most_fifty_answers_and_the_total(self):
+        page = await self.page(self.many())
+        self.assertEqual((len(page["rows"]), page["total"]), (50, 120))
+
+    async def test_offset_pages_on_and_the_last_page_is_short(self):
+        page = await self.page(self.many(), offset=100)
+        self.assertEqual((len(page["rows"]), page["total"]), (20, 120))
+
+    async def test_a_limit_above_fifty_still_returns_fifty(self):
+        page = await self.page(self.many(), limit=500)
+        self.assertEqual(len(page["rows"]), 50)
+
+    async def test_q_keeps_the_answers_with_every_word_in_any_field(self):
+        units = [
+            self.delegated("0001_a", "use sqlite"),
+            self.delegated("0002_b", "use postgres"),
+        ]
+        self.assertEqual((await self.page(units, q="use SQLITE"))["total"], 1)
+        self.assertEqual((await self.page(units, q="  "))["total"], 2)
+        self.assertEqual((await self.page(units, q="0002"))["total"], 1)
+        self.assertEqual((await self.page(units, q="use postgres nothing"))["total"], 0)
+        field = [self.delegated("0003_c", "t", artifact="plan.md", name="Bao", question="Why?")]
+        for q in ("plan.md", "bao", "why", "bao plan.md 0003"):
+            self.assertEqual((await self.page(field, q=q))["total"], 1, q)
+
+    async def test_q_filters_over_answers_outside_the_first_page(self):
+        units = self.many() + [self.delegated("0002_late", "the rare word", date="2000-01-01")]
+        page = await self.page(units, q="rare")
+        self.assertEqual(([d["unit"] for d in page["rows"]], page["total"]), (["0002_late"], 1))
