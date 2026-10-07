@@ -359,6 +359,7 @@ class LeifAsksBeforeACostlyRunAndStartsTenADay(_Core):
         await super().asyncSetUp()
         self.found = found(1)
         self.addCleanup(triggers._ASKED.clear)
+        self.addCleanup(triggers._LEIF_HELD.clear)
 
     async def call(self, turn: str, session: str = "S", **args) -> dict:
         said = await triggers.leif_call(

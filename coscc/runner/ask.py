@@ -227,16 +227,23 @@ async def _decide(
     """Sets `plan.session` to the thread's last session when it may be resumed, else
     `plan.why`, the reason a new session is opened. `head` `None` leaves the code it read
     unasked (a look at the thread, every 2 s while one is answered: no git)."""
+
+    # A session stopped mid-turn is not gone on in: what it did last may be half done.
+    def kept(e: Mapping[str, Any]) -> bool:
+        return bool(e.get("session_id")) and e.get("outcome") != "cancelled"
+
     last: tuple[Mapping[str, Any], Mapping[str, Any]] | None = (
-        (start, end) if plan.triggered and end.get("session_id") else None
+        (start, end) if plan.triggered and kept(end) else None
     )
     for s, e in _thread(journal, run):
-        if e is not None and e.get("session_id") and bool(s.get("triggered")) == plan.triggered:
+        if e is not None and kept(e) and bool(s.get("triggered")) == plan.triggered:
             last = (s, e)
     if last is None:
         plan.why = (
             "its session could write, so a reader starts afresh"
             if not plan.triggered
+            else "it was stopped before it ended"
+            if end.get("outcome") == "cancelled"
             else "it kept no session"
         )
         return
@@ -333,6 +340,20 @@ def last_words(data: Data, run: str, limit: int = LAST_WORDS) -> str:
     return str(said[-1].get("text") or "")[:limit] if said else ""
 
 
+def _numbered(core: Core, start: Mapping[str, Any]) -> str:
+    """The numbers the owner sees the run's proposals under, which the run never saw."""
+    data = Data(core.config.data_dir)
+    run = str(start.get("run") or "")
+    made = [p for p in proposals.listed(data, str(start.get("workspace"))) if p["run"] == run]
+    if not made:
+        return ""
+    return (
+        "The person names what you proposed by the number the app kept it under; "
+        "#N means that proposal, so answer why you proposed it:\n"
+        + "\n".join(f"- #{p['id']} {p['title']}" for p in made)
+    )
+
+
 def _summary(core: Core, start: Mapping[str, Any], end: Mapping[str, Any], tree: str) -> str:
     """What a fresh follow-up is told of the run: who, how it ended, what it made, its last
     words, and the end of its transcript."""
@@ -400,7 +421,8 @@ async def _ask(
         head = await triggers.tree_head(plan.tree)
         await _decide(core, journal, root_run, start, end, plan, head)
         if plan.session:
-            prompt = RESUMED + text
+            kept = await asyncio.to_thread(_numbered, core, start)
+            prompt = RESUMED + (f"{kept}\n\n" if kept else "") + text
         else:
             summary = await asyncio.to_thread(_summary, core, start, end, plan.tree)
             prompt = f"{summary}\n\n# The question\n\n{text}"

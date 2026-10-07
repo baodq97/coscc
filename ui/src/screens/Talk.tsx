@@ -236,16 +236,20 @@ function SessionList({ sessions, current, busy, onOpen }: { sessions: ChatSessio
 /** One run Leif started, named as Leif names it, where the turn that started it ended. */
 function RunLine({ r, workspace }: { r: LeifRun; workspace: string }) {
   const who = r.name === r.agent ? r.name : `${r.name} (${r.agent})`;
+  const running = r.outcome === "running";
+  const said = running ? "is running" : r.outcome === "done" ? "finished" : r.outcome;
   return (
-    <div className="faint" style={{ fontSize: 12.5 }}>
-      {r.outcome === "running" ? (
-        <>
-          <Dot tone="live" /> {who} is running, started by Leif.{" "}
-        </>
-      ) : (
-        `${who} ${r.outcome === "done" ? "finished" : r.outcome}: ${r.proposals} proposal${r.proposals === 1 ? "" : "s"}, ${money(r.cost_usd)}. `
-      )}
-      <Link to={`/run/${workspace}/${r.run}`}>{r.outcome === "running" ? "Watch it" : "Open the run"}</Link>
+    <div className={`callout ${running || r.outcome === "done" ? "accent" : "amber"}`} style={{ alignItems: "center", margin: "4px 0 8px" }}>
+      {running ? <Dot tone="live" /> : <Icon name="bolt" size={15} />}
+      <div className="grow">
+        <b>
+          {who} {said}
+        </b>
+        <div className="muted" style={{ fontSize: 12.5 }}>
+          {running ? "Started by Leif from this conversation." : `${r.proposals} proposal${r.proposals === 1 ? "" : "s"} · ${money(r.cost_usd)} · started by Leif`}
+        </div>
+      </div>
+      <Link to={`/run/${workspace}/${r.run}`}>{running ? "Watch it ▸" : "Open the run ▸"}</Link>
     </div>
   );
 }

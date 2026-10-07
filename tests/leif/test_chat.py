@@ -394,7 +394,8 @@ class LeifsYesComesFromALaterTurn(_App):
         async def run_(agent, inp, ctx):
             ctx.journal.started(inp.workspace, "", "chat", "manual", run=inp.run, agent="leif")
             args = {"key": "scan", "reason": "asked", **({"confirmed": True} if said else {})}
-            with mock.patch.object(triggers, "start", return_value="r9"):
+            # What `leif_call` starts with: no run is spawned to outlive the test's folder.
+            with mock.patch.object(triggers, "_hold", return_value="r9"):
                 # The server the client was built with: the first turn's.
                 said.append(await triggers.leif_call(self.core, self.cwd, args, turns[0]))
             ctx.journal.finished(
@@ -402,7 +403,9 @@ class LeifsYesComesFromALaterTurn(_App):
             )
             yield ("done", run_mod.Run("done", None, session="S", run=inp.run))
 
-        self.addCleanup(triggers._ASKED.clear)
+        # Module-wide: what one test leaves there would count in the next one's day.
+        for left in (triggers._ASKED, triggers._LEIF_HELD, triggers._RUNNING):
+            self.addCleanup(left.clear)
         with (
             mock.patch.object(triggers, "leif_server", server),
             mock.patch.object(run_mod, "run", run_),
@@ -414,3 +417,5 @@ class LeifsYesComesFromALaterTurn(_App):
                 pass
         self.assertIn("needs-confirm", said[0]["content"][0]["text"])
         self.assertFalse(said[1].get("is_error"), said[1])
+        self.assertIn("run r9", said[1]["content"][0]["text"])
+        self.assertEqual(triggers._TASKS, set())
