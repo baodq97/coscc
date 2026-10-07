@@ -174,10 +174,10 @@ export function DescribeTask({ cwd, want, run, onDraft, onRunning, onDiscard }: 
       </span>
       <textarea
         className="ta"
-        rows={3}
+        rows={4}
         value={words}
         disabled={phase.at === "running"}
-        placeholder={want === "agent" ? "For example: on request, read the interventions since the last run and propose at most two changes to the review skill." : "For example: docs changes go intent, then build, then review, then merge; no spec or plan."}
+        placeholder={want === "agent" ? "For example: on request, read the last run's interventions and propose changes to the review skill." : "For example: a docs change goes intent, build, review, merge; no spec or plan."}
         onChange={(e) => setWords(e.target.value)}
       />
       {phase.at === "running" ? (
