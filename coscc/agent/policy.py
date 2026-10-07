@@ -19,7 +19,7 @@ from __future__ import annotations
 import functools
 import re
 from dataclasses import dataclass, replace
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 from coscc.agent import pack
@@ -241,6 +241,8 @@ class _Redirect:
     # A parameter expansion, an unquoted leading `~`, or an unquoted `*`, `?` or `[`:
     # bash will open some other path than the one written here.
     expanded: bool
+    # Where the target (a heredoc's delimiter) starts in the line.
+    at: int = -1
 
 
 @dataclass(frozen=True)
@@ -254,6 +256,8 @@ class _Simple:
     # Per word: a parameter expansion outside single quotes.
     expanded: tuple[bool, ...]
     redirects: tuple[_Redirect, ...]
+    # Per word: `(start, end)` of its text in the line read, quotes included.
+    spans: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -263,6 +267,9 @@ class _Parsed:
     substitutions: tuple[tuple[str, int], ...]
     # Where each lone `&` stands: a command it ends runs in the background.
     background: tuple[int, ...] = ()
+    # Each here-document whose delimiter is quoted (its body is text, nothing expanded):
+    # `(where its delimiter stands, body start, body end)`.
+    bodies: tuple[tuple[int, int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -310,6 +317,7 @@ class _Reader:
         self.base = base
         self.subs: list[tuple[str, int]] = []
         self.amps: list[int] = []
+        self.docs: list[tuple[int, int, int]] = []
 
     def at(self, j: int) -> int:
         return self.base + j
@@ -333,13 +341,14 @@ class _Reader:
         start = self.i
         words: list[str] = []
         flags: list[bool] = []
+        spans: list[tuple[int, int]] = []
         redirects: list[_Redirect] = []
         word: _Word | None = None
         pending: tuple[str, str, int] | None = None
         heredocs: list[tuple[str, bool, bool, int]] = []
         depth = 0
 
-        def end_word() -> None:
+        def end_word(end: int | None = None) -> None:
             nonlocal word, pending
             if word is None:
                 return
@@ -347,25 +356,34 @@ class _Reader:
                 op, fd, _ = pending
                 if op in ("<<", "<<-"):
                     heredocs.append((word.text, word.quoted, op == "<<-", word.at))
-                    redirects.append(_Redirect(op, fd, word.text, False))
+                    redirects.append(_Redirect(op, fd, word.text, False, word.at))
                 else:
-                    redirects.append(_Redirect(op, fd, word.text, word.expanded or word.glob))
+                    redirects.append(
+                        _Redirect(op, fd, word.text, word.expanded or word.glob, word.at)
+                    )
                 pending = None
             else:
                 words.append(word.text)
                 flags.append(word.expanded)
+                spans.append((word.at, self.i if end is None else end))
             word = None
 
         def end_command(j: int) -> None:
-            nonlocal start, words, flags, redirects
+            nonlocal start, words, flags, spans, redirects
             end_word()
             if pending is not None:
                 raise _Stop(f"a redirect ({pending[0]}) with no target", self.at(pending[2]))
             if words or redirects:
                 out.append(
-                    _Simple(s[start:j].strip(), tuple(words), tuple(flags), tuple(redirects))
+                    _Simple(
+                        s[start:j].strip(),
+                        tuple(words),
+                        tuple(flags),
+                        tuple(redirects),
+                        tuple(spans),
+                    )
                 )
-            words, flags, redirects = [], [], []
+            words, flags, spans, redirects = [], [], [], []
             start = j + 1
 
         def at_command_start() -> bool:
@@ -399,7 +417,7 @@ class _Reader:
                     amp = self.i
                     k = self.skip(j + 1)
                     op, self.i = ("&>>", k + 1) if self.char(k) == ">" else ("&>", j + 1)
-                    end_word()
+                    end_word(amp)
                     if pending is not None:
                         raise _Stop(
                             f"a redirect ({pending[0]}) with no target", self.at(pending[2])
@@ -425,6 +443,7 @@ class _Reader:
                     self.i = j + 1
                     self.commands(opened=self.i - 2)
                     continue
+                here = self.i
                 op, self.i = self.redirect_op(c, j)
                 fd = ""
                 if (
@@ -435,7 +454,7 @@ class _Reader:
                     and not word.expanded
                 ):
                     fd, word = word.text, None
-                end_word()
+                end_word(here)
                 if pending is not None:
                     raise _Stop(f"a redirect ({pending[0]}) with no target", self.at(pending[2]))
                 pending = (op, fd, self.i - len(op))
@@ -538,7 +557,9 @@ class _Reader:
                     continue
                 logical += line
                 if logical == delimiter:
-                    if not literal:
+                    if literal:
+                        self.docs.append((self.at(opened), self.at(begin), self.at(line_start)))
+                    else:
                         body = _Reader(s[begin:line_start], self.at(begin))
                         body.expanding()
                         self.subs.extend(body.subs)
@@ -773,7 +794,10 @@ def _read(command: str) -> _Parsed | _Unreadable:
     except _Stop as stop:
         return _Unreadable(stop.what, stop.at)
     return _Parsed(
-        tuple(commands), tuple(sorted(reader.subs, key=lambda t: t[1])), tuple(sorted(reader.amps))
+        tuple(commands),
+        tuple(sorted(reader.subs, key=lambda t: t[1])),
+        tuple(sorted(reader.amps)),
+        tuple(reader.docs),
     )
 
 
@@ -788,13 +812,19 @@ _PUSH_WIDE = frozenset(
 )
 
 
-def check_push(words: list[str], branch: str, lease_head: str = "") -> str:
+def check_push(
+    words: list[str],
+    branch: str,
+    lease_head: str = "",
+    head: Callable[[bool], bool] | None = None,
+) -> str:
     """ "" if `git push <words>` is the one push allowed, else why not.
 
     `words` are the tokens after `push`. The one allowed shape is `origin <branch>`, or
     `HEAD:<branch>` or `HEAD:refs/heads/<branch>` in its place, never forced. With `lease_head` (Gebo's) it carries exactly one
     `--force-with-lease=<branch>:<lease_head>` with a full SHA; without, no lease at all. Pure:
-    the branch and the head come from the app, never the session.
+    the branch and the head come from the app, never the session. `git push origin HEAD` and
+    `git push` alone pass too, without a lease, when `head(bare)` says they land on `branch`.
     """
     if not branch:
         return (
@@ -828,6 +858,8 @@ def check_push(words: list[str], branch: str, lease_head: str = "") -> str:
         return "a push must carry exactly one --force-with-lease=<branch>:<head this step began at>"
     if lease_head and leases[0] != f"{branch}:{lease_head}":
         return f"the lease must be bound to {branch}:{lease_head}, the head this step began at"
+    if positional in ([], ["origin", "HEAD"]) and not lease_head and head and head(not positional):
+        return ""
     if positional not in (
         ["origin", branch],
         ["origin", f"HEAD:{branch}"],
@@ -835,6 +867,87 @@ def check_push(words: list[str], branch: str, lease_head: str = "") -> str:
     ):
         return f"push with `git push origin {branch}`: a push names this unit's branch"
     return ""
+
+
+def _checked_out(cwd: str) -> str:
+    """The branch checked out at `cwd`, read from its `.git` (a folder, or a worktree's file
+    naming one); "" on a detached HEAD or when it cannot be read."""
+    from pathlib import Path
+
+    try:
+        here = Path(cwd).resolve()
+        for d in (here, *here.parents):
+            dot = d / ".git"
+            if dot.is_dir():
+                gitdir = dot
+                break
+            if dot.is_file():
+                text = dot.read_text().strip()
+                if not text.startswith("gitdir: "):
+                    return ""
+                gitdir = (d / text[len("gitdir: ") :]).resolve()
+                break
+        else:
+            return ""
+        ref = (gitdir / "HEAD").read_text().strip()
+    except OSError, ValueError:
+        return ""
+    return ref.removeprefix("ref: refs/heads/") if ref.startswith("ref: refs/heads/") else ""
+
+
+def _push_lands(cwd: str, bare: bool) -> str:
+    """The branch on `origin` that `git push origin HEAD` run in `cwd` updates, or with `bare`
+    `git push` alone; "" when not known. Read from the checkout's files and settings, nothing
+    pushed. `git push` alone is known only when it sends the one branch (no `remote.*.push`,
+    `push.default` not `matching`) to `origin` under its own name (`@{push}`)."""
+    import os
+    import subprocess
+
+    branch = _checked_out(cwd)
+    if not branch or not bare:
+        return branch
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", cwd, *args], capture_output=True, text=True, timeout=10, env=env
+        )
+
+    try:
+        settings = git("config", "--get-regexp", r"^(push\.default|remote\..*\.push)$").stdout
+        target = git("rev-parse", "--symbolic-full-name", "@{push}")
+    except OSError, subprocess.SubprocessError:
+        return ""
+    if target.returncode or any(
+        line.startswith("remote.") or line.split()[-1:] == ["matching"]
+        for line in settings.splitlines()
+    ):
+        return ""
+    return branch if target.stdout.strip() == f"refs/remotes/origin/{branch}" else ""
+
+
+# `git` subcommands that leave HEAD on the branch it stands on, so a `git push origin HEAD` after
+# one still pushes it. Any other may move it (`checkout`, `switch`, `branch -m`, `rebase a b`).
+_KEEPS_HEAD = frozenset(
+    {*HELPER_GIT, "add", "commit", "fetch", "rev-parse", "ls-files", "ls-remote", "push"}
+    | {"restore", "rm", "mv", "config", "remote"}
+)
+
+
+def _moves_head(simple: _Simple) -> bool:
+    """Whether a command may leave the line on another branch or point git elsewhere: a `git`
+    not known to keep HEAD, a `GIT_*` word, or a word or redirect naming a `.git` or `HEAD`
+    path outside git."""
+    words = list(simple.words)
+    gits = [i for i, w in enumerate(words) if w.rsplit("/", 1)[-1] == "git"]
+    for i in gits:
+        sub = _words("git", words[i + 1 :])[1:2]
+        if not sub or sub[0] not in _KEEPS_HEAD:
+            return True
+    texts = [*(r.target for r in simple.redirects), *(() if gits else words)]
+    return any("GIT_" in w for w in words) or any(
+        ".git/" in t or t.endswith(".git") or "HEAD" in t for t in texts
+    )
 
 
 def _glob_reaches(text: str, protected: str) -> bool:
@@ -1374,6 +1487,8 @@ _WRAPPERS = frozenset(
     | {"npx", "uvx", "sudo"}
 )
 _CLAUDE = frozenset({"claude", "claude-code"})
+# The one word after `claude` that prints and starts no session.
+_CLAUDE_PRINTS = frozenset({"--version", "-v", "--help", "-h"})
 _CD = frozenset({"cd", "pushd"})
 # `gh <group> <verb>`: these verbs only read. Any other may write to the host, and a group
 # `gh` does not ship may be an extension, whose code is not read here.
@@ -1410,7 +1525,7 @@ def bash_refused(
     roots = _resolved((grant.cwd,))
     cwds = [str(roots[0]) if roots else None]
     known = _scratch_known(grant, command)
-    return _line_refused(grant, command, agent_id, cwds, known, strict)
+    return _line_refused(grant, command, agent_id, cwds, known, strict, top=True)
 
 
 def _line_refused(
@@ -1420,7 +1535,12 @@ def _line_refused(
     cwds: list[str | None],
     known: dict,
     strict: bool = False,
+    top: bool = False,
+    code: bool = False,
 ) -> str:
+    """`top` for the line the session sent, not a script read out of one of its words: only
+    there is a name set on the line followed, and a push of HEAD read. `code` for a program
+    `node -e` runs: a backtick or `$(` in it is JavaScript, no shell's substitution."""
     parsed = _read(command)
     if isinstance(parsed, _Unreadable):
         return (
@@ -1440,12 +1560,17 @@ def _line_refused(
         for k in _launched(list(s.words))
         if k < len(s.words)
     )
-    if hidden and _ROADS.search(command):
+    if hidden and not code and _ROADS.search(command):
         return (
             "a substitution or a variable program hides what runs, on a line that names push, "
             "merge, release, rm, gh or claude: spell each command out"
         )
-    for form in _braces(command):
+    if top:
+        known = {**known, **_bound(grant, parsed, command, known)}
+    text = command
+    for a, b in sorted(_data(grant, parsed, cwds), reverse=True):
+        text = text[:a] + " " * (b - a) + text[b:]
+    for form in _braces(text):
         for p in grant.secrets:
             if re.search(re.escape(p) + r"(?![\w.-])", form):
                 return f"{SECRETS}: {p}"
@@ -1461,10 +1586,12 @@ def _line_refused(
     if reason:
         return f"{HELPERS}: {reason}"
     cwds = list(cwds)
+    moved = not top
     for simple in parsed.commands:
-        reason = _simple_refused(grant, simple, agent_id, cwds, command, known)
+        reason = _simple_refused(grant, simple, agent_id, cwds, command, known, moved, code)
         if reason:
             return reason
+        moved = moved or _moves_head(simple)
     return ""
 
 
@@ -1475,10 +1602,17 @@ def _simple_refused(
     cwds: list[str | None],
     line: str,
     known: dict,
+    moved: bool = True,
+    code: bool = False,
 ) -> str:
-    """Why one simple command is critical, or ""; a `cd` or `pushd` moves `cwds` on."""
+    """Why one simple command is critical, or ""; a `cd` or `pushd` moves `cwds` on. `moved`
+    unless the line is known to stand on the branch it started on: no push of HEAD then."""
     words, unknown = list(simple.words), list(simple.expanded)
-    for word in (*words, *(r.target for r in simple.redirects)):
+    message = _messages(words)
+    for word in (
+        *(w for k, w in enumerate(words) if k not in message),
+        *(r.target for r in simple.redirects),
+    ):
         hit = _word_secret(grant, word, cwds)
         if hit:
             return f"{SECRETS}: {hit}"
@@ -1486,7 +1620,9 @@ def _simple_refused(
     for i, name in enumerate(names):
         rest, rest_unknown = words[i + 1 :], unknown[i + 1 :]
         if name == "git":
-            reason = _git_refused(grant, rest, rest_unknown)
+            here = not moved and not any("GIT_" in w for w in words[:i])
+            head = (lambda bare: _on_branch(grant, cwds, bare)) if here else None
+            reason = _git_refused(grant, rest, rest_unknown, head)
         elif name == "gh":
             reason = _gh_refused(rest, rest_unknown)
         elif name == "rm":
@@ -1500,13 +1636,18 @@ def _simple_refused(
             return reason
     launched = [k for k in _launched(words) if k < len(words)]
     wrapped = bool(launched) and names[launched[0]] in _WRAPPERS
-    if any(names[k] in _CLAUDE for k in launched) or (
-        wrapped and any(n in _CLAUDE for n in names[launched[0] + 1 :])
-    ):
+    if any(
+        names[k] in _CLAUDE and not (len(words) == k + 2 and words[k + 1] in _CLAUDE_PRINTS)
+        for k in launched
+    ) or (wrapped and any(n in _CLAUDE for n in names[launched[0] + 1 :])):
         return f"{REMOVAL}: a session may not start Claude Code inside itself"
-    inert = _inert(words)
+    inert, js = _inert(words), _code(words)
     for k, word in enumerate(words):
-        reason = "" if k in inert else _script_refused(grant, word, agent_id, cwds, line, known)
+        reason = (
+            ""
+            if k in inert
+            else _script_refused(grant, word, agent_id, cwds, line, known, code or k in js)
+        )
         if reason:
             return reason
     if launched and names[launched[0]] in _CD:
@@ -1521,9 +1662,11 @@ def _script_refused(
     cwds: list[str | None],
     line: str,
     known: dict,
+    code: bool = False,
 ) -> str:
     """A word shaped like a line, read again as one: what `sh -c`, `ssh`, `watch` or a pipe into
-    a shell would run. `NAME=` or `--flag=` in front is the value's, not the script's."""
+    a shell would run. `NAME=` or `--flag=` in front is the value's, not the script's. A name
+    the line set is not followed in there: the script may set it again."""
     if not _SCRIPT_SHAPE.search(word) or not _SCRIPT_WORDS.search(word):
         return ""
     head, eq, value = word.partition("=")
@@ -1534,7 +1677,16 @@ def _script_refused(
     if isinstance(_read(script), _Unreadable) and not _AT_COMMAND.search(script):
         # Prose, such as a commit message: a shell could not run it as it stands either.
         return ""
-    return _line_refused(grant, script, agent_id, cwds, known)
+    scratch = {k: v for k, v in known.items() if k in _SCRATCH_NAMES}
+    return _line_refused(grant, script, agent_id, cwds, scratch, code=code)
+
+
+def _on_branch(grant: Grant, cwds: list[str | None], bare: bool) -> bool:
+    """Whether a push of HEAD (`bare`: `git push` alone) lands on the grant's branch from every
+    place the line may stand."""
+    return bool(grant.branch and cwds) and all(
+        c is not None and _push_lands(c, bare) == grant.branch for c in cwds
+    )
 
 
 def _cd_refused(grant: Grant, args: list[str], cwds: list[str | None]) -> str:
@@ -1632,7 +1784,12 @@ def _word_secret(grant: Grant, word: str, cwds: list[str | None]) -> str:
     return ""
 
 
-def _git_refused(grant: Grant, rest: list[str], unknown: list[bool]) -> str:
+def _git_refused(
+    grant: Grant,
+    rest: list[str],
+    unknown: list[bool],
+    head: Callable[[bool], bool] | None = None,
+) -> str:
     at = _positions("git", rest)
     if at and unknown[at[0]]:
         return f"{HOST}: git's subcommand may not be a variable ({rest[at[0]]}): it can hide a push"
@@ -1647,7 +1804,7 @@ def _git_refused(grant: Grant, rest: list[str], unknown: list[bool]) -> str:
         return ""
     if rest[0] != "push":
         return f"{HOST}: a push must be spelled `git push …`, with nothing between"
-    reason = check_push(rest[1:], grant.branch, grant.lease)
+    reason = check_push(rest[1:], grant.branch, grant.lease, head)
     return f"{HOST}: {reason}" if reason else ""
 
 
@@ -1833,21 +1990,125 @@ def _inert(words: list[str]) -> set[int]:
     if k is None:
         return set()
     name, rest = words[k].rsplit("/", 1)[-1], words[k + 1 :]
-    out: set[int] = set()
-    if name == "git":
-        at = _positions("git", rest)
-        if at and rest[at[0]] in ("commit", "tag"):
-            for i in range(at[0] + 1, len(rest)):
-                w = rest[i]
-                if w == "--":
-                    break
-                if w == "--message" or re.fullmatch(r"-[aqvs]*m", w):
-                    out.add(k + 2 + i)
-                elif w.startswith("--message="):
-                    out.add(k + 1 + i)
-    elif name in _GREPS:
-        out = {k + 1 + i for i in _patterns(rest)}
+    if name not in _GREPS:
+        return _messages(words)
+    out = {k + 1 + i for i in _patterns(rest)}
     return {i for i in out if i < len(words) and "$(" not in words[i] and "`" not in words[i]}
+
+
+def _messages(words: list[str]) -> set[int]:
+    """Where the message of `git commit` or `git tag` stands in one command's words (`-m`,
+    `--message`, `--message=…`, or `-am`-like clusters of flags with no value, before any `--`):
+    text git only stores. A word with a substitution is none."""
+    k = _program_at(words)
+    if k is None or words[k].rsplit("/", 1)[-1] != "git":
+        return set()
+    rest, out = words[k + 1 :], set()
+    at = _positions("git", rest)
+    if at and rest[at[0]] in ("commit", "tag"):
+        for i in range(at[0] + 1, len(rest)):
+            w = rest[i]
+            if w == "--":
+                break
+            if w == "--message" or re.fullmatch(r"-[aqvs]*m", w):
+                out.add(k + 2 + i)
+            elif w.startswith("--message="):
+                out.add(k + 1 + i)
+    return {i for i in out if i < len(words) and "$(" not in words[i] and "`" not in words[i]}
+
+
+# `node`'s flags whose value is its program.
+_CODE_FLAGS = frozenset({"-e", "-p", "--eval", "--print"})
+
+
+def _code(words: list[str]) -> set[int]:
+    """Where `node -e` (`-p`, `--eval`, `--print`) takes its program: JavaScript, read again
+    for what it names, but its backticks and `${…}` are templates, not substitutions."""
+    k = _program_at(words)
+    if k is None or words[k].rsplit("/", 1)[-1] != "node" or len(words) < k + 3:
+        return set()
+    return {k + 2} if words[k + 1] in _CODE_FLAGS else set()
+
+
+# Programs that run text as shell code in the line's own shell, where it may set any name.
+_SETS_BY_NAME = frozenset({"eval", "source", "."})
+
+
+def _bound(grant: Grant, parsed: _Parsed, command: str, known: dict[str, str]) -> dict[str, str]:
+    """A name the line's first command sets alone, to a fixed path below the scratch
+    (`S=$COS_SCRATCH_DISK/x && rm -rf $S`), and that nothing else on the line may set: a removal
+    reads it as that path. Not known when it is set after a pipe or `||`, in a subshell or a group,
+    to anything with another variable, a glob or a blank in it, or again anywhere on the line
+    (`S=`, `S+=`, `read S`, `for S`, `${S:=…}`, `((…))`, `eval`, `source`)."""
+    if not grant.scratch or not parsed.commands:
+        return {}
+    first = parsed.commands[0]
+    m = re.fullmatch(r"([A-Za-z_]\w*)=(.*)", first.words[0], re.S) if first.words else None
+    if m is None or len(first.words) != 1 or first.redirects or m.group(1) in _SCRATCH_NAMES:
+        return {}
+    name, value = m.groups()
+    line = command.lstrip()
+    if not line.startswith(first.source) or not re.match(
+        r"\s*(?:;|&&|\n|$)", line[len(first.source) :]
+    ):
+        return {}
+    path = _put_scratch(value, known)
+    if path is None or not re.fullmatch(r"/[\w./+@:%-]*", path):
+        return {}
+    if _scratch_of(path, grant.scratch) is None:
+        return {}
+    again = re.compile(rf"^{name}(?:\+?=|\[)|\$\{{{name}[^}}\w]")
+    named = re.compile(rf"\b{name}\b")
+    for simple in parsed.commands[1:]:
+        words = list(simple.words)
+        if (
+            any(w.rsplit("/", 1)[-1] in _SETS_BY_NAME for w in words[:1])
+            or name in words
+            or any(
+                again.search(w) or ("((" in w and named.search(w))
+                for w in (*words, *(r.target for r in simple.redirects))
+            )
+        ):
+            return {}
+    return {name: path}
+
+
+def _data(grant: Grant, parsed: _Parsed, cwds: list[str | None]) -> list[tuple[int, int]]:
+    """Where the line holds text nothing reads as a path, left out of the line's secret search:
+    a commit's or a tag's message, and a quoted here-document that `cat` writes into one file in
+    the unit's places or `git commit -F -` takes as its message."""
+    bodies = {at: (b, e) for at, b, e in parsed.bodies}
+    places, out = list(cwds), []
+    for simple in parsed.commands:
+        words = list(simple.words)
+        out += [simple.spans[i] for i in _messages(words)]
+        docs = [r for r in simple.redirects if r.op in ("<<", "<<-")]
+        if len(docs) == 1 and docs[0].at in bodies and _takes_text(grant, simple, places):
+            out.append(bodies[docs[0].at])
+        if words[:1] and words[0] in _CD:
+            _cd_refused(grant, words[1:], places)
+    return out
+
+
+def _takes_text(grant: Grant, simple: _Simple, places: list[str | None]) -> bool:
+    """`cat` whose one output is a file in the unit's places, or `git commit -F -`."""
+    words = list(simple.words)
+    out = [r for r in simple.redirects if r.op not in ("<<", "<<-")]
+    if words == ["cat"]:
+        return (
+            len(out) == 1
+            and out[0].op in (">", ">>", ">|")
+            and out[0].fd in ("", "1")
+            and not out[0].expanded
+            and not _outside(grant, out[0].target, places)
+        )
+    at = _positions("git", words[1:]) if words[:1] == ["git"] else []
+    if not at or words[1 + at[0]] != "commit":
+        return False
+    rest = words[2 + at[0] :]
+    return "--file=-" in rest or any(
+        a in ("-F", "--file") and b == "-" for a, b in zip(rest, rest[1:])
+    )
 
 
 def _patterns(rest: list[str]) -> set[int]:

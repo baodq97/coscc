@@ -1416,9 +1416,8 @@ class AMessageOrAPatternIsNotReadAsAScript(_Unit):
             with self.subTest(line=line):
                 self.assertNotEqual(self.bash(line), "")
 
-    def test_a_skipped_word_is_still_read_for_a_secret(self):
+    def test_a_skipped_pattern_is_still_read_for_a_secret(self):
         for line in (
-            'git commit -m "the key is in ~/.config/coscc/vault.key"',
             'grep -e "~/.ssh/id_rsa" notes.md',
             "grep -f ~/.ssh/id_rsa x",
             "grep -rn token ~/.ssh",
@@ -1453,7 +1452,6 @@ class TheScratchIsKnownByItsTwoNames(_Unit):
             "for COS_SCRATCH_RAM in /; do rm -rf $COS_SCRATCH_RAM/x; done",
             "COS_SCRATCH_RAM=/ bash -c 'rm -rf $COS_SCRATCH_RAM/x'",
             "rm -rf ${COS_SCRATCH_RAM:-/}",
-            "S=$COS_SCRATCH_DISK/shot && rm -rf $S",
             "rm -rf $OTHER/x",
             "find $COS_SCRATCH_RAM/.. -delete",
         ):
@@ -1463,6 +1461,216 @@ class TheScratchIsKnownByItsTwoNames(_Unit):
     def test_a_session_without_a_scratch_knows_neither_name(self):
         places = {**self.places, "scratch": None}
         self.assertIn(policy.REMOVAL, self.bash("rm -rf $COS_SCRATCH_RAM/pr", places=places))
+
+
+class AHarmlessShapeIsNotRefused(_Unit):
+    """KR4.3 of idea 0006: the shapes the replay found refused though harmless pass, and the
+    harmful ones beside them stay refused (owner, 10-07: "Nới chính xác")."""
+
+    def git(self, *args, cwd=None):
+        import subprocess
+
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            cwd=cwd or self.tree,
+            check=True,
+            capture_output=True,
+        )
+
+    def repo(self):
+        """The worktree as a checkout of `feat/x`, pushed with its upstream to a bare origin."""
+        self.git("init", "-q", "--bare", str(self.root / "origin.git"), cwd=self.root)
+        self.git("init", "-q", "-b", "feat/x")
+        self.git("remote", "add", "origin", str(self.root / "origin.git"))
+        self.git("commit", "-q", "--allow-empty", "-m", "x")
+        self.git("push", "-q", "-u", "origin", "feat/x")
+
+    def test_a_push_of_head_from_the_units_branch_runs(self):
+        self.repo()
+        for line in (
+            "git push",
+            "git push origin HEAD",
+            "git push -u origin HEAD 2>&1 | tail -3",
+            'git add a && git commit -q -m "x" && git push -q origin HEAD',
+            "git status -sb | head -2; git push 2>&1 | tail -5",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
+    def test_any_other_push_of_head_is_refused(self):
+        self.repo()
+        for line in (
+            "git push --force origin HEAD",
+            "git push -f",
+            "git push --force-with-lease origin HEAD",
+            "git push origin +HEAD",
+            "git push origin HEAD:main",
+            "git push upstream HEAD",
+            "git push origin",
+            "git push --tags",
+            "git push --all",
+            "git push --mirror",
+            "git push origin --delete HEAD",
+            "git checkout main && git push origin HEAD",
+            "git switch -c main; git push",
+            "git branch -m main; git push",
+            "git rebase main other && git push origin HEAD",
+            "echo 'ref: refs/heads/main' > .git/HEAD; git push",
+            "GIT_DIR=/x git push origin HEAD",
+            "export GIT_DIR=/x; git push",
+            "cd $X && git push origin HEAD",
+            "bash -c 'git push origin HEAD'",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.HOST, self.bash(line))
+
+    def test_a_push_of_head_off_the_units_branch_is_refused(self):
+        self.repo()
+        self.git("checkout", "-q", "-b", "main")
+        for line in ("git push origin HEAD", "git push"):
+            with self.subTest(line=line):
+                self.assertIn(policy.HOST, self.bash(line))
+        self.git("checkout", "-q", "--detach")
+        self.assertIn(policy.HOST, self.bash("git push origin HEAD"))
+
+    def test_a_bare_push_is_refused_unless_it_sends_the_one_branch(self):
+        self.repo()
+        self.git("config", "push.default", "matching")
+        self.assertIn(policy.HOST, self.bash("git push"))
+        self.assertEqual(self.bash("git push origin HEAD"), "")
+        self.git("config", "--unset", "push.default")
+        self.git("config", "remote.origin.push", "refs/heads/feat/x:refs/heads/main")
+        self.assertIn(policy.HOST, self.bash("git push"))
+        self.git("config", "--unset", "remote.origin.push")
+        self.git("branch", "-q", "--unset-upstream")
+        self.assertIn(policy.HOST, self.bash("git push"))
+
+    def test_no_checkout_pushes_no_head(self):
+        for line in ("git push", "git push origin HEAD"):
+            with self.subTest(line=line):
+                self.assertIn(policy.HOST, self.bash(line))
+
+    def test_claude_asked_its_version_or_help_runs(self):
+        for line in (
+            "claude --version",
+            "claude -v",
+            "which claude && claude --help 2>&1 | grep -i -A2 system-prompt",
+            ".venv/lib/claude_agent_sdk/_bundled/claude -h",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+        for line in (
+            "claude",
+            "claude -p hi",
+            "claude --version -p hi",
+            "claude --help --print hi",
+            "timeout 5 claude --version",
+            "claude --version; claude -p hi",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.REMOVAL, self.bash(line))
+
+    def test_a_name_the_first_command_sets_below_the_scratch_is_removed(self):
+        for line in (
+            "S=$COS_SCRATCH_RAM/pr && rm -rf $S && mkdir -p $S/.cos/ideas",
+            "S=$COS_SCRATCH_DISK/shot && rm -rf $S && git clone -q . $S; cd $S && git status",
+            f'S={self.disk}/sim; rm -rf "$S"; mkdir -p $S',
+            "S=${COS_SCRATCH_DISK}/a; rm -rf $S/b",
+            "S=$COS_SCRATCH_RAM/pr && rm -rf $S && python3 - \"$S\" <<'E'\nS = 1\nE",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
+    def test_a_name_set_any_other_way_is_refused(self):
+        for line in (
+            "S=$X/pr && rm -rf $S",
+            "S=$(mktemp -d) && rm -rf $S",
+            "S=/ && rm -rf $S",
+            f"S={self.root}/elsewhere && rm -rf $S",
+            "S=$COS_SCRATCH_RAM && rm -rf $S",
+            "S=$COS_SCRATCH_RAM/../.. && rm -rf $S",
+            "S='$COS_SCRATCH_RAM/a b' && rm -rf $S",
+            "S=$COS_SCRATCH_RAM/* && rm -rf $S",
+            "S=$COS_SCRATCH_RAM/pr && S=/ && rm -rf $S",
+            "S=$COS_SCRATCH_RAM/pr; S+=/../.. ; rm -rf $S",
+            "S=$COS_SCRATCH_RAM/pr | rm -rf $S/x",
+            "S=$COS_SCRATCH_RAM/pr || rm -rf $S/x",
+            "true && S=$COS_SCRATCH_RAM/pr; rm -rf $S",
+            "(S=$COS_SCRATCH_RAM/pr); rm -rf $S",
+            "rm -rf $S; S=$COS_SCRATCH_RAM/pr",
+            "S=$COS_SCRATCH_RAM/pr; read S < f; rm -rf $S",
+            "S=$COS_SCRATCH_RAM/pr; export S=/; rm -rf $S",
+            "S=$COS_SCRATCH_RAM/pr; printf -v S /; rm -rf $S",
+            "S=$COS_SCRATCH_RAM/pr; for S in /; do rm -rf $S; done",
+            "S=$COS_SCRATCH_RAM/pr; rm -rf ${S:=/}; rm -rf $S",
+            "S=$COS_SCRATCH_RAM/pr; echo $((S=1)); rm -rf $S",
+            "S=$COS_SCRATCH_RAM/pr; eval x; rm -rf $S",
+            "S=$COS_SCRATCH_RAM/pr; source f; rm -rf $S",
+            "S=$COS_SCRATCH_RAM/pr; bash -c 'S=/; rm -rf $S/x'",
+            "S=$COS_SCRATCH_RAM/pr; cd /; rm -rf $T",
+        ):
+            with self.subTest(line=line):
+                self.assertNotEqual(self.bash(line), "")
+
+    def test_node_code_is_not_read_for_shell_substitutions(self):
+        for line in (
+            "node -e 'const a = `rm -rf ${x}`; console.log(a)'",
+            'node -e "const a = \\`release \\${b}\\`; console.log(a)"',
+            'node -e "s = s.slice(0, 1) + \\`gh \\${x}\\`;"',
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+        for line in (
+            'node -e "const a = `rm -rf ~`"',
+            'node -e "const a = $(rm -rf ~)"',
+            "node -e 'x; rm -rf ~'",
+            "node -e 'x; git push origin main'",
+            "node -p 'x; claude -p hi'",
+            "sh -c 'a=`rm -rf ${x}`'",
+            "S=$COS_SCRATCH_DISK/s && rm -rf $S"
+            " && git ls-files | while read f; do mkdir -p $S/$(dirname $f); done",
+        ):
+            with self.subTest(line=line):
+                self.assertNotEqual(self.bash(line), "")
+
+    def test_a_secrets_path_as_text_written_into_the_unit_runs(self):
+        for line in (
+            "cat >> tests/test_x.py <<'EOF'\nlines = ('cat ~/.config/coscc/env',)\nEOF",
+            f"cat > {self.disk}/notes.md <<'EOF'\n~/.ssh/id_rsa\nEOF",
+            'git add -A && git commit -q -m "K1: refuse ~/.config/coscc and ~/.ssh" && git log -1',
+            "git commit -F - <<'EOF'\nK1: ~/.config/coscc\nEOF",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self.bash(line), "")
+
+    def test_a_secrets_path_anything_reads_stays_refused(self):
+        for line in (
+            f"cat > {self.root}/x <<'EOF'\n~/.config/coscc\nEOF",
+            "cat > x <<EOF\n~/.config/coscc\nEOF",
+            "cat > x <<EOF\n$(cat ~/.config/coscc/env)\nEOF",
+            f"python3 - <<'EOF'\nopen('{self.home}/.config/coscc/env')\nEOF",
+            "python3 - <<'EOF'\nprint(open(\"~/.config/coscc/env\").read())\nEOF",
+            "tee x <<'EOF'\n~/.config/coscc\nEOF",
+            "cat > x 2>/dev/null <<'EOF'\n~/.config/coscc\nEOF",
+            "cat ~/.ssh/id <<'EOF'\nx\nEOF",
+            "cd .. && cat > x <<'EOF'\n~/.config/coscc\nEOF",
+            "git commit -F ~/.config/coscc/env",
+            "git commit --file=~/.config/coscc/env",
+            'git commit -m "$(cat ~/.config/coscc/env)"',
+            "git log -m ~/.config/coscc",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.SECRETS, self.bash(line))
+
+    def test_a_cd_into_the_data_root_stays_refused(self):
+        data = self.root / "data"
+        for line in (
+            f'cd {data}; for s in ws/*; do find "$s" -type f | wc -l; done',
+            f"cd {data} && ls",
+            f"cd {data} && cat cos.db",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(policy.SECRETS, self.bash(line))
 
 
 class TheHelperRulesHold(_Unit):
