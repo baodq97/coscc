@@ -1245,9 +1245,10 @@ def _inline(simple: _Simple, docs: Mapping[int, str], fed: _Simple | None = None
                     out.append(r.target)
                 elif r.fd in ("", "0") and r.op in ("<<", "<<-") and r.at in docs:
                     out.append(docs[r.at])
-            at = None if fed is None else _program_at(list(fed.words))
-            if at is not None and fed.words[at].rsplit("/", 1)[-1] in ("echo", "printf"):
-                out.append(" ".join(fed.words[at + 1 :]))
+            fed_words = [] if fed is None else list(fed.words)
+            at = _program_at(fed_words) if fed_words else None
+            if at is not None and fed_words[at].rsplit("/", 1)[-1] in ("echo", "printf"):
+                out.append(" ".join(fed_words[at + 1 :]))
     return out
 
 
@@ -1845,7 +1846,8 @@ def _recursive_secret(grant: Grant, words: list[str], cwds: list[str | None]) ->
     word names itself is `_word_secret`'s; a search's pattern is no path."""
     if not grant.secrets:
         return ""
-    for k in {_unwrapped(words, k) for k in _launched(words) if k < len(words)} - {None}:
+    starts = {_unwrapped(words, k) for k in _launched(words) if k < len(words)}
+    for k in (k for k in starts if k is not None):
         hit = _recursive_read(grant, words[k].rsplit("/", 1)[-1], words[k + 1 :], cwds)
         if hit:
             return hit
