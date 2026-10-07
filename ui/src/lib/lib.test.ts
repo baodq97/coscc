@@ -14,6 +14,7 @@ import { noRuns } from "../screens/Insights";
 import { moved } from "../screens/UpNext";
 import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
+import { onWords } from "../screens/AgentActivity";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
 import { builtinOf, changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
@@ -744,7 +745,7 @@ describe("until and statusWords", () => {
   const row = { on: true, on_in: ["a", "b"], off_reason: "", last: null, next_at: null } as unknown as AgentRow;
   it("tells on, last and next in one line", () => {
     const said = statusWords({ ...row, last: { at: "", made: 3 } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" }, "a");
-    expect(said).toMatch(/^On here \(also on in b\) · ran .*, and made 3 · next in \d+ d$/);
+    expect(said).toMatch(/^On here \(also on in b\) · ran .*, last run made 3 · next in \d+ d$/);
   });
   it("says why an agent is off and that it never ran", () => {
     expect(statusWords({ ...row, on: false, on_in: [], off_reason: "a run stopped at its ceiling" }, "a")).toBe("Off here: a run stopped at its ceiling · never ran");
@@ -752,6 +753,12 @@ describe("until and statusWords", () => {
   it("tells a stage agent's last run and says it is always on", () => {
     expect(statusWords({ ...row, on: null }, "a")).toBe("Always on · never ran");
     expect(statusWords({ ...row, on: null, last: { at: "", made: null } as AgentRow["last"] }, "a")).toMatch(/^Always on · ran /);
+  });
+  it("says a failed or stopped last run as it ended, and the tile's line has no 'never ran' mid-line", () => {
+    const failed = { ...row, last: { at: "", made: null, outcome: "failed" } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" };
+    expect(statusWords(failed, "a")).toMatch(/ · failed .* · next in/);
+    expect(onWords({ ...row, next_at: "2999-01-01T00:00:00Z" }, "a")).toMatch(/^On here \(also on in b\) · next in \d+ d$/);
+    expect(attention({ ...failed, chip: "failed", running: { run: "r", started: "" } } as unknown as AgentRow)).toBeNull();
   });
   it("says running now, not never ran or next, while the first run is in flight", () => {
     const said = statusWords({ ...row, running: { run: "r", started: "" }, next_at: "2999-01-01T00:00:00Z" }, "a");
