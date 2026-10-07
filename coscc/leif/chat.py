@@ -364,12 +364,30 @@ SOURCE_CHARS = 200
 _WORKSPACE = {"workspace": {"type": "string"}}
 
 
-def _fit(head: list[str], lines: Sequence[str], hint: str = "") -> str:
-    """`head`, then as many of `lines` as fit `READ_BUDGET`, then how many were left out."""
+def _numbers(ids: Sequence[int], room: int) -> str:
+    """`#1, #2, ...` of `ids`; their count and range when that is over `room` characters."""
+    text = ", ".join(f"#{i}" for i in ids)
+    return text if len(text) <= room else f"{len(ids)} of them, #{min(ids)} to #{max(ids)}"
+
+
+def _fit(
+    head: list[str], lines: Sequence[str], hint: str = "", ids: Sequence[int] | None = None
+) -> str:
+    """`head`, then as many of `lines` as fit `READ_BUDGET`, then how many were left out. With
+    `ids` (one per line), the last line names those left out and keeps its own room."""
+
+    def more(i: int) -> str:
+        if ids is None:
+            return f"... {len(lines) - i} more not shown{hint}"
+        left = _numbers(sorted(ids[i:]), READ_BUDGET // 4)
+        return f"... {len(lines) - i} more not shown, details of {left}; read them with ids"
+
     out, used = list(head), sum(len(h) + 1 for h in head)
     for i, line in enumerate(lines):
-        if used + len(line) + 1 > READ_BUDGET:
-            out.append(f"... {len(lines) - i} more not shown{hint}")
+        last = i == len(lines) - 1
+        room = 0 if ids is None or last else len(more(i + 1)) + 1
+        if used + len(line) + 1 + room > READ_BUDGET:
+            out.append(more(i))
             break
         out.append(line)
         used += len(line) + 1
@@ -601,6 +619,8 @@ async def read_proposals(core: Core, cwd: str, args: Mapping[str, Any]) -> str:
     asked = str(args.get("agent") or "")
     made = [p for p in got["proposals"] if _is(p["agent"], asked)]
     shown = made if args.get("include_decided") else [p for p in made if p["state"] == "pending"]
+    if args.get("ids"):
+        shown = [p for p in got["proposals"] if p["id"] in args["ids"]]
     lines = []
     for p in shown:
         sources = "; ".join(_source(s) for s in p["sources"])
@@ -619,7 +639,10 @@ async def read_proposals(core: Core, cwd: str, args: Mapping[str, Any]) -> str:
         + (f", {len(made) - pending} decided shown" if args.get("include_decided") else "")
         + ", newest first"
     ]
-    return _fit(head, lines)
+    named = sorted(p["id"] for p in made if p["state"] == "pending")
+    if named and not args.get("ids"):
+        head.append(f"pending: {_numbers(named, READ_BUDGET // 2)}")
+    return _fit(head, lines, ids=[p["id"] for p in shown])
 
 
 # Runs `runs` lists at most, newest first, and characters of each one's last words.
@@ -727,13 +750,15 @@ READS: dict[str, tuple[Callable[..., Any], str, dict[str, Any]]] = {
         "Use instead of guessing when asked what agents proposed for the Backlog: pending "
         "proposals, newest first, each with its number, agent, run, problem and sources. `agent` "
         "keeps one agent's (its key or name); `include_decided` adds the accepted and dismissed "
-        "ones with their reason.",
+        "ones with their reason. Every pending number is named, but the details of the oldest "
+        "may be left out to fit: `ids` returns those proposals, in any state.",
         {
             "type": "object",
             "properties": {
                 **_WORKSPACE,
                 "agent": {"type": "string"},
                 "include_decided": {"type": "boolean"},
+                "ids": {"type": "array", "items": {"type": "integer"}},
             },
             "additionalProperties": False,
         },

@@ -147,8 +147,9 @@ class EachReadAnswersFromTheAppsOwnState(_App):
         said = await chat.read_proposals(self.core, self.cwd, {})
         lines = said.splitlines()
         self.assertEqual(lines[0], "workspace proj: 1 pending proposals, newest first")
-        self.assertEqual(len(lines), 2)
-        self.assertIn(f"#{second} · pending · telemetry-audit · feat · Second", lines[1])
+        self.assertEqual(lines[1], f"pending: #{second}")
+        self.assertEqual(len(lines), 3)
+        self.assertIn(f"#{second} · pending · telemetry-audit · feat · Second", lines[2])
         full = await chat.read_proposals(self.core, self.cwd, {"include_decided": True})
         last = full.splitlines()[-1]
         self.assertIn(f"#{first} · dismissed", last)
@@ -156,7 +157,56 @@ class EachReadAnswersFromTheAppsOwnState(_App):
         self.assertNotIn("p" * 401, last)
         for asked, n in (("telemetry", 1), ("telemetry-audit", 1), ("scan", 0)):
             said = await chat.read_proposals(self.core, self.cwd, {"agent": asked})
-            self.assertEqual(len(said.splitlines()) - 1, n, asked)
+            self.assertEqual(sum(ln.startswith("#") for ln in said.splitlines()), n, asked)
+
+    async def _pending(self, n: int, dismissed: int, problem: int, source: int) -> list[int]:
+        """`n` proposals made, the first `dismissed` of them dismissed; the ids still pending."""
+        from coscc.units import proposals
+
+        data = Data(str(self.root / "data"))
+        key = self.core.ws.key(self.cwd)
+        item = {"type": "fix", "title": "T", "problem": "p" * problem, "sources": ["s" * source]}
+        made = proposals.add(
+            data, key, "telemetry-audit", "", [{**item, "slug": f"a-{i}"} for i in range(n)]
+        )
+        for pid in made[:dismissed]:
+            await proposals.dismiss(data, key, pid, "not now")
+        return made[dismissed:]
+
+    async def test_proposals_names_every_pending_id_when_their_details_do_not_fit(self):
+        pending = await self._pending(30, 9, 400, 200)
+        self.assertEqual((pending[0], pending[-1]), (10, 30))
+        said = await chat.read_proposals(self.core, self.cwd, {})
+        self.assertLessEqual(len(said), chat.READ_BUDGET)
+        lines = said.splitlines()
+        self.assertEqual(lines[1], "pending: " + ", ".join(f"#{i}" for i in pending))
+        shown = {int(ln[1:].split(" ")[0]) for ln in lines[2:-1]}
+        dropped = [i for i in pending if i not in shown]
+        self.assertTrue(dropped)
+        self.assertIn("more not shown", lines[-1])
+        self.assertIn(", ".join(f"#{i}" for i in dropped), lines[-1])
+        self.assertIn("ids", lines[-1])
+
+    async def test_proposals_stay_within_the_budget_with_five_hundred_pending(self):
+        pending = await self._pending(500, 0, 400, 200)
+        said = await chat.read_proposals(self.core, self.cwd, {})
+        self.assertLessEqual(len(said), chat.READ_BUDGET)
+        self.assertIn("500", said.splitlines()[1])
+        self.assertIn("#1", said.splitlines()[1])
+        self.assertIn(f"#{pending[-1]}", said.splitlines()[1])
+        self.assertIn("ids", said.splitlines()[-1])
+
+    async def test_proposals_by_ids_returns_those_in_full_in_any_state(self):
+        pending = await self._pending(12, 2, 400, 200)
+        said = await chat.read_proposals(self.core, self.cwd, {"ids": [10, 1]})
+        lines = said.splitlines()
+        self.assertEqual(len(lines), 3, said)
+        self.assertIn("#1 · dismissed", " ".join(lines))
+        self.assertIn("#10 · pending", " ".join(lines))
+        self.assertIn("p" * 400, said)
+        self.assertNotIn("#11 ", said)
+        self.assertNotIn("pending: ", said)
+        self.assertIn(11, pending)
 
     async def test_runs_names_an_agents_last_runs_with_what_they_proposed_and_said(self):
         from coscc.units import proposals
