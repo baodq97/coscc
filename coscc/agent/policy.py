@@ -2091,7 +2091,8 @@ def _data(grant: Grant, parsed: _Parsed, cwds: list[str | None]) -> list[tuple[i
 
 
 def _takes_text(grant: Grant, simple: _Simple, places: list[str | None]) -> bool:
-    """`cat` whose one output is a file in the unit's places, or `git commit -F -`."""
+    """`cat` whose one output is a file in the unit's places and not git's own (a hook runs it),
+    or `git commit -F -`."""
     words = list(simple.words)
     out = [r for r in simple.redirects if r.op not in ("<<", "<<-")]
     if words == ["cat"]:
@@ -2100,6 +2101,7 @@ def _takes_text(grant: Grant, simple: _Simple, places: list[str | None]) -> bool
             and out[0].op in (">", ">>", ">|")
             and out[0].fd in ("", "1")
             and not out[0].expanded
+            and ".git/" not in out[0].target
             and not _outside(grant, out[0].target, places)
         )
     at = _positions("git", words[1:]) if words[:1] == ["git"] else []

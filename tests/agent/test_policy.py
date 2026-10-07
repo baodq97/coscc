@@ -1654,6 +1654,7 @@ class AHarmlessShapeIsNotRefused(_Unit):
             "cat > x 2>/dev/null <<'EOF'\n~/.config/coscc\nEOF",
             "cat ~/.ssh/id <<'EOF'\nx\nEOF",
             "cd .. && cat > x <<'EOF'\n~/.config/coscc\nEOF",
+            "cat > .git/hooks/pre-push <<'EOF'\ncat ~/.config/coscc/env\nEOF",
             "git commit -F ~/.config/coscc/env",
             "git commit --file=~/.config/coscc/env",
             'git commit -m "$(cat ~/.config/coscc/env)"',
