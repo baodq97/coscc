@@ -12,7 +12,7 @@ from typing import Any
 import jsonschema
 
 from coscc import kernel
-from coscc.agent import pack
+from coscc.agent import pack, policy
 from coscc.units import contracts, guards, submit
 from coscc.units.contracts import ContractError
 from coscc.units.submit import AGAIN, Channel
@@ -547,3 +547,59 @@ class ADraftPassesTheLoadChecks(unittest.TestCase):
         del row["fields"]["trigger"]
         said, _ = self._said(agent=row, process={"name": "docs", "process": full})
         self.assertFalse(said.get("is_error"), said)
+
+
+class ADraftMayAskFirst(unittest.TestCase):
+    """Dagaz may hand back up to three questions, each with its recommended answer, before any
+    draft; and the gaps the catalog leaves, beside a draft or its questions."""
+
+    catalog = {t.name: t.effect for t in kernel.BUILTINS}
+
+    def _said(self, **obj: Any) -> tuple[dict[str, Any], submit.Collector]:
+        collector = submit.Collector("dagaz", self.catalog)
+        return asyncio.run(collector.handle({"why": "a scope to settle", **obj})), collector
+
+    def _q(self, n: int, rec: str = "the units of this project") -> dict[str, Any]:
+        return {"n": n, "text": "Which code should it look at?", "recommendation": rec}
+
+    def test_dagaz_submits_its_questions_and_gaps_through_its_grant(self):
+        self.assertIn(pack.row("dagaz")["output"]["kind"], policy.SUBMIT_KINDS)
+        self.assertTrue(policy.row_for("dagaz").submits)
+        props = contracts.schema("dagaz")["properties"]
+        self.assertEqual(set(props["questions"]["items"]["required"]), {"n", "text", "recommendation"})
+        self.assertEqual(
+            props["gaps"]["items"]["properties"]["part"]["enum"],
+            ["tool", "data", "trigger", "output", "event"],
+        )
+
+    def test_questions_alone_are_taken_and_kept(self):
+        gap = {"part": "trigger", "need": "every morning at 7", "instead": "every 24 h"}
+        said, collector = self._said(questions=[self._q(1), self._q(2)], gaps=[gap])
+        self.assertFalse(said.get("is_error"), said)
+        self.assertEqual(collector.object()["gaps"], [gap])
+
+    def test_more_than_three_questions_are_refused(self):
+        said, collector = self._said(questions=[self._q(n) for n in range(1, 5)])
+        self.assertIn("ask at most 3 questions", said["content"][0]["text"])
+        self.assertIsNone(collector.object())
+
+    def test_a_question_with_an_empty_recommendation_is_refused(self):
+        said, _ = self._said(questions=[self._q(1, rec=" ")])
+        self.assertIn("carries the answer you recommend", said["content"][0]["text"])
+
+    def test_a_question_beside_a_draft_is_refused(self):
+        said, _ = self._said(questions=[self._q(1)], agent=_draft_agent())
+        self.assertIn("ask, or draft", said["content"][0]["text"])
+
+    def test_a_gap_of_no_known_part_is_refused_by_the_schema(self):
+        good = {"part": "event", "need": "a unit stuck overnight", "instead": "a daily run"}
+        schema = contracts.schema("dagaz")
+        jsonschema.validate({"why": "w", "gaps": [good]}, schema)
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate({"why": "w", "gaps": [{**good, "part": "email"}]}, schema)
+
+    def test_a_draft_with_its_gaps_is_taken(self):
+        gap = {"part": "output", "need": "a report to the person", "instead": "proposals"}
+        said, collector = self._said(agent=_draft_agent(), gaps=[gap])
+        self.assertFalse(said.get("is_error"), said)
+        self.assertEqual(collector.object()["gaps"], [gap])
