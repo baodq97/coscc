@@ -525,6 +525,8 @@ class Detail(TypedDict):
     decisions: list[Decision]
     # Its graded outcome, `None` when no row grades outcomes.
     outcome: Outcome | None
+    # The originator's own words that opened the unit (its `idea.md`), empty when it has none.
+    brief: str
 
 
 def _text(v: Any) -> str:
@@ -548,6 +550,7 @@ def detail(
     decisions: Sequence[DecisionRow] = (),
     graded: Mapping[int, RoundGrades] | None = None,
     outcome: Outcome | None = None,
+    brief: str = "",
 ) -> Detail:
     """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`), its `outputs`
     (`UnitMeta.outputs`), its `decisions` (`UnitMeta.decisions`) and what each review round graded
@@ -664,11 +667,18 @@ def detail(
         "hold_moves": [str(m) for m in unit.get("hold_moves") or []],
         "outputs": outputs,
         "outcome": outcome,
+        "brief": brief_words(brief),
         "decisions": [
             {"kind": d["kind"], "by": d["by"], "date": d["date"], "text": _decision_text(d)}
             for d in decisions
         ],
     }
+
+
+def brief_words(idea_md: str) -> str:
+    """The person's words in an `idea.md` the app wrote (`## In their own words`), else the file as it is."""
+    head = "## In their own words"
+    return idea_md.split(head, 1)[1].strip() if head in idea_md else idea_md.strip()
 
 
 def _brief_rounds(units_: list[dict[str, Any]]) -> None:

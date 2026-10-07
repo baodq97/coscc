@@ -516,6 +516,19 @@ class TheUnitPageCarriesItsOutputs(unittest.TestCase):
         got = detail(unit, [], outputs)
         self.assertEqual(got["outputs"], outputs)
 
+    def test_the_page_carries_the_persons_words_of_the_brief(self):
+        from coscc.units.read import detail
+
+        unit = {
+            "name": "0001_x",
+            "number": 1,
+            "slug": "x",
+            "state": {"state": "a", "label": "A", "color": "gray"},
+        }
+        idea = "# Idea: x\nAuthor: the originator.\n\n## In their own words\n\nMake it faster.\n"
+        self.assertEqual(detail(unit, [], [], brief=idea)["brief"], "Make it faster.")
+        self.assertEqual(detail(unit, [], [])["brief"], "")
+
 
 class TheUnitPageCarriesItsDecisions(unittest.TestCase):
     UNIT = {

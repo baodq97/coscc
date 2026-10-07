@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { Question } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { allUnits, useBoards, type PlacedUnit } from "../lib/boards";
+import { liveQuestions } from "../lib/model";
 import { ago, unitCode, unitTitle } from "../lib/format";
 import { Icon } from "../lib/icons";
 import { stageLabel } from "../lib/pack";
@@ -14,9 +15,11 @@ import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui"
 export function Inbox({ workspace, number }: { workspace?: string; number?: string }) {
   const { boards, loading } = useBoards();
   const waiting = allUnits(boards)
-    .filter((u) => u.open > 0)
+    .filter((u) => liveQuestions(u) > 0)
     .sort((a, b) => b.updated.localeCompare(a.updated));
-  const chosen = waiting.find((u) => u.workspace.name === workspace && u.number === Number(number)) ?? waiting[0];
+  const asked = workspace !== undefined && number !== undefined;
+  const found = waiting.find((u) => u.workspace.name === workspace && u.number === Number(number));
+  const chosen = found ?? (asked ? undefined : waiting[0]);
 
   if (loading) return <div className="page"><SkeletonRows rows={4} /></div>;
   if (!waiting.length)
@@ -57,7 +60,15 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
           </div>
         ))}
       </div>
-      <div className="rp">{chosen && <Questions unit={chosen} />}</div>
+      <div className="rp">
+        {chosen ? (
+          <Questions unit={chosen} />
+        ) : (
+          <Empty icon="search" title="Not found in what needs you">
+            {unitCode(workspace ?? "", Number(number))} has no question waiting on you: it may be answered, dropped or shipped. The list on the left is what waits.
+          </Empty>
+        )}
+      </div>
     </div>
   );
 }
