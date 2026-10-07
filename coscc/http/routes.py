@@ -398,7 +398,8 @@ async def propose_gap(request: Request) -> proposals.Proposal:
     ws, data, journal = core.ws.key(cwd), Data(core.config.data_dir), core.ws.journal()
     ends = await asyncio.to_thread(journal.records, ws, "", kinds=("end",)) if journal else []
     end = next((r for r in reversed(ends) if r.get("run") == run), {})
-    draft = end.get("draft") if isinstance(end.get("draft"), dict) else {}
+    draft = end.get("draft")
+    draft = draft if isinstance(draft, dict) else {}
     gaps = draft.get("gaps") or []
     if not isinstance(at, int) or isinstance(at, bool) or not 0 <= at < len(gaps):
         raise Invalid(f"run {run} drafted no gap {at}")
