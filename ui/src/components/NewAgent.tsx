@@ -100,7 +100,9 @@ export function DescribeTask({ cwd, want, run, onDraft, onRunning, onDiscard }: 
   const onRunningRef = useRef(onRunning);
   onRunningRef.current = onRunning;
   const running = phase.at === "running";
-  useEffect(() => onRunningRef.current?.(running), [running]);
+  useEffect(() => {
+    onRunningRef.current?.(running);
+  }, [running]);
 
   const follows = run || kept?.run;
   useEffect(() => {
