@@ -189,6 +189,8 @@ export function AgentPage({ name, tab = "activity" }: { name: string; tab?: stri
     }
     setBusy(false);
     setDone(!failed);
+    // The header (its chip, its on/off) reads the latest list: take it again from what was saved.
+    agents.reload();
   };
   const own = a.own;
   const remove = async () => {
