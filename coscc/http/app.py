@@ -86,7 +86,9 @@ class Core:
         self.attempts.admitting = self._admitting
         self.holds = Holds(self.attempts)
         # The parts below `Core`, each given what it reads.
-        self.agents = Agents(self.config, self.ws, lambda: self.steps.hooks)
+        self.agents = Agents(
+            self.config, self.ws, lambda: self.steps.hooks, lambda cwd: self.autopilot.today(cwd)
+        )
         self.models = Models(self.config, self.ws)
         self.activity = Activity(self.config, self.ws)
         self.chat = Chat(

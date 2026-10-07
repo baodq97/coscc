@@ -106,6 +106,16 @@ class EachStatus(Base):
         for field in ("agent", "model", "run", "unit", "stage"):
             self.assertEqual(start[field], end[field], field)
 
+    def test_the_end_says_who_started_it_and_the_agents_name(self):
+        named = run_mod.Agent(
+            "scan", Row(max_turns=4, max_budget_usd=1.0), model="m", name="Sowilo"
+        )
+        self.go(Fake(obj={"units": []}), agent=named, started_by="manual")
+        [end] = self.rows("end")
+        self.assertEqual((end["started_by"], end["agent_name"]), ("manual", "Sowilo"))
+        self.go(Fake(obj={"units": []}))
+        self.assertEqual(self.rows("end")[-1]["started_by"], "person")
+
     def test_a_ceiling_is_paused_budget(self):
         got = self.go(Fake(obj={"units": []}, terminal="error_max_budget_usd"))[-1][1]
         self.assertEqual((got.status, got.output), ("paused-budget", None))

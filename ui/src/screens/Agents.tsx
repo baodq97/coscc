@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import type { AgentRow } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { LeifAvatar, Rune } from "../lib/icons";
-import { modelName, money } from "../lib/format";
+import { ago, modelName, money, until } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { Link, navigate, useQuery } from "../lib/router";
 import { isBuiltIn, packTitle, type BuildAgent } from "../lib/build";
@@ -62,6 +62,25 @@ export function attention(a: AgentRow): { tone: "red" | "amber"; label: string }
   return null;
 }
 
+/** Where an agent stands, in a line: on or off here, its last run and what it made, its next run. */
+export function statusWords(a: AgentRow, here: string): string {
+  const said: string[] = [];
+  if (a.on !== null) {
+    const held = a.on && a.off_reason ? ` · ${a.off_reason}` : "";
+    const elsewhere = a.on_in.filter((n) => n !== here);
+    const also = elsewhere.length ? ` (${a.on ? "also on" : "on"} in ${elsewhere.join(", ")})` : "";
+    said.push(a.on ? `On here${also}${held}` : `Off here${a.off_reason ? `: ${a.off_reason}` : ""}${also}`);
+  }
+  if (a.last)
+    said.push(`ran ${ago(a.last.at)}${a.last.made != null ? `, made ${a.last.made}` : ""}`);
+  else if (a.on !== null) said.push("never ran");
+  if (a.next_at) said.push(`next ${until(a.next_at)}`);
+  return said.join(" · ");
+}
+
+/** The address of a run the app holds now, which the run page follows live. */
+export const liveRun = (a: AgentRow, workspace?: Workspace) => (a.running && workspace ? `/run/${workspace.name}/${a.running.run}` : "");
+
 export function AgentGlyph({ a, size = "" }: { a: AgentRow; size?: "" | "lg" | "xl" }) {
   if (a.key === "leif") return <LeifAvatar size={size} />;
   return (
@@ -111,7 +130,7 @@ export function useAgents() {
   const draft = useQuery("draft");
   const ofRun = useRunWorkspace(named ? "" : draft, list);
   const workspace = pickWorkspace(list, named, ofRun);
-  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path } : {});
+  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path } : {}, { on: ["agent-run."], every: 60_000, wait: 0 });
   return { ws, list, workspace, cwd: workspace?.path ?? "", agents };
 }
 
@@ -218,13 +237,14 @@ export function Agents() {
 
 function AgentLine({ a, rows, workspace }: { a: AgentRow; rows: AgentRow[]; workspace?: Workspace }) {
   const look = attention(a);
+  const live = liveRun(a, workspace);
   const whose = isBuiltIn(a as BuildAgent) ? "" : packTitle(a as BuildAgent);
   return (
     <Link to={inWorkspace(`/agents/${a.key}`, workspace)} className="agent-line">
       <AgentGlyph a={a} />
       <span className="who">
         <b>{a.row.name ?? a.key}</b> <span className="faint mono">{a.key}</span>
-        <span className="when">{triggerWords(a, rows)}</span>
+        <span className="when">{[statusWords(a, workspace?.name ?? ""), triggerWords(a, rows)].filter(Boolean).join(" · ")}</span>
       </span>
       <span className="what">
         {modelName(a.config.model)}
@@ -240,6 +260,25 @@ function AgentLine({ a, rows, workspace }: { a: AgentRow; rows: AgentRow[]; work
         )}
       </span>
       <span className="marks">
+        {a.running && (
+          <Chip square tone="accent">
+            <span className="dot live" /> running
+            {live && (
+              <span
+                role="link"
+                tabIndex={0}
+                className="live-link"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigate(live);
+                }}
+              >
+                {" "}▸ live
+              </span>
+            )}
+          </Chip>
+        )}
         {whose && <Chip square tone={whose === "Yours" ? "accent" : "plain"}>{whose === "Yours" ? "yours" : whose}</Chip>}
         {look && <Chip square tone={look.tone}>{look.label}</Chip>}
         {a.edited.length > 0 && <Chip square tone="accent">edited</Chip>}

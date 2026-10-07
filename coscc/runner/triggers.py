@@ -54,9 +54,27 @@ STATE_KIND = "agent-state"
 # Leif's tool, on the chat's own `cos` server.
 LEIF_TOOL = policy.RUN_AGENT_TOOL.rsplit("__", 1)[-1]
 
-# The (workspace, agent) pairs a run of this process holds now, and the tasks `start` made.
-_RUNNING: set[tuple[str, str]] = set()
+# The (workspace, agent) pairs a run of this process holds now, each with its run id and start
+# time, and the tasks `start` made.
+_RUNNING: dict[tuple[str, str], tuple[str, str]] = {}
 _TASKS: set[asyncio.Task] = set()
+
+
+def running() -> list[dict[str, str]]:
+    """The runs held now: `{workspace, agent, run, started}`."""
+    return [
+        {"workspace": ws, "agent": key, "run": run, "started": at}
+        for (ws, key), (run, at) in list(_RUNNING.items())
+    ]
+
+
+def due(data: Data, ws: str, key: str) -> str | None:
+    """When the earliest event-delayed run of `key` in `ws` is due, or `None`."""
+    with data.connect() as conn:
+        got = conn.execute(
+            "SELECT MIN(due_at) FROM trigger_due WHERE workspace = ? AND agent = ?", (ws, key)
+        ).fetchone()
+    return got[0] if got else None
 
 
 def _trigger(found: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -147,14 +165,44 @@ def start(
     reason: str = "",
     text: str = "",
 ) -> str:
-    """`check`, then `run` in the background: what a press, Leif and the bus use. The run holds
-    its (workspace, agent) from here, so a second press is refused at once. Its run id, which the
-    caller may follow before the run has begun."""
-    loop = asyncio.get_running_loop()
+    """`check`, then `_hold`: what the bus and the schedule use, on the loop. A press and Leif
+    use `begin`, whose `check` runs off it."""
     ws = check(core, key, workspace, unit, by=by, reason=reason, text=text)
-    _RUNNING.add((ws, key))
+    return _hold(core, key, workspace, ws, unit, by, reason, text)
+
+
+async def begin(
+    core: Core,
+    key: str,
+    workspace: str,
+    unit: str = "",
+    *,
+    by: str,
+    reason: str = "",
+    text: str = "",
+) -> str:
+    """`start` with `check`, which reads the run log and the spend, off the loop."""
+    with pack.held():
+        ws = await asyncio.to_thread(
+            check, core, key, workspace, unit, by=by, reason=reason, text=text
+        )
+    return _hold(core, key, workspace, ws, unit, by, reason, text)
+
+
+def _hold(
+    core: Core, key: str, cwd: str, ws: str, unit: str, by: str, reason: str, text: str
+) -> str:
+    """The run in the background, holding its (workspace, agent) from here, so a second press is
+    refused at once (`unit-busy`; asked again, since `check` may have run off the loop). Its run
+    id, which the caller may follow before the run has begun."""
+    if (ws, key) in _RUNNING:
+        raise Refused(f"a run of {key} in this workspace is already going", ("unit-busy",))
     run_id = uuid.uuid4().hex
-    task = loop.create_task(_held(core, key, workspace, ws, unit, by, reason, text, run_id))
+    _RUNNING[ws, key] = (run_id, now())
+    core.bus.publish("agent-run.started", {"workspace": ws, "agent": key, "run": run_id})
+    task = asyncio.get_running_loop().create_task(
+        _held(core, key, cwd, ws, unit, by, reason, text, run_id)
+    )
     _TASKS.add(task)
     task.add_done_callback(_done)
     return run_id
@@ -173,23 +221,6 @@ async def stop() -> None:
     await asyncio.gather(*_TASKS, return_exceptions=True)
 
 
-async def run(
-    core: Core,
-    key: str,
-    workspace: str,
-    unit: str = "",
-    *,
-    by: str,
-    reason: str = "",
-    text: str = "",
-) -> str:
-    """One run of the row `key` in `workspace` (on `unit` for a row that reads one): its `run` id,
-    `""` when it was `skipped` (its input empty, no session, $0). `Invalid` from `check`."""
-    ws = check(core, key, workspace, unit, by=by, reason=reason, text=text)
-    _RUNNING.add((ws, key))
-    return await _held(core, key, workspace, ws, unit, by, reason, text)
-
-
 async def _held(
     core: Core,
     key: str,
@@ -205,7 +236,8 @@ async def _held(
     try:
         return await _run(core, key, cwd, ws, unit, by, reason, text, run_id)
     finally:
-        _RUNNING.discard((ws, key))
+        run, _ = _RUNNING.pop((ws, key), ("", ""))
+        core.bus.publish("agent-run.ended", {"workspace": ws, "agent": key, "run": run})
         core.updater.job_ended()
 
 
@@ -230,7 +262,7 @@ async def _run(
     if "interventions" in declared["data"]:
         found = await asyncio.to_thread(_interventions, core, journal, ws, since)
     if declared.get("skip_when_empty") and not found:
-        await asyncio.to_thread(_skipped, journal, ws, unit, key, by, since)
+        await asyncio.to_thread(_skipped, journal, ws, unit, key, by, since, run_id)
         return ""
     made = (
         await asyncio.to_thread(proposals.listed, data, ws, key)
@@ -257,7 +289,7 @@ async def _run(
             tree = str((await worktrees.main_tree(cwd, core.config.data_dir))[0])
         except (GitError, OSError) as e:
             await asyncio.to_thread(
-                _ended, journal, ws, unit, key, by, "failed", f"no trunk tree to read: {e}"
+                _ended, journal, ws, unit, key, by, "failed", f"no trunk tree to read: {e}", run_id
             )
             return ""
     row = policy.row_for(key)
@@ -348,7 +380,11 @@ def _data_until(journal: Any, ws: str, key: str) -> str:
     return ""
 
 
-def _skipped(journal: Any, ws: str, unit: str, key: str, by: str, since: str) -> None:
+def _name(key: str) -> str:
+    return str((pack.row(key) or {}).get("name") or "")
+
+
+def _skipped(journal: Any, ws: str, unit: str, key: str, by: str, since: str, run_id: str) -> None:
     try:
         journal.finished(
             ws,
@@ -359,6 +395,8 @@ def _skipped(journal: Any, ws: str, unit: str, key: str, by: str, since: str) ->
             status="done",
             skipped=True,
             started_by=by,
+            run=run_id,
+            agent_name=_name(key),
             cost_usd=0.0,
             detail="nothing new since its last run",
             **({"data_until": since} if since else {}),
@@ -367,7 +405,9 @@ def _skipped(journal: Any, ws: str, unit: str, key: str, by: str, since: str) ->
         log.exception("the skipped run of %s was not recorded", key)
 
 
-def _ended(journal: Any, ws: str, unit: str, key: str, by: str, outcome: str, why: str) -> None:
+def _ended(
+    journal: Any, ws: str, unit: str, key: str, by: str, outcome: str, why: str, run_id: str
+) -> None:
     try:
         journal.finished(
             ws,
@@ -377,6 +417,8 @@ def _ended(journal: Any, ws: str, unit: str, key: str, by: str, outcome: str, wh
             agent=key,
             status=outcome,
             started_by=by,
+            run=run_id,
+            agent_name=_name(key),
             cost_usd=0.0,
             detail=why,
         )
@@ -634,7 +676,7 @@ async def leif_call(core: Core, cwd: str, args: Mapping[str, Any]) -> Reply:
     """One `run_agent` call: the run started in the background, or the refusal with its codes."""
     key = str(args.get("key") or "")
     try:
-        run_id = start(
+        run_id = await begin(
             core,
             key,
             cwd,
@@ -647,7 +689,10 @@ async def leif_call(core: Core, cwd: str, args: Mapping[str, Any]) -> Reply:
         codes = ", ".join(getattr(e, "reasons", ()) or ())
         said = f"refused{f' ({codes})' if codes else ''}: {e}"
         return {"content": [{"type": "text", "text": said}], "is_error": True}
-    said = f"started {key}, run {run_id}; its output lands in the app"
+    said = (
+        f"started {key}, run {run_id}; its output lands in the app; "
+        f"[live run](/run/{core.ws.name(cwd)}/{run_id})"
+    )
     if (pack.row(key) or {}).get("output", {}).get("kind") == "draft":
         said += f"; the owner reads and saves its draft at /agents?draft={run_id}"
     return {"content": [{"type": "text", "text": said}]}

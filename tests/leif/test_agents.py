@@ -297,7 +297,7 @@ class ThePage(_WithAService):
     def test_a_run_view_says_its_log_who_started_it_and_a_skip(self):
         base = {"v": 1, "workspace": "w", "unit": "", "stage": "scan"}
         started = base | {"kind": "start", "at": _at(3), "started_by": "leif"}
-        kept = _end("scan", "done", 3, cost=0.1, unit="") | {"run": "abc123"}
+        kept = _end("scan", "done", 3, cost=0.1, unit="") | {"run": "abc123", "proposals": 4}
         skip = _end("scan", "done", 2, cost=0.0, unit="") | {
             "skipped": True,
             "detail": "nothing new since its last run",
@@ -312,6 +312,7 @@ class ThePage(_WithAService):
         ]
         by = {r["at"]: r for r in runs}
         self.assertEqual((by[_at(3)]["run"], by[_at(3)]["started_by"]), ("abc123", "leif"))
+        self.assertEqual((by[_at(3)]["made"], by[_at(2)]["made"]), (4, None))
         self.assertEqual(
             (
                 by[_at(2)]["skipped"],

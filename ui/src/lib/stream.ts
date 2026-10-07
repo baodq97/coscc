@@ -12,6 +12,7 @@ export type Change = { subject: string } & (
   | (OfUnit & { sha: string; at: string }) // `unit.shipped`
   | OfUnit // `answer.written`, `hold.moved`, `mode.set`, `retake.ended`, `integration.escalated`
   | { workspace: string } // `shortlist.saved`
+  | { workspace: string; agent: string; run: string } // `agent-run.started`, `agent-run.ended`
   | { session: string } // `chat-turn.ended`
 );
 
@@ -53,14 +54,16 @@ export function onChange(listener: (c: Change) => void): () => void {
 }
 
 /** A change that a screen showing `subjects` (prefixes, `""` for all) in `workspace` cares about. */
-export function matches(change: Change, subjects: string[], workspace = ""): boolean {
+export function matches(change: Change, subjects: string[], workspace = "", except: string[] = []): boolean {
   const of = "workspace" in change ? change.workspace : "";
   const mine = !workspace || !of || of === workspace;
-  return mine && subjects.some((s) => change.subject.startsWith(s));
+  // The replay after a reconnect has subject `""`: it is a change to everything, whatever is left out.
+  const left = change.subject !== "" && except.some((s) => change.subject.startsWith(s));
+  return mine && !left && subjects.some((s) => change.subject.startsWith(s));
 }
 
 /** Calls `fn` after a matching change, once per burst: changes come in runs (queued, running, ended). */
-export function useChanges(subjects: string[] | null, fn: () => void, workspace = "", wait = 400) {
+export function useChanges(subjects: string[] | null, fn: () => void, workspace = "", wait = 400, except: string[] = []) {
   const latest = useRef(fn);
   latest.current = fn;
   const key = subjects?.join("|") ?? null;
@@ -69,7 +72,7 @@ export function useChanges(subjects: string[] | null, fn: () => void, workspace 
     const wanted = key.split("|");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stop = onChange((c) => {
-      if (!matches(c, wanted, workspace)) return;
+      if (!matches(c, wanted, workspace, except)) return;
       clearTimeout(timer);
       timer = setTimeout(() => latest.current(), wait);
     });
@@ -77,5 +80,6 @@ export function useChanges(subjects: string[] | null, fn: () => void, workspace 
       clearTimeout(timer);
       stop();
     };
+    // `except` is a constant of its caller.
   }, [key, workspace, wait]);
 }

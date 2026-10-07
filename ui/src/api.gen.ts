@@ -28,6 +28,10 @@ export type AgentRow = {
   "chip": string;
   "groups": RunGroup[];
   "on": boolean | null;
+  "running": coscc__leif__agents__Running | null;
+  "next_at": string | null;
+  "on_in": string[];
+  "off_reason": string;
 };
 
 export type AgentRun = {
@@ -147,7 +151,7 @@ export type Cards = {
   "read_at": string;
   "units": Card[];
   "autopilot": AutopilotBrief | null;
-  "running": Running[];
+  "running": coscc__units__read__Running[];
 };
 
 export type CatalogTool = {
@@ -323,6 +327,29 @@ export type LastRun = {
 export type Leaks = {
   "unit": string;
   "names": string[];
+};
+
+export type Live = {
+  "running": LiveRun[];
+  "proposals": LiveProposal[];
+};
+
+export type LiveProposal = {
+  "id": number;
+  "workspace": string;
+  "agent": string;
+  "agent_name": string;
+  "type": string;
+  "title": string;
+  "at": string;
+};
+
+export type LiveRun = {
+  "run": string;
+  "started": string;
+  "workspace": string;
+  "agent": string;
+  "name": string;
 };
 
 export type Meta = {
@@ -587,13 +614,7 @@ export type RunView = {
   "skipped": boolean;
   "detail": string;
   "started_by": string;
-};
-
-export type Running = {
-  "unit": string;
-  "stage": string;
-  "agent": string;
-  "started": string;
+  "made": number | null;
 };
 
 export type Saved = {
@@ -863,8 +884,21 @@ export type Worktree = {
   "path": string;
 };
 
+export type coscc__leif__agents__Running = {
+  "run": string;
+  "started": string;
+};
+
+export type coscc__units__read__Running = {
+  "unit": string;
+  "stage": string;
+  "agent": string;
+  "started": string;
+};
+
 export type Get = {
   "/api/agents": AgentPage;
+  "/api/agents/live": Live;
   "/api/backlog": UpNext;
   "/api/chat/history": ChatHistory;
   "/api/chat/sessions": ChatSessions;

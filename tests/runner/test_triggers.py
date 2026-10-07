@@ -61,6 +61,7 @@ class _Core(unittest.IsolatedAsyncioTestCase):
             ws=SimpleNamespace(
                 check=lambda cwd: cwd,
                 key=lambda cwd: cwd,
+                name=lambda cwd: "proj",
                 journal=lambda: self.journal,
                 unit_meta=lambda: None,
                 all=lambda: {"paths": [self.ws]},
@@ -118,6 +119,12 @@ class _Core(unittest.IsolatedAsyncioTestCase):
             r for r in self.journal.records(self.ws, kinds=("end",)) if r.get("stage") == "scan"
         ]
 
+    async def go(self, *args, **kw) -> str:
+        """`start`, then wait for the run it made: its run's result, `""` when it was skipped."""
+        triggers.start(self.core, *args, **kw)
+        [task] = triggers._TASKS
+        return await task
+
     async def settle(self) -> None:
         await asyncio.gather(*triggers._TASKS)
 
@@ -139,7 +146,7 @@ class APressRunsTheRow(_Core):
                 ]
             },
         )
-        run = await triggers.run(self.core, "scan", self.ws, by="manual")
+        run = await self.go("scan", self.ws, by="manual")
         self.assertEqual(run, "r1")
         (given,) = self.given
         self.assertEqual((given.started_by, given.start["trigger"]), ("manual", "manual"))
@@ -152,26 +159,28 @@ class APressRunsTheRow(_Core):
 
     async def test_the_next_run_reads_past_where_the_last_stopped(self):
         self.found = found(2)
-        await triggers.run(self.core, "scan", self.ws, by="manual")
+        await self.go("scan", self.ws, by="manual")
         self.found = found(4)
-        await triggers.run(self.core, "scan", self.ws, by="manual")
+        await self.go("scan", self.ws, by="manual")
         self.assertNotIn("rerun:runs:2 ", self.given[1].prompt)
         self.assertIn("rerun:runs:3", self.given[1].prompt)
 
     async def test_nothing_new_is_skipped_at_no_cost_and_opens_no_session(self):
-        self.assertEqual(await triggers.run(self.core, "scan", self.ws, by="manual"), "")
+        self.assertEqual(await self.go("scan", self.ws, by="manual"), "")
         self.assertEqual(self.given, [])
         (end,) = self.ends()
         self.assertEqual((end["skipped"], end["cost_usd"], end["outcome"]), (True, 0.0, "done"))
+        self.assertEqual(len(end["run"]), 32)
+        self.assertTrue(end["agent_name"])
 
     async def test_a_second_run_of_the_same_agent_is_refused_before_spend(self):
         self.found = found(1)
         self.gate.clear()
-        first = asyncio.create_task(triggers.run(self.core, "scan", self.ws, by="manual"))
+        first = asyncio.create_task(self.go("scan", self.ws, by="manual"))
         while not self.given:
             await asyncio.sleep(0)
         with self.assertRaises(Invalid) as e:
-            await triggers.run(self.core, "scan", self.ws, by="manual")
+            await self.go("scan", self.ws, by="manual")
         self.assertEqual(e.exception.reasons, ("unit-busy",))
         self.gate.set()
         await first
@@ -186,15 +195,56 @@ class APressRunsTheRow(_Core):
         await self.settle()
         self.assertEqual(len(self.given), 1)
 
+    async def test_a_held_run_is_listed_with_its_id_and_the_bus_says_when_it_starts_and_ends(self):
+        self.found = found(1)
+        heard = []
+        self.core.bus.watch(lambda e: heard.append((e.name, e.payload["run"])))
+        run = triggers.start(self.core, "scan", self.ws, by="manual")
+        [held] = triggers.running()
+        self.assertEqual((held["agent"], held["workspace"], held["run"]), ("scan", self.ws, run))
+        self.gate.set()
+        await self.settle()
+        self.assertEqual(triggers.running(), [])
+        self.assertEqual(heard, [("agent-run.started", run), ("agent-run.ended", run)])
+
+    async def test_due_says_when_the_earliest_delayed_run_comes(self):
+        data = Data(self.core.config.data_dir)
+        self.assertIsNone(triggers.due(data, self.ws, "scan"))
+        with data.write() as conn:
+            conn.executemany(
+                "INSERT INTO trigger_due (workspace, agent, unit, due_at, event) VALUES (?, ?, ?, ?, ?)",
+                [
+                    (self.ws, "scan", "", "2026-10-09T00:00:00+00:00", "e"),
+                    (self.ws, "scan", "0001_a", "2026-10-08T00:00:00+00:00", "e"),
+                    (self.ws, "other", "", "2026-10-01T00:00:00+00:00", "e"),
+                ],
+            )
+        self.assertEqual(triggers.due(data, self.ws, "scan"), "2026-10-08T00:00:00+00:00")
+
+    async def test_two_presses_at_once_hold_it_once_though_check_ran_off_the_loop(self):
+        self.found = found(1)
+        self.gate.clear()
+        results = await asyncio.gather(
+            triggers.begin(self.core, "scan", self.ws, by="manual"),
+            triggers.begin(self.core, "scan", self.ws, by="manual"),
+            return_exceptions=True,
+        )
+        refused = [r for r in results if isinstance(r, Invalid)]
+        self.assertEqual(len(refused), 1)
+        self.assertEqual(refused[0].reasons, ("unit-busy",))
+        self.gate.set()
+        await self.settle()
+        self.assertEqual(len(self.given), 1)
+
     async def test_the_daily_cap_and_a_row_with_no_such_trigger_are_refused(self):
         self.found = found(1)
         self.core.autopilot.today = lambda cwd: (120.0, 120.0)
         with self.assertRaises(Invalid) as e:
-            await triggers.run(self.core, "scan", self.ws, by="manual")
+            await self.go("scan", self.ws, by="manual")
         self.assertEqual(e.exception.reasons, ("budget-reached",))
         self.core.autopilot.today = lambda cwd: (0.0, 120.0)
         with self.assertRaises(Invalid) as e:
-            await triggers.run(self.core, "estimate", self.ws, by="manual")
+            await self.go("estimate", self.ws, by="manual")
         self.assertEqual(e.exception.reasons, ("not-triggered",))
         self.assertEqual(self.given, [])
 
@@ -202,7 +252,7 @@ class APressRunsTheRow(_Core):
 class ARefusalBeforeSpend(_Core):
     async def refused(self, **kw) -> tuple[str, ...]:
         with self.assertRaises(Invalid) as e:
-            await triggers.run(self.core, "scan", self.ws, by="manual", **kw)
+            await self.go("scan", self.ws, by="manual", **kw)
         self.assertEqual(self.given, [])
         return e.exception.reasons
 
@@ -232,7 +282,7 @@ class ARefusalBeforeSpend(_Core):
     async def test_a_unit_that_walks_out_is_refused(self):
         with mock.patch.object(triggers, "_unit_scoped", return_value=True):
             with self.assertRaises(Invalid) as e:
-                await triggers.run(self.core, "scan", self.ws, "../..", by="manual")
+                await self.go("scan", self.ws, "../..", by="manual")
         self.assertIn("not a work unit name", str(e.exception))
 
     async def test_a_busy_journal_skips_the_schedule_not_reads_it_as_never_run(self):
@@ -246,20 +296,20 @@ class ARefusalBeforeSpend(_Core):
 class LeifRunsARowThatSaysLeif(_Core):
     async def test_its_reason_is_on_the_start(self):
         self.found = found(1)
-        await triggers.run(self.core, "scan", self.ws, by="leif", reason="CI went red twice")
+        await self.go("scan", self.ws, by="leif", reason="CI went red twice")
         self.assertEqual(
             (self.given[0].started_by, self.given[0].start["reason"]), ("leif", "CI went red twice")
         )
         with self.assertRaises(Invalid):
-            await triggers.run(self.core, "scan", self.ws, by="leif", reason=" ")
+            await self.go("scan", self.ws, by="leif", reason=" ")
 
     async def test_a_row_without_leif_is_refused_not_leif(self):
         self.set_row("trigger", {"schedule": {"hours": 24}, "manual": True})
         with self.assertRaises(Invalid) as e:
-            await triggers.run(self.core, "scan", self.ws, by="leif", reason="why")
+            await self.go("scan", self.ws, by="leif", reason="why")
         self.assertEqual(e.exception.reasons, ("not-leif",))
         with self.assertRaises(Invalid) as e:
-            await triggers.run(self.core, "impl", self.ws, by="leif", reason="why")
+            await self.go("impl", self.ws, by="leif", reason="why")
         self.assertEqual(e.exception.reasons, ("not-triggered",))
 
     async def test_the_tool_says_the_refusal(self):
@@ -305,6 +355,7 @@ class DagazDraftsFromWords(_Core):
         )
         await self.settle()
         self.assertIn("/agents?draft=", said["content"][0]["text"])
+        self.assertRegex(said["content"][0]["text"], r"\[live run\]\(/run/proj/[0-9a-f]{32}\)")
         self.assertIn("Docs changes", self.given[0].prompt)
 
 
@@ -373,7 +424,7 @@ class ARunAtItsCeilingTurnsTheRowOff(_Core):
         self.reply = Run(
             "paused-budget", None, {"cost_usd": 0.7}, detail="stopped at its ceiling: max_budget"
         )
-        await triggers.run(self.core, "scan", self.ws, by="schedule")
+        await self.go("scan", self.ws, by="schedule")
         self.assertFalse(pack.agent_on(self.data, "scan", self.ws))
         (said,) = self.journal.records(self.ws, kinds=("agent-state",))
         self.assertEqual((said["on"], said["by"]), (False, "app"))
@@ -416,7 +467,7 @@ class TheGraderGradesWhatShipped(_Core):
 
     async def test_a_press_grades_in_the_trunk_tree_and_proposes_each_no(self):
         self.reply = Run("done", self.criteria("yes", "no", "unclear", "no"))
-        await triggers.run(self.core, "outcome", self.ws, self.unit, by="manual")
+        await self.go("outcome", self.ws, self.unit, by="manual")
         (given,) = self.given
         self.assertEqual((given.cwd, given.workspace_dir), (str(self.trunk), self.ws))
         self.assertIn("A fix ships.", given.prompt)
@@ -436,14 +487,14 @@ class TheGraderGradesWhatShipped(_Core):
         folder = self.core.ws.unit_dir(self.ws, self.unit)
         self.assertFalse(folder.is_relative_to(self.ws) or folder.is_relative_to(self.trunk))
         self.reply = Run("done", self.criteria("yes"))
-        await triggers.run(self.core, "outcome", self.ws, self.unit, by="manual")
+        await self.go("outcome", self.ws, self.unit, by="manual")
         (given,) = self.given
         for said in (self.unit, "A fix ships.", "Merged as #1.", "Fewer steps."):
             self.assertIn(said, given.prompt)
 
     async def test_a_unit_the_workspace_does_not_hold_is_refused_before_spend(self):
         with self.assertRaises(Invalid) as e:
-            await triggers.run(self.core, "outcome", self.ws, "0047_nonexistent", by="manual")
+            await self.go("outcome", self.ws, "0047_nonexistent", by="manual")
         self.assertEqual(e.exception.reasons, ("no-unit",))
         with self.assertRaises(Invalid):
             triggers.start(self.core, "outcome", self.ws, "0047_nonexistent", by="manual")
@@ -451,7 +502,7 @@ class TheGraderGradesWhatShipped(_Core):
 
     async def test_unclear_alone_proposes_nothing(self):
         self.reply = Run("done", self.criteria("yes", "unclear"))
-        await triggers.run(self.core, "outcome", self.ws, self.unit, by="manual")
+        await self.go("outcome", self.ws, self.unit, by="manual")
         self.assertEqual(self.meta.verdict(self.ws, self.unit)["judgement"], "unclear")
         self.assertEqual(proposals.listed(self.data, self.ws, "outcome"), [])
 
@@ -479,7 +530,7 @@ class TheGraderGradesWhatShipped(_Core):
             raise triggers.GitError("no origin")
 
         with mock.patch("coscc.runner.triggers.worktrees.main_tree", broken):
-            await triggers.run(self.core, "outcome", self.ws, self.unit, by="manual")
+            await self.go("outcome", self.ws, self.unit, by="manual")
         self.assertEqual(self.given, [])
         (end,) = self.journal.records(self.ws, self.unit, kinds=("end",))
         self.assertEqual(end["outcome"], "failed")
@@ -493,7 +544,7 @@ class AnOffPackStartsNothing(_Core):
     async def test_a_row_whose_pack_is_off_is_refused_pack_off_for_every_start(self):
         pack.set_packs(self.data, self.ws, "coscc-sdlc", on=False)
         with self.assertRaises(Invalid) as e:
-            await triggers.run(self.core, "scan", self.ws, by="manual")
+            await self.go("scan", self.ws, by="manual")
         self.assertEqual(e.exception.reasons, ("pack-off",))
         self.assertEqual(self.given, [])
 
@@ -502,7 +553,7 @@ class AnOffPackStartsNothing(_Core):
         pack.new_row("look", "Look", "scan")
         pack.write("look", "tools", {"Read": "allow"})
         with self.assertRaises(Invalid) as e:
-            await triggers.run(self.core, "look", self.ws, by="manual")
+            await self.go("look", self.ws, by="manual")
         self.assertEqual(e.exception.reasons, ("agent-invalid",))
 
 

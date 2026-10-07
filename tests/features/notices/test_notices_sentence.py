@@ -99,7 +99,7 @@ class EachKindComesFromItsRecord(unittest.TestCase):
             "shipped": notices.notice_of(4, _ship("shipped")),
             "ship-refused": notices.notice_of(5, _ship("refused")),
         }
-        self.assertEqual(set(got) | {"agent-off"}, set(notices.KINDS))
+        self.assertEqual(set(got) | {"agent-off", "proposed", "agent-failed"}, set(notices.KINDS))
         for kind, n in got.items():
             self.assertIsNotNone(n, kind)
             self.assertEqual(n["kind"], kind)
@@ -125,7 +125,34 @@ class EachKindComesFromItsRecord(unittest.TestCase):
         ):
             self.assertIsNone(notices.notice_of(1, record), record)
 
-    def test_an_end_with_no_unit_and_a_ship_with_another_result_are_no_notice(self):
+    def test_an_agent_run_that_proposed_or_failed_is_a_notice_and_the_rest_are_not(self):
+        run = {"unit": "", "stage": "telemetry", "agent": "telemetry", "started_by": "manual"}
+        run |= {"agent_name": "Telemetry"}
+        n = notices.notice_of(1, _end("done", **{**run, "proposals": 2}))
+        self.assertEqual((n["kind"], n["text"]), ("proposed", "Telemetry proposed 2 in proj."))
+        n = notices.notice_of(1, _end("failed", **{**run, "agent_name": ""}))
+        self.assertEqual((n["kind"], n["text"]), ("agent-failed", "telemetry in proj failed."))
+        for who in ("event", "schedule", "leif"):
+            self.assertIsNotNone(notices.notice_of(1, _end("failed", **{**run, "started_by": who})))
+        for record in (
+            _end("done", **run),
+            _end("done", **{**run, "proposals": 0}),
+            _end("done", **{**run, "proposals": 3, "skipped": True}),
+            _end("failed", **{**run, "skipped": True}),
+            # An app going down or updating cancels a run: nobody failed it.
+            _end("cancelled", **run),
+            # A pause at its ceiling has its own notice (`agent-off`).
+            _end("paused-budget", **run),
+            # A chat turn and an estimate are not runs of an agent a trigger starts.
+            _end("failed", unit="", stage="chat", agent="chat", started_by="person"),
+            _end("failed", unit="", stage="estimate", agent="estimate", started_by="person"),
+            _end("failed", **{k: v for k, v in run.items() if k != "started_by"}),
+            _end("done", **{**run, "stage": "ask", "proposals": 2}),
+            _end("failed", **{**run, "parent_run": "r1"}),
+        ):
+            self.assertIsNone(notices.notice_of(1, record), record)
+
+    def test_an_end_with_no_unit_and_no_agent_and_a_ship_with_another_result_are_no_notice(self):
         for record in (
             _end("failed", unit=""),
             _ship(""),

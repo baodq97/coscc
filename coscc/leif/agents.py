@@ -10,6 +10,7 @@ gets.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -49,7 +50,8 @@ class RunView(TypedDict):
     """One `end` record of an agent, as the page shows it; `workspace` is the run-log key, the
     workspace's resolved path; `row_hash` the definition its `start` ran (`""` before rows had
     one). `run` is the run-log id its events were kept under (`""` when none); `skipped` and
-    `detail` say a run that spent nothing and why; `started_by` is who started it."""
+    `detail` say a run that spent nothing and why; `started_by` is who started it; `made` how many
+    proposals it kept (`None` when it makes none)."""
 
     workspace: str
     unit: str
@@ -62,6 +64,7 @@ class RunView(TypedDict):
     skipped: bool
     detail: str
     started_by: str
+    made: int | None
 
 
 class Setting(TypedDict):
@@ -153,6 +156,49 @@ class RowFields(TypedDict, total=False):
 Group = Literal["stage", "engine", "helper", "triggered"]
 
 
+class Running(TypedDict):
+    """A run of an agent that this app holds now: its id (the run page follows it) and start."""
+
+    run: str
+    started: str
+
+
+class LiveRun(Running):
+    workspace: str
+    agent: str
+    name: str
+
+
+class LiveProposal(TypedDict):
+    id: int
+    workspace: str
+    agent: str
+    agent_name: str
+    type: str
+    title: str
+    at: str
+
+
+class Live(TypedDict):
+    """What agents are doing across every listed workspace: the runs in flight and the proposals
+    waiting for a person (workspaces by their names)."""
+
+    running: list[LiveRun]
+    proposals: list[LiveProposal]
+
+
+@dataclass(frozen=True)
+class _Now:
+    """What one read of the page asks once for every row: the runs held, the workspaces by their
+    run-log key, each row's newest on/off record, what was spent against the daily cap."""
+
+    running: list[dict[str, str]]
+    names: dict[str, str]
+    states: dict[tuple[str, str], dict[str, Any]]
+    cap: tuple[float, float] | None
+    now: datetime
+
+
 class AgentRow(TypedDict):
     key: str
     # The pack the row comes from: `coscc-sdlc`, `local` or an imported pack's name.
@@ -184,6 +230,14 @@ class AgentRow(TypedDict):
     # Whether its event or schedule runs it in the workspace asked about; `None` for a row with
     # neither, or no workspace.
     on: bool | None
+    # The run of it in the workspace asked about that is going now (any workspace for "all").
+    running: Running | None
+    # When its schedule or a due event next runs it there; `None` off, with neither, or unscheduled.
+    next_at: str | None
+    # The names of the workspaces where its event or schedule is on.
+    on_in: list[str]
+    # Why it is off in the workspace asked about: what the app or the owner logged; `""` when on.
+    off_reason: str
 
 
 class ProposingAgent(TypedDict):
@@ -241,6 +295,7 @@ def _run_view(record: dict[str, Any]) -> RunView:
         skipped=bool(record.get("skipped")),
         detail=str(record.get("detail") or ""),
         started_by=str(record.get("started_by") or ""),
+        made=made if isinstance(made := record.get("proposals"), int) else None,
     )
 
 
@@ -316,9 +371,17 @@ def _skills(found: dict[str, Any]) -> list[SkillText]:
 
 
 class Agents:
-    def __init__(self, config: Config, ws: Workspaces, hooks: Callable[[], Hooks] = Hooks) -> None:
+    def __init__(
+        self,
+        config: Config,
+        ws: Workspaces,
+        hooks: Callable[[], Hooks] = Hooks,
+        spent: Callable[[str], tuple[float, float] | None] = lambda _cwd: None,
+    ) -> None:
         self.config = config
         self.ws = ws
+        # What was spent today and the daily cap for a workspace (`Autopilot.today`).
+        self.spent = spent
         # The app's catalog, asked when the page is read or a field saved: set once the features
         # are built, after this.
         self.hooks = hooks
@@ -420,21 +483,33 @@ class Agents:
 
     def _records(
         self, workspace: str | None
-    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[Setting]], list[str]]:
+    ) -> tuple[
+        dict[str, list[dict[str, Any]]],
+        dict[str, list[Setting]],
+        dict[tuple[str, str], dict[str, Any]],
+        list[str],
+    ]:
         """Every `end` by agent, oldest first, each with the `label` and `row_hash` of the `start`
         it closes (a run is measured against its own ceiling, grouped by its own definition); every
-        `agent-setting` by agent, oldest first. One read of the run log."""
+        `agent-setting` by agent, oldest first; the newest `agent-state` of each (workspace, agent).
+        One read of the run log."""
         journal = self.ws.journal()
         if journal is None:
-            return {}, {}, []
+            return {}, {}, {}, []
         try:
-            records = journal.records(None, kinds=("start", "end", SETTING_KIND))
+            records = journal.records(
+                None, kinds=("start", "end", SETTING_KIND, triggers.STATE_KIND)
+            )
         except (Unusable, Busy, sqlite3.Error, OSError) as e:
-            return {}, {}, [f"the run log could not be read, so no run is shown: {e}"]
+            return {}, {}, {}, [f"the run log could not be read, so no run is shown: {e}"]
         starts: dict[tuple[str, str, str], dict[str, Any]] = {}
         ends: dict[str, list[dict[str, Any]]] = {}
         settings: dict[str, list[Setting]] = {}
+        onoff: dict[tuple[str, str], dict[str, Any]] = {}
         for record in records:
+            if record.get("kind") == triggers.STATE_KIND:
+                onoff[str(record.get("workspace")), str(record.get("agent"))] = record
+                continue
             if record.get("kind") == SETTING_KIND:
                 settings.setdefault(str(record.get("agent") or ""), []).append(
                     Setting(
@@ -461,7 +536,7 @@ class Agents:
                         "row_hash": start.get("row_hash"),
                     }
                 )
-        return ends, settings, []
+        return ends, settings, onoff, []
 
     def agent_page(
         self, workspace: str | None = None, now: datetime | None = None, cwd: str = ""
@@ -477,10 +552,21 @@ class Agents:
         """
         now = now or datetime.now(timezone.utc)
         since = (now - timedelta(days=WINDOW_DAYS)).isoformat(timespec="seconds")
-        ends, settings, bad_runs = self._records(workspace)
+        ends, settings, onoff, bad_runs = self._records(workspace)
         effects = self._effects()
         data = Data(self.config.data_dir)
         rows: list[AgentRow] = []
+        by = _Now(
+            running=triggers.running(),
+            names={
+                self.ws.key(w["path"]): w["name"]
+                for w in self.ws.all()["workspaces"]
+                if not w["missing"]
+            },
+            states=onoff,
+            cap=self._cap(cwd) if cwd and workspace else None,
+            now=now,
+        )
         for key, found in pack.rows().items():
             config = models.config_row(key, self.config.model)
             variants = found.get("variants")
@@ -491,6 +577,7 @@ class Agents:
             )
             rows[-1]["problems"] = pack.problems(key, effects)
             rows[-1]["on"] = self._on(data, key, workspace)
+            self._live_fields(rows[-1], found, data, workspace, ends.get(key, []), by)
         table = agents.table()
         return AgentPage(
             rows=rows,
@@ -499,6 +586,94 @@ class Agents:
             cos_model=self.config.model,
             scope="all" if workspace is None else "workspace",
         )
+
+    def _cap(self, cwd: str) -> tuple[float, float] | None:
+        try:
+            return self.spent(cwd)
+        except Invalid:
+            return None
+
+    def _live_fields(
+        self,
+        row: AgentRow,
+        found: dict[str, Any],
+        data: Data,
+        workspace: str | None,
+        mine: list[dict[str, Any]],
+        by: "_Now",
+    ) -> None:
+        """`running`, `next_at`, `on_in` and `off_reason` of `row`."""
+        for held in by.running:
+            if held["agent"] == row["key"] and workspace in (None, held["workspace"]):
+                row["running"] = Running(run=held["run"], started=held["started"])
+        if not (pack.triggered(found, "event") or pack.triggered(found, "schedule")):
+            return
+        key = row["key"]
+        row["on_in"] = [n for k, n in by.names.items() if pack.agent_on(data, key, k)]
+        if workspace is None or row["on"] is None:
+            return
+        if not pack.pack_on(data, str(found.get("pack") or ""), workspace):
+            row["off_reason"] = "its pack is off here"
+            return
+        if not row["on"]:
+            said = by.states.get((workspace, key))
+            row["off_reason"] = (
+                "off until you turn it on"
+                if said is None
+                else str(said.get("reason") or "")
+                or ("turned off by you" if said.get("by") == OWNER else "turned off")
+            )
+            return
+        ceiling = float((found.get("ceilings") or {}).get("usd") or 0.0)
+        if by.cap and by.cap[0] + ceiling > by.cap[1]:
+            row["off_reason"] = (
+                f"held by the daily cap (${by.cap[0]:.2f} of ${by.cap[1]:.2f} spent)"
+            )
+        due = triggers.due(data, workspace, key)
+        hours = (found.get("trigger", {}).get("schedule") or {}).get("hours")
+        if hours:
+            last = (
+                datetime.fromisoformat(mine[-1]["at"]) if mine else by.now - timedelta(hours=hours)
+            )
+            at = (last + timedelta(hours=hours)).isoformat(timespec="seconds")
+            due = min(due or at, at)
+        row["next_at"] = due
+
+    def live(self) -> Live:
+        """The runs in flight and the proposals pending in every listed workspace."""
+        data = Data(self.config.data_dir)
+        rows = pack.rows()
+        by_key = {self.ws.key(w["path"]): w["name"] for w in self.ws.all()["workspaces"]}
+
+        def name(key: str) -> str:
+            return str((rows.get(key) or {}).get("name") or key)
+
+        running = [
+            LiveRun(
+                workspace=by_key.get(h["workspace"], ""),
+                agent=h["agent"],
+                name=name(h["agent"]),
+                run=h["run"],
+                started=h["started"],
+            )
+            for h in triggers.running()
+            if h["workspace"] in by_key
+        ]
+        waiting = [
+            LiveProposal(
+                id=p["id"],
+                workspace=label,
+                agent=p["agent"],
+                agent_name=name(p["agent"]),
+                type=p["type"],
+                title=p["title"],
+                at=p["at"],
+            )
+            for key, label in by_key.items()
+            for p in proposals.listed(data, key)
+            if p["state"] == "pending"
+        ]
+        return Live(running=running, proposals=sorted(waiting, key=lambda p: p["at"], reverse=True))
 
     def _row(
         self,
@@ -538,6 +713,10 @@ class Agents:
             chip=chip_of(last, budget, len(recent)),
             groups=groups_of(views, [s for s in settings.get(key, []) if s["at"] >= since]),
             on=None,
+            running=None,
+            next_at=None,
+            on_in=[],
+            off_reason="",
         )
 
     @staticmethod
@@ -838,6 +1017,7 @@ class Models:
                 "max_turns_source": models.DEFAULT,
                 "max_budget_source": models.DEFAULT if row.max_budget_usd else models.NONE,
             },
+            name=str((pack.row(key) or {}).get("name") or ""),
             system=str((pack.row(key) or {}).get(pack.BODY) or ""),
         )
 

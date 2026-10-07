@@ -635,6 +635,8 @@ def _end(
             agent=agent.key,
             session_id=out.session,
             model=model_of(ctx, agent),
+            started_by=given.started_by,
+            agent_name=agent.name or None,
             denials=denials,
             cost=out.cost if out.cost else {"cost_unknown": True},
             detail=out.detail or None,

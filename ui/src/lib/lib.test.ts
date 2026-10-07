@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { startedBy, ago, modelName, money, unitCode, unitTitle } from "./format";
+import { until, startedBy, ago, modelName, money, unitCode, unitTitle } from "./format";
 import { match } from "./router";
-import { findUnit, type PlacedUnit } from "./boards";
+import { findUnit, needsYou, proposalLink, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { fill, readLines } from "./api";
@@ -14,7 +14,7 @@ import { noRuns } from "../screens/Insights";
 import { moved } from "../screens/UpNext";
 import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
-import { attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
+import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
 import { runRow, changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
 import { fieldLabel, isEmpty, itemLine } from "../screens/UnitPage";
@@ -631,7 +631,7 @@ describe("work and needs you", () => {
 });
 
 describe("runRow", () => {
-  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "" };
+  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "", made: null };
   it("opens the log of a unitless run and names who started it", () => {
     expect(runRow({ ...run, run: "abc", started_by: "leif" }, "ws")).toMatchObject({ to: "/run/ws/abc", title: "Run by Leif" });
     expect(runRow({ ...run, run: "abc", started_by: "schedule" }, "ws").title).toBe("Run by the schedule");
@@ -665,5 +665,50 @@ describe("a sandboxed Bash", () => {
     expect(sandboxed("")).toEqual({ sandbox: { network: [] } });
     const [t] = draftTools({ tools: { Bash: { sandbox: { network: ["127.0.0.1:3000"] } } } }, []);
     expect(t.policy).toBe("Bash, sandboxed: network 127.0.0.1:3000; writes its scratch folder only.");
+  });
+});
+
+describe("until and statusWords", () => {
+  const now = Date.parse("2026-10-07T10:00:00Z");
+  it("says when something comes", () => {
+    expect(until("2026-10-07T09:59:00Z", now)).toBe("due");
+    expect(until("2026-10-07T10:12:00Z", now)).toBe("in 12 min");
+    expect(until("2026-10-07T15:00:00Z", now)).toBe("in 5 h");
+    expect(until("2026-10-09T10:00:00Z", now)).toBe("in 2 d");
+  });
+  const row = { on: true, on_in: ["a", "b"], off_reason: "", last: null, next_at: null } as unknown as AgentRow;
+  it("tells on, last and next in one line", () => {
+    const said = statusWords({ ...row, last: { at: "", made: 3 } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" }, "a");
+    expect(said).toMatch(/^On here \(also on in b\) · ran .*, made 3 · next in \d+ d$/);
+  });
+  it("says why an agent is off and that it never ran", () => {
+    expect(statusWords({ ...row, on: false, on_in: [], off_reason: "a run stopped at its ceiling" }, "a")).toBe("Off here: a run stopped at its ceiling · never ran");
+  });
+  it("says nothing of on or off for an agent no schedule runs", () => {
+    expect(statusWords({ ...row, on: null }, "a")).toBe("");
+  });
+});
+
+describe("proposalLink", () => {
+  it("opens the proposal on its project's Up next", () => {
+    expect(proposalLink({ workspace: "my proj", id: 31 })).toBe("/up-next?ws=my%20proj#proposal-31");
+  });
+});
+
+describe("needsYou", () => {
+  const unit = (over: object) => ({ why: "", phase: "full", open: 0, ...over }) as unknown as PlacedUnit;
+  it("counts the units that need a person and the proposals once, for every screen", () => {
+    const got = needsYou([unit({ open: 2 }), unit({ paused: { at: "impl" } }), unit({}), unit({ why: "dropped", open: 1 })], ["p1", "p2", "p3"]);
+    expect(got.units.length).toBe(2);
+    expect(got.total).toBe(5);
+  });
+});
+
+describe("matches with something left out", () => {
+  const run = { subject: "agent-run.started", workspace: "w", agent: "a", run: "r" };
+  it("leaves out a subject but never the reconnect replay", () => {
+    expect(matches(run, [""], "", ["agent-run."])).toBe(false);
+    expect(matches({ subject: "step.ended", workspace: "w", unit: "u", going_down: false }, [""], "", ["agent-run."])).toBe(true);
+    expect(matches({ subject: "", workspace: "" }, [""], "", ["agent-run.", "chat-turn."])).toBe(true);
   });
 });
