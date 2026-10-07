@@ -56,7 +56,7 @@ export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading:
 
 /** What agents are doing across every project: the runs in flight and the proposals waiting for a decision. */
 export function useLive() {
-  const got = useResource("/api/agents/live", {}, { on: ["agent-run."], every: 60_000 });
+  const got = useResource("/api/agents/live", {}, { on: ["agent-run."], every: 60_000, wait: 0 });
   return { running: got.data?.running ?? [], proposals: got.data?.proposals ?? [], loading: !got.data && got.state !== "error" };
 }
 

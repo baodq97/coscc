@@ -129,7 +129,7 @@ export function useAgents() {
   const draft = useQuery("draft");
   const ofRun = useRunWorkspace(named ? "" : draft, list);
   const workspace = pickWorkspace(list, named, ofRun);
-  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path } : {}, { on: ["agent-run."] });
+  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path } : {}, { on: ["agent-run."], wait: 0 });
   return { ws, list, workspace, cwd: workspace?.path ?? "", agents };
 }
 

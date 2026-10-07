@@ -177,7 +177,7 @@ export type Resource<T> =
 export function useResource<P extends keyof Get>(
   path: P | null,
   query: Record<string, string> = {},
-  { on = null, every = 0 }: { on?: string[] | null; every?: number } = {},
+  { on = null, every = 0, wait }: { on?: string[] | null; every?: number; wait?: number } = {},
 ): Resource<Get[P]> & { reload: () => void } {
   const [res, setRes] = useState<Resource<Get[P]>>({ state: "loading" });
   const [tick, setTick] = useState(0);
@@ -208,7 +208,7 @@ export function useResource<P extends keyof Get>(
     return () => clearInterval(id);
   }, [every]);
 
-  useChanges(path === null ? null : on, () => setTick((t) => t + 1), query.cwd ?? "");
+  useChanges(path === null ? null : on, () => setTick((t) => t + 1), query.cwd ?? "", wait);
 
   return { ...res, reload: () => setTick((t) => t + 1) };
 }
