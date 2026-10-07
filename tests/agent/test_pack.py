@@ -872,3 +872,100 @@ class ManyPacks(unittest.TestCase):
         self.assertIn(
             "agents/impl.md", zipfile.ZipFile(io.BytesIO(pack.export_zip("coscc-sdlc"))).namelist()
         )
+
+
+class WhatTheSecurityReviewFound(unittest.TestCase):
+    """Each hole the review of the import proved, closed."""
+
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.addCleanup(self.d.cleanup)
+        patcher = mock.patch.object(pack, "ROOT", self.d.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def left(self) -> list[str]:
+        root = pack.packs_dir()
+        return sorted(p.name for p in root.iterdir()) if root.is_dir() else []
+
+    def test_a_state_name_is_never_a_path(self):
+        for bad in ("../x", "a/b", "a\\b"):
+            p = tiny("impl")
+            p["states"][bad] = {"action": "merge"}
+            with self.subTest(bad):
+                self.assertIn("a state name is", "; ".join(pack.check_process("p", p, pack.rows())))
+
+    def test_review_before_merge_is_not_fooled_by_an_agent_keyed_as_a_state(self):
+        pack.new_row("rv", "Rv", "impl", CATALOG)
+        p = {
+            "start": "intent",
+            "end": "shipped",
+            "states": {
+                "intent": {
+                    "agent": "intent",
+                    "next": [{"to": "rv", "when": {"guard": "skip-decision"}}, {"to": "x"}],
+                },
+                "x": {"agent": "rv", "next": [{"to": "pr"}]},
+                "pr": {"action": "open-pr", "next": [{"to": "ship"}]},
+                "rv": {
+                    "agent": "review",
+                    "next": [
+                        {"to": "x", "when": {"field": "verdict", "is": "changes-requested"}},
+                        {"to": "ship", "when": {"field": "verdict", "is": "pass"}},
+                    ],
+                },
+                "ship": {"action": "merge"},
+            },
+        }
+        self.assertIn(
+            "p.ship: a review state is not on every path to it",
+            pack.check_process("p", p, pack.rows()),
+        )
+
+    def test_a_bad_imported_input_is_its_rows_problem_never_an_error(self):
+        bad = ROW.replace("NAME", "mine-row").replace("tools:", 'input: {"artifacts": "x"}\ntools:')
+        with self.assertRaises(pack.PackError) as e:
+            pack.import_zip(zipped(a_pack(**{"agents/mine-row.md": bad})), CATALOG)
+        self.assertIn("mine-row.input", str(e.exception))
+        folder = pack.packs_dir() / "mine"
+        for rel, text in a_pack(**{"agents/mine-row.md": bad}).items():
+            (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+            (folder / rel).write_text(str(text))
+        self.assertTrue(pack.row("mine-row")["problems"])
+        self.assertEqual(contracts.input_of("mine-row")["artifacts"], [])
+        self.assertTrue(contracts.input_of("review")["artifacts"])
+
+    def test_an_encrypted_odd_or_broken_zip_is_refused_and_leaves_nothing(self):
+        import io
+        import zipfile
+
+        def one(info: zipfile.ZipInfo, compress: int = zipfile.ZIP_STORED) -> bytes:
+            out = io.BytesIO()
+            with zipfile.ZipFile(out, "w", compress) as z:
+                z.writestr(".claude-plugin/plugin.json", json.dumps({"name": "x"}))
+                z.writestr(info, "y" * 5000)
+            return out.getvalue()
+
+        locked = zipfile.ZipInfo("agents/a.md")
+        locked.flag_bits |= 1
+        odd = zipfile.ZipInfo("agents/a.md")
+        odd.compress_type = zipfile.ZIP_BZIP2
+        broken = bytearray(one(zipfile.ZipInfo("agents/a.md"), zipfile.ZIP_DEFLATED))
+        at = broken.index(b"agents/a.md") + len("agents/a.md") + 2
+        broken[at : at + 8] = b"\xff" * 8
+        for what, blob in (
+            ("encrypted", one(locked)),
+            ("bzip2", one(odd)),
+            ("broken", bytes(broken)),
+        ):
+            with self.subTest(what), self.assertRaises(pack.PackError):
+                pack.import_zip(blob, CATALOG)
+            self.assertEqual(self.left(), [])
+
+    def test_a_skill_only_the_owners_pack_has_is_taken(self):
+        own = pack.owner_dir() / "skills" / "my-skill" / pack.SKILL_FILE
+        own.parent.mkdir(parents=True)
+        own.write_text("mine")
+        with self.assertRaises(pack.PackError) as e:
+            pack.import_zip(zipped(a_pack(**{"skills/my-skill/SKILL.md": "theirs"})), CATALOG)
+        self.assertIn("my-skill is your own pack's skill", str(e.exception))

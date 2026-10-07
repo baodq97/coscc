@@ -352,6 +352,9 @@ def load(rows: Mapping[str, Mapping[str, object]]) -> dict[str, Output]:
     out: dict[str, Output] = {}
     for agent, row in rows.items():
         output = row.get("output")
+        # A row with a problem never runs (`agent-invalid`): its declaration is not read.
+        if row.get("problems"):
+            continue
         if isinstance(output, dict) and output.get("kind") in KINDS:
             out[agent] = check(agent, output)
     _check_process_reads(out)
@@ -417,14 +420,17 @@ DATA = (
 _OPTIONAL_INPUT = ("skip_when_empty", "given")
 
 
-def check_input(agent: str, raw: object, agents: Iterable[str]) -> Input:
+def check_input(
+    agent: str, raw: object, agents: Iterable[str], states: Iterable[str] | None = None
+) -> Input:
     """`raw` as `agent`'s input declaration, or a `ContractError` naming what is wrong. An
-    artifact names a state of the pack's processes, an output an agent of `agents`, either with
-    `?` when it may be missing."""
+    artifact names a state of the pack's processes (`states`, else every process's), an output an
+    agent of `agents`, either with `?` when it may be missing."""
     keys = set(Input.__annotations__) - set(_OPTIONAL_INPUT)
     if not isinstance(raw, dict) or not keys <= set(raw) <= keys | set(_OPTIONAL_INPUT):
         raise _bad(f"{agent}.input", f"an input is {{{', '.join(sorted(keys))}}}")
-    for part, known in (("artifacts", set(pack.state_names())), ("outputs", set(agents))):
+    named = set(pack.state_names() if states is None else states)
+    for part, known in (("artifacts", named), ("outputs", set(agents))):
         names = raw[part]
         if not isinstance(names, list) or not all(
             isinstance(n, str) and n.rstrip("?") in known for n in names
@@ -447,7 +453,32 @@ def check_input(agent: str, raw: object, agents: Iterable[str]) -> Input:
 
 def load_inputs(rows: Mapping[str, Mapping[str, object]]) -> dict[str, Input]:
     """Every row's `input`, checked; a row with none declares none."""
-    return {a: check_input(a, row["input"], rows) for a, row in rows.items() if "input" in row}
+    return {
+        a: check_input(a, row["input"], rows)
+        for a, row in rows.items()
+        if "input" in row and not row.get("problems")
+    }
+
+
+def row_reasons(
+    agent: str, row: Mapping[str, Any], rows: Iterable[str], states: Iterable[str]
+) -> list[str]:
+    """Why a row's input or output is no declaration the engine can read: `pack.check`'s step for
+    a row not as built (`pack.ROW_CHECKS`), so a bad one is its problem and never an error that
+    stops every read."""
+    out: list[str] = []
+    try:
+        if "input" in row:
+            check_input(agent, row["input"], rows, states)
+        output = row.get("output")
+        if isinstance(output, dict) and output.get("kind") in KINDS:
+            check(agent, output)
+    except ContractError as e:
+        out.append(str(e))
+    return out
+
+
+pack.ROW_CHECKS.append(row_reasons)
 
 
 # The rows the declarations were last read from, and what was read: read again when they change.

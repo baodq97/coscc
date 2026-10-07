@@ -84,11 +84,18 @@ def check(
     if by not in BY:
         raise Invalid(f"started_by must be one of {', '.join(BY)}")
     found = pack.row(key)
-    if not pack.triggered(found):
+    if found is None or not pack.triggered(found):
         raise Refused(f"{key} is no agent a trigger starts", ("not-triggered",))
     if not _trigger(found).get(by):
         code = "not-leif" if by == "leif" else "not-triggered"
         raise Refused(f"{key} is not started {_words(by)}", (code,))
+    if not pack.pack_on(Data(core.config.data_dir), str(found.get("pack")), core.ws.key(workspace)):
+        raise Refused(f"{key}'s pack {found.get('pack')} is off in this workspace", ("pack-off",))
+    hooks = getattr(core.steps, "hooks", None)
+    if hooks is not None and pack.needs_catalog(found):
+        effects = {n: t.effect for n, t in hooks.catalog().items()}
+        if bad := pack.problems(key, effects):
+            raise Refused(f"{key}'s row cannot run: {'; '.join(bad)}", ("agent-invalid",))
     if by == "leif" and not 0 < len(reason.strip()) <= REASON_MAX:
         raise Invalid(f"Leif gives a reason of 1 to {REASON_MAX} characters")
     if _unit_scoped(key) != bool(unit):

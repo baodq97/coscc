@@ -12,9 +12,10 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any, Literal, TypedDict
 
+from coscc import vault
 from coscc.agent import agents, models, modeltrial, pack, policy
 from coscc.config import Config
 from coscc.kernel import OWNER, Hooks, Invalid
@@ -566,6 +567,9 @@ class Agents:
                 raise Invalid(f"the setting was saved but not logged: {e}") from e
         return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
 
+    def _vault(self) -> vault.Store:
+        return vault.Store(Data(self.config.data_dir))
+
     def _log(self, record: dict[str, Any]) -> None:
         journal = self.ws.journal()
         if journal is None:
@@ -603,6 +607,7 @@ class Agents:
             pack.delete_row(str(key))
         except pack.PackError as e:
             raise Refused(e) from e
+        self._vault().forget_agents({str(key)})
         self._log(
             {"kind": SETTING_KIND, "agent": str(key), "field": "delete", "old": None, "new": None}
         )
@@ -650,7 +655,8 @@ class Agents:
         key = self.ws.key(self.ws.check(cwd))
         data = Data(self.config.data_dir)
         try:
-            name = pack.import_zip(blob, self._effects(), _contract)
+            named = self._vault().named_agents()
+            name = pack.import_zip(blob, self._effects(), lambda k, _: _named(k, named))
         except pack.PackError as e:
             raise Refused(e) from e
         except OSError as e:
@@ -677,7 +683,9 @@ class Agents:
                     [f"{name} holds the process of {', '.join(used)}"], code="in-use"
                 )
             old = pack.pack_version(name)
+            keys = {k for k, r in pack.rows().items() if r["pack"] == name}
             pack.remove_pack(name)
+            self._vault().forget_agents(keys)
         except pack.PackError as e:
             raise Refused(e) from e
         except OSError as e:
@@ -687,16 +695,9 @@ class Agents:
         return pack.packs_shown(data, key)
 
 
-def _contract(key: str, found: Mapping[str, Any]) -> list[str]:
-    """Why an imported row's output is no contract the engine reads, as the field route asks."""
-    output = found.get("output")
-    if not isinstance(output, dict) or output.get("kind") not in contracts.KINDS:
-        return []
-    try:
-        contracts.check(key, output)
-    except contracts.ContractError as e:
-        return [f"{key}: {e}"]
-    return []
+def _named(key: str, named: set[str]) -> list[str]:
+    """An imported row never takes a key a vault secret's list names: it would get the secret."""
+    return [f"{key}: a vault secret names an agent {key}"] if key in named else []
 
 
 def _forget(data: Data, name: str) -> None:
