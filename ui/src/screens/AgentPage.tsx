@@ -525,7 +525,7 @@ function Tools(ctx: Ctx) {
               <span className="tmeta">
                 <Chip square tone="plain">{EFFECT[t.effect] ?? t.effect}</Chip>
                 <Chip square tone={TIER[t.tier] ?? "plain"}>{t.tier} risk</Chip>
-                {!same(p, (a.builtin.tools ?? {})[t.name] ?? "off") && <Chip square tone="accent">edited</Chip>}
+                {!same(tools[t.name] ?? "off", (a.builtin.tools ?? {})[t.name] ?? "off") && <Chip square tone="accent">edited</Chip>}
               </span>
               <span className="seg">
                 {choices(t).map((x) => (
@@ -536,7 +536,7 @@ function Tools(ctx: Ctx) {
               </span>
               {box && (
                 <span className="tool-why">
-                  {sandboxLine(box)}{" "}
+                  <div>{sandboxLine(box)}</div>
                   <label>
                     Network{" "}
                     <input
