@@ -14,6 +14,7 @@ import { useResource } from "../lib/api";
 import { useIndex } from "../lib/pack";
 import { AgentGlyph, WorkspaceSwitch, attention, inWorkspace, statusWords, triggerWords, useAgents } from "./Agents";
 import { Activity } from "./AgentActivity";
+import { SkillPicker } from "../components/SkillPicker";
 
 export const TABS = [
   { key: "activity", label: "Activity" },
@@ -948,10 +949,10 @@ function Prompt(ctx: Ctx) {
         <TextPart ctx={ctx} field="body" label="Its role" hint="Given to every run before anything else." rows={6} />
       </div>
       <div className="sec-h">
-        Skills <span className="faint">the rules it is given for its stage; a skill's text is shared by every agent that names it</span>
+        Skills <span className="faint">rules given with its prompt on every run; a skill's text is shared by every agent that names it</span>
       </div>
       <div className="card card-b">
-        {a.skills.length === 0 && <div className="faint">It names no skill.</div>}
+        <SkillPicker agent={a.key} names={(ctx.value("skills") as string[] | undefined) ?? []} editable={ctx.editable} onChange={(n) => ctx.edit("skills", n)} />
         {a.skills.map((s) => (
           <TextPart key={s.name} ctx={ctx} field={`skill:${s.name}`} label={s.name} rows={18} mono />
         ))}

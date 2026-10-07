@@ -16,7 +16,7 @@ from unittest import mock
 import claude_agent_sdk as sdk
 import httpx
 
-from coscc.agent import pack
+from coscc.agent import pack, policy
 from coscc.kernel import Feature
 from coscc.http.app import build
 from coscc.config import Config
@@ -2667,6 +2667,15 @@ class SkillsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mine["uses_30d"], 0)
         self.assertEqual((pack.row("scout") or {})["skills"], ["note-taking"])
         core = self.app.state.core
+        logged = core.ws.journal().records(None, kind="agent-setting")
+        self.assertEqual(
+            [(r["agent"], r["field"], r["new"], r["by"]) for r in logged][:1],
+            [("", "skill:note-taking", "new", "owner")],
+        )
+        self.assertIn("scout", [r["agent"] for r in logged])
+        run = core.models.agent("scout", policy.row_for("scout"))
+        self.assertTrue(run.system.endswith("Write down what you found."))
+        self.assertRegex(pack.stamp("scout")["skills"][0], r"^note-taking@[0-9a-f]{12}$")
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         core.ws.journal().started(
             core.ws.key(self.cwd), "", "scout", "manual", skills=["note-taking@abc"], at=now
@@ -2687,3 +2696,4 @@ class SkillsOverHttp(unittest.IsolatedAsyncioTestCase):
                 r = await self.post(**body)
                 self.assertEqual(r.status_code, 400, body)
         self.assertFalse((pack.owner_dir() / "skills").exists())
+        self.assertEqual(self.app.state.core.ws.journal().records(None, kind="agent-setting"), [])

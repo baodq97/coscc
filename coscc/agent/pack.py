@@ -914,15 +914,21 @@ def pack_version(name: str) -> str:
 
 
 def stamp(key: str, process_ref: str | None = None) -> dict[str, Any]:
-    """What a run of `key` records of its row: `pack`, `row_hash`, `edited`; with the unit's
-    process, `process` and `process_hash`."""
+    """What a run of `key` records of its row: `pack`, `row_hash`, `edited`, `skills` (each skill
+    it or a helper it names is given, as `name@<12 hex of its text>`); with the unit's process,
+    `process` and `process_hash`."""
     found = row(key)
     if found is None:
         return {}
+    named = [*(found.get("skills") or [])]
+    for helper in found.get("helpers") or []:
+        named += (row(helper) or {}).get("skills") or []
+    given = [(n, p) for n in dict.fromkeys(named) if (p := skill_path(n))]
     out = {
         "pack": pack_version(str(found["pack"])),
         "row_hash": hash_of(found),
         "edited": list(found["edited"]),
+        "skills": [f"{n}@{hashlib.sha256(p.read_bytes()).hexdigest()[:12]}" for n, p in given],
     }
     if process(process_ref) is not None:
         out.update(process=process_ref, process_hash=process_hash(process_ref))

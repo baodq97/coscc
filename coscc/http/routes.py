@@ -36,11 +36,12 @@ from coscc import kernel
 from coscc.agent import pack, skills
 from coscc.agent.pack import PackShown
 from coscc.agent.skills import SkillsPage
-from coscc.store.db import Data
+from coscc.store.db import Busy, Data
+from coscc.store.journal import BadRecord
 from coscc.bus import Event
 from coscc.http import plugin
 from coscc.kernel import Invalid
-from coscc.leif.agents import AgentPage, Live, ProposalsView
+from coscc.leif.agents import SETTING_KIND, AgentPage, Live, ProposalsView
 from coscc.leif.chat import ChatHistory, ChatSessions
 from coscc.leif.insights import Insights
 from coscc.runner import ask, triggers
@@ -352,6 +353,20 @@ async def new_skill(request: Request) -> SkillsPage:
         skills.new(name, body.get("text"))
     except ValueError as e:
         raise Invalid(str(e)) from e
+    journal = core.ws.journal()
+    if journal is not None:
+        said = {
+            "kind": SETTING_KIND,
+            "workspace": "",
+            "unit": "",
+            "stage": "",
+            "agent": "",
+            "by": kernel.OWNER,
+        }
+        try:
+            journal.append({**said, "field": f"{pack.SKILL}{name}", "old": None, "new": "new"})
+        except (BadRecord, Busy) as e:
+            raise Invalid(f"the skill was saved but not logged: {e}") from e
     if found is not None:
         named = [*(found.get("skills") or []), name]
         core.agents.set_agent_field(agent, "skills", named, cwd=str(body.get("cwd") or ""))
