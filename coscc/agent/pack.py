@@ -99,8 +99,8 @@ CWDS = ("trunk",)
 THENS = ("proposal-if-no",)
 # A schedule's hours and an event's delay. Chosen: a year.
 HOURS_MAX = 8760
-# Claude Code's own tools that do more than read, for a row checked with no catalog.
-NOT_READ = ("Write", "Edit", "NotebookEdit", "Bash", "Agent", "Task")
+# Claude Code's tools known to only read, all of its own a row checked with no catalog may hold.
+KNOWN_READ = ("Read", "Glob", "Grep", "SendMessage", "peers")
 # What a process state may do in place of running an agent: the engine opens the pull request, or
 # merges it.
 ACTIONS = ("open-pr", "merge")
@@ -348,7 +348,7 @@ def _check_trigger(
 ) -> list[str]:
     """A helper has none; an engine row names its engine and nothing else; a state's agent has
     none, the process names it (`agent_for`). Any other trigger is `TRIGGERS`' shapes, and a row an
-    event, a schedule or Leif starts holds only reading tools: no person watches it start."""
+    event, a schedule or Leif starts holds only reading tools: no person watches it start (a press, too, is only a read in v1)."""
     trigger, default = row.get("trigger"), row.get("default")
     if trigger is None:
         return [] if default is None else ["default: only a row with a trigger has one"]
@@ -380,18 +380,17 @@ def _check_trigger(
         out += _check_hours("trigger.schedule", trigger["schedule"], "hours", required=True)
     if "event" in trigger:
         out += _check_event(row, trigger["event"])
-    if any(k in trigger for k in ("event", "schedule", "leif")):
+    if any(k in trigger for k in TRIGGERS if k != "engine"):
         held = [t for t, p in (row.get("tools") or {}).items() if p != "off"]
-        beyond = [
-            t
-            for t in held
-            if (catalog or {}).get(t, "write" if t in NOT_READ else "read") != "read"
-        ]
+        if catalog is None:
+            # No catalog at load: a feature's tool (lower case) waits for the run's check, which
+            # has the catalog and refuses one that does more than read; Claude Code's own must be
+            # known to read.
+            beyond = [t for t in held if t not in KNOWN_READ and not t.islower()]
+        else:
+            beyond = [t for t in held if catalog.get(t) != "read"]
         if beyond:
-            out.append(
-                "a row an event, a schedule or Leif starts holds only reading tools, "
-                f"not {', '.join(beyond)}"
-            )
+            out.append(f"a row a trigger starts holds only reading tools, not {', '.join(beyond)}")
     return out
 
 

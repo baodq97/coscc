@@ -4,6 +4,7 @@ spend, an empty input is skipped for nothing, and a run at its ceiling turns the
 from __future__ import annotations
 
 import asyncio
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,13 +13,19 @@ from unittest import mock
 
 from coscc.agent import pack
 from coscc.bus import Bus
-from coscc.kernel import Run
+from coscc.kernel import Hooks, Parts, Run, Tool
 from coscc.runner import run as run_mod
 from coscc.runner import triggers
-from coscc.store.db import Data
+from coscc.store.db import Busy, Data
 from coscc.store.journal import Intervention, Journal
+from coscc import units
 from coscc.units import Invalid, proposals
 from coscc.units.meta import UnitMeta
+
+# The app's catalog holds every feature's tool, on or off: the grader names the code index.
+HOOKS = Hooks(
+    parts=(("codegraph", Parts(tools=(Tool("codegraph", "read", "low", when=lambda f: False),))),)
+)
 
 PROBLEM = "Steps stop and a person runs them again by hand. " * 6
 
@@ -55,15 +62,15 @@ class _Core(unittest.IsolatedAsyncioTestCase):
                 check=lambda cwd: cwd,
                 key=lambda cwd: cwd,
                 journal=lambda: self.journal,
-                units_root=lambda cwd: root / "units",
                 unit_meta=lambda: None,
                 all=lambda: {"paths": [self.ws]},
+                unit_dir=self._unit_dir,
             ),
             holds=SimpleNamespace(attempts=None),
             sessions=None,
             models=SimpleNamespace(agent=lambda key, row: run_mod.Agent(key, row)),
-            steps=SimpleNamespace(refuse_updating=lambda: None),
-            autopilot=SimpleNamespace(today=lambda cwd: None),
+            steps=SimpleNamespace(refuse_updating=lambda: None, hooks=HOOKS),
+            autopilot=SimpleNamespace(today=lambda cwd: (0.0, 120.0)),
             updater=SimpleNamespace(job_ended=lambda: None),
             bus=Bus(),
         )
@@ -75,6 +82,12 @@ class _Core(unittest.IsolatedAsyncioTestCase):
             p.start()
             self.addCleanup(p.stop)
         self.addCleanup(triggers._RUNNING.clear)
+
+    def _unit_dir(self, cwd, unit):
+        # As in the app: under the data root, outside the workspace's tree.
+        if not re.fullmatch(r"\d{4}_[a-z0-9-]+", unit):
+            raise Invalid(f"not a work unit name: {unit!r}")
+        return units.unit_dir(cwd, unit, self.core.config.data_dir)
 
     def _interventions(self, journal, meta, attempts, key, after, limit):
         return [i for i in self.found if i.at > after][:limit]
@@ -179,10 +192,54 @@ class APressRunsTheRow(_Core):
         with self.assertRaises(Invalid) as e:
             await triggers.run(self.core, "scan", self.ws, by="manual")
         self.assertEqual(e.exception.reasons, ("budget-reached",))
-        self.core.autopilot.today = lambda cwd: None
+        self.core.autopilot.today = lambda cwd: (0.0, 120.0)
         with self.assertRaises(Invalid) as e:
             await triggers.run(self.core, "estimate", self.ws, by="manual")
         self.assertEqual(e.exception.reasons, ("not-triggered",))
+        self.assertEqual(self.given, [])
+
+
+class ARefusalBeforeSpend(_Core):
+    async def refused(self, **kw) -> tuple[str, ...]:
+        with self.assertRaises(Invalid) as e:
+            await triggers.run(self.core, "scan", self.ws, by="manual", **kw)
+        self.assertEqual(self.given, [])
+        return e.exception.reasons
+
+    async def test_an_owner_file_giving_a_non_reading_tool_is_refused(self):
+        owner = pack.owner_dir() / "agents"
+        owner.mkdir(parents=True, exist_ok=True)
+        (owner / "scan.md").write_text('---\ntools: {"vault": "allow"}\n---\n')
+        self.found = found(1)
+        self.assertEqual(await self.refused(), ("agent-invalid",))
+
+    async def test_a_press_only_row_holding_a_write_tool_is_refused(self):
+        owner = pack.owner_dir() / "agents"
+        owner.mkdir(parents=True, exist_ok=True)
+        (owner / "scan.md").write_text(
+            '---\ntrigger: {"manual": true}\ntools: {"Write": "allow"}\n---\n'
+        )
+        self.found = found(1)
+        self.assertEqual(await self.refused(), ("agent-invalid",))
+
+    async def test_an_unreadable_spend_and_a_ceiling_past_the_cap_are_refused(self):
+        self.found = found(1)
+        self.core.autopilot.today = lambda cwd: None
+        self.assertEqual(await self.refused(), ("unavailable",))
+        self.core.autopilot.today = lambda cwd: (119.5, 120.0)
+        self.assertEqual(await self.refused(), ("budget-reached",))
+
+    async def test_a_unit_that_walks_out_is_refused(self):
+        with mock.patch.object(triggers, "_unit_scoped", return_value=True):
+            with self.assertRaises(Invalid) as e:
+                await triggers.run(self.core, "scan", self.ws, "../..", by="manual")
+        self.assertIn("not a work unit name", str(e.exception))
+
+    async def test_a_busy_journal_skips_the_schedule_not_reads_it_as_never_run(self):
+        self.found = found(1)
+        pack.set_agent_on(self.data, "scan", self.ws, True)
+        with mock.patch.object(self.journal, "records", side_effect=Busy("busy")):
+            await triggers.tick(self.core)
         self.assertEqual(self.given, [])
 
 
@@ -332,8 +389,10 @@ class TheGraderGradesWhatShipped(_Core):
         await super().asyncSetUp()
         root = Path(self.ws).parent
         self.unit = "0141_fast-lane"
-        (root / "units" / self.unit).mkdir(parents=True)
-        (root / "units" / self.unit / "intent.md").write_text("## Proposed outcome\nA fix ships.")
+        folder = self.core.ws.unit_dir(self.ws, self.unit)
+        folder.mkdir(parents=True)
+        (folder / "intent.md").write_text("## Proposed outcome\nA fix ships.")
+        (folder / "ship.md").write_text("Merged as #1.")
         self.trunk = root / "trunk"
         self.trunk.mkdir()
         self.meta = UnitMeta(root / "work", self.data)
@@ -372,6 +431,23 @@ class TheGraderGradesWhatShipped(_Core):
             r for r in self.journal.records(self.ws, kinds=("end",)) if r["stage"] == "outcome"
         ]
         self.assertEqual((end["verdict"], end["proposals"]), ("not-met", 2))
+
+    async def test_the_prompt_carries_the_unit_from_outside_the_tree(self):
+        folder = self.core.ws.unit_dir(self.ws, self.unit)
+        self.assertFalse(folder.is_relative_to(self.ws) or folder.is_relative_to(self.trunk))
+        self.reply = Run("done", self.criteria("yes"))
+        await triggers.run(self.core, "outcome", self.ws, self.unit, by="manual")
+        (given,) = self.given
+        for said in (self.unit, "A fix ships.", "Merged as #1.", "Fewer steps."):
+            self.assertIn(said, given.prompt)
+
+    async def test_a_unit_the_workspace_does_not_hold_is_refused_before_spend(self):
+        with self.assertRaises(Invalid) as e:
+            await triggers.run(self.core, "outcome", self.ws, "0047_nonexistent", by="manual")
+        self.assertEqual(e.exception.reasons, ("no-unit",))
+        with self.assertRaises(Invalid):
+            triggers.start(self.core, "outcome", self.ws, "0047_nonexistent", by="manual")
+        self.assertEqual((self.given, triggers._TASKS), ([], set()))
 
     async def test_unclear_alone_proposes_nothing(self):
         self.reply = Run("done", self.criteria("yes", "unclear"))

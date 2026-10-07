@@ -729,6 +729,13 @@ class Data:
                     have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
                     if column not in have:
                         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+                if 0 < found < 18 and "rule" in {
+                    r[1] for r in conn.execute("PRAGMA table_info(review_findings)")
+                }:
+                    conn.execute(
+                        "UPDATE review_findings SET criterion = rule "
+                        "WHERE criterion = '' AND rule != ''"
+                    )
                 # Not parameterisable; `SCHEMA_VERSION` is this module's own integer.
                 conn.execute(f"PRAGMA user_version={int(SCHEMA_VERSION)}")
         except BaseException:

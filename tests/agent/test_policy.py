@@ -66,6 +66,11 @@ class OnlyImplAndOnlyAutonomous(unittest.TestCase):
         )
         self.assertEqual(row_for("no-such-stage"), Row())
 
+    def test_every_row_that_hands_back_an_object_submits(self):
+        """The grader's `verdict` and the scan's `proposal` reach the app only through `submit`."""
+        self.assertTrue(row_for("outcome").submits)
+        self.assertTrue(row_for("scan").submits)
+
     def test_impl_writes_its_own_artifact_and_prose_stages_do_not(self):
         self.assertFalse(IMPL.app_writes_artifact)
         self.assertTrue(row_for("spec").app_writes_artifact)
