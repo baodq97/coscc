@@ -1209,9 +1209,9 @@ def _inline(simple: _Simple, docs: Mapping[int, str]) -> list[str]:
     (`docs`, by where its delimiter stands) or here-string it reads from stdin.
 
     An interpreter counts where `_helper_git` counts `git`: where a program starts (`uv run`,
-    `find -exec`), and as a bare name or an absolute path anywhere else (`timeout 9 python3`),
-    except after a program that only reads its words. Text, not what it does: a name built as it
-    runs is not seen.
+    `find -exec`), and as a name or a path anywhere else (`timeout 9 .venv/bin/python`), except
+    after a program that only reads its words. Text, not what it does: a name built as it runs is
+    not seen.
     """
     words = list(simple.words)
     launched = [k for k in _launched(words) if k < len(words)]
@@ -1220,9 +1220,7 @@ def _inline(simple: _Simple, docs: Mapping[int, str]) -> list[str]:
     for k, word in enumerate(words):
         name = word.rsplit("/", 1)[-1]
         name = "python" if _PYTHON.fullmatch(name) else name
-        if name not in _INLINE or (
-            k not in launched and (reader or ("/" in word and word[:1] != "/"))
-        ):
+        if name not in _INLINE or (k not in launched and reader):
             continue
         code, script = _given(name, words[k + 1 :])
         if code is not None:

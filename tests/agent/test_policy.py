@@ -1775,6 +1775,7 @@ class TheHelperRulesHold(_Unit):
         """ruby -E UTF-8 -e 'system("git", "push")'""",
         """node -pe "require('child_process').execSync('git push')\"""",
         """python3 -Wignore::DeprecationWarning <<< "import os; os.system('git commit')\"""",
+        """timeout 60 .venv/bin/python -c "import os; os.system('git commit -m x')\"""",
     )
 
     def test_a_helpers_inline_program_naming_git_is_refused(self):
@@ -1799,6 +1800,8 @@ class TheHelperRulesHold(_Unit):
             'node -e "console.log(1)"',
             'python3 -I -c "print(1)"',
             "python3 -W ignore script.py",
+            "timeout 60 .venv/bin/python -m pytest tests/x.py",
+            "ls tools/python -c git",
             "grep -n git x.py",
             "git diff",
             "git status --porcelain",
