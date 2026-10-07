@@ -1,8 +1,9 @@
 # coscc: the target architecture
 
 Where the app goes as the Reflex page is replaced. It is written for the owner first and for
-the agents who will build it second. Figures come from `main` at dd33c2b. The way the
-state machine works stays in [fsm.md](fsm.md).
+the agents who will build it second. Figures in §2 come from `main` at dd33c2b. The way the
+state machine works stays in [fsm.md](fsm.md). Idea 0006 (agents and packs) built §5 and
+changed §1, §3.3, §4 and §9; each says what runs now and what was not built.
 
 ## 1. What the app is
 
@@ -16,7 +17,7 @@ The architecture has three concepts, and only three.
 |---|---|---|
 | **Core** | What coscc cannot exist without: the store, units and their state machine, the runner, Leif, git/GitHub, HTTP. | Rarely, and only through a planned kernel change. |
 | **Feature** | Anything optional. Each one lives in one folder, builds only on the kernel, and can be added or removed with one line. | Often. This is where new work goes. |
-| **Agent** | A configured worker: a prompt or skill, a model, an effort level, tools, a grant, a budget, a trigger, and an output. Stage agents (Nauthiz, Kenaz, …) are agents. So is a scanner, and so is Dagaz, which makes agents. | Through the Agents page, not through code. |
+| **Agent** | A row of a pack: a prompt and skills, a model and effort, tools (each `allow`, `ask` or `off`), ceilings, an input and an output contract, and a trigger. A pack also holds processes, the state machines that bind states to agents. The stage agents (Nauthiz, Kenaz, …), the scanner, the outcome grader and Dagaz, which drafts agents, are rows of the built-in pack `coscc-sdlc`. | On the Agents page and in Settings, not through code. |
 
 Nothing else is a concept: no service layer, no ports, no adapters.
 
@@ -35,11 +36,12 @@ Nothing else is a concept: no service layer, no ports, no adapters.
 
 ```
 coscc/
-  kernel.py        the one module a feature imports: Feature, Ctx, Tool, Guard, Block, the read models
+  kernel.py        the one module a feature imports: Feature, Ctx, Tool, Guard, Block, the tool catalog
+  packs/coscc-sdlc/ the built-in pack: agents/<key>.md rows, skills/, process.json   (data, no code)
   store/           cos.db: connection, migrations, prefs, the run log           (data.py, runlog/journal.py)
   loop/            the state machine and its rules                             (unchanged)
   units/           units, transitions, holds, worktrees, the one board read
-  runner/          runs one agent session: prompt, grant, attempt, cost, events (+ agent/)
+  runner/          runs any row: run(agent, input), the grant, attempts, triggers, cost (+ agent/: packs, policy)
   leif/            the decision loop: autopilot, decisions, delegations, the inbox, chat with Leif
   git/  github/    worktrees, PRs, CI, integrate                                (unchanged)
   http/            app, auth, routes by area, SSE stream, the studio's files    (api.py, auth.py, studio.py)
@@ -70,16 +72,17 @@ deleted: the studio formats on its side.
 
 ### 3.3 Optional parts become features
 
-| Feature | Today |
+The features are `codegraph`, `notices`, `parallel`, `release`, `scratch` and `vault`
+(`coscc/features/__init__.py`). What the first plan listed and where it went:
+
+| Part | Where it is |
 |---|---|
-| `vault` | `features/vault.py` + `vault/`. Its paths leave `agent/policy.py:445` and are declared by the feature. |
-| `notices`, `codegraph`, `parallel`, `scratch` | `features/*`. `scratch` is spread through runner, agent and service today, and becomes one folder. |
-| `scan` | Becomes an **Agent** (run log in, proposals out) plus a small `proposals` feature that owns the Backlog proposals table. Its names leave core. |
-| `backlog` | Estimates, relations, the shortlist: `units/backlog.py` + `service/backlog.py`. Leif reads the shortlist through the kernel. |
-| `release` | `github/release.py` + `service/release.py` |
-| `update` | `update/updater.py`. Core keeps only "suspend and resume sessions" (`service/__init__.py:246-407`). |
-| `model-trial` | `agent/modeltrial.py` |
-| `insights` | New: cost, runs and failing tool calls per agent and per project, read from the run log. |
+| `vault` | A feature with the `vault` catalog tool and the `vault-leak` guard; which agents may use a secret is the secret's own list. |
+| `scan` | A row of the built-in pack (Sowilo, `agents/scan.md`) on a schedule; its proposals are the core table `proposals`, shown on Up next. No feature code. |
+| `backlog` | Core (`units/backlog.py`, `leif/backlog.py`); the estimate is a row with an `engine` trigger. Not moved. |
+| `update` | Core (`coscc/update/`). Not moved. |
+| `model-trial` | Row data: a row's `model.trial`. |
+| `insights` | Core (`leif/insights.py`): cost, runs and the grader's verdicts, per agent and project. |
 
 ## 4. The feature contract
 
@@ -96,50 +99,65 @@ tests/features/<name>/
 ```python
 Feature(
     name,
-    summary,
-    default="on" | "off" | "pilot",
-    routes=lambda ctx: [...],  # typed routes under /api/<name>/
+    routes=lambda ctx: [...],  # routes under /api/<name>/
     tables=(...),  # created at start; only this feature reads and writes them
-    agent=lambda ctx: Parts(...),  # tools, guards, prompt blocks (hooks.py today)
-    grants=Grants(paths=..., protected=..., commands=...),  # what core policy now hard-codes
-    events=("<name>.<verb>", ...),  # subjects it may publish; listeners via ctx.bus
-    schedule=Schedule(...),  # optional
-    settings=Model,  # a Pydantic model; the studio draws its form
+    agent=lambda ctx: Parts(...),  # catalog tools, guards, prompt blocks
+    default="on" | "off",
+    pilot=False,  # whether `pilot` (half the units) may be chosen
+    status=...,  # its line on Settings
+    on_set=...,  # told when a person set a state
+    summary="...",
 )
 ```
 
-`Ctx` stops being a bag of callables. It holds a few typed handles, each a narrow view of a
-core part:
+A feature's tool is a catalog entry (`kernel.Tool`: name, effect, tier) that an agent row
+names; the engine issues the grant per run, so a feature declares no grant. A paid session is
+never a feature's: it is a pack row with a trigger. Not built from the first sketch:
+`grants=`, `events=`, `schedule=` and a settings model.
+
+`Ctx` holds a few typed handles, each a narrow view of a core part:
 
 | Handle | Gives |
 |---|---|
-| `ctx.units` | read a board or a unit; create a unit or an idea; move it only through the FSM |
-| `ctx.runs` | read the run log, step events and interventions |
-| `ctx.agents` | run an Agent with a grant and a budget, and get its submitted result |
+| `ctx.units` | the workspace's units, creating one, the trunk tree, open pull requests |
+| `ctx.runs` | the run log |
 | `ctx.store` | a connection limited to the feature's own tables |
-| `ctx.bus` | publish its declared events; listen to any |
-| `ctx.settings` | read its settings, per workspace |
+| `ctx.bus` | publish and listen; every subject's payload is typed |
+| `ctx.settings` | the feature's state per workspace |
+| `ctx.asks`, `ctx.required_checks`, `ctx.refuse_updating` | slow reads asked again in the background; a PR's required checks; refusal while an update runs |
 
 A feature that needs something none of these give means a kernel change, planned first. This
 rule is unchanged from `.claude/docs/code-and-tests.md`.
 
 ## 5. Agents are data
 
-An Agent is a row, not code:
+An agent is a row of a pack, `agents/<key>.md`; its frontmatter is data and its body the
+system prompt:
 
 ```
-name, rune, role         who it is and what it is for
-skill / prompt           what it is told
-model, effort, turns, $  how much it may spend
-tools, grant             what it may touch
-trigger                  a unit stage, a schedule, a bus event, or Leif asking
-output                   an artifact, proposals, a decision, a report
+name, glyph, description   who it is and what it is for
+body, skills               what it is told
+model, effort, variants    what it runs on (a `novel` variant for a dearer step)
+ceilings {turns, usd}      where it pauses; a person raises and it goes on
+tools {name: allow|ask|off} catalog entries; the engine derives the grant per run
+input, output              the envelope it is given; the typed record it hands back
+trigger, default           engine | event | schedule | manual | leif; on or off by default
 ```
 
-- The eight stage agents are seeded rows bound to FSM stages. Their settings move from code to the row. 0161 started this for model, effort and limits.
-- The runner runs any row. The FSM still decides transitions; an agent only gives evidence (fsm.md §7).
-- A skills hub turns skills on, off or pilot, per agent.
-- Dagaz is an agent whose output is a new agent row, proposed to Leif.
+- A pack is a Claude Code plugin folder: `.claude-plugin/plugin.json`, `agents/`, `skills/`,
+  `process.json`. The built-in `coscc-sdlc` ships with the app and is never written; the
+  owner's `local` pack is laid over it (a key it shares holds only what differs) and holds
+  their own rows and processes; imported packs sit beside it, off until a project turns them on.
+- A process binds each state to a row or an engine action (`open-pr`, `merge`); its ways on
+  read output fields or named guards. The loop runs any process; the core names no stage.
+- The runner runs any row. The loop still decides transitions; an agent only gives evidence
+  (fsm.md §7).
+- The Agents page shows and edits every part, builds new agents and processes, and exports or
+  imports a pack as a zip; every save passes the same load checks as a pack.
+- Dagaz drafts a row or a process from a task in words; the draft is checked at `submit`, kept
+  on the run's `end`, and a person saves it. It writes nothing itself.
+- Not built: a skills hub that pilots a skill per agent (a row lists its skills), and a
+  capability layer above the output contracts (it waits for a second provider of one output).
 
 ## 5a. Leif learns
 
@@ -159,9 +177,8 @@ recommend   options with the one Leif would pick and why; the owner's choice, an
             outcome, are new facts
 ```
 
-- **Facts are already kept**, in the run log and in `cos.db`. What is missing is who decided.
-  Today 339 of 356 answers were given by Leif or an agent yet are recorded as `person`, so the
-  provenance becomes a field on every answer and every choice.
+- **Facts are already kept**, in the run log and in `cos.db`, and every answer carries who
+  gave it (`by`: `person` or `delegated`). Choices other than answers do not yet.
 - **Knowledge is distilled, never typed in.** A distiller agent (scheduled, like scan) reads
   new facts and adds, strengthens, weakens or retires claims. A claim with no evidence left,
   or contradicted by outcomes, is retired. The owner can correct a claim, and the correction
@@ -173,10 +190,11 @@ recommend   options with the one Leif would pick and why; the owner's choice, an
 - **Value is measured, on Insights**: how often a recommendation is taken, how often its
   predicted outcome happens, $ and turns per unit, and how often the owner steps in. A claim
   that is never used or keeps being wrong decays.
-- **The old decisions and delegations go.** The `decisions` table, its Settings form,
-  `DELEGATES` and the `delegated` path are unused and are deleted in the cut. What they tried
-  to do, letting Leif answer in the owner's place, comes back as recommendations Leif may act
-  on when the knowledge behind them is strong and the owner has let it (a fact, not a rule).
+- **The old decisions and delegations are gone**: the `decisions` table, its Settings form
+  and `DELEGATES`. An answer given for the owner is written `by: delegated`. Letting Leif act
+  in the owner's place comes back as recommendations Leif may act on when the knowledge behind
+  them is strong and the owner has let it (a fact, not a rule). The distiller, the knowledge
+  and the recommendations are not built.
 
 ## 6. Contract between the app and the studio
 
@@ -204,6 +222,8 @@ Each rule is a test, not a sentence:
 | `api.gen.ts` is fresh | new, in `npm test` |
 | A file over 800 lines is marked "still to split" and its count only falls | new ratchet. Today: `service/steps.py` 2691, `runner/step.py` 2375, `loop/model.py` 1586, and others. |
 | Each feature's tests run alone | `pytest tests/features/<name>` |
+| Core names no stage or agent | `tests/test_no_stage_names.py` |
+| Every pack row and process passes the load checks | `pack.check`, `check_process` at load and at save |
 
 An agent working on a feature should need its folder, `kernel.py` and this file, about 5
 files. Today it needs `plugin.py`, `hooks.py`, `service/*` and the policy.
@@ -226,8 +246,8 @@ Each step is one PR, and the app runs after each one.
      Done: `service/` is gone and `coscc/http/` (`app.py`, `routes.py`, `auth.py`, `studio.py`, `plugin.py`) is the top.
    - Remove the `reflex` dependency.
    - Delete the `decisions` table, its form and the `delegated` path (§5a).
-4. **Features to folders.** `backlog`, `release`, `update`, `scratch` and `model-trial` move under `features/`, and the `proposals` feature comes out of scan.
-5. **Agents as data.** Agent rows, the Agents page that edits them, the skills hub, scan as an agent, Dagaz, and Insights.
+4. **Features to folders.** `release` and `scratch` are features. `backlog` and `update` stayed core, `model-trial` became row data, and proposals are a core table.
+5. **Agents as data.** Built by idea 0006: rows in packs, processes as data, packs on or off per project, triggers, scan and the outcome grader as rows, review by rubric, the Agents page that edits and builds them, pack export and import, Dagaz, and Insights. Not built: the skills hub.
 6. **Leif learns (§5a).** Provenance on every answer and choice, the distiller agent and its knowledge, Leif's recommendations with their reasons, and their measures on Insights. Talk to Leif is built on it.
 
 Steps 1 and 3 are kernel changes and are planned as units. Steps 2, 4 and 5 are ordinary

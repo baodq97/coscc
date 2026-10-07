@@ -6,6 +6,13 @@ be checked. Nothing here is a design yet — section 6 lists what the redesign m
 `loop:N` and a bare `:N` in section 1 cite a line of the Node script that decided the loop at
 that commit; since `0153` the loop is `coscc.loop`, the same commands in Python.
 
+**Since idea 0006 the stages are data.** A unit walks one *process* from a pack's
+`process.json`; each state runs an agent row (`agents/<key>.md`) or an engine action
+(`open-pr`, `merge`), and each way on reads a field of the state's typed output or a named
+guard. The stages in sections 1–5 are the built-in pack `coscc-sdlc`'s `full` process; `short`
+(intent → impl → pr → review → ship) is the other built-in one, and a person may add their own.
+Section 8 says what runs now. Where 0006 changed a line below, the line says so.
+
 Who decides a transition:
 
 - **CODE** — deterministic: `coscc.loop`, the app's Python, git/gh reads.
@@ -50,13 +57,14 @@ flowchart LR
   S1 -- "end → nudge" --> A1
 ```
 
-The unit's state is **not stored anywhere**: `coscc.loop` recomputes it on every read from the
-markdown files, git and `gh`. The app keeps its own facts (steps, picks, stops, holds'
+The unit's state is **not a column**: `coscc.loop` recomputes it on every read from the
+snapshot of its `cos.db` rows (the `outputs` records, holds, answers, decisions, review rounds,
+PR-machine transitions, its process), git and `gh`; markdown is prose for people. The app keeps its own facts (steps, picks, stops, holds'
 effects, answers, shortlist, estimates, settings) as rows in `~/.cos/cos.db` table `runs`
 and `prefs`. The two halves meet through `coscc.loop status/next/gate` called as a subprocess
 (`coscc/units/board.py:44-415`).
 
-## 1. Unit lifecycle (per unit) — `coscc.loop`
+## 1. Unit lifecycle (per unit) — `coscc.loop`, the `full` process
 
 ### 1.1 States per artifact
 
@@ -137,13 +145,13 @@ stateDiagram-v2
 | Transition | Decided by | Recorded |
 |---|---|---|
 | refuse before spend: busy mark, held, `coscc.loop gate` non-zero, impl tree prep fails, review screenshot retake fails, a required input the stage's row declares is missing (`input-missing`, `units/contracts.py` `missing`) (`coscc/runner/steps.py` `_open`, `_prepare`) | CODE | none / `screens` |
-| prompt assembly: skill + gate text + the envelope the row's `input` declares (`agents.json`: artifacts whole, earlier records, answers and open findings from `cos.db` rows, the app's data) + note (`runner/prompt.py` `compose_prompt`) | CODE | `start` (`envelope`, model, effort, grant) |
+| prompt assembly: the row's body and skills + gate text + the envelope the row's `input` declares (artifacts whole, earlier records, answers and open findings from `cos.db` rows, the app's data) + note (`runner/prompt.py` `compose_prompt`) | CODE | `start` (`envelope`, model, effort, grant, `pack`, `row_hash`, `process`) |
 | the work itself, and the record it hands back through `submit` | **AGENT** | the file, `outputs` |
 | prose stages: app writes the file from the reply, checks the title | CODE on AGENT text | `end.opening` |
 | tool stages: file must exist before `submit` is taken | CODE on AGENT file | — |
-| ceilings (turns, $ per grant, `policy.py:253-397`) → paused-budget; a person's raise goes on | CODE | `end`, `raise` |
+| ceilings (turns, $ from the row's `ceilings` or its `novel` variant, `agent/models.py` `ceilings`) → paused-budget; a person's raise goes on in the same session | CODE | `end`, `raise` |
 | Stop (`POST /api/board/stop`) | PERSON | `end.stopped_by` |
-| after `end`: post review rounds as PR comments; `pr-sync` title/body; worktree cleanup after ship; write `questions` and `ship` rows; nudge autopilot (`coscc/runner/steps.py` `after_end`) | CODE | `pr-comment`, `pr-sync`, `questions`, `ship` |
+| after `end`: post review rounds as PR comments; `pr-sync` title/body; worktree cleanup after ship; write `questions` and `merge` rows; nudge autopilot (`coscc/runner/steps.py` `after_end`) | CODE | `pr-comment`, `pr-sync`, `questions`, `merge` |
 | startup recovery: a `start` with a dead pid and no `end` → `end{failed, recovered}` (`runlog/recovery.py:55-76`) | CODE | `end` |
 
 ## 3. Autopilot (per workspace) — `coscc/leif/autopilot.py`, `coscc/leif/decide.py`
@@ -155,8 +163,7 @@ shortlist change. Since `0136` R23 also after the PR reader records a transition
 machine (a CI answer, a new head, `merged`, `closed`): one pass per workspace per read, and a
 `merged` one for every other workspace whose autopilot is on. Such a pass's `autopilot-pick`
 rows carry `woken_by`: `{unit, transition, id}` of each transition that scheduled it. A
-`merged` the reader records is followed by what a `ship` step leaves — the `ship` row, the
-worktree's cleanup — since no `ship` step follows it.
+`merged` the reader records writes the `merge` row and cleans the worktree up.
 
 A pass, all CODE (`Autopilot.run_pass`):
 
@@ -200,10 +207,10 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 | **Holds** | active, paused, dropped | PERSON `POST /api/units/hold`; dropped → CODE closes the PR and removes the worktree (`units/hold.py:99-165`) | `### Paused…` block + `hold` row |
 | **PR / CI / integrate** | unknown, conflicting, red-after-integration, behind, current (`github/integrate.py:80-111`) | read by `gh pr list` on each board read, `gh pr checks` ≤ every 60 s per head, and the 300 s pass — no dedicated poller. `behind` → CODE `gh pr update-branch`; conflicting / red / refused / diverged head → **AGENT Gebo** (120 turns, $8, leased push) (`coscc/github/integration.py` `_integrate_body`, `integrate_gebo`); Gebo's `[needs-person]` lines set the outcome (since `0136`, the object it hands back through `submit`) | `integration`, `start`/`end` |
 | **Review loop** | round n: changes-requested → impl → CI → review n+1 … pass → ship | verdict and severities AGENT; rounds counted CODE; clean-rebase re-review skip CODE (0067) | review.md, `pr-comment` |
-| **Ship** | open → merged → recorded | CODE: the PR machine runs `gh pr merge --match-head-commit` behind guard `ship-ready` (`0136`); no session, skill or grant since `0139` R12; merged outside → "record, do not merge" (0116) | ship.md, `ship` row |
+| **Ship** | open → merged → recorded | CODE: the PR machine runs `gh pr merge --match-head-commit` behind guard `ship-ready` (`0136`); no session, skill or grant since `0139` R12; merged outside → "record, do not merge" (0116) | ship.md, `merge` row |
 | **Update** | idle → pending → applying → handoff / fail; release channel (6 h check), local channel (build-local) | CODE checks; PERSON applies (`update/updater.py:148-757`) | `update` rows |
-| **Model trial** (routine `impl`, since `0139`; the effort trial of `0123` ended) | arm = SHA-256(unit): `opus-5-5` / `sonnet-5-5` | CODE; `model` from the session's `init` | `start.model_trial` |
-| **Notices** | stream of autopilot-stop, questions, end, ship | CODE, read-only (`features/notices/`) | — |
+| **Model trial** (a row's `model.trial`, routine steps only; built in: impl) | arm = SHA-256(unit) over the listed models | CODE; `model` from the session's `init` | `start.model_trial` |
+| **Notices** | stream of autopilot-stop, questions, step ended, merge refused, shipped, agent turned off | CODE, read-only (`features/notices/`) | — |
 | **Artifact history** | a transition table in the DB already exists (`units/history.py`, `machine.refuse`) | fed after each step from the record, guard `stage-result` | history table |
 
 ## 5b. Channels and formats
@@ -217,7 +224,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 | app ↔ coscc.loop | subprocess | JSON on stdout (`status`, `next`, `rerun`, `screens`); `gate` = prose lines on stdout/stderr, exit 0/1/2, merged into one string by the app (`board.py:352`) | JSON / substring |
 | app ↔ GitHub | `gh` subprocess | `--json` fields; PR comments with a hidden marker `<!-- coscc-review unit=U round=N -->` | JSON |
 | person ↔ app | REST, SSE (`/api/stream`, a run's `follow`) and NDJSON streams (`/api/board/run`, `/api/chat`, `/api/notices/follow`) | NDJSON `{type, …}` | JSON |
-| agent ↔ agent | artifacts on disk | review rounds `## Round N` / `Reviewed: <sha>. Verdict: …` / `- F<k> [state] path:line — severity — text` (the loop reads only `review_rounds`) | regex in **three** places (`loop:517`, `review.py:13`, `priorfindings.py:29`) |
+| agent ↔ agent | never directly: through the engine | each agent's `submit` record (`outputs`, `review_rounds`), handed to the next as the envelope its row's `input` declares; artifacts are prose for people | the record, checked against the declaration at `submit` and at pack load |
 | everything → history | SQLite `runs` | JSON record per kind (`start`, `end`, `attempt`, `autopilot-pick`, `autopilot-stop`, `integration`, `answer`, `hold`, `shortlist`, …) | JSON |
 
 ## 6. What the as-is map shows
@@ -293,3 +300,36 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 Success is measured per finished goal: share of units shipped with no intervention outside the
 app, total $ per shipped unit including retries and integration, time from ready to started,
 review rounds, CI-red returns and escapes after merge.
+
+## 8. What runs since idea 0006
+
+- **Packs.** The built-in `coscc-sdlc` ships with the package and is never written. Other packs
+  live under the data root: the owner's `local` (a file whose key another pack has holds only
+  what differs; any other is a whole row of theirs; its `process.json` holds their processes)
+  and each imported zip. A project turns packs on or off and picks its default process; off, a
+  new unit is refused `no-process`. A unit records its process when it opens; a process that
+  loses the unit's state holds it `state-gone`.
+- **Load checks.** Every row passes `pack.check` with the tool catalog and the output contracts;
+  every process passes `check_process` (an agent or an action per state, a known guard, a
+  field the state's output has, every state reachable and the end reached, every required
+  input produced on each path, a review on every path to a merge). A bad built-in stops the app; a bad
+  imported pack or owner file is a problem on the page and its runs are refused.
+- **One runtime.** `run(agent, input)` (`coscc/runner/run.py`) for a board step, Gebo, estimate,
+  chat and every triggered row: one `start` and one `end`, `done | paused-budget | failed |
+  refused | cancelled`. A grant is issued per run from the row and where it runs; the session is
+  in `auto` mode and one fail-closed hook refuses the critical calls (writes outside the grant,
+  the secrets, a push other than the unit's branch, a merge or release, `rm -r` outside, a
+  nested `claude`, a helper or MCP tool not granted).
+- **Triggers.** A state runs its agent through the loop. A row no state runs names its own
+  trigger: `engine` (Gebo, estimate, chat), `event` (a bus subject, at once or `after_hours`
+  later through `trigger_due`), `schedule` (`hours` since its last `end`), `manual` (*Run now*),
+  `leif` (Leif's `run_agent`). Event, schedule and Leif runs hold reading tools only. Built in:
+  the scan (Sowilo: interventions → proposals), the outcome grader (Eihwaz: a week after a
+  merge, every criterion of the intent and its idea met / no / unclear, a `no` becomes a
+  proposal) and Dagaz (a task in words → a draft row or process, checked at `submit`, saved by
+  a person).
+- **Review by rubric.** A review round grades the plan's proof and the spec's requirements
+  criterion by criterion; every finding names its criterion.
+- **No stage names in the core.** Record keys are named by what the engine did (`merge`,
+  `verdicts`); `tests/test_no_stage_names.py` holds the core to none. One schema step takes a
+  0.15 database (v12) to the current one; an older one is refused.

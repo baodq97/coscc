@@ -1,8 +1,9 @@
 # The spike step
 
-Read this before changing the `spike` grant or its scratch directory.
+Read this before changing a row whose artifact is written `by: scratch` (the built-in `spike`)
+or its scratch directory.
 
-- `spike` runs arbitrary code as this user and nothing is a sandbox: `python -c` writes anywhere
+- The spike runs arbitrary code as this user and nothing is a sandbox: `python -c` writes anywhere
   the user can. Its working directory is a scratch that is emptied before and removed after;
   the worktree and the unit are read only.
 - The worktree's `HEAD` and status are compared before and after: a difference fails the step

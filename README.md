@@ -9,13 +9,23 @@ Code sessions across projects. `pyproject.toml` describes the thing that exists;
 paragraph is the only place the destination is written down, and nothing in the repository
 implements it.
 
-A local AI-native SDLC harness: a unit of work moves through eight stages — `idea.md`,
-`intent.md`, `spec.md`, `plan.md`, `impl.md`, `pr.md`, `review.md`, `ship.md` — each
-artifact accepted and committed before the next begins. `idea.md` is optional and gates
-nothing; the other seven are gated on the one before. The agent writes those artifacts and
-judges its own, so a stage's `judgement` records readiness rather than approval;
-`.claude/CLAUDE.md`, under `## What is deliberately not built`, says what was traded
-away for that and what is left.
+A local AI-native SDLC harness: a unit of work walks one **process**, a state machine kept
+as data. Each state runs an **agent** or an engine action (open the pull request, merge), and
+each way on reads a field of the last agent's typed output or a named guard. Processes and
+agents come in **packs**, Claude Code plugin folders: the built-in `coscc-sdlc`
+(`coscc/packs/coscc-sdlc/`) has the processes `full` (idea, intent, spec, spike, plan, impl,
+pull request, review, merge, with a fast-lane branch from intent to impl) and `short`
+(intent, impl, pull request, review, merge), and one row per agent (`agents/<key>.md`: model,
+ceilings, tools, input, output, trigger; the body is the prompt). A project turns packs on or
+off and picks its default process; a unit keeps the process it opened on.
+
+On the page a person edits every part of an agent, builds new agents and processes (the
+owner's pack, `local`), imports and exports packs as zips, and can ask **Dagaz** to draft an
+agent or a process from a sentence, then read it and save it. An agent no state runs starts on
+a trigger: a bus event, a schedule, a press, or Leif. Every agent runs on one runtime under a
+grant the app issues for that run alone, in Claude Code's `auto` mode with a few critical calls
+refused. The agent judges its own work, so a `judgement` records readiness rather than
+approval; `.claude/docs/not-built.md` says what was traded away for that.
 
 The harness is inside `.claude/`; the mechanical checks — numbering, gates, status — are the
 app's `coscc.loop`:
