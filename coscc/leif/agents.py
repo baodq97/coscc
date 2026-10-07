@@ -138,7 +138,7 @@ class RowFields(TypedDict, total=False):
     model: dict[str, Any]
     variants: dict[str, Any]
     skills: list[str]
-    tools: dict[str, str]
+    tools: dict[str, Any]
     helpers: list[str]
     input: dict[str, Any]
     output: dict[str, Any]
@@ -370,6 +370,12 @@ class Agents:
                 if k not in ("helper", "draft")
             },
             "triggers": [t for t in pack.TRIGGERS if t != "engine"],
+            "sandbox": (
+                'A triggered row may hold Bash as {"Bash": {"sandbox": {"network": '
+                '["127.0.0.1:<port>"]}}}: its commands run in an OS sandbox that writes only its '
+                "scratch folder, reads none of the app's secrets and reaches only those loopback "
+                "hosts (127.0.0.1, localhost or [::1], each with its port)."
+            ),
             "events": events,
             "guards": list(pack.PROCESS_GUARDS),
             "actions": list(pack.ACTIONS),
@@ -592,7 +598,7 @@ class Agents:
         the app's catalog, its `input` and `output` `contracts`; else a 400 naming every reason and
         nothing is written. `trigger` is saved only on a row its own trigger starts (an event, a
         schedule, a press, Leif), and only within `pack.check`: a row an event, a schedule or Leif
-        starts holds only reading tools. Any other row's is shown, not saved.
+        starts holds only reading tools, and Bash only in the sandbox. Any other row's is shown, not saved.
 
         **Behind the password like every route here**: whoever holds it or a live session can give
         any agent another model, larger ceilings, another prompt or more of the catalog's tools,

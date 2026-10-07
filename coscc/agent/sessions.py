@@ -16,12 +16,12 @@ import shutil
 import signal
 import tempfile
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TypeIs, get_args
+from typing import Any, TypedDict, TypeIs, get_args
 
 import claude_agent_sdk as sdk
 from claude_agent_sdk import (
@@ -576,7 +576,7 @@ def _options(
 
     `--settings` is `AUTO_MODE` as `autoMode`, and beside a preset the agent's `{"attribution":
     ...}` from `agents.settings_json`, `settings` (attribution replaces the preset's commit
-    guidance).
+    guidance); for a grant whose Bash is sandboxed, `sandbox_settings`, with `TMPDIR` its data root.
 
     `mcp_servers` is the app's own in-process servers, `{"cos": <submit>}` for a step that
     hands back an object; `strict_mcp_config` stays, so those are the only ones.
@@ -589,17 +589,22 @@ def _options(
     # default, empty. `tools=[]` and `tools=None` differ for the SDK, so test `is None`. Read
     # once so the environment below follows the same list.
     resolved = config.effective_tools() if tools is None else list(tools)
+    env = child_env(
+        cwd,
+        workspace,
+        data_dir=data_dir,
+        app_db=Data(config.data_dir).db_path,
+        bash="Bash" in resolved,
+        scratch=unit_scratch,
+    )
+    sandbox = gate.grant.sandbox
+    if sandbox is not None:
+        # The sandbox's own temp folder is made under `TMPDIR`: inside the one place it may write.
+        env["TMPDIR"] = data_dir
     options = ClaudeAgentOptions(
         cwd=cwd,
         # Laid over what the child would inherit. See `child_env`.
-        env=child_env(
-            cwd,
-            workspace,
-            data_dir=data_dir,
-            app_db=Data(config.data_dir).db_path,
-            bash="Bash" in resolved,
-            scratch=unit_scratch,
-        ),
+        env=env,
         tools=resolved,
         permission_mode="auto",
         resume=resume,
@@ -643,6 +648,11 @@ def _options(
         {
             "autoMode": AUTO_MODE,
             **(json.loads(settings) if settings is not None and preset else {}),
+            **(
+                {"sandbox": sandbox_settings(config, cwd, data_dir, sandbox)}
+                if sandbox is not None
+                else {}
+            ),
         },
         ensure_ascii=False,
     )
@@ -691,6 +701,54 @@ def _resolve(directory: str) -> Path | None:
         return Path(directory).expanduser().resolve()
     except OSError, ValueError:
         return None
+
+
+class SandboxNetwork(TypedDict):
+    allowedDomains: list[str]
+    strictAllowlist: bool
+
+
+class SandboxFiles(TypedDict):
+    allowWrite: list[str]
+    denyWrite: list[str]
+    denyRead: list[str]
+
+
+# Claude Code's `sandbox` settings, as its docs spell them.
+Sandbox = TypedDict(
+    "Sandbox",
+    {
+        "enabled": bool,
+        "failIfUnavailable": bool,
+        "allowUnsandboxedCommands": bool,
+        "autoAllowBashIfSandboxed": bool,
+        "network": SandboxNetwork,
+        "filesystem": SandboxFiles,
+    },
+)
+
+
+def sandbox_settings(config: Config, cwd: str, data_dir: str, network: Sequence[str]) -> Sandbox:
+    """Claude Code's OS sandbox around a run's Bash (`Grant.sandbox`): every command inside it, none
+    when it cannot start; writes only in the session's own data root `data_dir`, never in `cwd`;
+    no read of the app's secrets (`secrets_of`) nor of Claude Code's login; the network only to
+    `network`'s loopback hosts, through the sandbox's proxy, and no other host a command names.
+    The gate's critical blocks stay in front of it."""
+    home = config.home or str(Path.home())
+    claude = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    deny = [p for p in secrets_of(config) if p.startswith("/")]
+    return {
+        "enabled": True,
+        "failIfUnavailable": True,
+        "allowUnsandboxedCommands": False,
+        "autoAllowBashIfSandboxed": True,
+        "network": {"allowedDomains": list(network), "strictAllowlist": True},
+        "filesystem": {
+            "allowWrite": [data_dir],
+            "denyWrite": [cwd],
+            "denyRead": [*deny, os.path.join(claude, ".credentials.json")],
+        },
+    }
 
 
 def secrets_of(config: Config) -> tuple[str, ...]:

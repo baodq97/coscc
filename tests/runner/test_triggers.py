@@ -504,3 +504,16 @@ class AnOffPackStartsNothing(_Core):
         with self.assertRaises(Invalid) as e:
             await triggers.run(self.core, "look", self.ws, by="manual")
         self.assertEqual(e.exception.reasons, ("agent-invalid",))
+
+
+class ASandboxedRowIsToldItsBash(unittest.TestCase):
+    def test_the_prompt_names_where_it_writes_and_what_it_reaches(self):
+        from coscc.units import contracts
+
+        declared = contracts.input_of("scan")
+        boxed, _ = triggers.prompt_of(declared, [], [], None, sandbox=("127.0.0.1:3000",))
+        self.assertIn("# Your Bash", boxed)
+        self.assertIn("reaches only 127.0.0.1:3000", boxed)
+        self.assertIn("--noproxy ''", boxed)
+        plain, _ = triggers.prompt_of(declared, [], [], None)
+        self.assertNotIn("# Your Bash", plain)

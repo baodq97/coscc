@@ -244,8 +244,10 @@ async def _run(
         if "catalog" in declared["data"]
         else ""
     )
-    prompt, taken = prompt_of(declared, found, made, directory, text, idea, unit, catalog)
     found_row = pack.row(key) or {}
+    prompt, taken = prompt_of(
+        declared, found, made, directory, text, idea, unit, catalog, pack.sandbox_of(found_row)
+    )
     output = found_row.get("output") or {}
     kind = output.get("kind")
     sources = {i.id: proposals.Source(id=i.id, kind=i.kind, unit=i.unit, at=i.at) for i in taken}
@@ -449,10 +451,12 @@ def prompt_of(
     idea: str = "",
     unit: str = "",
     catalog: str = "",
+    sandbox: Sequence[str] | None = None,
 ) -> tuple[str, list[Intervention]]:
     """The prompt of a triggered run, from what its row declares and nothing else, and the
     interventions it holds (within `PROMPT_MAX`). The row's body is its system prompt. A unit's
-    artifacts come inline, from the app's unit folder, which the run's tree does not hold."""
+    artifacts come inline, from the app's unit folder, which the run's tree does not hold. A row
+    whose Bash is sandboxed is told where it may write and what it may reach."""
     parts: list[str] = []
     if unit:
         parts.append(
@@ -482,6 +486,14 @@ def prompt_of(
             size += len(_line(i)) + 1
         lines = "\n".join(_line(i) for i in taken) or "- none"
         parts.append(f"# Interventions\n\n{lines}")
+    if sandbox is not None:
+        hosts = ", ".join(sandbox) or "no host"
+        parts.append(
+            "# Your Bash\n\nIt runs in a sandbox: it writes only under `$TMPDIR`, reads none of "
+            f"the app's secrets, and reaches only {hosts}, through the sandbox's proxy; "
+            "`NO_PROXY` names loopback, so pass `--noproxy ''` to curl. A refusal is final: "
+            "say what it stopped in your output."
+        )
     parts.append("# Your task\n\nHand the app your output through `submit`, then end your turn.")
     return "\n\n".join(parts), taken
 

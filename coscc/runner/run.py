@@ -160,6 +160,7 @@ def issue(
       to `ask`: offered, every call refused `policy.ASKS`. A write tool or `Agent` set to `ask`
       opens no place to write and no helper.
     - `secrets`: this app's (`sessions.secrets_of`), the deny list no grant lifts; never empty.
+    - `sandbox`: the row's sandboxed Bash, the loopback hosts it may reach.
     """
     config = getattr(sessions, "config", None)
     secrets = secrets_of(config if config is not None else Config())
@@ -188,6 +189,7 @@ def issue(
         tools=tuple(t for t in row.tools if t not in features),
         held=held,
         asks=(*(t for t in row.asks if t not in features), *asks),
+        sandbox=row.sandbox if "Bash" in allowed else None,
     )
 
 

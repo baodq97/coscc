@@ -628,6 +628,46 @@ class TriggersAreChecked(unittest.TestCase):
         with self.assertRaises(ValueError):
             pack.write("scan", "tools", {"Write": "allow"})
 
+    def test_a_triggered_row_holds_bash_only_in_the_sandbox(self):
+        boxed = {"Read": "allow", "Bash": {"sandbox": {"network": ["127.0.0.1:3000"]}}}
+        self.assertEqual(self.reasons(_scan(tools=boxed)), "")
+        self.assertEqual(pack.check(_scan(tools=boxed)), [])
+        for hosts in (["localhost:9090", "[::1]:8080"], []):
+            fine = {"Bash": {"sandbox": {"network": hosts}}}
+            self.assertEqual(self.reasons(_scan(tools=fine)), "")
+        self.assertEqual(pack.sandbox_of(_scan(tools=boxed)), ("127.0.0.1:3000",))
+        self.assertEqual(pack.tools(_scan(tools=boxed)), ("Read", "Bash"))
+        self.assertIsNone(pack.sandbox_of(_scan(tools={"Bash": "allow"})))
+
+    def test_the_sandbox_refuses_what_is_not_loopback_or_has_an_escape(self):
+        for host in ("example.com:443", "10.0.0.2:80", "127.0.0.1", "localhost:0", "::1:80", "*"):
+            said = self.reasons(_scan(tools={"Bash": {"sandbox": {"network": [host]}}}))
+            self.assertIn(f"{host} is no loopback host with its port", said)
+        # No other key: no unsandboxed escape, no write place, no other tool in this form.
+        for given in (
+            {"sandbox": {"network": [], "allowUnsandboxedCommands": True}},
+            {"sandbox": {"network": []}, "dangerouslyDisableSandbox": True},
+            {"sandbox": {"network": [], "write": ["/"]}},
+            {"sandbox": True},
+        ):
+            self.assertIn(
+                "tools.Bash is allow, ask, off or", self.reasons(_scan(tools={"Bash": given}))
+            )
+        said = self.reasons(_scan(tools={"Write": {"sandbox": {"network": []}}}))
+        self.assertIn("tools.Write must be one of allow, ask, off", said)
+        # Bash with no sandbox stays refused, and saving it is too.
+        self.assertIn("(Bash only as", self.reasons(_scan(tools={"Bash": "allow"})))
+        with self.assertRaises(ValueError):
+            pack.write("scan", "tools", {"Bash": {"sandbox": {"network": ["example.com:80"]}}})
+        pack.write("scan", "tools", {"Bash": {"sandbox": {"network": ["127.0.0.1:3000"]}}})
+        self.assertEqual(pack.sandbox_of(pack.row("scan")), ("127.0.0.1:3000",))
+
+    def test_only_a_triggered_row_is_sandboxed(self):
+        rows = {k: r["builtin"] for k, r in pack.rows().items()}
+        impl = {**rows["impl"], "tools": {"Bash": {"sandbox": {"network": []}}}}
+        said = "\n".join(pack.check(impl, CATALOG, rows))
+        self.assertIn("only a row a trigger starts runs Bash in the sandbox", said)
+
     def test_with_no_catalog_claude_codes_own_tools_must_be_known_to_read(self):
         """A feature's tool waits for the catalog: the run's check has it and refuses one that does
         more than read."""

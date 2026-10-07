@@ -78,6 +78,9 @@ LINE_MAX = 200
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
 
 POLICIES = ("allow", "ask", "off")
+# A row a trigger starts may hold Bash only inside Claude Code's OS sandbox:
+# `{"Bash": {"sandbox": {"network": ["127.0.0.1:3000"]}}}`, each host a loopback one with its port.
+SANDBOX_HOST = re.compile(r"(?:127\.0\.0\.1|localhost|\[::1\]):([0-9]{1,5})")
 # Issued by the engine with the grant, never named by a row.
 ENGINE_TOOLS = ("submit", "peers", "run_agent")
 # What a row's `output.kind` may be: the `submit` kinds, a reply read as it is, a helper.
@@ -307,7 +310,9 @@ def _check_tools(
         return ["tools is {tool: allow|ask|off}"]
     out: list[str] = []
     for tool, policy in tools.items():
-        if policy not in POLICIES:
+        if tool == "Bash" and isinstance(policy, dict):
+            out += _check_sandbox(row, policy)
+        elif policy not in POLICIES:
             out.append(f"tools.{tool} must be one of {', '.join(POLICIES)}")
         if tool in ENGINE_TOOLS:
             out.append(f"tools.{tool}: the engine issues it, no row names it")
@@ -329,6 +334,36 @@ def _check_tools(
     if kind == "helper" and AGENT_TOOL in held:
         out.append(f"a helper holds no {AGENT_TOOL}")
     return out
+
+
+def _check_sandbox(row: Mapping[str, Any], given: Mapping[str, Any]) -> list[str]:
+    """`{"sandbox": {"network": [host:port, ...]}}`, only on a row a trigger starts, each host a
+    loopback one with its port: the network a sandboxed Bash may reach."""
+    shape = 'tools.Bash is allow, ask, off or {"sandbox": {"network": ["127.0.0.1:<port>"]}}'
+    box = given.get("sandbox")
+    if set(given) != {"sandbox"} or not isinstance(box, dict) or not set(box) <= {"network"}:
+        return [shape]
+    if not triggered(row):
+        return ["tools.Bash.sandbox: only a row a trigger starts runs Bash in the sandbox"]
+    network = box.get("network", [])
+    if not isinstance(network, list) or not all(isinstance(h, str) for h in network):
+        return [shape]
+    return [
+        f"tools.Bash.sandbox.network: {h} is no loopback host with its port "
+        "(127.0.0.1, localhost or [::1], then :<port>)"
+        for h in network
+        if not ((m := SANDBOX_HOST.fullmatch(h)) and 1 <= int(m.group(1)) <= 65535)
+    ]
+
+
+def sandbox_of(found: Mapping[str, Any] | None) -> tuple[str, ...] | None:
+    """The hosts a row's sandboxed Bash may reach, `()` for none; `None` when its Bash, if it holds
+    one, is not sandboxed."""
+    given = ((found or {}).get("tools") or {}).get("Bash")
+    box = given.get("sandbox") if isinstance(given, dict) else None
+    if not isinstance(box, dict):
+        return None
+    return tuple(h for h in box.get("network") or () if isinstance(h, str))
 
 
 def _check_links(
@@ -356,7 +391,8 @@ def _check_trigger(
 ) -> list[str]:
     """A helper has none; an engine row names its engine and nothing else; a state's agent has
     none, the process names it (`agent_for`). Any other trigger is `TRIGGERS`' shapes, and a row an
-    event, a schedule or Leif starts holds only reading tools: no person watches it start (a press, too, is only a read in v1)."""
+    event, a schedule or Leif starts holds only reading tools, and Bash only in Claude Code's OS
+    sandbox (`_check_sandbox`): no person watches it start (a press, too, is only a read in v1)."""
     trigger, default = row.get("trigger"), row.get("default")
     if trigger is None:
         return [] if default is None else ["default: only a row with a trigger has one"]
@@ -397,8 +433,13 @@ def _check_trigger(
             beyond = [t for t in held if t not in KNOWN_READ and not t.islower()]
         else:
             beyond = [t for t in held if catalog.get(t) != "read"]
+        if sandbox_of(row) is not None:
+            beyond = [t for t in beyond if t != "Bash"]
         if beyond:
-            out.append(f"a row a trigger starts holds only reading tools, not {', '.join(beyond)}")
+            out.append(
+                f"a row a trigger starts holds only reading tools, not {', '.join(beyond)}"
+                + (' (Bash only as {"sandbox": {"network": [...]}})' if "Bash" in beyond else "")
+            )
     return out
 
 
@@ -804,8 +845,12 @@ def problems(key: str, catalog: Mapping[str, str] | None = None) -> list[str]:
 
 
 def tools(found: Mapping[str, Any], policy: str = "allow") -> tuple[str, ...]:
-    """The tools a row holds under `policy`, in its order."""
-    return tuple(t for t, p in (found.get("tools") or {}).items() if p == policy)
+    """The tools a row holds under `policy`, in its order; a sandboxed Bash is allowed."""
+    return tuple(
+        t
+        for t, p in (found.get("tools") or {}).items()
+        if p == policy or (policy == "allow" and isinstance(p, dict))
+    )
 
 
 def hash_of(found: Mapping[str, Any]) -> str:

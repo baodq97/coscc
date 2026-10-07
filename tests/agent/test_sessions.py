@@ -246,6 +246,43 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         self.assertEqual(preset.permission_mode, bare.permission_mode)
         self.assertEqual(preset.max_turns, bare.max_turns)
 
+    def test_a_sandboxed_grant_runs_bash_in_the_os_sandbox(self):
+        config = Config(data_dir="/data", config_home="/home/o/.config", home="/home/o")
+        gate = Gate(_grant(tools=("Bash",), sandbox=("127.0.0.1:3000",)))
+        with (
+            tempfile.TemporaryDirectory() as run,
+            mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": ""}),
+        ):
+            options = _options(config, "/repo", None, tools=["Bash"], gate=gate, data_dir=run)
+            box = json.loads(options.settings or "")["sandbox"]
+            self.assertEqual(options.env["TMPDIR"], run)
+        self.assertEqual(json.loads(options.settings or "")["autoMode"], sessions.AUTO_MODE)
+        self.assertTrue(box["enabled"] and box["failIfUnavailable"])
+        self.assertFalse(box["allowUnsandboxedCommands"])
+        self.assertNotIn("excludedCommands", box)
+        self.assertEqual(
+            box["network"], {"allowedDomains": ["127.0.0.1:3000"], "strictAllowlist": True}
+        )
+        self.assertEqual(box["filesystem"]["allowWrite"], [run])
+        self.assertEqual(box["filesystem"]["denyWrite"], ["/repo"])
+        deny = box["filesystem"]["denyRead"]
+        for secret in (
+            "/data/cos.db",
+            "/data/vault",
+            "/data/packs",
+            "/home/o/.config/coscc",
+            "/home/o/.config/gh",
+            "/home/o/.ssh",
+            "/home/o/.claude/.credentials.json",
+        ):
+            self.assertIn(secret, deny)
+        self.assertTrue(all(p.startswith("/") for p in deny))
+        # The gate's hooks stay in front of it.
+        self.assertTrue(options.hooks)
+        # No sandbox for a grant that has none.
+        plain = _options(config, "/repo", None, tools=["Bash"], gate=Gate(_grant(tools=("Bash",))))
+        self.assertNotIn("sandbox", json.loads(plain.settings or ""))
+
     def test_attribution_rides_beside_auto_only_with_a_preset(self):
         from coscc.agent import agents, policy
         from coscc.runner.attempt import CLAUDE_CODE_PRESET

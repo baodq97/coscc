@@ -2343,6 +2343,25 @@ class OwnAgentsAndPacksOverHttp(unittest.IsolatedAsyncioTestCase):
         r = await self.post("/api/agents/new", key="two", name="Two", row=row, **{"from": "impl"})
         self.assertIn("from and row: give one", r.json()["reasons"])
 
+    async def test_a_sandboxed_bash_is_saved_shown_and_edited_through_the_same_check(self):
+        fields = {**pack.BLANK, "trigger": {"manual": True}}
+        boxed = {"Read": "allow", "Bash": {"sandbox": {"network": ["127.0.0.1:3000"]}}}
+        row = {"fields": {**fields, "tools": boxed}, "body": "Read."}
+        r = await self.post("/api/agents/new", key="probe", name="Probe", row=row)
+        self.assertEqual(r.status_code, 200)
+        shown = next(x for x in r.json()["rows"] if x["key"] == "probe")
+        self.assertEqual(shown["row"]["tools"], boxed)
+        self.assertEqual(shown["problems"], [])
+        wide = {"Bash": {"sandbox": {"network": ["example.com:443"]}}}
+        r = await self.post("/api/agents/field", key="probe", field="tools", value=wide)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("example.com:443 is no loopback host", str(r.json()))
+        r = await self.post(
+            "/api/agents/field", key="probe", field="tools", value={"Bash": "allow"}
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(pack.sandbox_of(pack.row("probe")), ("127.0.0.1:3000",))
+
     async def test_a_process_set_chosen_walked_from_the_snapshot_and_removal_in_use(self):
         await self.post("/api/agents/new", key="tidy", name="Tidy", **{"from": "impl"})
         bad = self.tiny()
