@@ -8,7 +8,7 @@ description: "Reads the run log for what keeps needing a person and proposes one
 model: {"id": "claude-opus-5-5[1m]", "effort": "medium"}
 tools: {"Read": "allow", "Glob": "allow", "Grep": "allow"}
 input: {"artifacts": [], "outputs": [], "answers": false, "findings": false, "data": ["interventions", "proposals"], "skip_when_empty": true}
-output: {"kind": "proposal", "version": 2, "purpose": "Hand the app the changes you propose, each item with the interventions it gathers, the signal it lowers and its cost.", "fields": {"proposals": {"list": {"type": "text", "slug": "text", "title": "text", "problem": "text", "sources": {"list": "text"}, "change": {"kind": {"enum": ["skill", "check", "guard", "tool"]}, "path": "text", "text": "text"}, "signal": {"kind": {"enum": ["refused", "ci-red", "rerun", "review-round", "impl-draft", "integrate"]}, "now": "number", "target": "number"}, "measure": "text", "usd": "[0-9]+(\\.[0-9]{1,2})?"}}}}
+output: {"kind": "proposal", "version": 2, "purpose": "Hand the app the work you propose, each item one change with the interventions it gathers, the signal it lowers and its cost.", "fields": {"proposals": {"list": {"type": "text", "slug": "text", "title": "text", "problem": "text", "sources": {"list": "text"}, "change": {"kind": {"enum": ["skill", "check", "guard", "tool"]}, "path": "text", "text": "text"}, "signal": {"kind": {"enum": ["refused", "ci-red", "rerun", "review-round", "impl-draft", "integrate"]}, "now": "number", "target": "number"}, "measure": "text", "usd": "[0-9]+(\\.[0-9]{1,2})?"}}}}
 trigger: {"schedule": {"hours": 24}, "manual": true, "leif": true}
 default: "off"
 cwd: "trunk"
