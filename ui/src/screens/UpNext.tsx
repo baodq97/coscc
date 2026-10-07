@@ -29,7 +29,9 @@ export function UpNext() {
   const named = useQuery("ws");
   const [project, setProject] = useState(named);
   // A link to another project's proposal moves the page there.
-  useEffect(() => setProject(named), [named]);
+  useEffect(() => {
+    setProject(named);
+  }, [named]);
   const workspace = boards.find((b) => b.workspace.name === project)?.workspace ?? boards[0]?.workspace;
   return (
     <div className="page mid">

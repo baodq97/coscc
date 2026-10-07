@@ -564,7 +564,7 @@ class Agents:
                 if not w["missing"]
             },
             states=onoff,
-            cap=self.spent(cwd) if cwd and workspace else None,
+            cap=self._cap(cwd) if cwd and workspace else None,
             now=now,
         )
         for key, found in pack.rows().items():
@@ -586,6 +586,12 @@ class Agents:
             cos_model=self.config.model,
             scope="all" if workspace is None else "workspace",
         )
+
+    def _cap(self, cwd: str) -> tuple[float, float] | None:
+        try:
+            return self.spent(cwd)
+        except Invalid:
+            return None
 
     def _live_fields(
         self,
