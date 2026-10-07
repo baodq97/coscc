@@ -353,6 +353,23 @@ async def run_agent(request: Request) -> Started:
     return {"agent": key, "started": True, "run": run}
 
 
+@router.post("/api/agents/try")
+async def try_agent(request: Request) -> Started:
+    """`{cwd, key, fields, body}` **opens one paid, read-only session** of a row not saved yet
+    (Dagaz's draft, *Try it*), on the owner's press: the checks a save runs and the read-only rule
+    of a row that runs unpressed, no unit, its own ceilings and the daily cap; `started_by` and
+    `stage` `trial`. What it hands back is shown on its run's `end` (`tried`) and kept nowhere
+    else: no proposal, no verdict, no row. Refused before spend (`code`)."""
+    body = await kernel.body(request)
+    key, fields = str(body.get("key") or ""), body.get("fields")
+    if not isinstance(fields, dict):
+        raise Invalid("fields is the row's frontmatter, an object")
+    run = await triggers.trial(
+        _core(request), str(body.get("cwd") or ""), key, fields, str(body.get("body") or "")
+    )
+    return {"agent": key, "started": True, "run": run}
+
+
 @router.get("/api/proposals")
 async def get_proposals(request: Request) -> ProposalsView:
     """`?cwd=`: every agent's proposals in the workspace, newest first, and the rows that
@@ -375,10 +392,41 @@ async def decide_proposal(pid: int, request: Request) -> proposals.Proposal:
         async def create(slug: str, brief: str) -> str:
             return str((await core.answers.create_unit(cwd, slug, brief))["unit"])
 
-        return await proposals.accept(data, ws, pid, str(body.get("slug") or ""), create)
+        made = await proposals.accept(data, ws, pid, str(body.get("slug") or ""), create)
+        # The page opens the unit next: the held board must hold it, as after `POST /api/units`.
+        if ws in core.boards.held:
+            await asyncio.shield(core.boards.refresh(cwd, again=True))
+        return made
     if action == "dismiss":
         return await proposals.dismiss(data, ws, pid, str(body.get("reason") or ""))
     raise Invalid("action must be accept or dismiss")
+
+
+@router.post("/api/proposals")
+async def propose_gap(request: Request) -> proposals.Proposal:
+    """`{cwd, run, gap}`: the person's "propose this capability" on the `gap`-th gap (from 0)
+    the draft of `run` names, as a `pending` proposal of the run's agent resting on the run. The
+    words are the draft's, kept on the run's `end`, never the page's; a gap proposed once is
+    refused again. Acts for whoever holds the password; it only adds a row to decide."""
+    body = await kernel.body(request)
+    core = _core(request)
+    cwd = core.ws.check(str(body.get("cwd") or ""))
+    run, at = str(body.get("run") or ""), body.get("gap")
+    ws, data, journal = core.ws.key(cwd), Data(core.config.data_dir), core.ws.journal()
+    ends = await asyncio.to_thread(journal.records, ws, "", kinds=("end",)) if journal else []
+    end = next((r for r in reversed(ends) if r.get("run") == run), {})
+    draft = end.get("draft")
+    draft = draft if isinstance(draft, dict) else {}
+    gaps = draft.get("gaps") or []
+    if not isinstance(at, int) or isinstance(at, bool) or not 0 <= at < len(gaps):
+        raise Invalid(f"run {run} drafted no gap {at}")
+    item = proposals.of_gap(str(draft.get("why") or ""), gaps[at], run)
+    agent = str(end.get("agent") or "")
+    made = await asyncio.to_thread(proposals.listed, data, ws, agent)
+    if any(p["run"] == run and p["slug"] == item["slug"] for p in made):
+        raise Invalid("this capability is proposed already")
+    (pid,) = await asyncio.to_thread(proposals.add, data, ws, agent, "", [item], run=run)
+    return await asyncio.to_thread(proposals.one, data, ws, pid)
 
 
 @router.get("/api/insights")
@@ -742,6 +790,23 @@ async def ask_run(run: str, request: Request) -> ask.Asked:
     body = await kernel.body(request)
     return await ask.ask(
         _core(request), str(body.get("cwd") or ""), run, str(body.get("text") or "")
+    )
+
+
+@router.post("/api/runs/{run}/answer")
+async def answer_draft(run: str, request: Request) -> ask.Asked:
+    """`{cwd, task, text}`: the person's answers (`text`) to the questions a draft of `run`
+    asked. **Opens one paid session**: the drafting row goes on in its warm session (as a question
+    about a run resumes) with its own grant and ceilings, `submit` kept, and the new draft lands
+    on that run's `end`; else a new run of the row starts from `task` and the answers. Refused
+    before spend as `/ask` is, and for a run that drafted nothing."""
+    body = await kernel.body(request)
+    return await ask.continue_draft(
+        _core(request),
+        str(body.get("cwd") or ""),
+        run,
+        str(body.get("task") or ""),
+        str(body.get("text") or ""),
     )
 
 

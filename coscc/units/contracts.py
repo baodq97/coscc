@@ -34,6 +34,8 @@ Met = Literal["yes", "no", "unclear"]
 FindingState = Literal["open", "fixed", "needs-person", "claim-rejected", "answered"]
 Severity = Literal["high", "medium", "low"]
 SpikeVerdict = Literal["holds", "fails"]
+# What a draft found missing in the catalog: the part of an agent the task needs and none serves.
+GapPart = Literal["tool", "data", "trigger", "output", "event"]
 # A unit's branch type: the intent's `type`; the loop's `BRANCH_TYPES` is this list.
 BranchType = Literal[
     "feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci", "revert"
@@ -183,9 +185,18 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
         )
     },
     "verdict": {"criteria": ("verdict_problem", criterion_list(VERDICT_CRITERION))},
-    # A draft holds an agent, a process or both (`draft_problem`): each as the save routes take it.
+    # A draft holds an agent, a process or both (`draft_problem`): each as the save routes take it;
+    # or, first, the questions a person answers before it drafts. `gaps`: what the catalog lacks.
     "draft": {
         "why": ("draft_problem", "text"),
+        "questions?": (
+            "draft_problem",
+            {"list": {"n": "number", "text": "text", "recommendation": "text"}},
+        ),
+        "gaps?": (
+            "draft_problem",
+            {"list": {"part": _enum(GapPart), "need": "text", "instead": "text"}},
+        ),
         "agent?": ("draft_problem", {"key": "text", "fields": "json", "body": "text"}),
         "process?": ("draft_problem", {"name": "text", "process": "json"}),
     },
@@ -497,9 +508,12 @@ _READ: list[tuple[object, dict[str, Output], dict[str, Input]]] = []
 
 def _read() -> tuple[dict[str, Output], dict[str, Input]]:
     rows = pack.rows()
-    if not _READ or _READ[0][0] is not rows:
-        _READ[:] = [(rows, load(rows), load_inputs(rows))]
-    return _READ[0][1], _READ[0][2]
+    # Read once into a local: another thread (or a trial's rows) may replace the cache meanwhile.
+    cached = next(iter(_READ), None)
+    if cached is None or cached[0] is not rows:
+        cached = (rows, load(rows), load_inputs(rows))
+        _READ[:] = [cached]
+    return cached[1], cached[2]
 
 
 def _inputs() -> dict[str, Input]:

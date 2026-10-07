@@ -303,7 +303,18 @@ class Core:
             shown = read.outcome(*found, verdict, [p for p in made if p["unit"] == name])
         idea = units.unit_dir(cwd, name, self.config.data_dir) / states.brief_file()
         brief = await asyncio.to_thread(idea.read_text, "utf-8") if idea.is_file() else ""
-        return read.detail(unit, timeline, outputs, decisions, graded, shown, brief)
+        made = await asyncio.to_thread(proposals.origin, Data(self.config.data_dir), key, name)
+        origin = None
+        if made is not None:
+            row = pack.row(made["agent"]) or {}
+            origin = read.Origin(
+                id=made["id"],
+                title=made["title"],
+                agent=made["agent"],
+                name=str(row.get("name") or made["agent"]),
+                run=made["run"],
+            )
+        return read.detail(unit, timeline, outputs, decisions, graded, shown, brief, origin)
 
     def _asks(self) -> list[tuple[str, asyncio.Task]]:
         """The background `gh` asks running now: CI, the board's and each feature's."""

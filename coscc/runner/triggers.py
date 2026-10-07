@@ -17,6 +17,7 @@ and says so in the run log; nothing here raises a ceiling.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 import uuid
@@ -45,6 +46,9 @@ log = logging.getLogger(__name__)
 
 # Who started a run, as its `start.started_by` says.
 BY = ("event", "schedule", "manual", "leif")
+# A row tried before it is saved (`trial`): its runs' `started_by` and `stage`, so nothing that
+# counts or follows a row's own runs (its page, notices, `data_until`) reads them.
+TRIAL = "trial"
 # The most interventions one run reads, and the most characters they take.
 LIMIT = 25
 PROMPT_MAX = 12_000
@@ -137,19 +141,25 @@ def check(
         raise Refused(
             f"agent-invalid: {key}'s row cannot run: {'; '.join(bad)}", ("agent-invalid",)
         )
+    _within_cap(core, workspace, found)
+    if (ws, key) in _RUNNING:
+        raise Refused(f"a run of {key} in this workspace is already going", ("unit-busy",))
+    return ws
+
+
+def _within_cap(core: Core, workspace: str, found: Mapping[str, Any] | None) -> None:
+    """Refused unless the day's spend in `workspace` leaves room for the row's own `usd`."""
     today = core.autopilot.today(workspace)
     if today is None:
         raise Refused("the daily spend cannot be read now", ("unavailable",))
-    ceiling = float(((found or {}).get("ceilings") or {}).get("usd") or 0.0)
+    ceilings = (found or {}).get("ceilings")
+    ceiling = float(ceilings.get("usd") or 0.0) if isinstance(ceilings, dict) else 0.0
     if today[0] + ceiling > today[1]:
         raise Refused(
             f"the daily cap of ${today[1]:.2f} would pass (${today[0]:.2f} spent, "
             f"${ceiling:.2f} reserved)",
             ("budget-reached",),
         )
-    if (ws, key) in _RUNNING:
-        raise Refused(f"a run of {key} in this workspace is already going", ("unit-busy",))
-    return ws
 
 
 def _words(by: str) -> str:
@@ -202,6 +212,7 @@ def _hold(
     reason: str,
     text: str,
     asked_in: str = "",
+    tried: Mapping[str, Any] | None = None,
 ) -> str:
     """The run in the background, holding its (workspace, agent) from here, so a second press is
     refused at once (`unit-busy`; asked again, since `check` may have run off the loop). Its run
@@ -214,7 +225,7 @@ def _hold(
     core.bus.publish("agent-run.started", {"workspace": ws, "agent": key, "run": run_id})
     spawn(
         asyncio.get_running_loop(),
-        _held(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in),
+        _held(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in, tried),
         run_id,
         ws,
     )
@@ -265,10 +276,13 @@ async def _held(
     text: str,
     run_id: str = "",
     asked_in: str = "",
+    tried: Mapping[str, Any] | None = None,
 ) -> str:
-    """`_run` while its (workspace, agent) is held; let go however it ends."""
+    """`_run` while its (workspace, agent) is held, a trial's row seen by it alone; let go
+    however it ends."""
     try:
-        return await _run(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in)
+        with pack.trying(tried) if tried is not None else contextlib.nullcontext():
+            return await _run(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in)
     finally:
         run, _ = _RUNNING.pop((ws, key), ("", ""))
         core.bus.publish("agent-run.ended", {"workspace": ws, "agent": key, "run": run})
@@ -330,16 +344,19 @@ async def _run(
     run_id: str = "",
     asked_in: str = "",
 ) -> str:
+    """One run of `key`. A trial (`by` `TRIAL`) keeps nothing it hands back: its output goes on
+    its `end` as `tried`, and it never skips, reads up to no mark and turns nothing off."""
     journal = core.ws.journal()
     if journal is None:
         raise Invalid("no working folder is set, so a run cannot be recorded")
+    trial = by == TRIAL
     declared = contracts.input_of(key)
     data = Data(core.config.data_dir)
-    since = await asyncio.to_thread(_data_until, journal, ws, key)
+    since = "" if trial else await asyncio.to_thread(_data_until, journal, ws, key)
     found: list[Intervention] = []
     if "interventions" in declared["data"]:
         found = await asyncio.to_thread(_interventions, core, journal, ws, since)
-    if declared.get("skip_when_empty") and not found:
+    if declared.get("skip_when_empty") and not found and not trial:
         await asyncio.to_thread(_skipped, journal, ws, unit, key, by, since, run_id)
         return ""
     found_row = pack.row(key) or {}
@@ -362,7 +379,11 @@ async def _run(
     head = await tree_head(tree)
 
     async def finish(got: Run) -> Mapping[str, Any]:
-        """What it handed back kept by kind, and how far it read, before its `end`."""
+        """What it handed back kept by kind, and how far it read, before its `end`; a trial's
+        only shown."""
+        if trial:
+            shown = got.output if got.status == "done" and got.output is not None else None
+            return {"trial": True, **({"tried": shown} if shown is not None else {})}
         if got.status != "done":
             return {"data_until": since} if since else {}
         until = taken[-1].at if taken else since
@@ -396,6 +417,7 @@ async def _run(
             ws,
             workspace_dir=cwd,
             unit=unit,
+            stage=TRIAL if trial else "",
             started_by=by,
             start={
                 "trigger": by,
@@ -423,9 +445,43 @@ async def _run(
                 got = payload
     finally:
         await stream.aclose()
-    if got.status == "paused-budget":
+    if got.status == "paused-budget" and not trial:
         await asyncio.to_thread(_turn_off, core, journal, ws, key, got.detail)
     return got.run
+
+
+async def trial(core: Core, cwd: str, key: str, fields: Mapping[str, Any], body: str) -> str:
+    """One run, on the owner's press, of a row not saved yet (`fields`, `key`, `body`, as a draft
+    holds it): the checks a save runs (`pack.new_row_problems`), and the rule a row that runs with
+    nobody pressing keeps, so it holds only reading tools; no unit, under its own ceilings and the
+    daily cap. It runs with the row laid over the others in its own context only
+    (`pack.trying`), as `started_by` and `stage` `trial`, and keeps nothing it hands back. Refused
+    before spend; else its run id."""
+    with pack.held():
+        ws, checked = await asyncio.to_thread(_trial_check, core, cwd, key, fields, body)
+    return _hold(core, key, cwd, ws, "", TRIAL, "", "", tried=checked)
+
+
+def _trial_check(
+    core: Core, cwd: str, key: str, fields: Mapping[str, Any], body: str
+) -> tuple[str, dict[str, Any]]:
+    """`trial`'s refusals, off the loop: the workspace key and the row as it is tried."""
+    ws = core.ws.key(core.ws.check(cwd))
+    made = {**fields, "key": key, pack.BODY: body}
+    # The rule a row a schedule, an event or Leif starts keeps, asked of the row as it is tried.
+    checked = {**made, "trigger": {"leif": True}}
+    try:
+        bad = pack.new_row_problems(checked, effects(core.steps.hooks))
+    except (TypeError, AttributeError, ValueError, KeyError) as e:
+        bad = [f"{type(e).__name__}: {e}"]
+    if bad:
+        raise Refused(f"this row cannot be tried: {'; '.join(bad)}", ("agent-invalid",))
+    with pack.trying(checked):
+        if _unit_scoped(key):
+            raise Invalid(f"{key} reads a unit: a trial runs with none")
+    core.steps.refuse_updating()
+    _within_cap(core, cwd, checked)
+    return ws, checked
 
 
 def _interventions(core: Core, journal: Any, ws: str, since: str) -> list[Intervention]:

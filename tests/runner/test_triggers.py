@@ -712,3 +712,115 @@ class ASandboxedRowIsToldItsBash(unittest.TestCase):
         self.assertIn("--noproxy ''", boxed)
         plain, _ = triggers.prompt_of(declared, [], [], None)
         self.assertNotIn("# Your Bash", plain)
+
+
+def _tried(**over) -> tuple[dict, str]:
+    """A whole row Dagaz drafted and nobody saved: its frontmatter and its body."""
+    from tests.units.test_submit import _draft_agent
+
+    made = _draft_agent(**over)
+    return made["fields"], made["body"]
+
+
+class ATrialRunsARowNotSaved(_Core):
+    """*Try it*: one run of an unsaved row on the owner's press, read-only, no unit, under its own
+    ceilings and the daily cap; seen by that run alone, and nothing it hands back is kept."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.agents: list = []
+        self.core.models = SimpleNamespace(
+            # As `Models.agent`: the row's body, read from the rows the run sees, is its system.
+            agent=lambda key, row: (
+                self.agents.append((key, row, (pack.row(key) or {}).get(pack.BODY)))
+                or run_mod.Agent(key, row)
+            )
+        )
+
+    async def tried(self, key="tidy", **over) -> str:
+        fields, body = _tried(**over)
+        run = await triggers.trial(self.core, self.ws, key, fields, body)
+        await self.settle()
+        return run
+
+    async def refused(self, key="tidy", **over) -> tuple[str, ...]:
+        fields, body = _tried(**over)
+        with self.assertRaises(Invalid) as e:
+            await triggers.trial(self.core, self.ws, key, fields, body)
+        self.assertEqual((self.given, triggers._TASKS), ([], set()))
+        return getattr(e.exception, "reasons", ())
+
+    async def test_it_runs_the_unsaved_row_once_as_a_trial_and_keeps_nothing(self):
+        self.found = found(2)
+        item = {"type": "fix", "slug": "a-b", "title": "T", "problem": PROBLEM, "sources": ["x"]}
+        self.reply = Run("done", {"proposals": [item]}, {"cost_usd": 0.12})
+        await self.tried()
+        (given,) = self.given
+        self.assertEqual((given.stage, given.started_by), (triggers.TRIAL, triggers.TRIAL))
+        self.assertIn("rerun:runs:2", given.prompt)
+        ((key, row, system),) = self.agents
+        self.assertEqual(
+            (key, row.max_budget_usd, system), ("tidy", 0.3, "Read the interventions.")
+        )
+        self.assertEqual(proposals.listed(self.data, self.ws), [])
+        self.assertIsNone(pack.row("tidy"))
+        (end,) = [r for r in self.journal.records(self.ws, kinds=("end",)) if r.get("trial")]
+        self.assertEqual(end["tried"], {"proposals": [item]})
+        self.assertNotIn("data_until", end)
+        self.assertNotIn("proposals", end)
+        self.assertEqual(triggers._data_until(self.journal, self.ws, "tidy"), "")
+
+    async def test_its_bus_facts_and_the_updater_never_see_the_row(self):
+        self.found = found(1)
+        seen: list = []
+        self.core.bus = SimpleNamespace(
+            publish=lambda name, p: seen.append((name, pack.row("tidy")))
+        )
+        self.core.updater = SimpleNamespace(
+            job_ended=lambda: seen.append(("job", pack.row("tidy")))
+        )
+        await self.tried()
+        self.assertEqual(
+            seen, [("agent-run.started", None), ("agent-run.ended", None), ("job", None)]
+        )
+        self.assertEqual(self.agents[0][2], "Read the interventions.")
+
+    async def test_the_row_is_seen_only_inside_its_run(self):
+        self.found = found(1)
+        self.gate.clear()
+        fields, body = _tried()
+        await triggers.trial(self.core, self.ws, "tidy", fields, body)
+        while not self.given:
+            await asyncio.sleep(0)
+        self.assertIsNone(pack.row("tidy"))
+        self.assertNotIn("tidy", pack.rows())
+        self.gate.set()
+        await self.settle()
+
+    async def test_a_writing_tool_or_bash_outside_the_sandbox_is_refused(self):
+        for tools in ({"Write": "allow"}, {"Edit": "allow"}, {"Bash": "allow"}):
+            self.assertEqual(await self.refused(tools=tools), ("agent-invalid",), tools)
+
+    async def test_a_tool_off_the_catalog_a_taken_key_and_a_ceiling_past_its_bounds(self):
+        self.assertEqual(await self.refused(tools={"send_email": "allow"}), ("agent-invalid",))
+        self.assertEqual(await self.refused(key="scan"), ("agent-invalid",))
+        self.assertEqual(await self.refused(ceilings={"turns": 4, "usd": 500}), ("agent-invalid",))
+
+    async def test_a_row_with_no_dollar_ceiling_runs_no_trial(self):
+        for ceilings in ({"turns": 4}, {"turns": 4, "usd": 0}):
+            self.assertEqual(await self.refused(ceilings=ceilings), ("agent-invalid",), ceilings)
+
+    async def test_a_row_that_reads_a_unit_runs_no_trial(self):
+        given = {"artifacts": ["intent"], "outputs": [], "answers": False, "findings": False}
+        await self.refused(input={**given, "data": []})
+
+    async def test_the_daily_cap_and_an_update_refuse_it_before_spend(self):
+        self.core.autopilot = SimpleNamespace(today=lambda cwd: (119.9, 120.0))
+        self.assertEqual(await self.refused(), ("budget-reached",))
+
+        def updating():
+            raise triggers.Refused("an update is under way", ("updating",))
+
+        self.core.autopilot = SimpleNamespace(today=lambda cwd: (0.0, 120.0))
+        self.core.steps = SimpleNamespace(refuse_updating=updating, hooks=HOOKS)
+        self.assertEqual(await self.refused(), ("updating",))

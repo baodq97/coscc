@@ -1,4 +1,5 @@
-"""Ask a run: a person's question about one run, answered by a read-only follow-up run.
+"""Ask a run: a person's question about one run, answered by a read-only follow-up run; and the
+person's answers to a draft's questions, which Dagaz goes on with (`continue_draft`).
 
 A follow-up is a run of stage `ask`, its `agent` the asked run's and its `parent_run` the run
 asked; a follow-up's own follow-ups hang on that same run, its thread. It never writes and never
@@ -60,6 +61,11 @@ RESUMED = (
     "call submit: this answer is not an output.\n\n"
 )
 
+ANSWERED = (
+    "# Your questions, answered\n\nThe person answered the questions you asked. Draft now, "
+    "from the task and these answers, and hand the whole draft to submit.\n\n"
+)
+
 # The threads with a follow-up going now, by their run.
 _ASKING: set[str] = set()
 
@@ -112,6 +118,8 @@ class _Plan:
     # The run that opened `session`, whose data root it is resumed in (`run.Input.scratch_as`).
     scratch_as: str = ""
     why: str = ""
+    # A draft's answers: the `submit` its new draft comes back through.
+    channel: Any = None
 
 
 def _journal(core: Core) -> Any:
@@ -405,6 +413,53 @@ def ask(core: Core, cwd: str, run: str, text: str) -> asyncio.Future[Asked]:
     return told
 
 
+def continue_draft(core: Core, cwd: str, run: str, task: str, text: str) -> asyncio.Future[Asked]:
+    """The person's answers (`text`) to the questions a draft of `run` asked: the drafting row
+    goes on in the thread's warm session under the rules `ask` resumes by, its own grant and
+    ceilings kept (with `submit`), and the run's `end` keeps the new draft as any draft's. When the
+    session cannot be resumed, a new run of the row starts from the `task` and the answers.
+    Refused before spend as `ask` is, and unless the end of `run` kept a draft that asks."""
+    if not text.strip() or not task.strip():
+        raise Invalid("give the task and the answers")
+    root_run, start, end, journal = _check(core, cwd, run, text)
+    key = str(start.get("agent") or start.get("stage") or "")
+    found = pack.row(key) or {}
+    # The questions answered are those the end of `run` itself kept (the first run's, or the
+    # follow-up's that asked again); a run that ended with no draft asked none.
+    _, own_end = _run_records(journal, run)
+    asked = (own_end or {}).get("draft")
+    if (
+        not start.get("trigger")
+        or (found.get("output") or {}).get("kind") != "draft"
+        or not isinstance(asked, dict)
+        or not asked.get("questions")
+    ):
+        raise Invalid(f"run {run} asked no questions: answers go to a draft that asked")
+    plan = _plan(core, cwd, start)
+    row = policy.row_for(key)
+    today = core.autopilot.today(cwd)
+    if today is not None and today[0] + row.max_budget_usd > today[1]:
+        raise Refused(
+            f"the daily cap of ${today[1]:.2f} would pass (${today[0]:.2f} spent)",
+            ("budget-reached",),
+        )
+    collector = submit.Collector(key, triggers.effects(core.steps.hooks))
+    plan.servers[submit.SERVER] = collector.server()
+    plan.agent, plan.channel = core.models.agent(key, row), collector
+    _ASKING.add(root_run)
+    loop = asyncio.get_running_loop()
+    told: asyncio.Future[Asked] = loop.create_future()
+    run_id = uuid.uuid4().hex
+    fresh = f"{task.strip()}\n\n# Your questions, answered\n\n{text.strip()}"
+    triggers.spawn(
+        loop,
+        _ask(core, cwd, journal, root_run, start, end, plan, text.strip(), run_id, told, fresh),
+        run_id,
+        str(start.get("workspace") or ""),
+    )
+    return told
+
+
 async def _ask(
     core: Core,
     cwd: str,
@@ -416,13 +471,24 @@ async def _ask(
     text: str,
     run_id: str,
     told: asyncio.Future[Asked],
+    fresh: str = "",
 ) -> None:
+    """A follow-up; with `fresh` (the words a new run would take), a draft's answers: resumed,
+    or else a new run of the row from `fresh`."""
     try:
         head = await triggers.tree_head(plan.tree)
         await _decide(core, journal, root_run, start, end, plan, head)
+        if fresh and not plan.session:
+            key = plan.agent.key
+            again = await triggers.begin(core, key, cwd, by="manual", text=fresh)
+            told.set_result(Asked(run=again, resumed=False, why=plan.why))
+            return
         if plan.session:
-            kept = await asyncio.to_thread(_numbered, core, start)
-            prompt = RESUMED + (f"{kept}\n\n" if kept else "") + text
+            if fresh:
+                prompt = ANSWERED + text
+            else:
+                kept = await asyncio.to_thread(_numbered, core, start)
+                prompt = RESUMED + (f"{kept}\n\n" if kept else "") + text
         else:
             summary = await asyncio.to_thread(_summary, core, start, end, plan.tree)
             prompt = f"{summary}\n\n# The question\n\n{text}"
@@ -432,8 +498,9 @@ async def _ask(
         if not told.done():
             told.set_result(Asked(run=run_id, resumed=bool(plan.session), why=plan.why))
 
-        async def finish(_got: kernel.Run) -> Mapping[str, Any]:
-            return {"parent_run": root_run, "resumed": bool(plan.session)}
+        async def finish(got: kernel.Run) -> Mapping[str, Any]:
+            made = {"draft": got.output} if fresh and isinstance(got.output, dict) else {}
+            return {"parent_run": root_run, "resumed": bool(plan.session), **made}
 
         stream = run_mod.run(
             plan.agent,
@@ -447,6 +514,7 @@ async def _ask(
                 start={
                     "parent_run": root_run,
                     "question": text,
+                    **({"answers": True} if fresh else {}),
                     "resumed": bool(plan.session),
                     "triggered": plan.triggered,
                     "row_grants": plan.grant_now,
@@ -454,6 +522,7 @@ async def _ask(
                     **({"head": head} if head else {}),
                 },
                 session_id=plan.session or None,
+                channel=plan.channel,
                 servers=plan.servers,
                 mcp=plan.mcp,
                 features=plan.features,

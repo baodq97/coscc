@@ -421,6 +421,27 @@ class ThePage(_WithAService):
         self._seed([_end("scan", "done", 0, unit="") | later])
         self.assertEqual(self.core.agents.live()["failed"], [])
 
+    def test_a_failed_trial_is_no_run_of_the_agent_saved_later_under_its_key(self):
+        now = datetime.now(timezone.utc)
+        tried = _end("trial", "failed", 1, unit="", cost=0.05) | {
+            "run": "t1",
+            "agent": "tidy",
+            "started_by": "trial",
+            "trial": True,
+            "at": (now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        }
+        self._seed([{**tried, "kind": "start"}, tried])
+        pack.new_row("tidy", "Tidy", "scan")
+        listed = {"workspaces": [{"name": "proj", "path": "w", "missing": False}], "paths": ["w"]}
+        self.enterContext(mock.patch.object(self.core.ws, "all", return_value=listed))
+        self.enterContext(mock.patch.object(self.core.ws, "key", side_effect=lambda p: p))
+        pack.set_agent_on(self.data, "tidy", "w", True)
+        self.assertEqual(self.core.agents.live()["failed"], [])
+        tidy = self._row(self.core.agents.agent_page(agent="tidy"), "tidy")
+        self.assertEqual((tidy["runs_30d"], tidy["cost_30d"], tidy["last"]), (0, 0.0, None))
+        self.assertEqual([r for g in tidy["groups"] for r in g["runs"]], [])
+        self.assertNotEqual(tidy["chip"], "failed")
+
     def test_a_failed_run_of_an_agent_turned_off_is_not_held_up(self):
         now = datetime.now(timezone.utc)
         failed = _end("scan", "failed", 1, unit="") | {

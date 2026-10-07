@@ -23,6 +23,7 @@ from coscc.runner import run as run_mod
 from coscc.store.db import Data
 from coscc.store.journal import Journal
 from coscc.units import Invalid
+from tests.units.test_submit import _draft_agent
 
 HOOKS = Hooks(
     parts=(("codegraph", Parts(tools=(Tool("codegraph", "read", "low", when=lambda f: False),))),)
@@ -433,3 +434,134 @@ class OneRunIsStopped(_Asking):
         self.assertFalse(names["b"].done())
         gate.set()
         await asyncio.gather(*triggers._TASKS, return_exceptions=True)
+
+
+DRAFT = {"why": "a weekly reader", "agent": _draft_agent()}
+ASKED = {"why": "which code?", "questions": [{"n": 1, "text": "?", "recommendation": "all"}]}
+
+
+class ADraftsAnswersGoOnInItsSession(_Asking):
+    """The answers to a draft's questions resume Dagaz's warm session with `submit` kept, and the
+    new draft lands on that follow-up's `end`; cold, a new Dagaz run starts from task and answers."""
+
+    async def _run(self, agent, given, *, ctx, finish=None):
+        # As `run_mod._judge`: a session that submitted is done with its channel's object.
+        if given.channel is not None:
+            await given.channel.handle(DRAFT)
+
+        async def judged(got):
+            if given.channel is not None:
+                got.output = given.channel.object()
+            return await finish(got) if finish else {}
+
+        async for item in super()._run(agent, given, ctx=ctx, finish=judged):
+            yield item
+
+    def asked_dagaz(self, run="d1", outcome="done", **start):
+        row = policy.row_for("dagaz")
+        self.journal.started(
+            self.ws,
+            "",
+            "dagaz",
+            "manual",
+            started_by="manual",
+            agent="dagaz",
+            run=run,
+            trigger="manual",
+            grants=policy.record(grant_of(row, self.ws)),
+            head="h1",
+            **pack.stamp("dagaz"),
+            **start,
+        )
+        self.journal.finished(
+            self.ws,
+            "",
+            "dagaz",
+            outcome,
+            agent="dagaz",
+            run=run,
+            session_id="s1",
+            cost_usd=0.18,
+            **({"draft": ASKED} if outcome == "done" else {}),
+        )
+
+    async def answered(self, run="d1", task="code quality", text="1. All of it") -> ask.Asked:
+        told = await ask.continue_draft(self.core, self.ws, run, task, text)
+        await asyncio.gather(*triggers._TASKS)
+        return told
+
+    async def test_warm_it_resumes_with_submit_and_its_own_ceilings_and_keeps_the_draft(self):
+        self.asked_dagaz()
+        told = await self.answered()
+        self.assertTrue(told["resumed"])
+        ((agent, given),) = self.runs
+        self.assertEqual(given.session_id, "s1")
+        self.assertTrue(given.prompt.startswith(ask.ANSWERED))
+        self.assertTrue(given.prompt.endswith("1. All of it"))
+        grant = grant_of(agent.row, given.cwd, mcp=given.mcp, features=given.features)
+        self.assertIn(policy.SUBMIT_TOOL, grant.mcp)
+        self.assertEqual(agent.row, policy.row_for("dagaz"))
+        (end,) = [r for r in self.journal.records(self.ws, kinds=("end",)) if r["stage"] == "ask"]
+        self.assertEqual((end["parent_run"], end["draft"]), ("d1", DRAFT))
+        (start,) = [
+            r for r in self.journal.records(self.ws, kinds=("start",)) if r["stage"] == "ask"
+        ]
+        self.assertTrue(start["answers"])
+
+    async def test_a_second_round_of_answers_resumes_the_first_rounds_session(self):
+        self.asked_dagaz()
+        await self.answered()
+        await self.answered(text="2. Weekly")
+        self.assertEqual(self.runs[1][1].session_id, "s1")
+
+    async def test_cold_a_new_run_of_the_row_takes_the_task_and_the_answers(self):
+        self.asked_dagaz()
+        self.transcript = False
+        began: list[tuple[str, str, str]] = []
+
+        async def begin(core, key, workspace, unit="", *, by, reason="", text=""):
+            began.append((key, by, text))
+            return "r-new"
+
+        with mock.patch.object(ask.triggers, "begin", begin):
+            told = await self.answered()
+        self.assertEqual((told["run"], told["resumed"]), ("r-new", False))
+        self.assertEqual(
+            began,
+            [("dagaz", "manual", "code quality\n\n# Your questions, answered\n\n1. All of it")],
+        )
+        self.assertEqual(self.runs, [])
+
+    async def test_a_failed_dagaz_run_or_one_that_drafted_without_asking_takes_no_answers(self):
+        self.asked_dagaz(outcome="failed")
+        with self.assertRaises(Invalid) as e:
+            await ask.continue_draft(self.core, self.ws, "d1", "task", "1. yes")
+        self.assertIn("asked no questions", str(e.exception))
+        await self.answered_after_a_draft_without_questions()
+        self.assertEqual(self.runs, [])
+
+    async def answered_after_a_draft_without_questions(self):
+        self.asked_dagaz(run="d2")
+        await self.answered(run="d2")  # asks, so a follow-up drafts
+        follow = self.runs[-1][1].run
+        self.runs.clear()
+        with self.assertRaises(Invalid):
+            # The follow-up's own end holds a draft that asks nothing more.
+            await ask.continue_draft(self.core, self.ws, follow, "task", "1. yes")
+
+    async def test_a_run_that_drafts_nothing_takes_no_answers(self):
+        self.asked_run()
+        with self.assertRaises(Invalid):
+            await ask.continue_draft(self.core, self.ws, "p1", "task", "1. yes")
+        self.assertEqual(self.runs, [])
+
+    async def test_refused_before_spend_without_words_or_over_the_cap(self):
+        self.asked_dagaz()
+        for task, text in (("", "1. yes"), ("task", " ")):
+            with self.assertRaises(Invalid):
+                await ask.continue_draft(self.core, self.ws, "d1", task, text)
+        self.core.autopilot = SimpleNamespace(today=lambda cwd: (119.0, 120.0))
+        with self.assertRaises(Invalid) as e:
+            await ask.continue_draft(self.core, self.ws, "d1", "task", "1. yes")
+        self.assertEqual(e.exception.reasons, ("budget-reached",))
+        self.assertEqual(self.runs, [])

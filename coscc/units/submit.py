@@ -92,14 +92,31 @@ def verdict_problem(obj: Mapping[str, Any]) -> str:
     return ""
 
 
+# The most questions a draft asks before it drafts: the few whose answer changes the draft.
+QUESTIONS_MAX = 3
+
+
 def draft_problem(obj: Mapping[str, Any], catalog: Mapping[str, str] | None) -> str:
     """What a draft says that its schema cannot rule out, `""` when nothing: the load checks a
     person's save runs again. An `agent` is a whole new row (`pack.new_row_problems` with
     `catalog`: its key, every part, its input and output); a `process` passes `check_process`
-    on every row and that agent, under a name the owner's pack does not hold yet."""
+    on every row and that agent, under a name the owner's pack does not hold yet. A draft that
+    asks holds at most `QUESTIONS_MAX` questions, each with a recommendation, and nothing else
+    yet: the person's answers come before the draft."""
     agent, process = obj.get("agent"), obj.get("process")
+    questions = obj.get("questions") or []
+    if questions:
+        if len(questions) > QUESTIONS_MAX:
+            return (
+                f"ask at most {QUESTIONS_MAX} questions: the ones whose answer changes the draft."
+            )
+        if any(not str(q.get("recommendation") or "").strip() for q in questions):
+            return "each question carries the answer you recommend."
+        if agent is not None or process is not None:
+            return "a draft that asks holds no `agent` or `process` yet: ask, or draft."
+        return ""
     if agent is None and process is None:
-        return "a draft holds an `agent`, a `process` or both."
+        return "a draft holds an `agent`, a `process` or both, or the questions to ask first."
     rows = pack.plain_rows()
     out: list[str] = []
     if agent is not None:

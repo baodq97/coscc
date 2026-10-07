@@ -628,6 +628,19 @@ class TriggersAreChecked(unittest.TestCase):
         with self.assertRaises(ValueError):
             pack.write("scan", "tools", {"Write": "allow"})
 
+    def test_a_triggered_row_says_what_one_run_may_spend(self):
+        said = self.reasons(_scan(ceilings={"turns": 4}))
+        self.assertIn("ceilings.usd: a row a trigger starts says what one run may spend", said)
+        self.assertIn(
+            "ceilings.usd", self.reasons({k: v for k, v in _scan().items() if k != "ceilings"})
+        )
+        # An engine row is bounded by the engine; a state's agent by its process step.
+        engine = _scan(trigger={"engine": "estimate"}, ceilings={"turns": 4}, default=None)
+        self.assertNotIn("ceilings.usd", self.reasons(engine))
+        for key, row in pack.rows().items():
+            if pack.triggered(row):
+                self.assertIn("usd", row["ceilings"], key)
+
     def test_a_triggered_row_has_no_one_to_ask(self):
         said = self.reasons(_scan(tools={"Read": "ask"}))
         self.assertIn("no one to ask, so Read is allow or off", said)

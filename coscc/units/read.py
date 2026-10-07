@@ -527,6 +527,18 @@ class Detail(TypedDict):
     outcome: Outcome | None
     # The originator's own words that opened the unit (its `idea.md`), empty when it has none.
     brief: str
+    # The proposal whose acceptance made it, `None` for a unit a person opened.
+    origin: Origin | None
+
+
+class Origin(TypedDict):
+    """The proposal a unit was made from: its number and title, the agent and the run that made it."""
+
+    id: int
+    title: str
+    agent: str
+    name: str
+    run: str
 
 
 def _text(v: Any) -> str:
@@ -551,6 +563,7 @@ def detail(
     graded: Mapping[int, RoundGrades] | None = None,
     outcome: Outcome | None = None,
     brief: str = "",
+    origin: Origin | None = None,
 ) -> Detail:
     """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`), its `outputs`
     (`UnitMeta.outputs`), its `decisions` (`UnitMeta.decisions`) and what each review round graded
@@ -668,6 +681,7 @@ def detail(
         "outputs": outputs,
         "outcome": outcome,
         "brief": brief_words(brief),
+        "origin": origin,
         "decisions": [
             {"kind": d["kind"], "by": d["by"], "date": d["date"], "text": _decision_text(d)}
             for d in decisions

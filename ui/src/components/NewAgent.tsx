@@ -1,11 +1,13 @@
 // The New agent dialog: a name, a key and, if you like, a glyph, started from a copy of an agent, a
-// blank reader, or Dagaz's draft of the task you describe. A refusal's reasons land beside the field
-// they are about. `DescribeTask` is the "Describe the task" box the process editor shares.
+// blank reader, or Dagaz's draft of the task you describe. Dagaz may ask first: its questions come as
+// cards with its answer filled in. A draft is kept per project until it is saved or set aside, so
+// leaving the page loses nothing. A refusal's reasons land beside the field they are about.
+// `DescribeTask` is the "Describe the task" box the process editor shares.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { AgentPage, CatalogTool, Started, StepEvent } from "../api.gen";
-import { api, ApiError } from "../lib/api";
-import { afterAgentSaved, agentNameProblem, draftOf, draftParts, draftTools, runsByItself, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type Drafted, type NewAgentField } from "../lib/build";
+import type { AgentPage, Asked, CatalogTool, ProposalRow, Started, StepEvent } from "../api.gen";
+import { api, ApiError, useResource } from "../lib/api";
+import { afterAgentSaved, agentNameProblem, answersText, draftOf, draftParts, draftTools, GAP_PART, keepDraft, keptDraft, runsByItself, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type DraftGap, type Drafted, type NewAgentField } from "../lib/build";
 import { Rune } from "../lib/icons";
 import { refreshPacks } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
@@ -25,15 +27,21 @@ function Part({ label, hint, errors, children }: { label: string; hint?: string;
   );
 }
 
-type Phase = { at: "idle" } | { at: "running"; run: string; line: string } | { at: "failed"; why: string } | { at: "drafted"; run: string };
+type Phase = { at: "idle" } | { at: "running"; run: string; line: string } | { at: "failed"; why: string } | { at: "asked"; run: string; d: Drafted } | { at: "drafted"; run: string };
 
 /**
  * "Describe the task": the words go to Dagaz (one paid run that writes nothing), its live line shows
- * while it runs, and its draft comes back through `onDraft`. `run` follows a run already started.
+ * while it runs, and its draft comes back through `onDraft`. When it asks first, its questions show
+ * here with its answers filled in; answering runs it again with them. `run` follows a run already
+ * started; with none, the project's kept draft is followed again.
  */
 export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "agent" | "process"; run?: string; onDraft: (d: Drafted, run: string) => void }) {
-  const [words, setWords] = useState("");
+  // Only an agent's draft is kept: the process editor holds its own until it is saved.
+  const keeps = want === "agent" && Boolean(cwd);
+  const kept = keeps ? keptDraft(want, cwd) : null;
+  const [words, setWords] = useState(kept?.words ?? "");
   const [phase, setPhase] = useState<Phase>({ at: "idle" });
+  const [answers, setAnswers] = useState<string[]>([]);
   const source = useRef<EventSource | null>(null);
   const onDraftRef = useRef(onDraft);
   onDraftRef.current = onDraft;
@@ -42,7 +50,10 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
     try {
       const page = await api.get("/api/runs/{run}", { cwd, run: id, limit: "1" });
       const d = draftOf(page);
-      if (d) {
+      if (d && !d.agent && !d.process) {
+        setAnswers((d.questions ?? []).map((q) => q.recommendation));
+        setPhase({ at: "asked", run: id, d });
+      } else if (d) {
         setPhase({ at: "drafted", run: id });
         onDraftRef.current(d, id);
       } else if (page.status === "running") follow(id);
@@ -68,19 +79,28 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
     for (const e of ["done", "status", "end", "cut"]) s.addEventListener(e, over);
   };
 
+  const follows = run || kept?.run;
   useEffect(() => {
-    if (run && cwd) void ended(run);
+    if (follows && cwd) void ended(follows);
     return () => source.current?.close();
-  }, [run, cwd]);
+  }, [follows, cwd]);
 
-  const start = async () => {
+  const task = `${words.trim()}\n\nWanted: ${want === "agent" ? "an agent" : "a process"}.`;
+  // A first draft is a run of Dagaz; answers to its questions go on in that run's session.
+  const draft = async (ask: () => Promise<{ run: string }>) => {
     setPhase({ at: "running", run: "", line: "Starting…" });
     try {
-      const said = await api.post<Started>("/api/agents/run", { cwd, key: "dagaz", text: `${words.trim()}\n\nWanted: ${want === "agent" ? "an agent" : "a process"}.` });
+      const said = await ask();
+      if (keeps) keepDraft(want, cwd, { run: said.run, words: words.trim() });
       follow(said.run);
     } catch (e) {
       setPhase({ at: "failed", why: e instanceof ApiError && e.reasons.length ? e.reasons.join(" ") : (e as Error).message });
     }
+  };
+  const start = () => draft(() => api.post<Started>("/api/agents/run", { cwd, key: "dagaz", text: task }));
+  const again = () => {
+    if (keeps) keepDraft(want, cwd, null);
+    setPhase({ at: "idle" });
   };
 
   if (phase.at === "drafted") {
@@ -88,7 +108,35 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
       <div className="describe done">
         <Rune glyph="ᛞ" size={13} />
         <span className="grow">Drafted by Dagaz. Read every part, then save.</span>
-        <button className="linkish" onClick={() => setPhase({ at: "idle" })}>Describe again</button>
+        <button className="linkish" onClick={again}>Describe again</button>
+      </div>
+    );
+  }
+  if (phase.at === "asked") {
+    const qs = phase.d.questions ?? [];
+    return (
+      <div className="describe" id="draft-questions">
+        <span className="lab">
+          <Rune glyph="ᛞ" size={12} /> Dagaz asks before it drafts
+        </span>
+        <div className="muted" style={{ fontSize: 13 }}>{phase.d.why}</div>
+        {qs.map((q, i) => (
+          <label key={q.n} className="f dq">
+            <span>
+              <b>{q.n}.</b> {q.text}
+            </span>
+            <textarea className="ta" rows={2} aria-label={`Your answer to question ${q.n}`} value={answers[i] ?? ""} onChange={(e) => setAnswers(answers.map((a, j) => (j === i ? e.target.value : a)))} />
+            <span className="faint" style={{ fontSize: 12 }}>{answers[i] === q.recommendation ? "Dagaz's recommendation; change it if it is not what you want." : "Your answer."}</span>
+          </label>
+        ))}
+        {phase.d.gaps && <Gaps cwd={cwd} run={phase.run} gaps={phase.d.gaps} />}
+        <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <Button size="sm" kind="primary" disabled={answers.some((a) => !a.trim())} onClick={() => draft(() => api.post<Asked>(`/api/runs/${encodeURIComponent(phase.run)}/answer`, { cwd, task, text: answersText(qs, answers) }))}>
+            Answer and draft
+          </Button>
+          <button className="linkish" onClick={again}>Describe again</button>
+          <span className="faint" style={{ fontSize: 12 }}>{answers.some((a) => !a.trim()) ? "Answer every question to continue." : "One more paid run of at most $1.50 that saves nothing."}</span>
+        </div>
       </div>
     );
   }
@@ -159,6 +207,7 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
       await api.post<AgentPage>("/api/agents/new", { cwd, key: shownKey, name: name.trim(), ...row });
       if (!agent && glyph.trim()) await api.post<AgentPage>("/api/agents/field", { cwd, key: shownKey, field: "glyph", value: glyph.trim() });
       refreshPacks();
+      keepDraft("agent", cwd, null);
       navigate(afterAgentSaved(drafted?.d ?? null, shownKey, drafted?.run ?? ""));
       onClose();
     } catch (e) {
@@ -202,7 +251,10 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
         </Part>
       </div>
       {agent ? (
-        <DraftedRow fields={agent.fields} body={agent.body} catalog={catalog} />
+        <DraftedRow fields={agent.fields} body={agent.body} catalog={catalog}>
+          {drafted.d.gaps && <Gaps cwd={cwd} run={drafted.run} gaps={drafted.d.gaps} />}
+          <TryIt cwd={cwd} keyName={shownKey} fields={{ ...agent.fields, ...(name.trim() ? { name: name.trim() } : {}), ...(glyph.trim() ? { glyph: glyph.trim() } : {}) }} body={agent.body} />
+        </DraftedRow>
       ) : (
         <Part label="Start from" errors={at("from")} hint="A copy of that agent, which you then change on its page.">
           <select className="input" value={from} onChange={(e) => setFrom(e.target.value)}>
@@ -235,8 +287,147 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
   );
 }
 
-/** A drafted row's parts, as a person checks them before saving: what it does, when, on what, its tools and its instructions. */
-export function DraftedRow({ fields, body, catalog }: { fields: Record<string, unknown>; body: string; catalog: CatalogTool[] }) {
+type Trial = { at: "idle" } | { at: "running"; run: string; line: string } | { at: "ended"; run: string; outcome: string; detail: string; tried: unknown } | { at: "refused"; why: string };
+
+/**
+ * *Try it*: one read-only run of the draft as it would be saved, on this project, before saving:
+ * its live line, then what it handed back. Nothing is kept: no proposal, no verdict, no agent.
+ */
+export function TryIt({ cwd, keyName, fields, body }: { cwd: string; keyName: string; fields: Record<string, unknown>; body: string }) {
+  const [trial, setTrial] = useState<Trial>({ at: "idle" });
+  const source = useRef<EventSource | null>(null);
+  useEffect(() => () => source.current?.close(), []);
+  const usd = Number((fields.ceilings as { usd?: number } | undefined)?.usd ?? 0);
+
+  const ended = async (run: string, tries = 0): Promise<void> => {
+    const page = await api.get("/api/runs/{run}", { cwd, run, limit: "1" });
+    if (page.outcome) setTrial({ at: "ended", run, outcome: page.outcome, detail: page.detail ?? "", tried: page.tried });
+    else if (tries < 4) setTimeout(() => void ended(run, tries + 1), 800);
+    else setTrial({ at: "ended", run, outcome: "unknown", detail: "The run left no end.", tried: undefined });
+  };
+  const start = async () => {
+    setTrial({ at: "running", run: "", line: "Starting…" });
+    try {
+      const said = await api.post<Started>("/api/agents/try", { cwd, key: keyName, fields, body });
+      const s = new EventSource(`/api/runs/${encodeURIComponent(said.run)}/follow?${new URLSearchParams({ cwd })}`);
+      source.current = s;
+      setTrial({ at: "running", run: said.run, line: "Starting…" });
+      s.onmessage = (m) => {
+        const events = JSON.parse(m.data) as StepEvent[];
+        const last = events[events.length - 1];
+        setTrial((t) => (t.at === "running" ? { ...t, line: last?.kind === "tool_use" ? `Using ${last.name ?? "a tool"}…` : "Working…" } : t));
+      };
+      const over = () => (s.close(), void ended(said.run));
+      for (const e of ["done", "status", "end", "cut"]) s.addEventListener(e, over);
+    } catch (e) {
+      setTrial({ at: "refused", why: e instanceof ApiError && e.reasons.length ? e.reasons.join(" ") : (e as Error).message });
+    }
+  };
+
+  return (
+    <div className="try-it" id="draft-try">
+      <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <Button size="sm" disabled={trial.at === "running" || !keyName} onClick={() => void start()}>
+          {trial.at === "ended" ? "Try it again" : "Try it"}
+        </Button>
+        {trial.at === "running" ? (
+          <span className="describe-live" role="status">
+            <Dot tone="live" /> {trial.line}
+          </span>
+        ) : (
+          <span className="faint" style={{ fontSize: 12 }}>One read-only run on this project{usd ? `, at most $${usd.toFixed(2)}` : ""}, before you save; nothing it hands back is kept.</span>
+        )}
+      </div>
+      {trial.at === "refused" && <div className="field-err">{trial.why}</div>}
+      {trial.at === "ended" && <TrialOutput cwd={cwd} trial={trial} />}
+    </div>
+  );
+}
+
+function TrialOutput({ cwd, trial }: { cwd: string; trial: Extract<Trial, { at: "ended" }> }) {
+  const ws = useResource("/api/workspaces").data?.workspaces.find((w) => w.path === cwd)?.name ?? "";
+  // What it handed back comes into view once the run ends, above the dialog's sticky footer.
+  const at = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    at.current?.scrollIntoView({ block: "end" });
+  }, [trial.run]);
+  const items = (trial.tried as { proposals?: { title?: string; problem?: string }[] } | undefined)?.proposals;
+  return (
+    <div className="try-out" ref={at}>
+      <div className="row" style={{ gap: 8, alignItems: "center" }}>
+        <Chip square tone={trial.outcome === "done" ? "green" : "amber"}>{trial.outcome === "done" ? "Ran" : trial.outcome}</Chip>
+        <span className="grow faint" style={{ fontSize: 12 }}>{trial.detail}</span>
+        {ws && <Link to={`/run/${ws}/${trial.run}`}>Its log</Link>}
+      </div>
+      {items ? (
+        items.length ? (
+          <ol className="try-items">
+            {items.map((p, i) => (
+              <li key={i}>
+                <b>{p.title}</b>
+                <div className="muted">{p.problem}</div>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div className="faint">It proposed nothing this time.</div>
+        )
+      ) : trial.tried !== undefined ? (
+        <pre className="drafted-body">{JSON.stringify(trial.tried, null, 2)}</pre>
+      ) : (
+        <div className="faint">It handed nothing back.</div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What the task needs that the catalog lacks, each part with what the draft does without it, and a
+ * press that puts it on Up next as a proposal to build that capability.
+ */
+export function Gaps({ cwd, run, gaps }: { cwd: string; run: string; gaps: DraftGap[] }) {
+  const [made, setMade] = useState<Record<number, ProposalRow | string>>({});
+  const ws = useResource("/api/workspaces").data?.workspaces.find((w) => w.path === cwd)?.name ?? "";
+  // A gap proposed on an earlier visit shows as proposed: its proposal rests on this run and names the gap.
+  const before = useResource("/api/proposals", { cwd }).data?.proposals.filter((p) => p.run === run) ?? [];
+  const earlier = (g: DraftGap) => before.find((p) => p.problem.includes(`lacks this ${g.part}: ${g.need.split(/\s+/).join(" ")}.`));
+  const propose = async (i: number) => {
+    try {
+      const p = await api.post<ProposalRow>("/api/proposals", { cwd, run, gap: i });
+      setMade((m) => ({ ...m, [i]: p }));
+    } catch (e) {
+      setMade((m) => ({ ...m, [i]: e instanceof ApiError && e.reasons.length ? e.reasons.join(" ") : (e as Error).message }));
+    }
+  };
+  return (
+    <div className="gaps" id="draft-gaps">
+      <b>What the catalog lacks for this task</b>
+      {gaps.map((g, i) => {
+        const m = made[i] ?? earlier(g);
+        return (
+          <div key={i} className="gap-row">
+            <Chip square tone="amber">{GAP_PART[g.part] ?? g.part}</Chip>
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div>{g.need}</div>
+              {g.instead && <div className="faint" style={{ fontSize: 12 }}>Instead: {g.instead}</div>}
+              {typeof m === "string" && <div className="field-err">{m}</div>}
+            </div>
+            {m && typeof m !== "string" ? (
+              <span className="nowrap" style={{ fontSize: 12.5 }}>
+                <Link to={`/up-next?ws=${encodeURIComponent(ws)}#proposal-${m.id}`}>Proposed #{m.id}, on Up next</Link>
+              </span>
+            ) : (
+              <Button size="sm" onClick={() => void propose(i)}>Propose this capability</Button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A drafted row's parts, as a person checks them before saving: what it is built from (when, on what, what it hands back, its tools), what is missing, and its instructions. */
+export function DraftedRow({ fields, body, catalog, children }: { fields: Record<string, unknown>; body: string; catalog: CatalogTool[]; children?: ReactNode }) {
   const tools = draftTools(fields, catalog);
   const alone = runsByItself(fields);
   return (
@@ -269,6 +460,7 @@ export function DraftedRow({ fields, body, catalog }: { fields: Record<string, u
           )}
         </span>
       </div>
+      {children}
       <details>
         <summary>Its instructions</summary>
         <pre className="drafted-body">{body}</pre>

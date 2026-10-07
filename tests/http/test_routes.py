@@ -293,8 +293,8 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
             for route in self.app.routes
             if "POST" in getattr(route, "methods", ()) and "agents" in route.path
         ]
-        # New and delete write a row of the owner's pack; the owner's on/off and *Run now* beside
-        # them write none; none writes a grant.
+        # New and delete write a row of the owner's pack; the owner's on/off, *Run now* and *Try
+        # it* beside them write none; none writes a grant.
         self.assertEqual(
             writes,
             [
@@ -303,6 +303,7 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
                 "/api/agents/delete",
                 "/api/agents/state",
                 "/api/agents/run",
+                "/api/agents/try",
             ],
         )
 
@@ -474,6 +475,67 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             (r.status_code, r.json()["state"], r.json()["by"]), (200, "dismissed", "owner")
         )
+
+    async def test_a_drafts_gap_becomes_one_pending_proposal_in_the_drafts_words(self):
+        key = str(self.ws.resolve())
+        journal = self.core.ws.journal()
+        gap = {"part": "trigger", "need": "a time of day", "instead": "every 24 h"}
+        for run, extra in (
+            ("r-gap", {"draft": {"why": "stuck units", "gaps": [gap]}}),
+            ("r-no", {}),
+        ):
+            journal.started(key, "", "dagaz", "manual", run=run, started_by="manual")
+            journal.finished(key, "", "dagaz", "done", run=run, agent="dagaz", **extra)
+        body = {"cwd": str(self.ws), "run": "r-gap", "gap": 0}
+        r = await self.client.post("/api/proposals", json=body)
+        self.assertEqual(r.status_code, 200, r.text)
+        got = r.json()
+        self.assertEqual((got["agent"], got["state"], got["run"]), ("dagaz", "pending", "r-gap"))
+        self.assertEqual([s["id"] for s in got["sources"]], ["r-gap"])
+        self.assertIn("a time of day", got["title"])
+        self.assertEqual((await self.client.post("/api/proposals", json=body)).status_code, 400)
+        for bad in (
+            {**body, "gap": 1},
+            {**body, "gap": "0"},
+            {**body, "gap": True},
+            {**body, "run": "r-no"},
+            {**body, "run": "nope"},
+            {**body, "cwd": "/etc"},
+        ):
+            r = await self.client.post("/api/proposals", json=bad)
+            self.assertEqual(r.status_code, 400, bad)
+        from coscc.store.db import Data
+        from coscc.units import proposals
+
+        self.assertEqual(len(proposals.listed(Data(self.root), key)), 1)
+
+    async def test_answers_go_only_to_a_draft_and_are_refused_before_spend(self):
+        key = str(self.ws.resolve())
+        journal = self.core.ws.journal()
+        journal.started(key, "", "scan", "manual", run="r-scan", trigger="manual", agent="scan")
+        journal.finished(key, "", "scan", "done", run="r-scan", agent="scan", session_id="s")
+        body = {"cwd": str(self.ws), "task": "code quality", "text": "1. All of it"}
+        for run, extra in (("nope", {}), ("r-scan", {}), ("r-scan", {"text": ""})):
+            r = await self.client.post(f"/api/runs/{run}/answer", json={**body, **extra})
+            self.assertEqual(r.status_code, 400, (run, r.text))
+        self.assertEqual(journal.records(key, kinds=("start",))[-1]["run"], "r-scan")
+
+    async def test_a_trial_of_an_unsaved_row_is_refused_before_spend_and_saves_no_row(self):
+        from coscc.agent import pack
+        from tests.units.test_submit import _draft_agent
+
+        made = _draft_agent(tools={"Write": "allow"})
+        body = {"cwd": str(self.ws), "key": "tidy", "fields": made["fields"], "body": "Read."}
+        for bad in (
+            body,
+            {**body, "fields": "x"},
+            {**body, "cwd": "/etc"},
+            {**body, "key": "scan"},
+        ):
+            r = await self.client.post("/api/agents/try", json=bad)
+            self.assertEqual(r.status_code, 400, bad)
+        self.assertIsNone(pack.row("tidy"))
+        self.assertEqual(triggers._TASKS, set())
 
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):

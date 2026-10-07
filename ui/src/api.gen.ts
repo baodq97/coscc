@@ -287,6 +287,7 @@ export type Detail = {
   "decisions": Decision[];
   "outcome": Outcome | null;
   "brief": string;
+  "origin": Origin | null;
 };
 
 export type EstimateBrief = {
@@ -320,6 +321,7 @@ export type EventsPage = {
   "verdict"?: string;
   "refused"?: number;
   "helpers"?: number;
+  "tried"?: unknown;
 };
 
 export type Followup = {
@@ -433,6 +435,14 @@ export type NextStep = {
   "continue"?: string;
   "reasons": string[];
   "gate"?: string;
+};
+
+export type Origin = {
+  "id": number;
+  "title": string;
+  "agent": string;
+  "name": string;
+  "run": string;
 };
 
 export type Outcome = {

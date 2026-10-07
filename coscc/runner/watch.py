@@ -81,6 +81,8 @@ class EventsPage(TypedDict):
     verdict: NotRequired[str]
     refused: NotRequired[int]
     helpers: NotRequired[int]
+    # What a trial of a row not saved yet handed back (`triggers.trial`), shown and kept nowhere else.
+    tried: NotRequired[Any]
 
 
 class Watch:
@@ -244,6 +246,8 @@ class Watch:
         kept = Data(self.config.data_dir).step_event_counts([run], ("denied", "worker_start"))
         out["refused"] = kept.get(run, {}).get("denied", 0)
         out["helpers"] = kept.get(run, {}).get("worker_start", 0)
+        if "tried" in end:
+            out["tried"] = end["tried"]
         return out
 
     async def follow_events(
