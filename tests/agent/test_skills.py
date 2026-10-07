@@ -152,7 +152,7 @@ if __name__ == "__main__":
 
 class AStageKeepsASkill(_Root):
     def test_a_stage_left_with_no_skill_is_refused_and_nothing_is_written(self):
-        with self.assertRaisesRegex(ValueError, "spec runs in .*needs a skill"):
+        with self.assertRaisesRegex(ValueError, "^skills: Kenaz runs a stage of your process, so it needs at least one skill$"):
             pack.write("spec", "skills", [])
         self.assertEqual(pack.row("spec")["skills"], ["write-spec"])
         self.assertFalse((self.owner / "agents" / "spec.md").exists())

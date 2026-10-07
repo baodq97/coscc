@@ -305,7 +305,7 @@ type Ctx = {
 };
 
 // The Trigger tab's parts, each shown under its own label: a refusal naming one needs no key.
-const LABELLED = ["trigger.event.from", "trigger.event.after_hours", "trigger.schedule.hours", "default"];
+const LABELLED = ["skills", "trigger.event.from", "trigger.event.after_hours", "trigger.schedule.hours", "default"];
 
 /** A refusal's reasons as a person reads them: those naming a labelled part without its key. */
 export function plainReasons(message: string): string {
@@ -1018,6 +1018,7 @@ function Prompt(ctx: Ctx) {
         Skills <span className="faint">rules given with its prompt on every run; a skill's text is shared by every agent that names it</span>
       </div>
       <div className="card card-b">
+        {ctx.error?.field === "skills" && <div className="field-err">{plainReasons(ctx.error.message)}</div>}
         <SkillPicker agent={a.key} title={a.row.name ?? a.key} names={(ctx.value("skills") as string[] | undefined) ?? []} editable={ctx.editable} onChange={(n) => ctx.edit("skills", n)} />
         {a.skills.map((s) => (
           <TextPart key={s.name} ctx={ctx} field={`skill:${s.name}`} label={s.name} rows={18} mono />

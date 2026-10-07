@@ -1604,9 +1604,10 @@ def write(
         {field, *(also or {})} & {"skills", BODY}
         and not after.get("skills")
         and bare
-        and (used := naming(key))
+        and naming(key)
     ):
-        reasons.append(f"skills: {key} runs in {', '.join(used)}, so it needs a skill")
+        who = after.get("name") or key
+        reasons.append(f"skills: {who} runs a stage of your process, so it needs at least one skill")
     if reasons:
         raise ValueError("; ".join(reasons))
     path = owner_dir() / "agents" / f"{key}.md"

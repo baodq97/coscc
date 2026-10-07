@@ -240,6 +240,7 @@ describe("agents", () => {
     expect(plainReasons(`${circle}: agents cannot start each other in a circle; default: off until you turn it on`)).toBe(
       "Laguz runs after Echo runs after Laguz: agents cannot start each other in a circle; off until you turn it on",
     );
+    expect(plainReasons("skills: Kenaz runs a stage of your process, so it needs at least one skill")).toBe("Kenaz runs a stage of your process, so it needs at least one skill");
     expect(plainReasons("tools.Write: no such tool in the catalog")).toBe("tools.Write: no such tool in the catalog");
   });
 
