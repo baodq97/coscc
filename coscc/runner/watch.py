@@ -67,6 +67,11 @@ class EventsPage(TypedDict):
     last_at: int | None
     events_lost: int
     purged_at: str | None
+    # From the run's `end` in the run log, once it has one (on the first page): how it ended, why,
+    # and a `draft` kind's object (Dagaz's), which nothing else keeps.
+    outcome: NotRequired[str]
+    detail: NotRequired[str]
+    draft: NotRequired[dict[str, Any]]
 
 
 class Watch:
@@ -178,6 +183,25 @@ class Watch:
             found = []
         out["events"] = found
         out["first_seq"] = found[0]["seq"] if found else None
+        if recorder is None and before is None and seq is None:
+            out.update(self._ended(self.ws.key(cwd), run, unit))
+        return out
+
+    def _ended(self, workspace: str, run: str, unit: str) -> dict[str, Any]:
+        """What the run's `end` says: `outcome`, `detail` and a `draft`; `{}` with no `end` yet."""
+        journal = self.ws.journal()
+        if journal is None:
+            return {}
+        try:
+            ends = journal.records(workspace, unit, kinds=("end",))
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        end = next((r for r in reversed(ends) if r.get("run") == run), None)
+        if end is None:
+            return {}
+        out = {"outcome": str(end.get("outcome") or ""), "detail": str(end.get("detail") or "")}
+        if isinstance(end.get("draft"), dict):
+            out["draft"] = end["draft"]
         return out
 
     async def follow_events(

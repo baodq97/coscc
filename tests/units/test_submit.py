@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Any
 
 import jsonschema
 
+from coscc import kernel
+from coscc.agent import pack
 from coscc.units import contracts, guards, submit
 from coscc.units.contracts import ContractError
 from coscc.units.submit import AGAIN, Channel
@@ -441,3 +444,99 @@ class AVerdictCitesItsEvidence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _draft_agent(**over: Any) -> dict[str, Any]:
+    fields = {
+        "name": "Tidy",
+        "description": "Proposes changes to the review skill from the interventions.",
+        "model": {"id": "claude-sonnet-5-5[1m]", "effort": "low"},
+        "tools": {"Read": "allow"},
+        "input": {
+            "artifacts": [],
+            "outputs": [],
+            "answers": False,
+            "findings": False,
+            "data": ["interventions"],
+        },
+        "output": pack.BLANK["output"],
+        "trigger": {"manual": True},
+        "ceilings": {"turns": 4, "usd": 0.3},
+    }
+    return {"key": "tidy", "fields": {**fields, **over}, "body": "Read the interventions."}
+
+
+def _full() -> dict[str, Any]:
+    return json.loads(json.dumps(pack.processes()[pack.DEFAULT_PROCESS]))
+
+
+class ADraftPassesTheLoadChecks(unittest.TestCase):
+    """Dagaz's `submit` refuses a draft a person's save would refuse, with the save's reasons."""
+
+    catalog = {t.name: t.effect for t in kernel.BUILTINS}
+
+    def _said(self, **obj: Any) -> tuple[dict[str, Any], submit.Collector]:
+        collector = submit.Collector("dagaz", self.catalog)
+        said = asyncio.run(collector.handle({"why": "it serves the task", **obj}))
+        return said, collector
+
+    def test_a_row_and_fulls_shape_are_taken_and_kept(self):
+        process = {"name": "docs", "process": _full()}
+        said, collector = self._said(agent=_draft_agent(), process=process)
+        self.assertFalse(said.get("is_error"), said)
+        self.assertEqual(collector.object()["process"], process)
+
+    def test_a_draft_with_neither_is_refused(self):
+        said, collector = self._said()
+        self.assertTrue(said["is_error"])
+        self.assertIn("an `agent`, a `process` or both", said["content"][0]["text"])
+        self.assertIsNone(collector.object())
+
+    def test_a_tool_off_the_catalog_is_refused(self):
+        said, _ = self._said(agent=_draft_agent(tools={"send_email": "allow"}))
+        self.assertIn("tools.send_email: no such tool in the catalog", said["content"][0]["text"])
+
+    def test_a_writing_tool_on_a_row_leif_starts_is_refused(self):
+        said, _ = self._said(agent=_draft_agent(trigger={"leif": True}, tools={"Bash": "allow"}))
+        self.assertIn("holds only reading tools, not Bash", said["content"][0]["text"])
+
+    def test_a_taken_key_and_an_unreadable_output_are_refused(self):
+        said, _ = self._said(agent={**_draft_agent(), "key": "scan"})
+        self.assertIn("scan is taken", said["content"][0]["text"])
+        bad = {"kind": "proposal", "version": 1, "fields": {"items": "text"}}
+        said, _ = self._said(agent=_draft_agent(output=bad))
+        self.assertIn("contract-field-missing: tidy.proposals", said["content"][0]["text"])
+
+    def test_a_process_without_review_before_merge_is_refused(self):
+        full = _full()
+        full["states"]["impl"]["next"] = [{"to": "pr"}]
+        full["states"]["pr"]["next"] = [{"to": "ship"}]
+        del full["states"]["review"]
+        said, _ = self._said(process={"name": "docs", "process": full})
+        self.assertIn("a review state is not on every path to it", said["content"][0]["text"])
+
+    def test_a_guard_not_listed_is_refused(self):
+        full = _full()
+        full["states"]["plan"]["next"] = [{"to": "impl", "when": {"guard": "looks-fine"}}]
+        said, _ = self._said(process={"name": "docs", "process": full})
+        self.assertIn("no guard looks-fine", said["content"][0]["text"])
+
+    def test_a_process_may_run_the_agent_drafted_beside_it(self):
+        full = _full()
+        full["states"]["intent"]["agent"] = "tidy"
+        del full["states"]["idea"]
+        full["start"] = "intent"
+        said, _ = self._said(process={"name": "docs", "process": full})
+        self.assertIn("agent tidy is no row", said["content"][0]["text"])
+        row = _draft_agent(
+            output={
+                "kind": "artifact",
+                "version": 1,
+                "by": "app",
+                "fields": contracts.output("intent")["fields"],
+            },
+            trigger=None,
+        )
+        del row["fields"]["trigger"]
+        said, _ = self._said(agent=row, process={"name": "docs", "process": full})
+        self.assertFalse(said.get("is_error"), said)

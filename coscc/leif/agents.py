@@ -9,13 +9,14 @@ gets.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from typing import Any, Literal, TypedDict
 
-from coscc import vault
+from coscc import bus, vault
 from coscc.agent import agents, models, modeltrial, pack, policy
 from coscc.config import Config
 from coscc.kernel import OWNER, Hooks, Invalid
@@ -336,6 +337,66 @@ class Agents:
             if t.name not in pack.ENGINE_TOOLS
         ]
 
+    def catalog_block(self, cwd: str = "") -> str:
+        """Everything a row or a process may be composed from, as one JSON text: the `catalog`
+        data source (`contracts.DATA`) Dagaz reads. The tools (`catalog`), the data sources, the
+        output kinds with the fields the engine reads of each, the triggers and the bus events a
+        row may wait on, the process guards and actions, the bounds a row keeps, the skills, every
+        row (its parts a composition names) and every process. Read only."""
+        rows = pack.rows()
+        events = {}
+        for name in bus.NAMES:
+            fields = sorted(bus.fields_of(name))
+            if "workspace" in fields:
+                events[name] = fields
+        said = {
+            "tools": [
+                {"name": t["name"], "effect": t["effect"], "tier": t["tier"], "on": t["on"]}
+                for t in self.catalog(cwd)
+            ],
+            "data": list(contracts.DATA),
+            "outputs": {
+                k: {f: t for f, (_, t) in contracts.READS.get(k, {}).items()}
+                for k in pack.OUTPUT_KINDS
+                if k not in ("helper", "draft")
+            },
+            "triggers": [t for t in pack.TRIGGERS if t != "engine"],
+            "events": events,
+            "guards": list(pack.PROCESS_GUARDS),
+            "actions": list(pack.ACTIONS),
+            "bounds": {
+                "efforts": list(pack.EFFORTS),
+                "turns": [pack.TURNS_MIN, pack.TURNS_MAX],
+                "usd": [pack.BUDGET_MIN, pack.BUDGET_MAX],
+                "name_max": pack.NAME_MAX,
+                "key_max": pack.KEY_MAX,
+            },
+            "skills": sorted({s for r in rows.values() for s in r.get("skills") or []}),
+            "rows": [
+                {
+                    "key": k,
+                    "pack": r.get("pack"),
+                    **{
+                        f: r[f]
+                        for f in (
+                            "name",
+                            "description",
+                            "model",
+                            "input",
+                            "output",
+                            "trigger",
+                            "tools",
+                        )
+                        if f in r
+                    },
+                }
+                for k, r in rows.items()
+                if not r.get("problems")
+            ],
+            "processes": pack.processes(),
+        }
+        return json.dumps(said, ensure_ascii=False, indent=1)
+
     def _effects(self) -> dict[str, str] | None:
         """Each catalog tool's effect, for `pack.check`; `None` for a core built with no feature
         (a test's), whose catalog lacks the tools the built-in rows name."""
@@ -579,17 +640,22 @@ class Agents:
         except (BadRecord, Busy) as e:
             raise Invalid(f"the setting was saved but not logged: {e}") from e
 
-    def new_agent(self, key: object, start: object, name: object, cwd: str = "") -> AgentPage:
-        """Write a new agent into the owner's pack (`pack.new_row`): a copy of row `start` or the
-        smallest row that runs, checked with the app's catalog; logged as an `agent-setting`
-        record. **Behind the password**: its tools are the catalog's, its runs get only what the
-        engine derives, inside the critical calls."""
+    def new_agent(
+        self, key: object, start: object, name: object, cwd: str = "", given: object = None
+    ) -> AgentPage:
+        """Write a new agent into the owner's pack (`pack.new_row`): a copy of row `start`, the
+        whole row `given` (`{fields, body}`: a draft a person read and saves), or the smallest row
+        that runs, checked with the app's catalog; logged as an `agent-setting` record. **Behind
+        the password**: its tools are the catalog's, its runs get only what the engine derives,
+        inside the critical calls."""
         if not isinstance(key, str) or not isinstance(name, str):
-            raise Invalid("send {key, name, from?}: key and name are names")
+            raise Invalid("send {key, name, from?, row?}: key and name are names")
         if start is not None and not isinstance(start, str):
             raise Invalid("from is the key of an agent")
+        if given is not None and not isinstance(given, dict):
+            raise Invalid("row is {fields, body}")
         try:
-            pack.new_row(key, name, start or None, self._effects())
+            pack.new_row(key, name, start or None, self._effects(), given)
         except pack.PackError as e:
             raise Refused(e) from e
         except OSError as e:
@@ -597,7 +663,13 @@ class Agents:
                 f"the owner's pack could not be written, so nothing was saved: {e}"
             ) from e
         self._log(
-            {"kind": SETTING_KIND, "agent": key, "field": "new", "old": None, "new": start or ""}
+            {
+                "kind": SETTING_KIND,
+                "agent": key,
+                "field": "new",
+                "old": None,
+                "new": start or ("draft" if given is not None else ""),
+            }
         )
         return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
 

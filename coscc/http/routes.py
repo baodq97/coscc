@@ -255,14 +255,19 @@ async def set_agent_field(request: Request) -> AgentPage:
 
 @router.post("/api/agents/new")
 async def new_agent(request: Request) -> AgentPage:
-    """`{key, from?, name, cwd?}` writes a new agent into the owner's pack, `local/agents/<key>.md`:
-    a copy of row `from` (every key, the body, its skills by name) or, with no `from`, the
-    smallest row that runs (a manual reader on Sonnet low). A taken or bad key, or a row `pack.check`
+    """`{key, from?, row?, name, cwd?}` writes a new agent into the owner's pack,
+    `local/agents/<key>.md`: a copy of row `from` (every key, the body, its skills by name), the
+    whole row `row` (`{fields, body}`: Dagaz's draft, read and saved by a person), or the smallest
+    row that runs (a manual reader on Sonnet low). A taken or bad key, or a row `pack.check`
     refuses with the catalog, is a 400 naming every reason, and nothing is written. Logged as an
     `agent-setting` record `by: owner`. Every later edit is `/api/agents/field`'s."""
     body = await kernel.body(request)
     return _core(request).agents.new_agent(
-        body.get("key"), body.get("from"), body.get("name"), cwd=str(body.get("cwd") or "")
+        body.get("key"),
+        body.get("from"),
+        body.get("name"),
+        cwd=str(body.get("cwd") or ""),
+        given=body.get("row"),
     )
 
 
@@ -288,6 +293,8 @@ async def set_agent_state(request: Request) -> AgentPage:
 class Started(TypedDict):
     agent: str
     started: bool
+    # The run's id: its live line is `/api/runs/{run}/follow`, what it handed back `/api/runs/{run}`.
+    run: str
 
 
 @router.post("/api/agents/run")
@@ -299,7 +306,7 @@ async def run_agent(request: Request) -> Started:
     ceilings; its `start` and `end` are in the run log."""
     body = await kernel.body(request)
     key = str(body.get("key") or "")
-    triggers.start(
+    run = triggers.start(
         _core(request),
         key,
         str(body.get("cwd") or ""),
@@ -307,7 +314,7 @@ async def run_agent(request: Request) -> Started:
         by="manual",
         text=str(body.get("text") or ""),
     )
-    return {"agent": key, "started": True}
+    return {"agent": key, "started": True, "run": run}
 
 
 @router.get("/api/proposals")

@@ -17,6 +17,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from coscc.agent import pack
 from coscc.units import contracts, guards
 
 SERVER = "cos"
@@ -89,6 +90,33 @@ def verdict_problem(obj: Mapping[str, Any]) -> str:
             "(as `coscc/bus.py:12-30`); with none, say `unclear`."
         )
     return ""
+
+
+def draft_problem(obj: Mapping[str, Any], catalog: Mapping[str, str] | None) -> str:
+    """What a draft says that its schema cannot rule out, `""` when nothing: the load checks a
+    person's save runs again. An `agent` is a whole new row (`pack.new_row_problems` with
+    `catalog`: its key, every part, its input and output); a `process` passes `check_process`
+    on every row and that agent, under a name the owner's pack does not hold yet."""
+    agent, process = obj.get("agent"), obj.get("process")
+    if agent is None and process is None:
+        return "a draft holds an `agent`, a `process` or both."
+    rows = pack.plain_rows()
+    out: list[str] = []
+    if agent is not None:
+        made = {**agent["fields"], "key": agent["key"], pack.BODY: agent["body"]}
+        out += [f"agent: {r}" for r in pack.new_row_problems(made, catalog)]
+        rows[agent["key"]] = made
+    if process is not None:
+        name = process["name"]
+        if why := pack.key_problem(name, "a process name"):
+            out.append(f"process: {why}")
+        elif f"{pack.LOCAL_NAME}/{name}" in pack.processes():
+            out.append(f"process: {name} is taken: name it anew")
+        try:
+            out += [f"process: {r}" for r in pack.check_process(name, process["process"], rows)]
+        except (TypeError, AttributeError, ValueError, KeyError) as e:
+            out.append(f"process: {type(e).__name__}: {e}")
+    return "; ".join(out) + ("." if out else "")
 
 
 def plan_problem(obj: Mapping[str, Any]) -> str:
@@ -287,16 +315,19 @@ class Channel:
 class Collector:
     """The `submit` of a session that is no stage: Gebo, an estimate, a triggered row.
 
-    No artifact to hash and no unit run to match: it checks the schema (the SDK does that) and a
-    verdict's citations (`verdict_problem`), and keeps the last object handed in. What of it is
-    written is the caller's to decide.
+    No artifact to hash and no unit run to match: it checks the schema (the SDK does that), a
+    verdict's citations (`verdict_problem`) and a draft against the load checks with `catalog`
+    (`draft_problem`), and keeps the last object handed in. What of it is written is the
+    caller's to decide.
     """
 
-    def __init__(self, kind: str):
+    def __init__(self, kind: str, catalog: Mapping[str, str] | None = None):
         self.kind = self.stage = kind
         out = contracts.output(kind)
         self._what = out.get("purpose", "")
         self.is_verdict = out["kind"] == "verdict"
+        self.is_draft = out["kind"] == "draft"
+        self.catalog = catalog
         self.schema = contracts.schema(kind)
         self.received: dict[str, Any] | None = None
 
@@ -307,6 +338,8 @@ class Collector:
         obj = dict(args or {})
         if self.is_verdict and (problem := verdict_problem(obj)):
             return refusal(problem)
+        if self.is_draft and (problem := draft_problem(obj, self.catalog)):
+            return refusal(f"The draft would be refused: {problem}")
         self.received = {"object": obj}
         return {"content": [{"type": "text", "text": f"received: {self.kind}"}]}
 

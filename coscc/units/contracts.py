@@ -3,8 +3,9 @@ generated from it.
 
 A declaration is `{kind, version, fields}` (and `purpose`, what `submit` says it is for): an agent
 row's `output` (`coscc/agent/pack.py`) of a kind `submit` takes. Field
-types: `text`, `number` (an integer), `{"enum": [...]}`, `{"list": <type>}`, an object
-`{name: type}`, and any other string as a pattern, anchored. A name ending in `?` may be left
+types: `text`, `number` (an integer), `json` (any object, its shape another check's),
+`{"enum": [...]}`, `{"list": <type>}`, an object `{name: type}`, and any other string as a
+pattern, anchored. A name ending in `?` may be left
 out. `READS` names every field the engine decides on, with the reader and the type it expects:
 a declaration that lacks one, or gives it another type, refuses the load with a named reason.
 The declarations are read and checked when the rows change, and when the app is built.
@@ -44,8 +45,8 @@ SOURCE = "[^\\s:]+(:[0-9]+-[0-9]+)?"
 # `artifact`: a stage's judgement of its file, one `outputs` row; `review`: a round, kept in
 # its own rows; `session`: the object handed to the code that opened the session; `proposal`:
 # work proposed for the Backlog (`coscc/units/proposals.py`); `verdict`: criteria graded on a
-# unit, one `outputs` row.
-Kind = Literal["artifact", "review", "session", "proposal", "verdict"]
+# unit, one `outputs` row; `draft`: a row or a process a person may save, kept on the run's `end`.
+Kind = Literal["artifact", "review", "session", "proposal", "verdict", "draft"]
 KINDS: tuple[Kind, ...] = get_args(Kind)
 
 # The field the engine adds to an artifact's object: who sent it.
@@ -182,6 +183,12 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
         )
     },
     "verdict": {"criteria": ("verdict_problem", criterion_list(VERDICT_CRITERION))},
+    # A draft holds an agent, a process or both (`draft_problem`): each as the save routes take it.
+    "draft": {
+        "why": ("draft_problem", "text"),
+        "agent?": ("draft_problem", {"key": "text", "fields": "json", "body": "text"}),
+        "process?": ("draft_problem", {"name": "text", "process": "json"}),
+    },
     "integrate": {
         "needs_person": ("outcome_of_session", {"list": {"commit": "text", "why": "text"}})
     },
@@ -234,7 +241,7 @@ GROUPS = (
     ("needs_person", "left_lane?"),
 )
 
-_WORDS = ("text", "number")
+_WORDS = ("text", "number", "json")
 _NAME = re.compile(r"[a-z][a-z0-9_]*\??")
 _RESERVED = ("list", "enum")
 
@@ -404,8 +411,8 @@ class Input(TypedDict):
 # The app's data a stage may declare: the shared idea, the sibling checkouts, the units this one
 # names, the plan's files as they stand, the files `main` changed since the plan, the last
 # integration and the screenshots taken again; and, for a triggered row
-# (`coscc/runner/triggers.py`), what people stepped in for since its last run and the proposals
-# already made.
+# (`coscc/runner/triggers.py`), what people stepped in for since its last run, the proposals
+# already made, and the catalog a row or a process is composed from (`Agents.catalog_block`).
 DATA = (
     "idea",
     "siblings",
@@ -416,6 +423,7 @@ DATA = (
     "screens",
     "interventions",
     "proposals",
+    "catalog",
 )
 _OPTIONAL_INPUT = ("skip_when_empty", "given")
 
@@ -582,6 +590,8 @@ def _schema(t: FieldType) -> dict[str, object]:
         return {"type": "string"}
     if t == "number":
         return {"type": "integer"}
+    if t == "json":
+        return {"type": "object"}
     if isinstance(t, str):
         return {"type": "string", "pattern": f"^{t}$"}
     if isinstance(t, list):

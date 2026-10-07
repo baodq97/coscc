@@ -79,8 +79,9 @@ POLICIES = ("allow", "ask", "off")
 # Issued by the engine with the grant, never named by a row.
 ENGINE_TOOLS = ("submit", "peers", "run_agent")
 # What a row's `output.kind` may be: the `submit` kinds, a reply read as it is, a helper.
-# `proposal` hands back work for the Backlog (`coscc/units/proposals.py`); `verdict` grades criteria.
-OUTPUT_KINDS = ("artifact", "review", "session", "proposal", "verdict", "reply", "helper")
+# `proposal` hands back work for the Backlog (`coscc/units/proposals.py`); `verdict` grades criteria;
+# `draft` a row or a process for a person to save (`coscc/units/submit.py` `draft_problem`).
+OUTPUT_KINDS = ("artifact", "review", "session", "proposal", "verdict", "draft", "reply", "helper")
 # Who writes a stage's artifact: the app from the reply of a row that only reads (`app`), the app
 # from the reply of a row that runs code in a throwaway directory (`scratch`), the session.
 WRITERS = ("app", "scratch", "session")
@@ -1421,29 +1422,58 @@ BLANK: dict[str, Any] = {
 }
 
 
+def plain_rows() -> dict[str, dict[str, Any]]:
+    """Every row's frontmatter, `key` and body, as `check` and `check_process` read them."""
+    return {k: _fields(r) for k, r in rows().items()}
+
+
+def new_row_problems(made: Mapping[str, Any], catalog: Mapping[str, str] | None) -> list[str]:
+    """Why `made`, a whole new row (its frontmatter, `key` and body), cannot join the rows: a bad
+    or taken key, `check` with `catalog` beside every row, and `ROW_CHECKS` (its input and output
+    as the engine reads them)."""
+    key = str(made.get("key") or "")
+    if why := key_problem(key):
+        return [why]
+    if key in rows():
+        return [f"{key} is taken: an agent of {rows()[key]['pack']} has it"]
+    every = {**plain_rows(), key: dict(made)}
+    reasons = _safely(made, every, catalog)
+    if reasons:
+        return reasons
+    names = tuple(dict.fromkeys(k for p in processes().values() for k in p["states"]))
+    return _later(key, made, every, names)
+
+
 def new_row(
-    key: str, name: str, start: str | None, catalog: Mapping[str, str] | None = None
+    key: str,
+    name: str,
+    start: str | None,
+    catalog: Mapping[str, str] | None = None,
+    given: Mapping[str, Any] | None = None,
 ) -> None:
     """Write `local/agents/<key>.md`: a copy of row `start` (every key, its body, its skills by
-    name) named `name`, or with no `start` the `BLANK` row. A taken or bad key, or a row `check`
-    refuses, is a `PackError` with every reason and nothing is written."""
-    reasons = [why] if (why := key_problem(key)) else []
-    if key in rows():
-        reasons.append(f"{key} is taken: an agent of {rows()[key]['pack']} has it")
-    base = BLANK
-    if start:
+    name) named `name`, the row `given` (`{fields, body}`, a draft a person saves), or the `BLANK`
+    row. A taken or bad key, or a row `new_row_problems` refuses, is a `PackError` with every
+    reason and nothing is written."""
+    reasons: list[str] = []
+    base: Mapping[str, Any] = BLANK
+    if start and given is not None:
+        reasons.append("from and row: give one")
+    elif start:
         found = row(start)
         if found is None:
             reasons.append(f"no agent {start} to start from")
         else:
-            base = {k: found[k] for k in KEYS if k in found}
-            base[BODY] = found.get(BODY) or ""
+            base = {**{k: found[k] for k in KEYS if k in found}, BODY: found.get(BODY) or ""}
+    elif given is not None:
+        if not isinstance(given.get("fields"), dict) or not isinstance(given.get("body"), str):
+            reasons.append("row is {fields, body}: fields an object, body text")
+        else:
+            base = {**given["fields"], BODY: given["body"]}
     fields = {k: v for k, v in {**base, "name": name}.items() if k != BODY}
     body = str(base.get(BODY) or "")
     made = {**fields, "key": key, BODY: body}
-    if not reasons:
-        others = {k: _fields(r) for k, r in rows().items()}
-        reasons = check(made, catalog, {**others, key: made})
+    reasons = reasons or new_row_problems(made, catalog)
     if reasons:
         raise PackError(reasons)
     _own_manifest()

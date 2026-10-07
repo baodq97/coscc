@@ -297,9 +297,9 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(r.status_code, 400, bad)
 
     async def test_run_now_starts_a_manual_run_and_refuses_a_row_it_does_not_start(self):
-        with mock.patch("coscc.http.routes.triggers.start") as start:
+        with mock.patch("coscc.http.routes.triggers.start", return_value="r1") as start:
             r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "scan"})
-        self.assertEqual((r.status_code, r.json()), (200, {"agent": "scan", "started": True}))
+        self.assertEqual((r.status_code, r.json()), (200, {"agent": "scan", "started": True, "run": "r1"}))
         self.assertEqual(start.call_args.kwargs["by"], "manual")
         r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "impl"})
         self.assertEqual((r.status_code, r.json()["code"]), (400, "not-triggered"))

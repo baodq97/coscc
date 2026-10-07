@@ -91,9 +91,9 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
                 )
                 cases += 1
         # judgement and questions for six artifacts, four review fields, one field each for
-        # integrate, estimate, the scan's proposals and the grader's criteria; then the nine read
-        # by name.
-        self.assertEqual(cases, 6 * 2 + 4 + 4 + 9)
+        # integrate, estimate, the scan's proposals and the grader's criteria, Dagaz's three; then
+        # the nine read by name.
+        self.assertEqual(cases, 6 * 2 + 4 + 4 + 3 + 9)
 
     def test_the_intents_type_names_branch_for(self):
         raw = _shipped()
@@ -246,6 +246,7 @@ PINNED = {
     "estimate": (1, "cd5fc053a8e3"),
     "scan": (1, "b4482adace0e"),
     "outcome": (1, "5a28b9ca8b0f"),
+    "dagaz": (1, "4c242a14f390"),
 }
 
 
