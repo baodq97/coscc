@@ -25,6 +25,7 @@ from unittest import mock
 from coscc import features
 from coscc.config import PROTECTED_DB_VAR
 from coscc.http import plugin
+from coscc.store import db
 from coscc.store.db import SCHEMA_VERSION, Busy, Data, Incompatible, Protected
 
 REPO = Path(__file__).resolve().parent.parent
@@ -74,7 +75,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 with self.assertRaises(Incompatible) as caught:
                     data.version()
                 self.assertIn(f"schema {found}", str(caught.exception))
-                self.assertIn("upgrade through 0.14 first", str(caught.exception))
+                self.assertIn("upgrade through 0.15 first", str(caught.exception))
 
     def test_a_newer_database_is_still_refused(self):
         """Was `version_5`, then `version_6`: it follows `SCHEMA_VERSION`, so a newer number is
@@ -512,8 +513,23 @@ def _shape(conn: sqlite3.Connection) -> dict[str, tuple]:
     return out
 
 
+class TheOneStepFindsTodaysPack(unittest.TestCase):
+    def test_what_it_derives_from_the_built_in_pack(self):
+        """`_from_12` finds agents and states by what they declare; a pack that drifts fails here."""
+        states, rows = db._builtin()
+        self.assertEqual(db._with(rows, "type"), ["intent"])
+        self.assertEqual(db._with(rows, "rests_on"), ["plan"])
+        self.assertEqual(db._with(rows, "unmeasured"), ["spec"])
+        self.assertEqual(
+            sorted(db._with(rows, "questions")), ["idea", "impl", "intent", "plan", "spec", "spike"]
+        )
+        self.assertEqual(db._coders(rows), ["impl"])
+        self.assertEqual(db._scan_row(rows), "scan")
+        self.assertEqual([s for s, v in states.items() if v.get("action") == "merge"], ["ship"])
+
+
 class AV12DatabaseTakesOneStep(unittest.TestCase):
-    """0.14's database to this schema in one step; the end state is what each part proves."""
+    """0.15's database to this schema in one step; the end state is what each part proves."""
 
     ANSWERS = (
         ("person", "Leif (CoS), x"),

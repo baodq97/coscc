@@ -456,7 +456,7 @@ class TheOwnersLayer(unittest.TestCase):
         self.assertEqual(skill_for("spec"), "# my rules\n")
 
 
-# A database at 12 (0.14), the one the agent prefs move out of.
+# A database at 12 (0.15), the one the agent prefs move out of.
 V12 = Path(__file__).resolve().parents[1] / "store" / "fixtures" / "v12.sql"
 
 

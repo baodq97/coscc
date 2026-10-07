@@ -1,4 +1,4 @@
--- The schema of a database at 12 (0.14, the last release), as the real one has it: the start of `_from_12`.
+-- The schema of a database at 12 (0.15, the last release), as the real one has it: the start of `_from_12`.
 
 CREATE TABLE attempt_moves (
     attempt  INTEGER NOT NULL REFERENCES attempts (id),

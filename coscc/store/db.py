@@ -33,7 +33,7 @@ from typing import Any, Iterator
 # The shape below. `_open` refuses a database numbered higher than this rather than guessing, and
 # **an older build answers `500` on a database a newer one has touched**, so rolling the app back
 # means rolling the database back with it. 19 is idea 0006 whole: an empty database is created at
-# it, one at `FROM` (0.14, the last release) takes `_from_12` in one step, any other is refused.
+# it, one at `FROM` (0.15, the last release) takes `_from_12` in one step, any other is refused.
 SCHEMA_VERSION = 19
 FROM = 12
 
@@ -612,14 +612,9 @@ def _records(conn: sqlite3.Connection, rows: dict[str, dict[str, Any]]) -> None:
         )
 
 
-def _scan_moves(
-    conn: sqlite3.Connection, rows: dict[str, dict[str, Any]], tables: set[str]
-) -> None:
-    """The scan feature is a row of the pack, the one proposing on a schedule. Its proposals move
-    into `proposals` under that row; whether it was on in a workspace moves from `features.state`
-    (a schedule of `0` hours is off) into `agents.state`; its cursor lands as `data_until` on its
-    last `end`; `features.schedule` and its tables go. The feature had the row's key as its name."""
-    scan = next(
+def _scan_row(rows: dict[str, dict[str, Any]]) -> str:
+    """The row the scan feature became: the one proposing on a schedule."""
+    return next(
         (
             k
             for k, r in rows.items()
@@ -627,6 +622,16 @@ def _scan_moves(
         ),
         "",
     )
+
+
+def _scan_moves(
+    conn: sqlite3.Connection, rows: dict[str, dict[str, Any]], tables: set[str]
+) -> None:
+    """The scan feature is a row of the pack, the one proposing on a schedule. Its proposals move
+    into `proposals` under that row; whether it was on in a workspace moves from `features.state`
+    (a schedule of `0` hours is off) into `agents.state`; its cursor lands as `data_until` on its
+    last `end`; `features.schedule` and its tables go. The feature had the row's key as its name."""
+    scan = _scan_row(rows)
     if f"{scan}_proposals" in tables:
         conn.execute(
             "INSERT INTO proposals (workspace, agent, unit, run, type, slug, title, problem, "
@@ -832,7 +837,7 @@ class Data:
                 if found not in (0, FROM):
                     raise Incompatible(
                         f"{self.db_path} is at schema {found}, and this build migrates only "
-                        f"schema {FROM}: upgrade through 0.14 first, or start from a copy made "
+                        f"schema {FROM}: upgrade through 0.15 first, or start from a copy made "
                         f"at {FROM}"
                     )
                 if found == FROM:
@@ -849,7 +854,7 @@ class Data:
             conn.execute("COMMIT")
 
     def _from_12(self, conn: sqlite3.Connection) -> None:
-        """12 (0.14) to this schema in one step: idea 0006 whole.
+        """12 (0.15) to this schema in one step: idea 0006 whole.
 
         - `stage_results` is `outputs` (column `agent`, a `version`); the removed decisions
           feature's `unit_decisions`, `idea_meta`, `unit_seen`, `unit_meta.lane`, the `repo` links,
