@@ -47,6 +47,9 @@ class _Core(unittest.IsolatedAsyncioTestCase):
         root = Path(tmp.name)
         self.ws = str(root / "ws")
         Path(self.ws).mkdir()
+        # The tree a row with `cwd: trunk` (the scan, the grader) reads.
+        self.trunk = root / "trunk"
+        self.trunk.mkdir()
         self.data = Data(root / "data")
         patch = mock.patch.object(pack, "ROOT", str(root / "data"))
         patch.start()
@@ -79,6 +82,7 @@ class _Core(unittest.IsolatedAsyncioTestCase):
         for target, fake in (
             ("coscc.runner.triggers.interventions", self._interventions),
             ("coscc.runner.triggers.run_mod.run", self._run),
+            ("coscc.runner.triggers.worktrees.main_tree", self._main_tree),
         ):
             p = mock.patch(target, fake)
             p.start()
@@ -90,6 +94,9 @@ class _Core(unittest.IsolatedAsyncioTestCase):
         if not re.fullmatch(r"\d{4}_[a-z0-9-]+", unit):
             raise Invalid(f"not a work unit name: {unit!r}")
         return units.unit_dir(cwd, unit, self.core.config.data_dir)
+
+    async def _main_tree(self, workspace, data_dir=None):
+        return self.trunk, "abc"
 
     def _interventions(self, journal, meta, attempts, key, after, limit):
         return [i for i in self.found if i.at > after][:limit]
@@ -167,6 +174,40 @@ class APressRunsTheRow(_Core):
         self.assertEqual((p["agent"], p["sources"][0]["unit"]), ("scan", "0001_a"))
         (end,) = self.ends()
         self.assertEqual((end["data_until"], end["proposals"]), (self.found[-1].at, 1))
+
+    async def test_a_change_is_kept_on_a_file_of_the_trunk_and_rejected_elsewhere(self):
+        self.found = found(2)
+        (self.trunk / "skills").mkdir()
+        (self.trunk / "skills" / "spec.md").write_text("x")
+
+        def item(slug: str, path: str) -> dict:
+            return {
+                "type": "fix",
+                "slug": slug,
+                "title": "Steps stop",
+                "problem": PROBLEM,
+                "sources": ["rerun:runs:1", "rerun:runs:2"],
+                "change": {"kind": "skill", "path": path, "text": "Name the file."},
+                "signal": {"kind": "rerun", "now": 2, "target": 0},
+                "measure": "Count reruns of the spec stage over the 14 days after it ships.",
+                "usd": "2.40",
+            }
+
+        self.reply = Run(
+            "done", {"proposals": [item("on-trunk", "skills/spec.md"), item("off", "nope/x.md")]}
+        )
+        await self.go("scan", self.ws, by="manual")
+        (given,) = self.given
+        self.assertEqual(given.cwd, str(self.trunk))
+        (p,) = proposals.listed(self.data, self.ws)
+        self.assertEqual(
+            (p["slug"], p["change"]["path"], p["usd"]), ("on-trunk", "skills/spec.md", 2.4)
+        )
+        self.assertEqual(p["signal"], {"kind": "rerun", "now": 2, "target": 0})
+        (end,) = self.ends()
+        self.assertEqual(end["proposals"], 1)
+        (rejected,) = end["rejected"]
+        self.assertTrue(rejected.startswith("off: change path 'nope/x.md' is no file"), rejected)
 
     async def test_the_preview_is_the_prompt_a_run_is_given_and_starts_nothing(self):
         self.found = found(2)
@@ -383,7 +424,7 @@ class LeifAsksBeforeACostlyRunAndStartsTenADay(_Core):
 
     async def test_a_yes_counts_only_from_a_later_turn_of_the_same_chat(self):
         self.assertIn("needs-confirm", self.code(await self.call("t1")))
-        self.assertIn("$0.68", self.code(await self.call("t1")))
+        self.assertIn("$1.50", self.code(await self.call("t1")))
         # Leif saying yes for the person in the same turn is refused.
         self.assertIn("needs-confirm", self.code(await self.call("t1", confirmed=True)))
         self.turn_ended("t1")
@@ -606,18 +647,9 @@ class TheGraderGradesWhatShipped(_Core):
         folder.mkdir(parents=True)
         (folder / "intent.md").write_text("## Proposed outcome\nA fix ships.")
         (folder / "ship.md").write_text("Merged as #1.")
-        self.trunk = root / "trunk"
-        self.trunk.mkdir()
         self.meta = UnitMeta(root / "work", self.data)
         self.core.ws.unit_meta = lambda: self.meta
         self.core.ideas = SimpleNamespace(idea_note=lambda cwd, unit: "## Wanted\nFewer steps.")
-
-        async def main_tree(workspace, data_dir=None):
-            return self.trunk, "abc"
-
-        p = mock.patch("coscc.runner.triggers.worktrees.main_tree", main_tree)
-        p.start()
-        self.addCleanup(p.stop)
 
     def criteria(self, *met: str) -> dict:
         return {
@@ -948,7 +980,7 @@ class OneAgentsResultStartsAnother(_Core):
         self.assertEqual(self.given, [])
 
     async def test_the_daily_cap_holds_a_chained_run_too(self):
-        spent = iter([(0.0, 1.0), (0.95, 1.0)])
+        spent = iter([(0.0, 2.0), (1.95, 2.0)])
         self.core.autopilot = SimpleNamespace(today=lambda cwd: next(spent))
         with self.assertLogs("coscc.runner.triggers", "WARNING") as said:
             await self.lead()

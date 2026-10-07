@@ -2,8 +2,10 @@
 and the owner's press that accepts it as a unit or dismisses it with a reason.
 
 An agent whose output is `proposal` (`coscc/agent/pack.py`) hands back
-`{proposals: [{type, slug, title, problem, sources}]}`; the engine (`coscc/runner/triggers.py`)
-keeps those that pass `problems_of`, at most `PER_RUN` a run, as `pending`. Only a person's press
+`{proposals: [{type, slug, title, problem, sources}]}`, and may add the one change it makes, the
+signal it lowers, how to measure it and its cost (`change`, `signal`, `measure`, `usd`); the
+engine (`coscc/runner/triggers.py`) keeps those that pass `problems_of`, at most `PER_RUN` a run,
+as `pending`. Only a person's press
 moves one on (`decide`, `by: owner`): no agent holds a tool that does. Nothing here touches the
 shortlist, and the autopilot never reads this table.
 """
@@ -12,13 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Literal, TypedDict, get_args
+from pathlib import Path, PurePosixPath
+from typing import Any, Literal, NotRequired, TypedDict, get_args
 
 from coscc.store.db import Data, now
 from coscc.units import Invalid
-from coscc.units.contracts import BranchType
+from coscc.units.contracts import BranchType, ChangeKind, SignalKind
 
 # The loop's slug grammar (`coscc/loop/__init__.py`'s `SLUG_RE`, `SLUG_MAX`), which this layer may
 # not import; `test_proposals` pins the copies.
@@ -29,6 +33,15 @@ TITLE_MAX = 120
 PROBLEM_MIN, PROBLEM_MAX = 200, 1_000
 REASON_MAX = 500
 PER_RUN = 8
+# The most a proposed change may cost, in dollars: one over it is dropped, not proposed with a
+# warning.
+USD_MAX = 5.00
+CHANGE_KINDS: tuple[str, ...] = get_args(ChangeKind)
+SIGNAL_KINDS: tuple[str, ...] = get_args(SignalKind)
+TEXT_MAX = 500
+MEASURE_MIN, MEASURE_MAX = 40, 400
+# What makes a proposal one change: a proposal carrying any of them carries them all.
+MEASURED = ("change", "signal", "measure", "usd")
 # How much of the proposals already made a run is handed (`lists_of`).
 LISTS_MAX = 2_000
 OWNER = "owner"
@@ -44,6 +57,22 @@ class Source(TypedDict):
     kind: str
     unit: str
     at: str
+
+
+class Change(TypedDict):
+    """The one change a proposal makes: its kind, the file it edits and the line."""
+
+    kind: str
+    path: str
+    text: str
+
+
+class Signal(TypedDict):
+    """The intervention kind a change lowers: how many of its sources are of it, and how few."""
+
+    kind: str
+    now: int
+    target: int
 
 
 class Proposal(TypedDict):
@@ -63,11 +92,21 @@ class Proposal(TypedDict):
     at: str
     decided: str
     reason: str
+    # `None`, `None`, `""` and `None` for a proposal that names no change.
+    change: Change | None
+    signal: Signal | None
+    measure: str
+    usd: float | None
 
 
-def problems_of(proposal: Mapping[str, Any], ids: set[str] | None) -> list[str]:
-    """Why one proposal breaks a rule of its type, slug, lengths and sources, `[]` when none.
-    `ids` are the sources the run was handed; `None` takes any."""
+def problems_of(
+    proposal: Mapping[str, Any],
+    kinds: Mapping[str, str] | None,
+    tree: str | Path | None = None,
+) -> list[str]:
+    """Why one proposal breaks a rule of its type, slug, lengths and sources, or of its change,
+    `[]` when none. `kinds` are the sources the run was handed, by id, with their kind; `None`
+    takes any. `tree` is what the run read, where a change's file is."""
     out = []
     if proposal.get("type") not in TYPES:
         out.append(f"type {proposal.get('type')!r} is not a branch type")
@@ -81,19 +120,96 @@ def problems_of(proposal: Mapping[str, Any], ids: set[str] | None) -> list[str]:
     sources = proposal.get("sources") or []
     if not sources:
         out.append("it names no source")
-    unknown = [s for s in sources if ids is not None and s not in ids]
+    unknown = [s for s in sources if kinds is not None and s not in kinds]
     if unknown:
         out.append(f"{', '.join(unknown[:3])} is not in this run's input")
+    if any(f in proposal for f in MEASURED):
+        out += _change_problems(proposal.get("change"), tree)
+        out += _signal_problems(proposal.get("signal"), sources, kinds)
+        if not MEASURE_MIN <= len(str(proposal.get("measure") or "").strip()) <= MEASURE_MAX:
+            out.append(f"the measure is not {MEASURE_MIN} to {MEASURE_MAX} characters")
+        out += _usd_problems(proposal.get("usd"))
     return out
 
 
+def _change_problems(change: Any, tree: str | Path | None) -> list[str]:
+    """A change's kind, its line, and its file: relative, without `..`, in `tree`, or new in a
+    folder `tree` has."""
+    if not isinstance(change, Mapping):
+        return ["it names no change"]
+    out = []
+    if change.get("kind") not in CHANGE_KINDS:
+        out.append(f"change kind {change.get('kind')!r} is not one of {', '.join(CHANGE_KINDS)}")
+    if not 0 < len(str(change.get("text") or "").strip()) <= TEXT_MAX:
+        out.append(f"the change's text is not 1 to {TEXT_MAX} characters")
+    path = str(change.get("path") or "")
+    parts = PurePosixPath(path).parts
+    if not path or path.startswith(("/", "\\")) or ".." in parts:
+        return [*out, f"change path {path!r} is not a path relative to the repository"]
+    if tree is None:
+        return [*out, f"change path {path!r} cannot be read: the run read no tree"]
+    root = Path(tree).resolve()
+    target = (root / path).resolve()
+    there = target.is_file() or (not target.exists() and target.parent.is_dir())
+    if not target.is_relative_to(root) or not there:
+        out.append(f"change path {path!r} is no file of the tree, nor a new one in a folder of it")
+    return out
+
+
+def _signal_problems(
+    signal: Any, sources: Sequence[str], kinds: Mapping[str, str] | None
+) -> list[str]:
+    """A signal's kind, and `0 <= target < now`, `now` the sources of its kind."""
+    if not isinstance(signal, Mapping):
+        return ["it names no signal"]
+    kind, now, target = signal.get("kind"), signal.get("now"), signal.get("target")
+    if kind not in SIGNAL_KINDS:
+        return [f"signal kind {kind!r} is not an intervention kind"]
+    if kinds is None:
+        return ["its signal cannot be counted: the run was handed no interventions"]
+    counted = len({s for s in sources if kinds.get(s) == kind})
+    if not isinstance(now, int) or isinstance(now, bool) or now != counted or now < 1:
+        return [f"signal now {now!r} is not the {counted} {kind} among its sources"]
+    if not isinstance(target, int) or isinstance(target, bool) or not 0 <= target < now:
+        return [f"signal target {target!r} is not 0 to {now - 1}"]
+    return []
+
+
+def _cost(usd: Any) -> float | None:
+    """`usd` as dollars, `None` when it is no finite number."""
+    if isinstance(usd, bool):
+        return None
+    try:
+        got = float(usd)
+    except TypeError, ValueError:
+        return None
+    return got if math.isfinite(got) else None
+
+
+def _usd_problems(usd: Any) -> list[str]:
+    got = _cost(usd)
+    if got is None:
+        return [f"estimate {usd!r} is no cost in dollars"]
+    if got > USD_MAX:
+        return [f"estimated ${got:.2f} is over the ${USD_MAX:.2f} ceiling"]
+    if got <= 0:
+        return [f"estimated ${got:.2f} is no cost"]
+    return []
+
+
 def kept(
-    items: Sequence[Mapping[str, Any]], ids: set[str] | None
+    items: Sequence[Mapping[str, Any]],
+    kinds: Mapping[str, str] | None,
+    tree: str | Path | None = None,
 ) -> tuple[list[Mapping[str, Any]], list[str]]:
     """The proposals that keep the rules, at most `PER_RUN`, and why each other was dropped."""
     keep, rejected = [], []
     for n, p in enumerate(items, start=1):
-        said = problems_of(p, ids) if n <= PER_RUN else [f"past the {PER_RUN} a run may propose"]
+        said = (
+            problems_of(p, kinds, tree)
+            if n <= PER_RUN
+            else [f"past the {PER_RUN} a run may propose"]
+        )
         if said:
             rejected.append(f"{p.get('slug') or n}: {'; '.join(said)}")
         else:
@@ -109,6 +225,10 @@ class Item(TypedDict):
     title: str
     problem: str
     sources: list[str]
+    change: NotRequired[Change]
+    signal: NotRequired[Signal]
+    measure: NotRequired[str]
+    usd: NotRequired[str]
 
 
 def of_verdict(unit: str, criteria: Sequence[Mapping[str, Any]]) -> list[Item]:
@@ -151,6 +271,10 @@ def _proposal(row: Any) -> Proposal:
         at=str(row["at"]),
         decided=str(row["decided"]),
         reason=str(row["reason"]),
+        change=json.loads(row["change"]) if row["change"] else None,
+        signal=json.loads(row["signal"]) if row["signal"] else None,
+        measure=str(row["measure"]),
+        usd=float(row["usd"]) if row["usd"] is not None else None,
     )
 
 
@@ -175,9 +299,11 @@ def add(
                 known.get(s) or Source(id=str(s), kind="", unit=unit, at="")
                 for s in dict.fromkeys(p.get("sources") or [])
             ]
+            change, signal = p.get("change"), p.get("signal")
             cur = conn.execute(
                 "INSERT INTO proposals (workspace, agent, unit, run, type, slug, title, problem, "
-                "sources, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "sources, at, change, signal, measure, usd) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     workspace,
                     agent,
@@ -189,6 +315,14 @@ def add(
                     str(p.get("problem") or ""),
                     json.dumps(cited),
                     at,
+                    json.dumps({k: change.get(k) for k in Change.__annotations__})
+                    if change
+                    else "",
+                    json.dumps({k: signal.get(k) for k in Signal.__annotations__})
+                    if signal
+                    else "",
+                    str(p.get("measure") or "").strip(),
+                    _cost(p.get("usd")),
                 ),
             )
             ids.append(int(cur.lastrowid or 0))
@@ -284,6 +418,8 @@ def lists_of(made: Sequence[Proposal]) -> str:
             if p["state"] != state:
                 continue
             line = f"- [{p['type']}] {p['title']}"
+            if p["change"]:
+                line += f" (changes {p['change']['path']})"
             if state == "accepted":
                 line += f" ({p['made']})"
             if state == "dismissed":
@@ -327,12 +463,23 @@ def unclaim(data: Data, workspace: str, pid: int) -> None:
 
 
 def brief_of(p: Proposal) -> str:
-    """The new unit's `idea.md` words: the title, the problem, and what it rests on."""
+    """The new unit's `idea.md` words: the title, the problem, the change it makes, the signal it
+    lowers, how to measure it and its cost, and what it rests on."""
     sources = "\n".join(
         f"- {s['id']}" + (f" ({s['kind']}, {s['unit'] or '-'}, {s['at']})" if s["kind"] else "")
         for s in p["sources"]
     )
-    return f"{p['title']}\n\n{p['problem']}\n\nProposed by {p['agent']}, from:\n{sources}"
+    measured = ""
+    if p["change"]:
+        c, sig = p["change"], p["signal"]
+        lines = [f"Change ({c['kind']}, `{c['path']}`): {c['text']}"]
+        if sig:
+            lines.append(f"Signal: {sig['kind']}: {sig['now']} → {sig['target']}")
+        lines.append(f"Measure: {p['measure']}")
+        if p["usd"] is not None:
+            lines.append(f"Estimated cost: ${p['usd']:.2f}")
+        measured = "\n\n" + "\n".join(lines)
+    return f"{p['title']}\n\n{p['problem']}{measured}\n\nProposed by {p['agent']}, from:\n{sources}"
 
 
 def check_slug(slug: str) -> str:

@@ -56,7 +56,9 @@ class AProposalKeepsItsRules(unittest.TestCase):
             proposal(["rerun:runs:1"], slug="no-type", type="feature"),
             proposal([], slug="no-source"),
         ]
-        keep, rejected = proposals.kept([*bad, proposal(["rerun:runs:1", "rerun:runs:2"])], ids)
+        keep, rejected = proposals.kept(
+            [*bad, proposal(["rerun:runs:1", "rerun:runs:2"])], dict.fromkeys(ids, "rerun")
+        )
         self.assertEqual([p["slug"] for p in keep], ["steps-stop"])
         self.assertEqual(len(rejected), len(bad))
         self.assertIn("rerun:runs:9 is not in this run's input", rejected[1])
@@ -129,10 +131,6 @@ class AnOwnerDecides(_Table):
             await proposals.dismiss(self.data, "/other", self.pid, "why")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AProposalKnowsTheUnitItMade(_Table):
     async def test_the_accepted_proposal_is_the_units_origin(self):
         self.assertIsNone(proposals.origin(self.data, WS, "0007_steps-stop"))
@@ -186,3 +184,159 @@ class AGapBecomesAProposal(unittest.TestCase):
         for gap in ({"part": "tool", "need": " "}, {"need": "x"}):
             with self.assertRaises(Invalid):
                 proposals.of_gap("w", gap, "r")
+
+
+MEASURE = "Count rerun interventions on the spec stage over the 14 days after it ships."
+KINDS = {"rerun:runs:1": "rerun", "rerun:runs:2": "rerun", "ci-red:runs:3": "ci-red"}
+
+
+def measured(**over) -> dict:
+    """A scan's proposal of one change, resting on two reruns and a red CI."""
+    return proposal(
+        ["rerun:runs:1", "rerun:runs:2", "ci-red:runs:3"],
+        **{
+            "change": {
+                "kind": "skill",
+                "path": "skills/spec.md",
+                "text": "Name the file a step reads.",
+            },
+            "signal": {"kind": "rerun", "now": 2, "target": 0},
+            "measure": MEASURE,
+            "usd": "3.50",
+            **over,
+        },
+    )
+
+
+class AChangeKeepsItsRules(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tree = Path(tmp.name)
+        (self.tree / "skills").mkdir()
+        (self.tree / "skills" / "spec.md").write_text("x")
+
+    def problems(self, p, kinds=KINDS):
+        return proposals.problems_of(p, kinds, self.tree)
+
+    def test_one_change_that_keeps_every_rule_is_kept(self):
+        self.assertEqual(self.problems(measured()), [])
+        new = {"kind": "check", "path": "skills/new.md", "text": "x"}
+        self.assertEqual(self.problems(measured(change=new)), [])
+
+    def test_each_rule_names_its_reason(self):
+        change = measured()["change"]
+        for over, said in (
+            ({"change": {**change, "kind": "rewrite"}}, "change kind 'rewrite' is not one of"),
+            ({"change": {**change, "path": "/etc/passwd"}}, "is not a path relative"),
+            ({"change": {**change, "path": "skills/../../x.md"}}, "is not a path relative"),
+            ({"change": {**change, "path": "nowhere/x.md"}}, "is no file of the tree"),
+            ({"change": {**change, "path": "skills"}}, "is no file of the tree"),
+            ({"change": {**change, "text": ""}}, "the change's text is not 1 to 500"),
+            ({"change": {**change, "text": "x" * 501}}, "the change's text is not 1 to 500"),
+            ({"change": [change, change]}, "it names no change"),
+            ({"signal": {"kind": "refused", "now": 1, "target": 0}}, "is not the 0 refused"),
+            ({"signal": {"kind": "rerun2", "now": 2, "target": 0}}, "signal kind 'rerun2'"),
+            ({"signal": {"kind": "rerun", "now": 3, "target": 0}}, "is not the 2 rerun"),
+            ({"signal": {"kind": "integrate", "now": 0, "target": 0}}, "is not the 0 integrate"),
+            ({"signal": {"kind": "rerun", "now": 2, "target": 2}}, "signal target 2 is not 0 to 1"),
+            ({"signal": {"kind": "rerun", "now": 2, "target": -1}}, "signal target -1"),
+            ({"measure": "count reruns"}, "the measure is not 40 to 400"),
+            ({"measure": "x" * 401}, "the measure is not 40 to 400"),
+            ({"usd": "6.50"}, "estimated $6.50 is over the $5.00 ceiling"),
+            ({"usd": "0"}, "estimated $0.00 is no cost"),
+            ({"usd": "cheap"}, "estimate 'cheap' is no cost in dollars"),
+        ):
+            with self.subTest(over=over):
+                got = self.problems(measured(**over))
+                self.assertEqual(len(got), 1, got)
+                self.assertIn(said, got[0])
+
+    def test_one_field_alone_asks_for_the_other_three(self):
+        got = self.problems(proposal(["rerun:runs:1"], usd="1"))
+        self.assertEqual(
+            got,
+            [
+                "it names no change",
+                "it names no signal",
+                "the measure is not 40 to 400 characters",
+            ],
+        )
+
+    def test_a_signal_is_not_counted_without_the_runs_input_nor_a_path_without_its_tree(self):
+        (said,) = proposals.problems_of(measured(), None, self.tree)
+        self.assertIn("handed no interventions", said)
+        (said,) = proposals.problems_of(measured(), KINDS)
+        self.assertIn("the run read no tree", said)
+
+    def test_a_dropped_one_is_rejected_with_its_reason_and_not_kept(self):
+        keep, rejected = proposals.kept(
+            [measured(usd="6.50"), measured(slug="ok")], KINDS, self.tree
+        )
+        self.assertEqual([p["slug"] for p in keep], ["ok"])
+        self.assertEqual(rejected, ["steps-stop: estimated $6.50 is over the $5.00 ceiling"])
+
+    def test_a_proposal_without_a_change_keeps_todays_rules(self):
+        self.assertEqual(self.problems(proposal(["rerun:runs:1"])), [])
+        gap = {"part": "tool", "need": "a time of day", "instead": "every 24 h"}
+        made = [
+            proposals.of_gap("It tells the person which units got stuck. " * 5, gap, "r9"),
+            *proposals.of_verdict(
+                "0141_a", [{"criterion": "O1", "met": "no", "evidence": "a.py:1-2 " * 30}]
+            ),
+        ]
+        for item in made:
+            self.assertEqual(proposals.problems_of(item, None, None), [], item)
+
+
+class AChangeIsKeptWithItsProposal(_Table):
+    def setUp(self):
+        super().setUp()
+        (self.measured,) = proposals.add(
+            self.data,
+            WS,
+            "scan",
+            "",
+            [measured(slug="name-the-file")],
+            run="r2",
+            sources={
+                k: proposals.Source(id=k, kind=v, unit="0001_a", at="t1") for k, v in KINDS.items()
+            },
+        )
+
+    def test_listed_gives_the_four_and_a_proposal_without_them_reads_empty(self):
+        got, old = proposals.listed(self.data, WS)
+        self.assertEqual(got["change"], measured()["change"])
+        self.assertEqual(got["signal"], {"kind": "rerun", "now": 2, "target": 0})
+        self.assertEqual((got["measure"], got["usd"]), (MEASURE, 3.5))
+        self.assertEqual(
+            (old["change"], old["signal"], old["measure"], old["usd"]), (None, None, "", None)
+        )
+        self.assertEqual(proposals.one(self.data, WS, self.measured)["usd"], 3.5)
+
+    async def test_the_brief_holds_the_four_after_the_problem_and_before_the_sources(self):
+        await proposals.accept(self.data, WS, self.measured, "name-the-file", self.create)
+        ((_, brief),) = self.units
+        order = [
+            brief.index(said)
+            for said in (
+                PROBLEM.strip(),
+                "Change (skill, `skills/spec.md`): Name the file a step reads.",
+                "Signal: rerun: 2 → 0",
+                f"Measure: {MEASURE}",
+                "Estimated cost: $3.50",
+                "Proposed by scan, from:",
+            )
+        ]
+        self.assertEqual(order, sorted(order))
+        await proposals.accept(self.data, WS, self.pid, "steps-stop", self.create)
+        self.assertNotIn("Change (", self.units[1][1])
+
+    def test_the_next_run_reads_the_file_a_change_was_proposed_on(self):
+        said = proposals.lists_of(proposals.listed(self.data, WS))
+        self.assertIn("- [fix] Steps stop (changes skills/spec.md)", said)
+        self.assertIn("- [fix] Steps stop\n", said)
+
+
+if __name__ == "__main__":
+    unittest.main()

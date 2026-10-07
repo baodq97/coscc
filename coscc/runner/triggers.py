@@ -522,7 +522,8 @@ async def _run(
         out: dict[str, Any] = {"data_until": until} if until else {}
         if kind == "proposal":
             items = list((got.output or {}).get("proposals") or [])
-            keep, rejected = proposals.kept(items, set(sources) if found else None)
+            kinds = {i: s["kind"] for i, s in sources.items()} if found else None
+            keep, rejected = proposals.kept(items, kinds, tree)
             await asyncio.to_thread(
                 proposals.add, data, ws, key, unit, keep, run=got.run, sources=sources
             )

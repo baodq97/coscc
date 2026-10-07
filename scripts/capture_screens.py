@@ -1044,10 +1044,47 @@ SCAN_PROPOSALS = (
     ),
 )
 
+# The one change each of `SCAN_PROPOSALS` makes, the intervention kind it lowers, how to measure it
+# and its cost: `(kind, path, text, signal, measure, usd)`.
+SCAN_CHANGES = (
+    (
+        "skill",
+        "coscc/packs/coscc-sdlc/skills/write-impl/SKILL.md",
+        "Before ending as a draft, list under ## What is still open each thing left undone.",
+        "impl-draft",
+        "Count impl-draft interventions on the impl stage over the 14 days after it ships.",
+        "2.40",
+    ),
+    (
+        "check",
+        "coscc/github/prsync.py",
+        "A red CI names its failing job and the first lines of that job's log.",
+        "ci-red",
+        "Count ci-red interventions on pull requests over the 14 days after it ships.",
+        "3.80",
+    ),
+    (
+        "guard",
+        "coscc/units/guards.py",
+        "Review refuses to start on a branch behind main, naming the commits it lacks.",
+        "integrate",
+        "Count integrate interventions over the 14 days after it ships.",
+        "4.50",
+    ),
+    (
+        "check",
+        "coscc/packs/coscc-sdlc/skills/write-spec/SKILL.md",
+        "A rerun note that decides something is recorded as an answer on the unit.",
+        "rerun",
+        "Count rerun interventions on the spec stage over the 14 days after it ships.",
+        "1.90",
+    ),
+)
+
 
 def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
-    """The scan row left off for `proj`, so nothing pays, and the four proposals of one run: two
-    pending, one accepted as `0006_frontend-calls-api`, one dismissed. Written through the core's
+    """The scan row left off for `proj`, so nothing pays, and the four proposals of one run, each
+    with its change: two pending, one accepted as `0006_frontend-calls-api`, one dismissed. Written through the core's
     `proposals` table, which the app made when it started."""
     from datetime import datetime, timedelta, timezone
 
@@ -1077,9 +1114,14 @@ def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
             "slug": s,
             "title": title,
             "problem": problem,
-            "sources": [i["id"] for i in taken[n * 3 : n * 3 + 3]],
+            # The two interventions of the kind its change lowers.
+            "sources": [i["id"] for i in taken if i["kind"] == c[3]],
+            "change": {"kind": c[0], "path": c[1], "text": c[2]},
+            "signal": {"kind": c[3], "now": 2, "target": 0},
+            "measure": c[4],
+            "usd": c[5],
         }
-        for n, (t, s, title, problem) in enumerate(SCAN_PROPOSALS)
+        for (t, s, title, problem), c in zip(SCAN_PROPOSALS, SCAN_CHANGES)
     ]
     data = Data(data_dir)
     ids = table.add(data, key, "scan", "", items, run="r", sources={i["id"]: i for i in taken})

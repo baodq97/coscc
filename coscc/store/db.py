@@ -32,9 +32,10 @@ from typing import Any, Iterator
 
 # The shape below. `_open` refuses a database numbered higher than this rather than guessing, and
 # **an older build answers `500` on a database a newer one has touched**, so rolling the app back
-# means rolling the database back with it. 19 is idea 0006 whole: an empty database is created at
-# it, one at `FROM` (0.15, the last release) takes `_from_12` in one step, any other is refused.
-SCHEMA_VERSION = 19
+# means rolling the database back with it. 19 is idea 0006 whole, 20 a proposal's change, signal,
+# measure and cost: an empty database is created at it, one at `FROM` (0.15, the last release)
+# takes `_from_12` in one step, one at 19 `_from_19`, any other is refused.
+SCHEMA_VERSION = 20
 FROM = 12
 
 DEFAULT_DIR = "~/.cos"
@@ -324,6 +325,7 @@ CREATE TABLE IF NOT EXISTS outputs (
     """-- Work an agent proposed for the Backlog (`coscc/units/proposals.py`): `unit` the unit it is
 -- about ('' for none), `run` the run that made it, `sources` JSON, `decision` pending, accepted
 -- or dismissed, `made` the unit accepting it made. Only the owner's press moves `decision` on.
+-- `change` and `signal` JSON, `measure` and `usd` (dollars): '' and NULL when it names no change.
 CREATE TABLE IF NOT EXISTS proposals (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace TEXT NOT NULL,
@@ -340,7 +342,11 @@ CREATE TABLE IF NOT EXISTS proposals (
     by        TEXT NOT NULL DEFAULT '',
     at        TEXT NOT NULL,
     decided   TEXT NOT NULL DEFAULT '',
-    reason    TEXT NOT NULL DEFAULT ''
+    reason    TEXT NOT NULL DEFAULT '',
+    change    TEXT NOT NULL DEFAULT '',
+    signal    TEXT NOT NULL DEFAULT '',
+    measure   TEXT NOT NULL DEFAULT '',
+    usd       REAL
 )""",
     """CREATE INDEX IF NOT EXISTS proposals_scope ON proposals (workspace, id)""",
     """-- A run an event asked for after a delay (`coscc/runner/triggers.py`): due at `due_at`,
@@ -813,7 +819,7 @@ class Data:
         if found < SCHEMA_VERSION:
             self._retry(lambda: self._create(conn), wait)
         # Equal is the whole common path: one pragma read. A lower number runs `_create`: an
-        # empty database gets `_SCHEMA`, one at `FROM` the one step `_from_12`.
+        # empty database gets `_SCHEMA`, one at `FROM` the one step `_from_12`, one at 19 `_from_19`.
 
     @staticmethod
     def _user_version(conn: sqlite3.Connection) -> int:
@@ -834,14 +840,16 @@ class Data:
                     f"(database schema {found}, this build understands {SCHEMA_VERSION})"
                 )
             if found < SCHEMA_VERSION:
-                if found not in (0, FROM):
+                if found not in (0, FROM, 19):
                     raise Incompatible(
                         f"{self.db_path} is at schema {found}, and this build migrates only "
-                        f"schema {FROM}: upgrade through 0.15 first, or start from a copy made "
+                        f"schema {FROM} and 19: upgrade through 0.15 first, or start from a copy made "
                         f"at {FROM}"
                     )
                 if found == FROM:
                     self._from_12(conn)
+                elif found == 19:
+                    self._from_19(conn)
                 else:
                     for statement in _SCHEMA:
                         conn.execute(statement)
@@ -943,6 +951,13 @@ class Data:
                 )
         self._agent_prefs(conn, rows)
         _scan_moves(conn, rows, tables)
+
+    @staticmethod
+    def _from_19(conn: sqlite3.Connection) -> None:
+        """19 to 20: a proposal's change, signal, measure and cost, empty on the rows it holds."""
+        for column in ("change", "signal", "measure"):
+            conn.execute(f"ALTER TABLE proposals ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE proposals ADD COLUMN usd REAL")
 
     def _agent_prefs(self, conn: sqlite3.Connection, rows: dict[str, dict[str, Any]]) -> None:
         """Every `agent:`, `model:`, `effort:`, `turns:` and `budget:` pref becomes the owner's layer

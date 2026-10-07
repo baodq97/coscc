@@ -602,6 +602,14 @@ class TriggersAreChecked(unittest.TestCase):
     def test_the_scan_row_passes(self):
         self.assertEqual(self.reasons(_scan()), "")
 
+    def test_the_scan_reads_the_trunk_and_writes_nothing(self):
+        row = _scan()
+        self.assertEqual(pack.tools(row), ("Read", "Glob", "Grep"))
+        self.assertTrue(pack.reads_only(row))
+        self.assertEqual((row["cwd"], row["ceilings"]), ("trunk", {"turns": 16, "usd": 1.5}))
+        self.assertIn("($1.50 ceiling)", row["warning"])
+        self.assertNotIn("Name no fix", row["body"])
+
     def test_an_unknown_trigger_key(self):
         self.assertIn("trigger.cron: no such trigger", self.reasons(_scan(trigger={"cron": "x"})))
 
