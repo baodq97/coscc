@@ -86,7 +86,9 @@ export type Step = {
   /** Where it goes on when no way above applies: the next step in the list. */
   then: boolean;
   ways: Way[];
-  /** What the editor does not touch (`label`, `hint`, `skip`, `rerun`, a state's own `when`). */
+  /** What a rerun of the step may do: `answers` goes on after an answer, `fresh` starts over. */
+  rerun: string[];
+  /** What the editor does not touch (`label`, `hint`, `skip`, a state's own `when`). */
   keep: Partial<State>;
 };
 export type Draft = { name: string; steps: Step[] };
@@ -100,7 +102,7 @@ const asWhen = (cs: Condition[]): State["when"] => (cs.length === 0 ? undefined 
 export function fromProcess(name: string, p: Pick<ProcessShown, "start" | "states">): Draft {
   const keys = [p.start, ...Object.keys(p.states).filter((k) => k !== p.start)];
   const steps = keys.map((key, i): Step => {
-    const { agent, action, optional, next, ...keep } = p.states[key];
+    const { agent, action, optional, next, rerun, ...keep } = p.states[key];
     const ways = (next ?? []).map((w) => ({ to: w.to, when: list(w.when) }));
     const last = ways[ways.length - 1];
     const then = Boolean(last && !last.when.length && last.to === keys[i + 1]);
@@ -110,6 +112,7 @@ export function fromProcess(name: string, p: Pick<ProcessShown, "start" | "state
       action: action ?? "",
       optional: Boolean(optional),
       then,
+      rerun: rerun ?? [],
       ways: (then ? ways.slice(0, -1) : ways).map((w) => ({ to: w.to, cond: w.when[0] ?? null, rest: w.when.slice(1) })),
       keep,
     };
@@ -134,6 +137,7 @@ export function toProcess(d: Draft): Pick<ProcessShown, "start" | "end" | "state
       ...s.keep,
       ...(s.agent ? { agent: s.agent } : { action: s.action }),
       ...(s.optional ? { optional: true } : {}),
+      ...(s.rerun.length ? { rerun: s.rerun } : {}),
       ...(next.length ? { next } : {}),
     };
   });
@@ -149,14 +153,30 @@ function freeKey(d: Draft, want: string): string {
   return key;
 }
 
+/** Whether an agent hands back questions: a step that runs it must go on after an answer. */
+export const asks = (row: AgentRow | undefined) => fieldOptions(row).some((o) => o.field === "questions");
+
+/**
+ * The rerun ways a step with this agent starts with: as a built-in process has them for it, else
+ * `answers` when the agent asks, else none.
+ */
+export function rerunFor(agent: string, rows: AgentRow[], packs: Pick<PackShown, "processes">[] = []): string[] {
+  for (const p of packs)
+    for (const pr of p.processes) {
+      const st = Object.values(pr.states).find((x) => x.agent === agent && x.rerun?.length);
+      if (st?.rerun) return [...st.rerun];
+    }
+  return asks(rows.find((r) => r.key === agent)) ? ["answers"] : [];
+}
+
 /** A step added at the end; the step before it now goes on to it. */
-export function addStep(d: Draft, what: { agent: string } | { action: string }): Draft {
+export function addStep(d: Draft, what: { agent: string } | { action: string }, rerun: string[] = []): Draft {
   const agent = "agent" in what ? what.agent : "";
   const action = "action" in what ? what.action : "";
   const key = freeKey(d, defaultKey({ agent, action }));
   const keep: Partial<State> = action === "merge" ? { when: { guard: "ship-ready" } } : {};
   const steps = d.steps.map((s, i) => (i === d.steps.length - 1 ? { ...s, then: true } : s));
-  return { ...d, steps: [...steps, { key, agent, action, optional: false, then: false, ways: [], keep }] };
+  return { ...d, steps: [...steps, { key, agent, action, optional: false, then: false, ways: [], rerun, keep }] };
 }
 
 export function removeStep(d: Draft, key: string): Draft {
@@ -180,12 +200,12 @@ export function setStep(d: Draft, key: string, change: Partial<Step>): Draft {
 }
 
 /** Another agent in a step; its key follows when it still carried the old agent's name. */
-export function setAgent(d: Draft, key: string, agent: string): Draft {
+export function setAgent(d: Draft, key: string, agent: string, rerun: string[] = []): Draft {
   const step = d.steps.find((s) => s.key === key);
   if (!step) return d;
   const fresh = step.key === defaultKey(step) || step.key.startsWith(`${defaultKey(step)}-`) ? freeKey({ ...d, steps: d.steps.filter((s) => s.key !== key) }, agent) : step.key;
   const steps = d.steps.map((s) =>
-    s.key === key ? { ...s, key: fresh, agent, ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) } : { ...s, ways: s.ways.map((w) => (w.to === key ? { ...w, to: fresh } : w)) },
+    s.key === key ? { ...s, key: fresh, agent, rerun, ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) } : { ...s, ways: s.ways.map((w) => (w.to === key ? { ...w, to: fresh } : w)) },
   );
   return { ...d, steps };
 }

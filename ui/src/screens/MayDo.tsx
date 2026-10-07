@@ -22,6 +22,9 @@ export function MayDo() {
   // `?draft=<run>`: Dagaz's process opens in the editor of the project it was run in, as Leif hands it over.
   const run = useQuery("draft");
   const ofRun = useRunWorkspace(run, boards.map((b) => b.workspace));
+  // `?feature=<name>`: the row of a feature that has no page, scrolled to in the first project.
+  const focus = useQuery("feature");
+  const ordered = [...boards].sort((x, y) => x.workspace.name.localeCompare(y.workspace.name));
 
   return (
     <div className="page mid">
@@ -38,7 +41,7 @@ export function MayDo() {
         </div>
       </Section>
       <Section title="Each project">
-        {loading ? <SkeletonRows rows={3} /> : boards.map((b, i) => <Project key={b.workspace.path} workspace={b.workspace} run={ofRun === b.workspace.path || (ofRun === "" && i === 0) ? run : ""} />)}
+        {loading ? <SkeletonRows rows={3} /> : ordered.map((b, i) => <Project key={b.workspace.path} workspace={b.workspace} focus={i === 0 ? focus : ""} run={ofRun === b.workspace.path || (ofRun === "" && i === 0) ? run : ""} />)}
       </Section>
       <Section title="The app">
         <TheApp />
@@ -81,7 +84,7 @@ function useSaving(reload: () => void) {
   return { error, busy, save };
 }
 
-function Project({ workspace, run }: { workspace: Workspace; run: string }) {
+function Project({ workspace, run, focus }: { workspace: Workspace; run: string; focus: string }) {
   const cwd = workspace.path;
   const settings = useResource("/api/settings/autopilot", { cwd });
   const shown = useResource("/api/features/shown", { cwd });
@@ -127,7 +130,7 @@ function Project({ workspace, run }: { workspace: Workspace; run: string }) {
         {packs.data && (
           <Packs cwd={cwd} workspace={workspace.name} packs={packs.data} run={run} disabled={busy} onSave={(name, body) => save("/api/packs", { cwd, name, ...body })} onChanged={() => (packs.reload(), refreshPacks())} />
         )}
-        {shown.data && shown.data.map((f) => <Feature key={f.name} feature={f} disabled={busy} onState={(state) => save("/api/features", { cwd, name: f.name, state })} />)}
+        {shown.data && shown.data.map((f) => <Feature key={f.name} feature={f} focus={focus === f.name} disabled={busy} onState={(state) => save("/api/features", { cwd, name: f.name, state })} />)}
         {error && <div style={{ color: "var(--red)", marginTop: 8, fontSize: 12.5 }}>{error.message}</div>}
       </div>
     </div>
@@ -150,7 +153,7 @@ function Packs({ cwd, workspace, packs, run, disabled, onSave, onChanged }: { cw
       {added && <div className="pack-added" role="status">{added}</div>}
       <NewUnitsWalk packs={packs} disabled={disabled} onSave={(ref) => onSave(ref.split("/")[0], { process: ref })} />
       {packs.map((p) => (
-        <Pack key={p.name} cwd={cwd} workspace={workspace} pack={p as BuildPack} rows={rows} run={p.own ? run : ""} disabled={disabled} onSave={(body) => onSave(p.name, body)} onChanged={onChanged} />
+        <Pack key={p.name} cwd={cwd} workspace={workspace} pack={p as BuildPack} packs={packs} rows={rows} run={p.own ? run : ""} disabled={disabled} onSave={(body) => onSave(p.name, body)} onChanged={onChanged} />
       ))}
       {importing && (
         <ImportPack
@@ -189,7 +192,7 @@ function NewUnitsWalk({ packs, disabled, onSave }: { packs: PackShown[]; disable
 const KIND_WORDS = (p: BuildPack) => (p.own ? "Yours" : p.imported ? "Imported" : "Built in");
 
 /** A pack in one project: what it is, on or off, the process a new unit walks, those processes drawn, and its export. */
-function Pack({ cwd, workspace, pack, rows, run, disabled, onSave, onChanged }: { cwd: string; workspace: string; pack: BuildPack; rows: BuildAgent[]; run: string; disabled: boolean; onSave: (body: { on?: boolean }) => void; onChanged: () => void }) {
+function Pack({ cwd, workspace, pack, packs, rows, run, disabled, onSave, onChanged }: { cwd: string; workspace: string; pack: BuildPack; packs: PackShown[]; rows: BuildAgent[]; run: string; disabled: boolean; onSave: (body: { on?: boolean }) => void; onChanged: () => void }) {
   const [shown, setShown] = useState(pack.process);
   const [editor, setEditor] = useState<"new" | string | null>(run ? "new" : null);
   const here = useRef<HTMLDivElement>(null);
@@ -254,6 +257,7 @@ function Pack({ cwd, workspace, pack, rows, run, disabled, onSave, onChanged }: 
           <ProcessEditor
             key={editor}
             rows={rows}
+            packs={packs}
             cwd={cwd}
             taken={processes.map((p) => p.name)}
             initial={editing ? { name: editing.name, process: editing } : undefined}
@@ -330,9 +334,9 @@ function ImportPack({ cwd, known, onClose, onDone }: { cwd: string; known: strin
   );
 }
 
-function Field({ label, hint, children }: { label: ReactNode; hint?: string; children: ReactNode }) {
+function Field({ label, hint, id, focus, children }: { label: ReactNode; hint?: string; id?: string; focus?: boolean; children: ReactNode }) {
   return (
-    <div className="field">
+    <div className={focus ? "field focus-row" : "field"} id={id}>
       <div>
         <div className="lab">{label}</div>
         {hint && <div className="hint">{hint}</div>}
@@ -358,10 +362,18 @@ function Cap({ value, disabled, onSave }: { value: number; disabled: boolean; on
   );
 }
 
-function Feature({ feature, disabled, onState }: { feature: Shown; disabled: boolean; onState: (state: string) => void }) {
+function Feature({ feature, focus, disabled, onState }: { feature: Shown; focus: boolean; disabled: boolean; onState: (state: string) => void }) {
   const states = feature.pilot ? ["off", "pilot", "on"] : ["off", "on"];
+  useEffect(() => {
+    if (!focus) return;
+    // The cards above it fill in after it, and move it; look again once they have.
+    const go = () => document.getElementById(`feature-${feature.name}`)?.scrollIntoView({ block: "center" });
+    go();
+    const later = setTimeout(go, 1500);
+    return () => clearTimeout(later);
+  }, [focus, feature.name]);
   return (
-    <Field label={feature.name} hint={feature.summary || feature.sentence}>
+    <Field id={`feature-${feature.name}`} focus={focus} label={feature.name} hint={feature.summary || feature.sentence}>
       <div className="seg">
         {states.map((st) => (
           <button key={st} className={feature.state === st ? "on" : ""} disabled={disabled || (feature.locked && st !== "off")} onClick={() => onState(st)}>

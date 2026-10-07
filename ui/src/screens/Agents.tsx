@@ -51,7 +51,7 @@ export function triggerWords(a: AgentRow, rows: AgentRow[] = []): string {
     const by = rows.filter((r) => (r.row.helpers ?? []).includes(a.key)).map((r) => r.row.name ?? r.key);
     return by.length ? `started by ${by.join(", ")}` : "started by no agent";
   }
-  return "—";
+  return "nowhere yet";
 }
 
 /** What needs a look on a line, worst first: a problem stops its runs, then the last run's chip. */
@@ -108,7 +108,8 @@ export function useAgents() {
   const ws = useResource("/api/workspaces");
   const list = ws.data?.workspaces ?? [];
   const named = useQuery("ws");
-  const ofRun = useRunWorkspace(named ? "" : useQuery("draft"), list);
+  const draft = useQuery("draft");
+  const ofRun = useRunWorkspace(named ? "" : draft, list);
   const workspace = pickWorkspace(list, named, ofRun);
   const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path } : {});
   return { ws, list, workspace, cwd: workspace?.path ?? "", agents };

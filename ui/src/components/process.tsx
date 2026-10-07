@@ -10,6 +10,8 @@ import {
   GUARD_WORDS,
   addStep,
   artifactNames,
+  asks,
+  rerunFor,
   missingInput,
   renameStep,
   fieldOptions,
@@ -228,6 +230,7 @@ const what = (s: Step) => (s.agent ? `agent:${s.agent}` : `action:${s.action}`);
  */
 export function ProcessEditor({
   rows,
+  packs,
   cwd,
   taken,
   initial,
@@ -236,6 +239,8 @@ export function ProcessEditor({
   onSaved,
 }: {
   rows: BuildAgent[];
+  /** The project's packs: what a new process may start from. */
+  packs: PackShown[];
   cwd: string;
   taken: string[];
   initial?: { name: string; process: Pick<ProcessShown, "start" | "states"> };
@@ -282,7 +287,14 @@ export function ProcessEditor({
   };
   const process = toProcess(draft);
   const drawn: ProcessShown = { ...process, own: true, ref: `local/${draft.name}`, name: draft.name || "new process" };
-  const why = !draft.steps.length ? "Add a step first." : problem;
+  const loose = draft.steps.some((s) => s.ways.some((w) => !w.to));
+  const why = !draft.steps.length ? "Add a step first." : loose ? "Choose where each way on goes." : problem;
+  const [from, setFrom] = useState("");
+  const startFrom = (ref: string) => {
+    setFrom(ref);
+    const p = packs.flatMap((k) => k.processes).find((x) => x.ref === ref);
+    if (p) edit((d) => ({ ...fromProcess(d.name, p), name: d.name }));
+  };
 
   return (
     <div className="pe">
@@ -315,6 +327,20 @@ export function ProcessEditor({
             <DraftedRow fields={fresh.fields} body={fresh.body} catalog={page.data?.catalog ?? []} />
           </div>
         )}
+        {!editing && (
+          <label className="f">
+            <span className="lab">Start from</span>
+            <select className="input" aria-label="Start from" value={from} onChange={(e) => startFrom(e.target.value)}>
+              <option value="">A blank process</option>
+              {packs.map((k) => (
+                <optgroup key={k.name} label={k.name}>
+                  {k.processes.map((x) => <option key={x.ref} value={x.ref}>{x.name}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            <span className="faint" style={{ fontSize: 12.5 }}>Copies its steps; change them below.</span>
+          </label>
+        )}
         <label className="f">
           <span className="lab">Process name</span>
           <input className="input mono" value={draft.name} disabled={editing} placeholder="tiny" onChange={(e) => edit((d) => ({ ...d, name: e.target.value }))} />
@@ -335,7 +361,7 @@ export function ProcessEditor({
                   value={what(s)}
                   onChange={(e) => {
                     const [kind, v] = e.target.value.split(":");
-                    edit((d) => (kind === "agent" ? (s.agent ? setAgent(d, s.key, v) : setStep(d, s.key, { agent: v, action: "", ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) })) : setStep(d, s.key, { agent: "", action: v, ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) })));
+                    edit((d) => (kind === "agent" ? (s.agent ? setAgent(d, s.key, v, rerunFor(v, rows, packs)) : setStep(d, s.key, { agent: v, action: "", rerun: rerunFor(v, rows, packs), ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) })) : setStep(d, s.key, { agent: "", action: v, rerun: [], ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) })));
                   }}
                 >
                   <StepOptions agents={agents} fresh={fresh} />
@@ -352,6 +378,7 @@ export function ProcessEditor({
                   {missingInput(r) && <> Name the step that makes it {missingInput(r)}, in its name box.</>}
                 </div>
               ))}
+              {s.agent && <RerunRow step={s} asks={asks(rows.find((r) => r.key === s.agent))} onChange={(rerun) => edit((d) => setStep(d, s.key, { rerun }))} />}
               {s.ways.map((w, wi) => (
                 <WayRow key={wi} way={w} step={s} keys={keys} rows={withFresh} onChange={(nw) => edit((d) => setStep(d, s.key, { ways: s.ways.map((x, n) => (n === wi ? nw : x)) }))} onRemove={() => edit((d) => setStep(d, s.key, { ways: s.ways.filter((_, n) => n !== wi) }))} />
               ))}
@@ -362,7 +389,7 @@ export function ProcessEditor({
                   </label>
                 )}
                 {draft.steps.length > 1 && (
-                  <button className="linkish" onClick={() => edit((d) => setStep(d, s.key, { ways: [...s.ways, { to: keys.find((k) => k !== s.key) ?? s.key, cond: null, rest: [] }] }))}>
+                  <button className="linkish" onClick={() => edit((d) => setStep(d, s.key, { ways: [...s.ways, { to: "", cond: null, rest: [] }] }))}>
                     + Add a way on
                   </button>
                 )}
@@ -376,7 +403,7 @@ export function ProcessEditor({
           value=""
           onChange={(e) => {
             const [kind, v] = e.target.value.split(":");
-            if (v) edit((d) => addStep(d, kind === "agent" ? { agent: v } : { action: v }));
+            if (v) edit((d) => addStep(d, kind === "agent" ? { agent: v } : { action: v }, kind === "agent" ? rerunFor(v, rows, packs) : []));
           }}
         >
           <option value="">+ Add a step…</option>
@@ -445,6 +472,25 @@ function StepOptions({ agents, fresh }: { agents: BuildAgent[]; fresh?: Drafted[
   );
 }
 
+/** What a rerun of an agent's step may do, as two ticks. An asking agent's step must go on after an answer. */
+function RerunRow({ step, asks, onChange }: { step: Step; asks: boolean; onChange: (rerun: string[]) => void }) {
+  const has = (k: string) => step.rerun.includes(k);
+  const toggle = (k: string, on: boolean) => onChange(["fresh", "answers"].filter((x) => (x === k ? on : has(x))));
+  return (
+    <div className="pe-rerun">
+      <label className="pe-then">
+        <input type="checkbox" checked={has("answers")} onChange={(e) => toggle("answers", e.target.checked)} /> go on after an answer
+      </label>
+      <label className="pe-then">
+        <input type="checkbox" checked={has("fresh")} onChange={(e) => toggle("fresh", e.target.checked)} /> may start over from scratch
+      </label>
+      <span className="faint" style={{ fontSize: 12 }}>
+        {asks ? "This agent asks questions, so it needs the first tick: its run resumes from the answer." : "Rerun options: continue from an answer, or begin again."}
+      </span>
+    </div>
+  );
+}
+
 function WayRow({ way, step, keys, rows, onChange, onRemove }: { way: Way; step: Step; keys: string[]; rows: BuildAgent[]; onChange: (w: Way) => void; onRemove: () => void }) {
   const options = fieldOptions(rows.find((r) => r.key === step.agent));
   const kind = kindOf(way);
@@ -455,6 +501,7 @@ function WayRow({ way, step, keys, rows, onChange, onRemove }: { way: Way; step:
     <div className="pe-way">
       <span className="faint">go to</span>
       <select className="input" aria-label="Goes to" value={way.to} onChange={(e) => onChange({ ...way, to: e.target.value })}>
+        {!way.to && <option value="">Choose a step…</option>}
         {keys.map((k) => <option key={k} value={k}>{stageLabel(k)}</option>)}
       </select>
       <span className="faint">when</span>
