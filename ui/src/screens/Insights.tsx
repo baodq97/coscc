@@ -231,6 +231,11 @@ function Days({ view }: { view: View }) {
   );
 }
 
+/** Why an agent's row lists no runs: its steps kept a cost but no run log to open. */
+export function noRuns(r: Pick<AgentSpend, "steps">): string {
+  return `${r.steps} of its steps recorded their cost but not what they did, so there is no run to open.`;
+}
+
 function Agents({ rows, workspace }: { rows: AgentSpend[]; workspace: Workspace }) {
   const top = Math.max(1, ...rows.map((r) => r.usd ?? 0));
   if (!rows.length) return <div className="card card-b faint">No agent has run in these days.</div>;
@@ -264,7 +269,7 @@ function Agents({ rows, workspace }: { rows: AgentSpend[]; workspace: Workspace 
                 </span>
               </Link>
             ))}
-            {!r.runs.length && <div className="card-b faint">None of its runs recorded what it did.</div>}
+            {!r.runs.length && <div className="card-b faint">{noRuns(r)}</div>}
           </div>
         </details>
       ))}

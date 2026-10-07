@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { EventsPage, StepEvent } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { stageLabel } from "../lib/pack";
-import { money, unitCode, unitTitle } from "../lib/format";
+import { modelName, money, unitCode, unitTitle } from "../lib/format";
 import { Link } from "../lib/router";
 import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
@@ -31,6 +31,25 @@ export function inUnit(text: string, unit: string): string {
 export function merged(events: StepEvent[], more: StepEvent[]): StepEvent[] {
   const seen = new Set(events.map((e) => e.seq));
   return [...events, ...more.filter((e) => !seen.has(e.seq))].sort((a, b) => a.seq - b.seq);
+}
+
+/** What a run's header says, from its events and its first page: how it ended and what it took. */
+export function runFacts(events: StepEvent[], page: Pick<EventsPage, "status" | "outcome" | "started_by">): { label: string; value: string }[] {
+  const config = events.find((e) => e.kind === "config");
+  const result = [...events].reverse().find((e) => e.kind === "result");
+  const end = [...events].reverse().find((e) => e.kind === "end");
+  const outcome = page.status === "running" ? "running" : (page.outcome || end?.outcome || "").replace("paused-budget", "paused at its ceiling");
+  const secs = result?.duration_ms != null ? Math.round(result.duration_ms / 1000) : null;
+  const took = secs == null ? "" : secs >= 60 ? `${Math.floor(secs / 60)} min ${secs % 60} s` : `${secs} s`;
+  const facts = [
+    { label: "Outcome", value: outcome },
+    { label: "Cost", value: result?.cost_usd != null ? money(result.cost_usd) : "" },
+    { label: "Turns", value: result?.num_turns != null ? String(result.num_turns) : "" },
+    { label: "Took", value: took },
+    { label: "Model", value: config?.model ? [modelName(config.model), config.effort].filter(Boolean).join(" · ") : "" },
+    { label: "Started by", value: page.started_by ?? "" },
+  ];
+  return facts.filter((f) => f.value);
 }
 
 function firstLine(content: unknown): string {
@@ -66,12 +85,13 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
           ) : undefined
         }
       />
-      <div style={{ marginTop: 16 }}>{cwd ? <RunLog cwd={cwd} run={run} live={false} /> : <SkeletonRows rows={3} />}</div>
+      <div style={{ marginTop: 16 }}>{cwd ? <RunLog cwd={cwd} run={run} live={false} whole /> : <SkeletonRows rows={3} />}</div>
     </div>
   );
 }
 
-export function RunLog({ cwd, run, live }: { cwd: string; run: string; live: boolean }) {
+/** `whole`: the run on a page of its own, with a header; an ended run opens at its start. */
+export function RunLog({ cwd, run, live, whole = false }: { cwd: string; run: string; live: boolean; whole?: boolean }) {
   const [page, setPage] = useState<EventsPage | null>(null);
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [error, setError] = useState<Error | null>(null);
@@ -116,7 +136,11 @@ export function RunLog({ cwd, run, live }: { cwd: string; run: string; live: boo
 
   // Opens at the end, where a reader looks first; while following, stays there unless scrolled up.
   const box = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
+  const atStart = whole && page?.status !== "running";
+  const pinned = useRef(!atStart);
+  useEffect(() => {
+    pinned.current = !atStart;
+  }, [atStart]);
   useEffect(() => {
     const el = box.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
@@ -146,8 +170,21 @@ export function RunLog({ cwd, run, live }: { cwd: string; run: string; live: boo
   const unit = page.unit;
   if (page.status === "purged") return <div className="faint rl-note">The events of this run were cleared on {page.purged_at?.slice(0, 10)}.</div>;
   if (!events.length) return <div className="faint rl-note">{page.status === "none" ? "This run recorded nothing: the app went down before its first event." : "No events yet."}</div>;
+  const toEnd = () => box.current?.scrollTo({ top: box.current.scrollHeight });
   return (
-    <div className="rl" ref={box}>
+    <>
+      {whole && (
+        <div className="row" style={{ gap: 18, flexWrap: "wrap", marginBottom: 6 }}>
+          {runFacts(events, page).map((f) => (
+            <div key={f.label}>
+              <div className="faint" style={{ fontSize: 11.5 }}>{f.label}</div>
+              <b>{f.value}</b>
+            </div>
+          ))}
+        </div>
+      )}
+      {page.detail && whole && <div className="muted" style={{ fontSize: 12.5 }}>{page.detail}</div>}
+    <div className="rl" ref={box} style={whole ? { maxHeight: "70vh" } : undefined}>
       {page.has_older && (
         <Button size="sm" kind="ghost" onClick={older}>
           Earlier events
@@ -159,6 +196,12 @@ export function RunLog({ cwd, run, live }: { cwd: string; run: string; live: boo
       {following && <div className="faint rl-note">Following…</div>}
       {page.events_lost > 0 && <div className="faint rl-note">{page.events_lost} events were not recorded.</div>}
     </div>
+      {atStart && (
+        <div className="faint rl-note">
+          Shown from the start. <button className="link-btn" onClick={toEnd}>Jump to the end</button>
+        </div>
+      )}
+    </>
   );
 }
 

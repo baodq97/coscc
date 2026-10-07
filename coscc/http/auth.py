@@ -523,13 +523,28 @@ def _locked(wait: float) -> str:
     return f"Too many wrong attempts from this address. Try again in {int(wait) + 1} s."
 
 
+# The studio's look (`ui/src/styles.css`): its colours, type stack and button. Assets sit behind the
+# door, so the page carries its own style and names the studio's face by the font installed.
 _STYLE = (
-    "body{font-family:system-ui,sans-serif;background:#f6f6f4;color:#1c1c1a;display:flex;"
-    "justify-content:center;padding-top:12vh}form{background:#fff;border:1px solid #ddd;"
-    "border-radius:8px;padding:24px 28px;width:340px}h1{font-size:18px;margin:0 0 16px}"
-    "label{display:block;font-size:13px;margin:12px 0 4px}input{width:100%;box-sizing:"
-    "border-box;padding:8px;font-size:14px}button{margin-top:18px;padding:8px 14px;"
-    "font-size:14px}p{font-size:13px}.err{color:#a3261a}.warn{color:#8a5a00}"
+    ":root{--bg:#fcfcfd;--panel:#fff;--line:#e1e1e7;--text:#1a1b1f;--muted:#5d5f68;--accent:#5e6ad2;"
+    "--accent-2:#4f5bc4;--red:#c4362b;--amber:#8a5a00}"
+    "@media(prefers-color-scheme:dark){:root{--bg:#0e0f11;--panel:#16171a;--line:#2a2c32;"
+    "--text:#e8e8eb;--muted:#a0a2ab;--accent:#7b85ea;--accent-2:#8d96f0;--red:#f0786d;--amber:#e0b04a}}"
+    "body{font-family:Inter,-apple-system,'Segoe UI','Ubuntu Sans',system-ui,sans-serif;font-size:13px;"
+    "line-height:1.5;background:var(--bg);color:var(--text);display:flex;justify-content:center;"
+    "padding:12vh 16px 0;margin:0}"
+    "form{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:24px 28px;"
+    "width:340px;max-width:100%;box-sizing:border-box;box-shadow:0 1px 2px rgba(15,18,30,.06)}"
+    "h1{font-size:16px;font-weight:600;margin:0 0 16px}"
+    "label{display:block;font-size:12.5px;font-weight:500;color:var(--muted);margin:12px 0 4px}"
+    "input{width:100%;box-sizing:border-box;height:32px;padding:0 10px;font:inherit;"
+    "color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:5px}"
+    "input:focus{outline:2px solid var(--accent);outline-offset:-1px}"
+    "button{margin-top:18px;height:32px;padding:0 14px;font:inherit;font-weight:500;color:#fff;"
+    "background:var(--accent);border:0;border-radius:5px;cursor:pointer}"
+    "button:hover{background:var(--accent-2)}"
+    "p{font-size:12.5px;color:var(--muted)}code{font-family:'Geist Mono',ui-monospace,monospace;"
+    "font-size:12px}.err{color:var(--red)}.warn{color:var(--amber)}"
 )
 
 

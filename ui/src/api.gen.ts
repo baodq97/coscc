@@ -288,6 +288,7 @@ export type EventsPage = {
   "last_at": number | null;
   "events_lost": number;
   "purged_at": string | null;
+  "started_by"?: string;
   "outcome"?: string;
   "detail"?: string;
   "draft"?: Record<string, unknown>;

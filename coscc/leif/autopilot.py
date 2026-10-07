@@ -778,8 +778,6 @@ class Autopilot:
             "stops": [],
             "refused_because": off_loopback(self.config) if on else "",
         }
-        if not on:
-            return block
         journal = self.ws.journal()
         if journal is not None:
             try:
@@ -788,6 +786,8 @@ class Autopilot:
                 )
             except Busy:
                 block["cap"] = None
+        if not on:
+            return block
         block["stops"] = sorted(
             (self.stops.get(key) or {}).values(),
             key=lambda s: (decide.unit_number(s["unit"]), s["unit"]),

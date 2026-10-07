@@ -175,7 +175,9 @@ class OnTheRealLoop(_Base):
         await self.settled()
         self.assertEqual([s["started_by"] for s in self.starts()], ["person"])
         self.assertEqual(self.core.autopilot.tasks, {})
-        self.assertFalse((await self.core.board(self.ws))["autopilot"]["on"])
+        block = (await self.core.board(self.ws))["autopilot"]
+        self.assertFalse(block["on"])
+        self.assertGreater(block["cap"]["limit"], 0)  # the day's spend shows with the autopilot off
 
     async def test_a_done_step_starts_the_next_stage_and_a_draft_stops_it(self):
         use_sessions(self.core, _Replies(accepted=1))
