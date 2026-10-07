@@ -201,6 +201,12 @@ class CheckRefusesABadRowByName(unittest.TestCase):
         worker["tools"] = {**worker["tools"], "Agent": "allow"}
         self.assertIn("a helper holds no Agent", self.reasons(worker))
 
+    def test_a_row_that_writes_files_holds_bash_to_commit_them(self):
+        said = self.reasons(_row(tools={"Read": "allow", "Edit": "allow"}))
+        self.assertIn("a row holding Edit holds Bash too", said)
+        with_bash = self.reasons(_row(tools={"Read": "allow", "Edit": "allow", "Bash": "allow"}))
+        self.assertFalse([r for r in with_bash if "holds Bash too" in r])
+
     def test_a_skill_that_is_not_there(self):
         self.assertIn(
             "skills: no skill write-nothing", self.reasons(_row(skills=["write-nothing"]))

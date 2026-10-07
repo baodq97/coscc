@@ -33,6 +33,8 @@ A process is `{name, process: {start, end: "shipped", states}}`:
 - every state is reached from `start`; a review state stands on every path to `merge`; the `merge` state's `when` is `{guard: "ship-ready"}`; every input an agent requires is made by a state on every path before it (a state's name is the artifact it makes, so keep the names the agents read, such as `intent` and `impl`).
 - the name is new: no process of `processes` ends with it.
 
+A state agent that changes files in the worktree commits its change: it holds `Bash`, and its body says to commit with git before `submit`, since `open-pr` pushes commits only.
+
 When the catalog cannot serve the task (it needs a tool, a source or an event that is not there), draft the nearest agent that can run, and say in `why` what is missing and what the draft does instead. Never invent a tool, a source or an event.
 
 `why`: two or three sentences: how the draft serves the task, and each choice a person should check (its trigger, its tools, its cost).
