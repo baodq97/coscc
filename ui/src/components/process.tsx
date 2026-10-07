@@ -329,7 +329,7 @@ function StepOptions({ agents }: { agents: BuildAgent[] }) {
     <>
       <optgroup label="An agent runs it">
         {agents.map((a) => (
-          <option key={a.key} value={`agent:${a.key}`}>{a.row.name ?? a.key}</option>
+          <option key={a.key} value={`agent:${a.key}`}>{a.row.name && a.row.name.toLowerCase() !== a.key ? `${a.row.name} (${a.key})` : a.key}</option>
         ))}
       </optgroup>
       <optgroup label="The app does it">

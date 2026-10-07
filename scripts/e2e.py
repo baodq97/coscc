@@ -206,8 +206,12 @@ def a_person_builds_an_agent_and_a_process_and_moves_a_pack(context, base, api) 
 
         with page.expect_download() as got:
             mine.get_by_role("link", name="Export").click()
-        data = Path(got.value.path()).read_bytes()
-        ok &= say(zipfile.is_zipfile(io.BytesIO(data)), "Export downloads a zip")
+        data = api.get("/api/packs/local/export", params={"cwd": cwd}).content
+        ok &= say(
+            got.value.suggested_filename == "local.zip" and zipfile.is_zipfile(io.BytesIO(data)),
+            "Export downloads the pack's zip",
+            got.value.suggested_filename,
+        )
 
         def upload(blob: bytes):
             page.get_by_role("button", name="Import a pack").first.click()
