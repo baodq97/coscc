@@ -17,6 +17,7 @@ import { kinds } from "../../../coscc/features/release/ui/index";
 import { onWords } from "../screens/AgentActivity";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
+import { runCount } from "../screens/AgentActivity";
 import { proposingWords } from "../components/Proposals";
 import { builtinOf, chainTo, changedParts, unsavedWords, changes, errorIsHere, get, modelOptions, plainReasons, put, savedApart } from "../screens/AgentPage";
 import { runRow, resultWords, shallowWords } from "../screens/AgentActivity";
@@ -852,6 +853,15 @@ describe("an agent's markdown and tool names", () => {
     expect(toolName("mcp__cos__proposals")).toBe("proposals");
     expect(toolName("mcp__code-graph__explore")).toBe("explore");
     expect(toolName("Read")).toBe("Read");
+  });
+});
+
+describe("runCount", () => {
+  it("counts skipped runs apart, in the group as in the tile", () => {
+    const runs = [...Array(12).fill({ skipped: false }), ...Array(3).fill({ skipped: true })];
+    expect(runCount(runs)).toBe("12 runs, 3 skipped");
+    expect(runCount(12, 3)).toBe("12 runs, 3 skipped");
+    expect(runCount([{ skipped: false }])).toBe("1 run");
   });
 });
 
