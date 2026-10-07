@@ -24,7 +24,9 @@ import math
 import os
 import re
 import tempfile
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
@@ -628,13 +630,39 @@ def _entry(base: dict[str, Any], pack_name: str, own: bool = False) -> dict[str,
     return {**base, "edited": [], "problems": [], "builtin": base, "pack": pack_name, "own": own}
 
 
+# A `held` scope: `[the stamp it saw, open]`, one list its copies (`asyncio.to_thread`, a task it
+# started) share; a task that outlives the scope finds it closed and looks at the files again.
+_HELD: ContextVar[list[Any] | None] = ContextVar("pack_held", default=None)
+
+
+@contextmanager
+def held() -> Iterator[None]:
+    """One look at the packs for everything inside: the files under `packs/` are walked once,
+    not at every row asked; a board read asks for rows thousands of times."""
+    scope: list[Any] = [None, True]
+    token = _HELD.set(scope)
+    try:
+        yield
+    finally:
+        scope[1] = False
+        _HELD.reset(token)
+
+
 def _loaded() -> dict[str, dict[str, Any]]:
     """Every row of every pack, the owner's files laid over them, each with `edited` (the keys the
-    owner set), `problems`, `pack` and `own`; read again only when a file under `packs/` changed."""
+    owner set), `problems`, `pack` and `own`; read again only when a file under `packs/` changed,
+    looked at once in a `held` scope."""
+    scope = _HELD.get()
+    if scope is not None and not scope[1]:
+        scope = None
+    if scope is not None and scope[0] is not None and _CACHE.get("stamp") is scope[0]:
+        return _CACHE["rows"]
     root = packs_dir()
     # The built-in pack is never written while the app runs: its path is enough.
     stamp = (str(BUILTIN), str(root), _stamp(root))
     if _CACHE.get("stamp") == stamp:
+        if scope is not None:
+            scope[0] = _CACHE["stamp"]
         return _CACHE["rows"]
     builtin_name = manifest()["name"]
     rows = {k: _entry(base, builtin_name) for k, base in _builtin().items()}
@@ -669,6 +697,8 @@ def _loaded() -> dict[str, dict[str, Any]]:
         if not row["problems"] and (row["pack"] != builtin_name or row["edited"]):
             row["problems"] = _later(key, plain[key], plain, names)
     _CACHE.update(stamp=stamp, rows=rows, packs=packs, processes=every)
+    if scope is not None:
+        scope[0] = stamp
     return rows
 
 

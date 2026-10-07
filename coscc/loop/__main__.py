@@ -11,6 +11,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 
+from coscc.agent import pack
 from coscc.loop import LOCAL_ONLY, NEEDS_STATE, STATE_READERS, checkout, given
 
 
@@ -179,7 +180,9 @@ def main(argv: list[str] | None = None) -> int:
     if isinstance(args, int):
         return args
     module = importlib.import_module(f"coscc.loop.{COMMANDS[args.cmd]}")
-    return module.run(args, out, err)
+    # One question, one look at the packs.
+    with pack.held():
+        return module.run(args, out, err)
 
 
 if __name__ == "__main__":

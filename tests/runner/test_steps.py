@@ -1657,6 +1657,28 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         self.assertEqual(seen["next"], seen["gate"])
         self.assertEqual(seen["next"][1], str(self.repo))
 
+    def test_a_unit_with_no_hold_row_is_asked_once_and_a_held_one_first_without_its_tree(self):
+        from coscc.units import board as board_reader
+
+        asked: list[str | None] = []
+        real = board_reader.next_step
+
+        async def counting(units_root, unit, repo=None, **kw):
+            asked.append(repo)
+            return await real(units_root, unit, repo=repo, **kw)
+
+        with mock.patch.object(board_reader, "next_step", counting):
+            self.assertEqual(self._next()["stage"], "spec")
+            self.assertEqual(len(asked), 1)
+            self.assertIsNotNone(asked[0])
+            asked.clear()
+            asyncio.run(
+                self.core.answers.hold(str(self.repo), self.made["unit"], "paused", "x", "owner")
+            )
+            got = self._next()
+        self.assertEqual(asked, [None])
+        self.assertEqual(got["hold"]["state"], "paused")
+
     def test_waiting_is_copied_and_absent_reads_as_none(self):
         """The findings a person is awaited on reach the page as the loop named them."""
         from coscc.units import board as board_reader

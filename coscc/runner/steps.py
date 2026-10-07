@@ -477,14 +477,19 @@ class Steps:
         if not unit:
             raise Invalid("name a work unit")
         self.ws.unit_dir(cwd, unit)
-        # Asked first with no `--repo`, which reads files only: a held unit is
-        # answered here, before `worktree` could reopen the tree a drop just removed.
-        try:
-            held = await board_reader.next_step(
-                self.ws.units_root(cwd), unit, repo=None, state=self.ws.snapshot(cwd, [unit])
-            )
-        except Unavailable as e:
-            raise Refused(str(e), ("unavailable",)) from e
+        state = await asyncio.to_thread(self.ws.snapshot, cwd, [unit])
+        own = state["units"].get(f"{state['workspace']}/{unit}") or {}
+        # A unit with a hold row is asked first with no `--repo`, which reads files only: a held
+        # unit is answered here, before `worktree` could reopen the tree a drop just removed.
+        # One with none cannot be held, and is not asked twice.
+        held: dict[str, Any] = {}
+        if own.get("holds"):
+            try:
+                held = await board_reader.next_step(
+                    self.ws.units_root(cwd), unit, repo=None, state=state
+                )
+            except Unavailable as e:
+                raise Refused(str(e), ("unavailable",)) from e
         if held.get("hold"):
             return {
                 "cwd": cwd,
@@ -509,7 +514,7 @@ class Steps:
             repo = cwd
         try:
             found = await board_reader.next_step(
-                self.ws.units_root(cwd), unit, repo=repo, state=self.ws.snapshot(cwd, [unit])
+                self.ws.units_root(cwd), unit, repo=repo, state=state
             )
         except Unavailable as e:
             raise Refused(str(e), ("unavailable",)) from e
@@ -521,7 +526,7 @@ class Steps:
                     unit,
                     found["stage"],
                     repo=repo,
-                    state=self.ws.snapshot(cwd, [unit]),
+                    state=state,
                 )
             except Unavailable as e:
                 closed = str(e)

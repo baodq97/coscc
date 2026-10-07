@@ -70,6 +70,17 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.app.state.core.shutdown()
         self._tmp.cleanup()
 
+    async def test_a_board_read_walks_the_packs_folder_once_not_per_row_asked(self):
+        from unittest import mock
+
+        from coscc.agent import pack
+
+        with mock.patch.object(pack, "_stamp", wraps=pack._stamp) as walked:
+            board = await self.app.state.core.boards.read(str(REPO))
+        self.assertTrue(board["units"])
+        # Once for the app's read and once for the loop's: it was once per row asked.
+        self.assertLessEqual(walked.call_count, 2)
+
     async def test_a_directory_that_is_not_a_workspace_is_refused(self):
         r = await self.client.get("/api/units", params={"cwd": "/etc"})
         self.assertEqual(r.status_code, 400)

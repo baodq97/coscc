@@ -175,11 +175,23 @@ def kind_of(process: str | None, name: str) -> str:
     return str((row_of(process, name).get("output") or {}).get("kind") or "")
 
 
+_WHERE: dict[Any, Any] = {}
+
+
 def states_where(
     *, action: str = "", by: str = "", kind: str = "", process: str | None = None
 ) -> tuple[str, ...]:
     """Every state of every process (or of `process` alone) that is this action, writes this way
-    or has this output kind."""
+    or has this output kind; worked out again only when the processes are read again."""
+    every = pack.processes()
+    asked = (action, by, kind, process)
+    held = _WHERE.get(asked)
+    if held is None or held[0] is not every:
+        held = _WHERE[asked] = (every, _states_where(action, by, kind, process))
+    return held[1]
+
+
+def _states_where(action: str, by: str, kind: str, process: str | None) -> tuple[str, ...]:
     return tuple(
         n
         for n in pack.state_names()
