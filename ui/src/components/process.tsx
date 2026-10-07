@@ -418,7 +418,9 @@ export function ProcessEditor({
 /** A step's name: what other agents' inputs call its result (`impl`). Kept when it is a fresh, valid name. */
 function StepName({ value, onCommit }: { value: string; onCommit: (to: string) => void }) {
   const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
   return (
     <>
       <input className="input mono pe-key" aria-label="Step name" list="pe-names" value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={() => (onCommit(draft), setDraft(value))} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />

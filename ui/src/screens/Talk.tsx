@@ -29,7 +29,10 @@ export function Talk() {
   const mine = sessions.data?.sessions.filter((s) => s.resumable) ?? [];
   const others = sessions.data?.sessions.filter((s) => !s.resumable) ?? [];
 
-  useEffect(() => end.current?.scrollIntoView({ block: "end" }), [messages]);
+  useEffect(() => {
+    // Braces: `scrollIntoView` returns a Promise in newer browsers, and React would call it as the cleanup.
+    end.current?.scrollIntoView({ block: "end" });
+  }, [messages]);
 
   const open = async (s: ChatSession | null) => {
     setSession(s);
