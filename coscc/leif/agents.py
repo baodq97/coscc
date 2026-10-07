@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from typing import Any, Literal, TypedDict
 
+from coscc import vault
 from coscc.agent import agents, models, modeltrial, pack, policy
 from coscc.config import Config
 from coscc.kernel import OWNER, Hooks, Invalid
@@ -32,6 +33,8 @@ log = logging.getLogger(__name__)
 
 # The `runs` kind of one saved or reset field: the trace of who moved what.
 SETTING_KIND = "agent-setting"
+# The `runs` kind of a pack the owner imported, removed, or whose process they set.
+PACK_KIND = "pack-setting"
 # How far back the page adds up cost and lists runs.
 WINDOW_DAYS = 30
 # A last run that spent this share of its budget or more is `costly`. Chosen, not measured.
@@ -146,6 +149,10 @@ Group = Literal["stage", "engine", "helper", "triggered"]
 
 class AgentRow(TypedDict):
     key: str
+    # The pack the row comes from: `coscc-sdlc`, `local` or an imported pack's name.
+    pack: str
+    # A whole row of the owner's own pack (`local`): they may delete it.
+    own: bool
     # Opened on a unit's state, by the engine (Gebo, the estimate, Leif), as another's helper, or by
     # its own trigger (an event, a schedule, a press, Leif: `coscc/runner/triggers.py`).
     group: Group
@@ -289,8 +296,7 @@ def _group_of(found: dict[str, Any]) -> Group:
 def _skills(found: dict[str, Any]) -> list[SkillText]:
     out = []
     for name in found.get("skills") or []:
-        builtin = pack.BUILTIN / "skills" / name / pack.SKILL_FILE
-        base = builtin.read_text(encoding="utf-8") if builtin.is_file() else ""
+        base = pack.skill_base(name)
         try:
             text = pack.skill(name)
         except LookupError:
@@ -433,6 +439,8 @@ class Agents:
         views = [_run_view(r) for r in recent]
         return AgentRow(
             key=key,
+            pack=str(found.get("pack") or ""),
+            own=bool(found.get("own")),
             group=group,
             row=_fields_of(found),
             builtin=_fields_of(found.get("builtin") or found),
@@ -558,6 +566,155 @@ class Agents:
             except (BadRecord, Busy) as e:
                 raise Invalid(f"the setting was saved but not logged: {e}") from e
         return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
+
+    def _vault(self) -> vault.Store:
+        return vault.Store(Data(self.config.data_dir))
+
+    def _log(self, record: dict[str, Any]) -> None:
+        journal = self.ws.journal()
+        if journal is None:
+            return
+        try:
+            journal.append({"workspace": "", "unit": "", "stage": "", **record, "by": OWNER})
+        except (BadRecord, Busy) as e:
+            raise Invalid(f"the setting was saved but not logged: {e}") from e
+
+    def new_agent(self, key: object, start: object, name: object, cwd: str = "") -> AgentPage:
+        """Write a new agent into the owner's pack (`pack.new_row`): a copy of row `start` or the
+        smallest row that runs, checked with the app's catalog; logged as an `agent-setting`
+        record. **Behind the password**: its tools are the catalog's, its runs get only what the
+        engine derives, inside the critical calls."""
+        if not isinstance(key, str) or not isinstance(name, str):
+            raise Invalid("send {key, name, from?}: key and name are names")
+        if start is not None and not isinstance(start, str):
+            raise Invalid("from is the key of an agent")
+        try:
+            pack.new_row(key, name, start or None, self._effects())
+        except pack.PackError as e:
+            raise Refused(e) from e
+        except OSError as e:
+            raise Invalid(
+                f"the owner's pack could not be written, so nothing was saved: {e}"
+            ) from e
+        self._log(
+            {"kind": SETTING_KIND, "agent": key, "field": "new", "old": None, "new": start or ""}
+        )
+        return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
+
+    def delete_agent(self, key: object, cwd: str = "") -> AgentPage:
+        """Remove a whole row of the owner's pack, refused `in-use` while a process names it."""
+        try:
+            pack.delete_row(str(key))
+        except pack.PackError as e:
+            raise Refused(e) from e
+        self._vault().forget_agents({str(key)})
+        self._log(
+            {"kind": SETTING_KIND, "agent": str(key), "field": "delete", "old": None, "new": None}
+        )
+        return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
+
+    def set_process(self, cwd: str, name: object, given: object) -> list[pack.PackShown]:
+        """Set the owner's process `local/<name>` (`pack.write_process`), or remove it with `None`:
+        refused `in-use` while a unit records it. Logged as a `pack-setting` record."""
+        key = self.ws.key(self.ws.check(cwd))
+        if not isinstance(name, str) or (given is not None and not isinstance(given, dict)):
+            raise Invalid("send {cwd, name, process}: process is {start, end, states} or null")
+        ref = f"{pack.LOCAL_NAME}/{name}"
+        try:
+            if given is None and (used := self.ws.unit_meta().units_on(ref)):
+                raise pack.PackError([f"{ref} is the process of {', '.join(used)}"], code="in-use")
+            old, new = pack.write_process(name, given)
+        except pack.PackError as e:
+            raise Refused(e) from e
+        except OSError as e:
+            raise Invalid(
+                f"the owner's pack could not be written, so nothing was saved: {e}"
+            ) from e
+        self._log(
+            {
+                "kind": PACK_KIND,
+                "pack": pack.LOCAL_NAME,
+                "field": f"process:{name}",
+                "old": old,
+                "new": new,
+            }
+        )
+        return pack.packs_shown(Data(self.config.data_dir), key)
+
+    def export_pack(self, name: str) -> bytes:
+        try:
+            return pack.export_zip(name)
+        except pack.PackError as e:
+            raise Refused(e) from e
+
+    def import_pack(self, cwd: str, blob: bytes) -> list[pack.PackShown]:
+        """Put the pack in zip `blob` in place (`pack.import_zip`, checked with the app's catalog),
+        off in every workspace; logged as a `pack-setting` record. **Behind the password**: it
+        brings prompts, skills and compositions of catalog tools, nothing that runs until a
+        workspace turns it on and a run is started."""
+        key = self.ws.key(self.ws.check(cwd))
+        data = Data(self.config.data_dir)
+        try:
+            named = self._vault().named_agents()
+            name = pack.import_zip(blob, self._effects(), lambda k, _: _named(k, named))
+        except pack.PackError as e:
+            raise Refused(e) from e
+        except OSError as e:
+            raise Invalid(f"the pack could not be written, so nothing was imported: {e}") from e
+        _forget(data, name)
+        self._log(
+            {
+                "kind": PACK_KIND,
+                "pack": name,
+                "field": "import",
+                "old": None,
+                "new": pack.pack_version(name),
+            }
+        )
+        return pack.packs_shown(data, key)
+
+    def delete_pack(self, cwd: str, name: str) -> list[pack.PackShown]:
+        """Remove an imported pack, refused `in-use` while a unit records one of its processes."""
+        key = self.ws.key(self.ws.check(cwd))
+        data = Data(self.config.data_dir)
+        try:
+            if used := self.ws.unit_meta().units_on(name):
+                raise pack.PackError(
+                    [f"{name} holds the process of {', '.join(used)}"], code="in-use"
+                )
+            old = pack.pack_version(name)
+            keys = {k for k, r in pack.rows().items() if r["pack"] == name}
+            pack.remove_pack(name)
+            self._vault().forget_agents(keys)
+        except pack.PackError as e:
+            raise Refused(e) from e
+        except OSError as e:
+            raise Invalid(f"the pack could not be removed: {e}") from e
+        _forget(data, name)
+        self._log({"kind": PACK_KIND, "pack": name, "field": "delete", "old": old, "new": None})
+        return pack.packs_shown(data, key)
+
+
+def _named(key: str, named: set[str]) -> list[str]:
+    """An imported row never takes a key a vault secret's list names: it would get the secret."""
+    return [f"{key}: a vault secret names an agent {key}"] if key in named else []
+
+
+def _forget(data: Data, name: str) -> None:
+    """Drop pack `name`'s on/off from every workspace: a pack imported under a removed one's name
+    starts off."""
+    state = data.pref(pack.STATE_PREF, {})
+    if isinstance(state, dict) and name in state:
+        data.set_pref(pack.STATE_PREF, {k: v for k, v in state.items() if k != name})
+
+
+class Refused(Invalid):
+    """A pack write refused: its `code` (`pack-refused`, `in-use`) and every reason in words."""
+
+    def __init__(self, e: pack.PackError):
+        super().__init__("; ".join(e.reasons))
+        self.code = e.code
+        self.reasons = e.reasons
 
 
 class Models:

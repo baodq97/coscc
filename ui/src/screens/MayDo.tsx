@@ -8,8 +8,12 @@ import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { money } from "../lib/format";
 import type { Workspace } from "../lib/model";
-import { ProcessDiagram } from "../components/process";
-import { Button, ErrorState, Meter, PageHead, SkeletonRows } from "../components/ui";
+import { ProcessDiagram, ProcessEditor } from "../components/process";
+import { useAgents } from "./Agents";
+import { refreshPacks } from "../lib/pack";
+import { ApiError } from "../lib/api";
+import { sizeWords, type BuildAgent, type BuildPack, type BuildProcess } from "../lib/build";
+import { Button, Chip, Dialog, ErrorState, Meter, PageHead, SkeletonRows } from "../components/ui";
 
 export function MayDo() {
   const { boards, loading } = useBoards();
@@ -116,7 +120,9 @@ function Project({ workspace }: { workspace: Workspace }) {
             </Field>
           </>
         )}
-        {packs.data?.map((p) => <Pack key={p.name} workspace={workspace.name} pack={p} disabled={busy} onSave={(body) => save("/api/packs", { cwd, name: p.name, ...body })} />)}
+        {packs.data && (
+          <Packs cwd={cwd} workspace={workspace.name} packs={packs.data} disabled={busy} onSave={(name, body) => save("/api/packs", { cwd, name, ...body })} onChanged={() => (packs.reload(), refreshPacks())} />
+        )}
         {shown.data && shown.data.map((f) => <Feature key={f.name} feature={f} disabled={busy} onState={(state) => save("/api/features", { cwd, name: f.name, state })} />)}
         {error && <div style={{ color: "var(--red)", marginTop: 8, fontSize: 12.5 }}>{error.message}</div>}
       </div>
@@ -124,40 +130,187 @@ function Project({ workspace }: { workspace: Workspace }) {
   );
 }
 
-/** A pack in one project: on or off, the process a new unit walks, and that process drawn. */
-function Pack({ workspace, pack, disabled, onSave }: { workspace: string; pack: PackShown; disabled: boolean; onSave: (body: { on?: boolean; process?: string }) => void }) {
-  const [shown, setShown] = useState(pack.process);
-  const drawn = pack.processes.find((p) => p.ref === shown) ?? pack.processes[0];
+/** The packs of one project, each as a card, and the one door in for a pack from outside. */
+function Packs({ cwd, workspace, packs, disabled, onSave, onChanged }: { cwd: string; workspace: string; packs: PackShown[]; disabled: boolean; onSave: (name: string, body: { on?: boolean; process?: string }) => void; onChanged: () => void }) {
+  const { agents } = useAgents();
+  const [importing, setImporting] = useState(false);
+  const [added, setAdded] = useState("");
+  const rows = (agents.data?.rows ?? []) as BuildAgent[];
   return (
     <>
-      <Field label={`${pack.name} ${pack.version}`} hint={pack.on ? pack.description : "Off: no new unit or idea opens here. Units already running carry on."}>
-        <Toggle on={pack.on} disabled={disabled} onChange={(on) => onSave({ on })} />
-      </Field>
-      <Field label="New units walk" hint="The process a new unit records when it opens. A unit keeps its own for good.">
-        <select className="input" value={pack.process} disabled={disabled} onChange={(e) => (setShown(e.target.value), onSave({ process: e.target.value }))}>
-          {pack.processes.map((p) => (
-            <option key={p.ref} value={p.ref}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <details id={`pack-${workspace}`} className="pack-draw">
-        <summary>How a unit walks {drawn.name}</summary>
-        <div className="row" style={{ gap: 6, margin: "10px 0 8px" }}>
-          {pack.processes.map((p) => (
-            <button key={p.ref} className={`btn sm ${p.ref === drawn.ref ? "primary" : "ghost"}`} onClick={() => setShown(p.ref)}>
-              {p.name}
-            </button>
-          ))}
-        </div>
-        <ProcessDiagram process={drawn} />
-      </details>
+      <div className="pack-bar">
+        <span className="lab">Packs</span>
+        <span className="faint grow">A pack is a set of agents and processes. Yours is the one you build on the page.</span>
+        <Button size="sm" onClick={() => (setAdded(""), setImporting(true))}>Import a pack</Button>
+      </div>
+      {added && <div className="pack-added" role="status">{added}</div>}
+      {packs.map((p) => (
+        <Pack key={p.name} cwd={cwd} workspace={workspace} pack={p as BuildPack} rows={rows} disabled={disabled} onSave={(body) => onSave(p.name, body)} onChanged={onChanged} />
+      ))}
+      {importing && (
+        <ImportPack
+          cwd={cwd}
+          onClose={() => setImporting(false)}
+          onDone={(list, before) => {
+            const fresh = list.filter((p) => !before.includes(p.name));
+            setAdded(fresh.length ? `Added ${fresh.map((p) => `${p.name} (${p.processes.length} process${p.processes.length === 1 ? "" : "es"})`).join(", ")}. It is off until you turn it on.` : "Imported.");
+            setImporting(false);
+            onChanged();
+          }}
+          known={packs.map((p) => p.name)}
+        />
+      )}
     </>
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+const KIND_WORDS = (p: BuildPack) => (p.own ? "Yours" : p.imported ? "Imported" : "Built in");
+
+/** A pack in one project: what it is, on or off, the process a new unit walks, those processes drawn, and its export. */
+function Pack({ cwd, workspace, pack, rows, disabled, onSave, onChanged }: { cwd: string; workspace: string; pack: BuildPack; rows: BuildAgent[]; disabled: boolean; onSave: (body: { on?: boolean; process?: string }) => void; onChanged: () => void }) {
+  const [shown, setShown] = useState(pack.process);
+  const [editor, setEditor] = useState<"new" | string | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [refused, setRefused] = useState<string[]>([]);
+  const processes = pack.processes as BuildProcess[];
+  const drawn = processes.find((p) => p.ref === shown) ?? processes[0];
+  const editing = editor && editor !== "new" ? processes.find((p) => p.ref === editor) : undefined;
+  const remove = async () => {
+    try {
+      await api.post("/api/packs", { cwd, name: pack.name, delete: true });
+      onChanged();
+    } catch (e) {
+      setRefused(e instanceof ApiError && e.reasons.length ? e.reasons : [(e as Error).message]);
+      setRemoving(false);
+    }
+  };
+  return (
+    <div className="pack-card">
+      <Field label={<>{pack.name} <span className="faint">{pack.version}</span> <Chip square tone={pack.own ? "accent" : "plain"}>{KIND_WORDS(pack)}</Chip></>} hint={pack.on ? pack.description : "Off: no new unit or idea opens here. Units already running carry on."}>
+        <Toggle on={pack.on} disabled={disabled} onChange={(on) => onSave({ on })} />
+      </Field>
+      {pack.problems && pack.problems.length > 0 && (
+        <div className="pack-problems" role="alert">
+          <b>This pack cannot run as it is:</b>
+          <ul>{pack.problems.map((p) => <li key={p}>{p}</li>)}</ul>
+        </div>
+      )}
+      {refused.length > 0 && (
+        <div className="pack-problems" role="alert">
+          <b>Not removed:</b>
+          <ul>{refused.map((p) => <li key={p}>{p}</li>)}</ul>
+        </div>
+      )}
+      {processes.length > 0 && (
+        <Field label="New units walk" hint="The process a new unit records when it opens. A unit keeps its own for good.">
+          <select className="input" value={pack.process} disabled={disabled} onChange={(e) => (setShown(e.target.value), onSave({ process: e.target.value }))}>
+            {processes.map((p) => (
+              <option key={p.ref} value={p.ref}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      <div className="pack-acts">
+        <a className="btn sm" href={`/api/packs/${encodeURIComponent(pack.name)}/export?cwd=${encodeURIComponent(cwd)}`} download={`${pack.name}.zip`}>
+          Export
+        </a>
+        {pack.own && <Button size="sm" onClick={() => setEditor("new")}>New process</Button>}
+        {pack.imported &&
+          (removing ? (
+            <>
+              <span className="faint" style={{ fontSize: 12.5 }}>Remove {pack.name} for good?</span>
+              <Button size="sm" kind="danger" onClick={remove}>Yes, remove</Button>
+              <Button size="sm" kind="ghost" onClick={() => setRemoving(false)}>Keep it</Button>
+            </>
+          ) : (
+            <Button size="sm" kind="ghost" onClick={() => setRemoving(true)}>Remove</Button>
+          ))}
+        {pack.own && <span className="faint grow" style={{ fontSize: 12 }}>Export holds your own agents and processes, not your changes to built-in ones.</span>}
+      </div>
+      {editor && (
+        <div className="pack-editor">
+          <div className="sec-h" style={{ marginTop: 0 }}>{editing ? `Change ${editing.name}` : "New process"}</div>
+          <ProcessEditor
+            key={editor}
+            rows={rows}
+            cwd={cwd}
+            taken={processes.map((p) => p.name)}
+            initial={editing ? { name: editing.name, process: editing } : undefined}
+            onClose={() => setEditor(null)}
+            onSaved={() => (setEditor(null), onChanged())}
+          />
+        </div>
+      )}
+      {drawn && !editor && (
+        <details id={`pack-${workspace}-${pack.name}`} className="pack-draw">
+          <summary>How a unit walks {drawn.name}</summary>
+          <div className="row" style={{ gap: 6, margin: "10px 0 8px" }}>
+            {processes.map((p) => (
+              <button key={p.ref} className={`btn sm ${p.ref === drawn.ref ? "primary" : "ghost"}`} onClick={() => setShown(p.ref)}>
+                {p.name}
+              </button>
+            ))}
+          </div>
+          {drawn.own && (
+            <div style={{ marginBottom: 8 }}>
+              <Button size="sm" onClick={() => setEditor(drawn.ref)}>Change {drawn.name}</Button>
+            </div>
+          )}
+          <ProcessDiagram process={drawn} />
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** Pick a pack's zip, then send it: it is checked whole and refused with every reason, or kept off. */
+function ImportPack({ cwd, known, onClose, onDone }: { cwd: string; known: string[]; onClose: () => void; onDone: (list: PackShown[], before: string[]) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [reasons, setReasons] = useState<string[]>([]);
+  const send = async () => {
+    if (!file) return;
+    setBusy(true);
+    setReasons([]);
+    try {
+      onDone(await api.post<PackShown[]>(`/api/packs/import?cwd=${encodeURIComponent(cwd)}`, file), known);
+    } catch (e) {
+      setReasons(e instanceof ApiError && e.reasons.length ? e.reasons : [(e as Error).message]);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog title="Import a pack" onClose={onClose}>
+      <label className="f">
+        <span className="lab">A pack's zip</span>
+        <input type="file" accept=".zip,application/zip" aria-label="Pack file" onChange={(e) => (setFile(e.target.files?.[0] ?? null), setReasons([]))} />
+        <span className="faint" style={{ fontSize: 12 }}>Up to 1 MB. Only agents, skills and processes are read.</span>
+      </label>
+      {file && (
+        <div className="pack-added">
+          <b>{file.name}</b> <span className="faint">{sizeWords(file.size)}</span>
+          <div className="faint" style={{ fontSize: 12.5 }}>It is checked whole first. If it passes, its agents and processes are added and stay off until you turn the pack on.</div>
+        </div>
+      )}
+      {reasons.length > 0 && (
+        <div className="pe-refused" role="alert">
+          <b>Not imported</b>
+          <ul>{reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+        </div>
+      )}
+      <div className="dlg-f">
+        <Button kind="ghost" onClick={onClose}>Cancel</Button>
+        <Button kind="primary" disabled={!file || busy} onClick={send}>{busy ? "Checking…" : "Import"}</Button>
+      </div>
+      {!file && <div className="faint" style={{ fontSize: 12 }}>Choose a file to continue.</div>}
+    </Dialog>
+  );
+}
+
+function Field({ label, hint, children }: { label: ReactNode; hint?: string; children: ReactNode }) {
   return (
     <div className="field">
       <div>

@@ -9,7 +9,6 @@ Which transitions are allowed is not decided here; only that a stage can carry t
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import lru_cache
 from collections.abc import Mapping
 from typing import Any
 
@@ -111,14 +110,23 @@ class Machine:
         )
 
 
-@lru_cache(maxsize=1)
+_DEFAULT: dict[str, Any] = {}
+
+
 def default() -> Machine:
-    """The built-in pack's set, read once: every state of its processes, in the order first seen.
-    Callers that take a `Machine | None` default to this."""
-    rows = pack.builtin_rows()
+    """Every pack's set: every state of every process, in the order first seen; built again only
+    when the processes are. Callers that take a `Machine | None` default to this."""
+    every = pack.processes()
+    if _DEFAULT.get("of") is not every:
+        _DEFAULT.update(of=every, machine=_machine(every))
+    return _DEFAULT["machine"]
+
+
+def _machine(every: Mapping[str, pack.Process]) -> Machine:
+    rows = pack.rows()
     stages: dict[str, list[str]] = {}
     optional: set[str] = set()
-    for p in pack.processes().values():
+    for p in every.values():
         for name, st in p["states"].items():
             have = stages.setdefault(name, [])
             have += [x for x in pack.statuses(st, rows) if x not in have]
@@ -135,7 +143,7 @@ def default() -> Machine:
             ],
             "by_process": {
                 ref: {f"{n}.md": pack.statuses(st, rows) for n, st in p["states"].items()}
-                for ref, p in pack.processes().items()
+                for ref, p in every.items()
             },
         }
     )

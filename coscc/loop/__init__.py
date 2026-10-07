@@ -66,11 +66,8 @@ class Proc:
     (the `fast-lane` branch: from, to, the states it passes over, the fields that send it back).
     """
 
-    def __init__(self, ref: str):
-        raw = pack.process(ref)
-        if raw is None:
-            raise KeyError(ref)
-        rows = pack.builtin_rows()
+    def __init__(self, ref: str, found: pack.Resolved):
+        raw, rows = found["process"], found["rows"]
         self.ref = ref
         self.start: str = raw["start"]
         self.info: dict[str, dict[str, Any]] = {}
@@ -199,15 +196,41 @@ class Proc:
 
 
 DEFAULT = pack.DEFAULT_PROCESS
-_PROCS: dict[str, Proc] = {}
+_PROCS: dict[tuple[str, str], Proc] = {}
+# The processes the snapshot hands over (`pack.resolved`): every one a unit records that is not
+# built in. The loop reads no pack file under the data root.
+GIVEN: dict[str, pack.Resolved] = {}
+
+
+def given(state) -> None:
+    """Take the processes of snapshot `state`, in place of the last one's."""
+    found = state.get("processes") if isinstance(state, dict) else None
+    GIVEN.clear()
+    GIVEN.update(found if isinstance(found, dict) else {})
+
+
+def known(ref) -> pack.Resolved | None:
+    """`{process, rows, hash}` of `ref`: the snapshot's, else the built-in pack's; `None` when
+    neither has it."""
+    if not isinstance(ref, str):
+        return None
+    if ref in GIVEN:
+        return GIVEN[ref]
+    found = pack.builtin_processes().get(ref)
+    return None if found is None else {"process": found, "rows": pack.builtin_rows()}
 
 
 def proc_of(ref) -> Proc:
-    """The process `ref` names, read once; the default one for a unit that names none."""
-    ref = ref if isinstance(ref, str) and pack.process(ref) is not None else DEFAULT
-    if ref not in _PROCS:
-        _PROCS[ref] = Proc(ref)
-    return _PROCS[ref]
+    """The process `ref` names, read once per definition; the default one for a unit that names
+    none or one no pack has."""
+    found = known(ref)
+    if found is None:
+        ref, found = DEFAULT, known(DEFAULT)
+    assert found is not None
+    at = (ref, str(found.get("hash") or ""))
+    if at not in _PROCS:
+        _PROCS[at] = Proc(ref, found)
+    return _PROCS[at]
 
 
 SPIKE_ROUNDS = 2

@@ -144,6 +144,17 @@ class UnitMeta:
         ).fetchone()
         return found[0] if found else None
 
+    def units_on(self, ref: str) -> list[str]:
+        """Every unit (`<workspace key>/<unit>`) that records process `ref`, or with a pack's name
+        any process of that pack."""
+        with self.data.connect() as conn:
+            found = conn.execute(
+                "SELECT workspace, unit FROM unit_meta WHERE root = ? AND "
+                "(process = ? OR process LIKE ?) ORDER BY workspace, unit",
+                (self.root, ref, f"{ref}/%" if "/" not in ref else ref),
+            ).fetchall()
+        return [f"{w}/{u}" for w, u in found]
+
     def ingest_failed(self, workspace: str, unit: str, reason: str) -> None:
         """An ingest that failed, as a row the snapshot turns into a problem on the card."""
         with self.data.write() as conn:
@@ -923,8 +934,15 @@ class UnitMeta:
                     )
                 else:
                     e["roundsGranted"] += int(fields["rounds"])
+        # The loop reads no pack under the data root: each process not built in, resolved.
+        given = {
+            ref: found
+            for ref in sorted({str(e["process"]) for e in units.values() if e["process"]})
+            if ref not in pack.builtin_processes() and (found := pack.resolved(ref))
+        }
         return {
             "workspace": own_name,
             "workspaces": sorted(n for n in named if n),
             "units": units,
+            **({"processes": given} if given else {}),
         }

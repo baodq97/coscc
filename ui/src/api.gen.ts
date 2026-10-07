@@ -10,6 +10,8 @@ export type AgentPage = {
 
 export type AgentRow = {
   "key": string;
+  "pack": string;
+  "own": boolean;
   "group": "stage" | "engine" | "helper" | "triggered";
   "row": RowFields;
   "builtin": RowFields;
@@ -322,7 +324,7 @@ export type Meta = {
   "name": string;
   "tier": string;
   "description": string;
-  "stages": string[];
+  "agents": string[];
   "modes": string[];
   "broker": boolean;
   "has_value": boolean;
@@ -382,6 +384,9 @@ export type PackShown = {
   "on": boolean;
   "process": string;
   "processes": ProcessShown[];
+  "own": boolean;
+  "imported": boolean;
+  "problems": string[];
 };
 
 export type Paused = {
@@ -400,6 +405,7 @@ export type ProcessShown = {
   "states": Record<string, State>;
   "ref": string;
   "name": string;
+  "own": boolean;
 };
 
 export type Proposal = {
@@ -594,8 +600,8 @@ export type Secrets = {
   "workspace": string;
   "age": boolean;
   "name_pattern": string;
-  "default_stages": string[];
-  "stages": string[];
+  "default_agents": string[];
+  "agents": string[];
   "modes": string[];
   "secrets": Meta[];
   "globals": Meta[];

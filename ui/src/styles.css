@@ -625,3 +625,37 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
 .pd-edge { font-size: 11px; fill: var(--text-2); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
 .pack-draw { padding: 10px 0 4px; border-bottom: 1px solid var(--line); }
 .pack-draw > summary { cursor: pointer; color: var(--text-2); font-weight: 500; }
+
+/* Building: packs, the process editor beside its diagram, import */
+.pack-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 0 6px; border-bottom: 1px solid var(--line); margin-top: 8px; }
+.pack-card { padding-bottom: 6px; }
+.pack-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 0 10px; }
+a.btn { text-decoration: none; }
+.pack-problems, .pe-refused { border: 1px solid var(--red); color: var(--red); border-radius: var(--r2); padding: 8px 12px; margin: 8px 0; font-size: 12.5px; }
+.pack-problems ul, .pe-refused ul { margin: 4px 0 0; padding-left: 18px; }
+.pack-added { background: var(--bg-sunk); border-radius: var(--r2); padding: 8px 12px; margin: 8px 0; font-size: 13px; }
+.pack-editor { border: 1px solid var(--line-2); border-radius: var(--r2); padding: 14px; margin: 8px 0 12px; background: var(--panel); }
+.pe { display: grid; grid-template-columns: minmax(300px, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.pe-form { display: grid; gap: 4px; min-width: 0; }
+.pe-form label.f { display: grid; gap: 4px; }
+.pe-form .lab { font-size: 12px; font-weight: 500; color: var(--text-2); }
+.pe-draw { min-width: 0; overflow-x: auto; position: sticky; top: 8px; }
+.pe-steps { list-style: none; margin: 6px 0 10px; padding: 0; display: grid; gap: 8px; }
+.pe-step { border: 1px solid var(--line); border-radius: var(--r2); padding: 8px 10px; background: var(--panel); display: grid; gap: 6px; }
+.pe-step.bad { border-color: var(--red); }
+.pe-head { display: flex; align-items: center; gap: 6px; }
+.pe-head .input { flex: 1; min-width: 0; }
+.pe-n { width: 20px; height: 20px; border-radius: 10px; background: var(--bg-sunk); color: var(--text-2); font-size: 11.5px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.pe-sub { font-size: 12px; }
+.pe-way { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-left: 26px; font-size: 12.5px; }
+.pe-way .input { width: auto; max-width: 100%; height: 26px; }
+.pe-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-left: 26px; font-size: 12.5px; }
+.pe-then { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); }
+.pe-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.icon-btn { width: 26px; height: 26px; border-radius: var(--r1); color: var(--text-3); flex: none; }
+.icon-btn:hover:not(:disabled) { background: var(--bg-sunk); color: var(--text); }
+.icon-btn:disabled { opacity: .35; }
+@media (max-width: 860px) { .pe { grid-template-columns: 1fr; } .pe-draw { position: static; } .pe-way, .pe-foot { padding-left: 0; } }
+
+.pe-key { width: 92px !important; flex: none !important; height: 28px; font-size: 12px; }
+@media (max-width: 860px) { .pe-head { flex-wrap: wrap; } .pe-head .pe-key { order: 5; width: calc(100% - 26px) !important; margin-left: 26px; } }

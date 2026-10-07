@@ -828,8 +828,8 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     from coscc.vault import Store
 
     store = Store(Data(data_dir), config_home=str(data_dir / "cfg"), home=str(data_dir / "home"))
-    store.create("ws:db", key, "the staging database", stages=("impl",))
-    store.create("ws:deploy-key", key, "pushes the preview build", stages=("spike",))
+    store.create("ws:db", key, "the staging database", agents=("impl",))
+    store.create("ws:deploy-key", key, "pushes the preview build", agents=("spike",))
     # The last `impl` run of all is this failed one, so `/agents` shows `impl` as `failed`
     # (a stage's chip is its last run's); `spec` ended `done` above and is `ok`.
     journal.started(key, "0004_finished", "impl", "autonomous")

@@ -18,6 +18,7 @@ from coscc.runner import run as run_mod
 from coscc.runner import triggers
 from coscc.store.db import Busy, Data
 from coscc.store.journal import Intervention, Journal
+from coscc import units
 from coscc.units import Invalid, proposals
 from coscc.units.meta import UnitMeta
 
@@ -61,7 +62,6 @@ class _Core(unittest.IsolatedAsyncioTestCase):
                 check=lambda cwd: cwd,
                 key=lambda cwd: cwd,
                 journal=lambda: self.journal,
-                units_root=lambda cwd: root / "units",
                 unit_meta=lambda: None,
                 all=lambda: {"paths": [self.ws]},
                 unit_dir=self._unit_dir,
@@ -84,9 +84,10 @@ class _Core(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(triggers._RUNNING.clear)
 
     def _unit_dir(self, cwd, unit):
+        # As in the app: under the data root, outside the workspace's tree.
         if not re.fullmatch(r"\d{4}_[a-z0-9-]+", unit):
             raise Invalid(f"not a work unit name: {unit!r}")
-        return Path(cwd) / unit
+        return units.unit_dir(cwd, unit, self.core.config.data_dir)
 
     def _interventions(self, journal, meta, attempts, key, after, limit):
         return [i for i in self.found if i.at > after][:limit]
@@ -350,8 +351,10 @@ class TheGraderGradesWhatShipped(_Core):
         await super().asyncSetUp()
         root = Path(self.ws).parent
         self.unit = "0141_fast-lane"
-        (root / "units" / self.unit).mkdir(parents=True)
-        (root / "units" / self.unit / "intent.md").write_text("## Proposed outcome\nA fix ships.")
+        folder = self.core.ws.unit_dir(self.ws, self.unit)
+        folder.mkdir(parents=True)
+        (folder / "intent.md").write_text("## Proposed outcome\nA fix ships.")
+        (folder / "ship.md").write_text("Merged as #1.")
         self.trunk = root / "trunk"
         self.trunk.mkdir()
         self.meta = UnitMeta(root / "work", self.data)
@@ -391,6 +394,23 @@ class TheGraderGradesWhatShipped(_Core):
         ]
         self.assertEqual((end["verdict"], end["proposals"]), ("not-met", 2))
 
+    async def test_the_prompt_carries_the_unit_from_outside_the_tree(self):
+        folder = self.core.ws.unit_dir(self.ws, self.unit)
+        self.assertFalse(folder.is_relative_to(self.ws) or folder.is_relative_to(self.trunk))
+        self.reply = Run("done", self.criteria("yes"))
+        await triggers.run(self.core, "outcome", self.ws, self.unit, by="manual")
+        (given,) = self.given
+        for said in (self.unit, "A fix ships.", "Merged as #1.", "Fewer steps."):
+            self.assertIn(said, given.prompt)
+
+    async def test_a_unit_the_workspace_does_not_hold_is_refused_before_spend(self):
+        with self.assertRaises(Invalid) as e:
+            await triggers.run(self.core, "outcome", self.ws, "0047_nonexistent", by="manual")
+        self.assertEqual(e.exception.reasons, ("no-unit",))
+        with self.assertRaises(Invalid):
+            triggers.start(self.core, "outcome", self.ws, "0047_nonexistent", by="manual")
+        self.assertEqual((self.given, triggers._TASKS), ([], set()))
+
     async def test_unclear_alone_proposes_nothing(self):
         self.reply = Run("done", self.criteria("yes", "unclear"))
         await triggers.run(self.core, "outcome", self.ws, self.unit, by="manual")
@@ -429,3 +449,20 @@ class TheGraderGradesWhatShipped(_Core):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnOffPackStartsNothing(_Core):
+    async def test_a_row_whose_pack_is_off_is_refused_pack_off_for_every_start(self):
+        pack.set_packs(self.data, self.ws, "coscc-sdlc", on=False)
+        with self.assertRaises(Invalid) as e:
+            await triggers.run(self.core, "scan", self.ws, by="manual")
+        self.assertEqual(e.exception.reasons, ("pack-off",))
+        self.assertEqual(self.given, [])
+
+    async def test_a_row_not_as_built_is_checked_with_the_catalog_before_spend(self):
+        self.core.steps.hooks = SimpleNamespace(catalog=lambda: {})
+        pack.new_row("look", "Look", "scan")
+        pack.write("look", "tools", {"Read": "allow"})
+        with self.assertRaises(Invalid) as e:
+            await triggers.run(self.core, "look", self.ws, by="manual")
+        self.assertEqual(e.exception.reasons, ("agent-invalid",))

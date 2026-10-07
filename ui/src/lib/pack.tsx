@@ -7,9 +7,9 @@ import { useResource } from "./api";
 import { SkeletonRows } from "../components/ui";
 
 export type AgentFace = { name: string; glyph: string };
-type Index = { faces: Record<string, AgentFace>; labels: Record<string, string>; withAgent: string[]; packs: PackShown[] };
+type Index = { faces: Record<string, AgentFace>; labels: Record<string, string>; withAgent: string[]; packs: PackShown[]; reload: () => void };
 
-const EMPTY: Index = { faces: {}, labels: {}, withAgent: [], packs: [] };
+const EMPTY: Index = { faces: {}, labels: {}, withAgent: [], packs: [], reload: () => {} };
 let index: Index = EMPTY;
 const Ctx = createContext<Index>(EMPTY);
 
@@ -23,6 +23,9 @@ export function stageLabel(key: string): string {
 export function agentFace(key: string): AgentFace {
   return index.faces[key] ?? { name: capital(key), glyph: capital(key).slice(0, 1) };
 }
+
+/** Read the agents and packs again, after the page added or removed one. */
+export const refreshPacks = () => index.reload();
 
 export const useIndex = () => useContext(Ctx);
 
@@ -42,6 +45,6 @@ export function PackProvider({ children }: { children: ReactNode }) {
     if (st.label) labels[key] = st.label;
     if (st.agent) withAgent.add(key);
   }
-  index = { faces, labels, withAgent: [...withAgent], packs: packs.data ?? [] };
+  index = { faces, labels, withAgent: [...withAgent], packs: packs.data ?? [], reload: () => (agents.reload(), packs.reload()) };
   return <Ctx.Provider value={index}>{children}</Ctx.Provider>;
 }

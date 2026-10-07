@@ -11,7 +11,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 
-from coscc.loop import LOCAL_ONLY, NEEDS_STATE, STATE_READERS, checkout
+from coscc.loop import LOCAL_ONLY, NEEDS_STATE, STATE_READERS, checkout, given
 
 
 @dataclass
@@ -166,6 +166,8 @@ def parse(argv: list[str], err) -> Args | int:
         if state is None:
             err(f"{cmd} {NEEDS_STATE}")
             return 2
+    if state is not None:
+        given(state)
     return Args(cmd or "", rest, cos_dir, repo_dir, limit, state, reserve_from)
 
 

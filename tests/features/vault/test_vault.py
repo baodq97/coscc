@@ -99,8 +99,8 @@ class Bed(unittest.IsolatedAsyncioTestCase):
         self.store.grant("global:tok", self.key)
         self.make("global:other", OTHER, "", "not for proj", ("impl",))
 
-    def make(self, name, value, workspace, description, stages=("impl",)):
-        self.store.create(name, workspace, description, stages=stages)
+    def make(self, name, value, workspace, description, agents=("impl",)):
+        self.store.create(name, workspace, description, agents=agents)
         self.store.put(name, workspace, value)
 
     def values(self) -> dict[str, bytes]:
@@ -556,3 +556,50 @@ class ThePromptBlock(Bed):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheVaultListsEveryPacksAgents(unittest.TestCase):
+    def test_an_owners_agent_that_holds_the_vault_is_listed(self):
+        from coscc.agent import pack
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(pack, "ROOT", d):
+            self.assertNotIn("keeper", vault.vault_agents())
+            pack.new_row("keeper", "Keeper", "impl")
+            self.assertIn("keeper", vault.vault_agents())
+            pack.new_row("looker", "Looker", None)
+            self.assertNotIn("looker", vault.vault_agents())
+
+
+class AnImportedAgentGetsNoSecretByDefault(unittest.TestCase):
+    def setUp(self):
+        from coscc.agent import pack
+
+        self.pack = pack
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.d = d.name
+        p = mock.patch.object(pack, "ROOT", d.name)
+        p.start()
+        self.addCleanup(p.stop)
+        # An imported copy of impl: it writes in the branch and holds the vault.
+        folder = pack.packs_dir() / "theirs"
+        (folder / ".claude-plugin").mkdir(parents=True)
+        (folder / ".claude-plugin" / "plugin.json").write_text('{"name": "theirs"}')
+        (folder / "agents").mkdir()
+        text = (pack.BUILTIN / "agents" / "impl.md").read_text()
+        (folder / "agents" / "coder.md").write_text(text.replace('name: "Uruz"', 'name: "Coder"'))
+
+    def test_not_a_default_and_not_usable_while_its_pack_is_off(self):
+        self.assertIn("coder", vault.vault_agents())
+        self.assertNotIn("coder", vault.default_agents())
+        data = Data(self.d)
+        self.assertFalse(vault.may_use(data, "coder", "/ws"))
+        self.pack.set_packs(data, "/ws", "theirs", on=True)
+        self.assertTrue(vault.may_use(data, "coder", "/ws"))
+
+    def test_a_removed_agent_leaves_no_secret_to_its_key(self):
+        store = vault.Store(Data(self.d))
+        store.create("ws:db", "/ws", "x", agents=("impl", "coder"))
+        store.forget_agents({"coder"})
+        self.assertEqual(store.get("ws:db", "/ws").agents, ("impl",))
+        self.assertEqual(store.named_agents(), {"impl"})

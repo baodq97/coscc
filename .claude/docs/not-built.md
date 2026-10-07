@@ -27,6 +27,19 @@ Read this before adding a route, a button or a grant.
   critical calls read only the grant, so no row reaches the secrets, another branch, a
   background command, a nested helper, a merge or a release. No agent holds a tool that writes
   a row.
+- **Whoever holds the password can add agents, processes and packs.** `POST /api/agents/new`
+  and `/api/agents/delete` write a whole row of the owner's pack `local`; `POST /api/packs/process`
+  sets or removes a process `local/<name>`; `POST /api/packs/import` puts a third party's pack in
+  `<data root>/packs/<name>/`, off in every workspace, and `POST /api/packs {delete: true}` removes
+  one; `GET /api/packs/{name}/export` hands a pack out as a zip. Each writes packs only (the
+  owner's configuration, no decision, answer or secret), logged `agent-setting` or `pack-setting`
+  `by: owner`. Every row of every pack passes the same `pack.check` with the catalog and every
+  process `check_process`, so an imported prompt, skill or composition reaches only catalog tools,
+  a triggered row only reading ones, and the critical calls hold for any prompt. An import is a
+  zip of at most 1 MB and 200 entries holding only the plugin folder's files, with no absolute
+  path, `..` or link; its keys, skill names and name are no other pack's, and a refusal leaves
+  nothing behind. Its text still reaches a session's prompt once a workspace turns it on and a
+  run starts: read it first.
 - **No list of programs, and no route to widen one.** What a session may run is auto mode's
   judgement plus the few critical blocks; a person adds nothing at runtime. The one place a line
   is read strictly (no substitution at all) is the vault's `vault_exec`, since it runs with secrets

@@ -353,10 +353,12 @@ async def _drain(agen: AsyncIterator[Any]) -> None:
 
 async def _refused(_: Request, e: Exception) -> JSONResponse:
     """`error`, its words; a gate's refusal adds its `code` (`guards.REASONS`, the first) and every
-    one of its `reasons`, for a caller to branch on."""
+    one of its `reasons`, for a caller to branch on; a pack's refusal its own `code` and every
+    reason in words."""
     status = 503 if isinstance(e, Updating) else 409 if isinstance(e, NotUpdatable) else 400
     reasons = list(getattr(e, "reasons", ()) or ())
-    coded = {"code": reasons[0], "reasons": reasons} if reasons else {}
+    code = getattr(e, "code", "") or (reasons[0] if reasons else "")
+    coded = {"code": code, "reasons": reasons} if reasons else {}
     return JSONResponse({"error": str(e), **coded}, status_code=status)
 
 

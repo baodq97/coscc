@@ -15,6 +15,7 @@ from typing import Any
 
 from coscc.loop import (
     BRANCH_TYPES,
+    DEFAULT,
     DECIDERS,
     IDEAS,
     REVIEW_ROUNDS,
@@ -31,7 +32,8 @@ from coscc.loop import (
     trim,
     truthy,
 )
-from coscc.agent import pack
+from coscc.loop import GIVEN
+from coscc.loop import known as loop_known
 from coscc.units import guards
 
 A = re.ASCII
@@ -851,15 +853,32 @@ def stale_marks(unit, known):
 def hold_state_gone(unit, known):
     """A unit whose recorded process is in no pack shows that process and is held `state-gone`
     (unless a person's hold is already on it): the loop walks the default in its place, and
-    nothing runs on it."""
+    nothing runs on it. So is a unit on a process the snapshot hands over that no longer has a
+    state the unit recorded."""
     ref = nullish(dig(known, "process"))
-    if isinstance(ref, str) and ref and pack.process(ref) is None:
+    if not isinstance(ref, str) or not ref:
+        return
+    why = ""
+    if loop_known(ref) is None:
         unit["process"] = ref
+        why = f"its process {ref} is in no pack"
+    elif ref in GIVEN:
+        # A process the owner changed under the unit: a state it recorded is gone. The brief every
+        # unit opens with is written whatever its process.
+        brief = proc_of(DEFAULT).file(proc_of(DEFAULT).start)
+        files = [*proc_of(ref).files, brief]
+        gone = [
+            f
+            for f, a in (nullish(dig(known, "artifacts"), {}) or {}).items()
+            if dig(a, "status") and f not in files
+        ]
+        why = f"its process {ref} no longer has {', '.join(gone)}" if gone else ""
+    if why:
         unit["hold"] = unit["hold"] or {
             "state": "paused",
             "by": "app",
             "date": "",
-            "reason": f"its process {ref} is in no pack",
+            "reason": why,
             "code": "state-gone",
         }
 
