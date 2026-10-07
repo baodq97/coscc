@@ -214,6 +214,12 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
         rows = {"changelog": {"key": "changelog", "pack": "local", pack.BODY: "Write one entry.\n"}}
         with mock.patch.object(pack, "row", rows.get):
             self.assertEqual(skill_for("changelog"), "Write one entry.")
+        told = {**rows["changelog"], "output": {"kind": "artifact"}}
+        with mock.patch.object(pack, "row", {"changelog": told}.get):
+            self.assertIn("`# Changelog:`", skill_for("changelog"))
+        told["output"] = {"kind": "artifact", "by": "session"}
+        with mock.patch.object(pack, "row", {"changelog": told}.get):
+            self.assertEqual(skill_for("changelog"), "Write one entry.")
         for row in (
             {**rows["changelog"], pack.BODY: "  "},
             {**rows["changelog"], "pack": "coscc-sdlc"},

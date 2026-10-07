@@ -34,7 +34,15 @@ def skill_for(key: str) -> str:
         and row.get("pack") != pack.manifest()["name"]
         and str(row.get(pack.BODY) or "").strip()
     ):
-        return str(row[pack.BODY]).strip()
+        body = str(row[pack.BODY]).strip()
+        output = row.get("output") or {}
+        if output.get("kind") == "artifact" and output.get("by") != "session":
+            # A skill says how its reply opens; a body the owner or Dagaz wrote may not.
+            body += (
+                f"\n\nYour last reply is this step's record, saved as `{key}.md`: open it with"
+                f" the line `# {key.capitalize()}:` and say in a few lines what you did."
+            )
+        return body
     if not names:
         raise RunError(f"no rules for the {key} stage: its row names no skill")
     try:
