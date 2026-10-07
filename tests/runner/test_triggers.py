@@ -170,6 +170,8 @@ class APressRunsTheRow(_Core):
         self.assertEqual(self.given, [])
         (end,) = self.ends()
         self.assertEqual((end["skipped"], end["cost_usd"], end["outcome"]), (True, 0.0, "done"))
+        self.assertEqual(len(end["run"]), 32)
+        self.assertTrue(end["agent_name"])
 
     async def test_a_second_run_of_the_same_agent_is_refused_before_spend(self):
         self.found = found(1)

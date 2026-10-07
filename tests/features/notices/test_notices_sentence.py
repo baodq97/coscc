@@ -141,6 +141,8 @@ class EachKindComesFromItsRecord(unittest.TestCase):
             _end("failed", **{**run, "skipped": True}),
             # An app going down or updating cancels a run: nobody failed it.
             _end("cancelled", **run),
+            # A pause at its ceiling has its own notice (`agent-off`).
+            _end("paused-budget", **run),
             # A chat turn and an estimate are not runs of an agent a trigger starts.
             _end("failed", unit="", stage="chat", agent="chat", started_by="person"),
             _end("failed", unit="", stage="estimate", agent="estimate", started_by="person"),

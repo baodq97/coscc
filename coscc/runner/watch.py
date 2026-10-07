@@ -115,7 +115,7 @@ class Watch:
             return None, None, ""
         journal = self.ws.journal()
         try:
-            started = journal.records(key, kind="start") if journal is not None else []
+            started = journal.records(key, kinds=("start", "end")) if journal is not None else []
         except Busy as e:
             raise Invalid(str(e)) from e
         for r in started:

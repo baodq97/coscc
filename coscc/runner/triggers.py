@@ -262,7 +262,7 @@ async def _run(
     if "interventions" in declared["data"]:
         found = await asyncio.to_thread(_interventions, core, journal, ws, since)
     if declared.get("skip_when_empty") and not found:
-        await asyncio.to_thread(_skipped, journal, ws, unit, key, by, since)
+        await asyncio.to_thread(_skipped, journal, ws, unit, key, by, since, run_id)
         return ""
     made = (
         await asyncio.to_thread(proposals.listed, data, ws, key)
@@ -289,7 +289,7 @@ async def _run(
             tree = str((await worktrees.main_tree(cwd, core.config.data_dir))[0])
         except (GitError, OSError) as e:
             await asyncio.to_thread(
-                _ended, journal, ws, unit, key, by, "failed", f"no trunk tree to read: {e}"
+                _ended, journal, ws, unit, key, by, "failed", f"no trunk tree to read: {e}", run_id
             )
             return ""
     row = policy.row_for(key)
@@ -380,7 +380,11 @@ def _data_until(journal: Any, ws: str, key: str) -> str:
     return ""
 
 
-def _skipped(journal: Any, ws: str, unit: str, key: str, by: str, since: str) -> None:
+def _name(key: str) -> str:
+    return str((pack.row(key) or {}).get("name") or "")
+
+
+def _skipped(journal: Any, ws: str, unit: str, key: str, by: str, since: str, run_id: str) -> None:
     try:
         journal.finished(
             ws,
@@ -391,6 +395,8 @@ def _skipped(journal: Any, ws: str, unit: str, key: str, by: str, since: str) ->
             status="done",
             skipped=True,
             started_by=by,
+            run=run_id,
+            agent_name=_name(key),
             cost_usd=0.0,
             detail="nothing new since its last run",
             **({"data_until": since} if since else {}),
@@ -399,7 +405,9 @@ def _skipped(journal: Any, ws: str, unit: str, key: str, by: str, since: str) ->
         log.exception("the skipped run of %s was not recorded", key)
 
 
-def _ended(journal: Any, ws: str, unit: str, key: str, by: str, outcome: str, why: str) -> None:
+def _ended(
+    journal: Any, ws: str, unit: str, key: str, by: str, outcome: str, why: str, run_id: str
+) -> None:
     try:
         journal.finished(
             ws,
@@ -409,6 +417,8 @@ def _ended(journal: Any, ws: str, unit: str, key: str, by: str, outcome: str, wh
             agent=key,
             status=outcome,
             started_by=by,
+            run=run_id,
+            agent_name=_name(key),
             cost_usd=0.0,
             detail=why,
         )

@@ -703,3 +703,12 @@ describe("needsYou", () => {
     expect(got.total).toBe(5);
   });
 });
+
+describe("matches with something left out", () => {
+  const run = { subject: "agent-run.started", workspace: "w", agent: "a", run: "r" };
+  it("leaves out a subject but never the reconnect replay", () => {
+    expect(matches(run, [""], "", ["agent-run."])).toBe(false);
+    expect(matches({ subject: "step.ended", workspace: "w", unit: "u", going_down: false }, [""], "", ["agent-run."])).toBe(true);
+    expect(matches({ subject: "", workspace: "" }, [""], "", ["agent-run.", "chat-turn."])).toBe(true);
+  });
+});

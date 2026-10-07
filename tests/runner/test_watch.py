@@ -211,3 +211,24 @@ class ARunsEndIsOnItsFirstPage(unittest.TestCase):
         page = core.watch.events_page(str(repo), "r9")
         self.assertEqual((page["outcome"], page["draft"]), ("done", draft))
         self.assertNotIn("draft", core.watch.events_page(str(repo), "r9", before=5))
+
+
+class ASkippedRunHasAPage(unittest.TestCase):
+    def test_a_run_with_only_an_end_opens_a_page_not_no_such_run(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        repo = root / "work" / "proj"
+        repo.mkdir(parents=True)
+        config = Config(
+            workspaces=(str(repo),), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
+        core = Core(config, Sessions(config))
+        ws = core.ws.key(str(repo))
+        core.ws.journal().finished(
+            ws, "", "scan", "done", run="r5", skipped=True, started_by="manual"
+        )
+        page = core.watch.events_page(str(repo), "r5")
+        self.assertEqual((page["events"], page["outcome"]), ([], "done"))
+        with self.assertRaises(Invalid):
+            core.watch.events_page(str(repo), "r6")

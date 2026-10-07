@@ -13,7 +13,8 @@ export function workspacesChanged(): void {
   dispatchEvent(new Event("cos-workspaces"));
 }
 
-const BOARD_FACTS = ["step.", "integration.", "hold.", "rounds.", "estimate.", "retake.", "answer.", "shortlist.", "mode.", "unit."];
+// Facts that change no unit; a board read is the dearest read there is.
+const NOT_BOARD = ["agent-run.", "chat-turn."];
 
 // The stream carries what the app does; a pull request merged or CI finished on GitHub reaches
 // the board only through a slow refresh.
@@ -41,8 +42,7 @@ export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading:
     // `key` stands for the list of workspaces.
   }, [key, tick]);
 
-  // Every fact but an agent run's and a chat turn's: those change no unit, and a board read is the dearest read there is.
-  useChanges(BOARD_FACTS, () => setTick((t) => t + 1));
+  useChanges([""], () => setTick((t) => t + 1), "", 400, NOT_BOARD);
   useEffect(() => {
     const on = () => ws.reload();
     addEventListener("cos-workspaces", on);

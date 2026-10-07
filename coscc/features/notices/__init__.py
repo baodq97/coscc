@@ -100,7 +100,8 @@ def _agent_end(record: dict[str, Any], outcome: str, where: str) -> tuple[str, s
     nothing."""
     if record.get("started_by") not in TRIGGERS or not record.get("agent"):
         return None
-    if record.get("skipped") or outcome == "cancelled":
+    # A run the app cut short says nothing here: a restart, or a pause at its ceiling (`agent-off`).
+    if record.get("skipped") or outcome in ("cancelled", "paused-budget"):
         return None
     # A follow-up question to a run (`ask`, `parent_run`) is no run of the agent's own.
     if record.get("stage") == "ask" or record.get("parent_run"):
