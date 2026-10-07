@@ -3,7 +3,7 @@
 // as it would then stand before writing anything. The next run uses what was saved.
 
 import { useState, type ReactNode } from "react";
-import type { AgentPage as Page, AgentRow, CatalogTool, RunGroup } from "../api.gen";
+import type { AgentPage as Page, AgentRow, CatalogTool, RunGroup, RunView } from "../api.gen";
 import { api, ApiError } from "../lib/api";
 import { refreshPacks } from "../lib/pack";
 import { ago, modelName, money, unitCode, unitTitle } from "../lib/format";
@@ -821,6 +821,20 @@ function settingWords(s: RunGroup["settings"][number]): string {
   return s.new == null ? `${s.field} reset` : `${s.field} edited`;
 }
 
+const STARTED = { leif: "Run by Leif", schedule: "Scheduled run", event: "Run on an event", manual: "Run by you", person: "Run by you", autopilot: "Run by the autopilot" } as Record<string, string>;
+
+/** One run's row: where it opens (only a run with a kept log, or its unit), and what it says. A
+ * skip and a run without a log are not links. */
+export function runRow(r: RunView, ws: string): { to: string; code: string; title: string; muted: boolean } {
+  const n = Number(r.unit.slice(0, 4));
+  const code = r.unit ? unitCode(ws, n) : "—";
+  if (r.skipped) return { to: "", code, title: `Skipped — ${r.detail || "nothing to do"}`, muted: true };
+  const title = r.unit ? unitTitle(r.unit) : (STARTED[r.started_by] ?? "Run");
+  if (r.run) return { to: `/run/${ws}/${r.run}`, code, title, muted: false };
+  if (r.unit) return { to: `/unit/${ws}/${n}`, code, title, muted: false };
+  return { to: "", code, title: `${title} — no log kept`, muted: true };
+}
+
 function Runs({ a, page, names }: { a: AgentRow; page: Page; names: Record<string, string> }) {
   if (!a.groups.length)
     return (
@@ -855,17 +869,22 @@ function Runs({ a, page, names }: { a: AgentRow; page: Page; names: Record<strin
             </div>
           )}
           {g.runs.map((r) => {
-            const n = Number(r.unit.slice(0, 4));
-            const ws = names[r.workspace] ?? "";
-            return (
-              <Link key={r.workspace + r.unit + r.at} to={r.unit ? `/unit/${ws}/${n}` : "/runs"} className="lrow">
-                <span className="id">{r.unit ? unitCode(ws, n) : "—"}</span>
-                <span className="t">{r.unit ? unitTitle(r.unit) : "no unit"}</span>
+            const row = runRow(r, names[r.workspace] ?? "");
+            const body = (
+              <>
+                <span className="id">{row.code}</span>
+                <span className="t" style={row.muted ? { color: "var(--text-3)", fontWeight: 400 } : undefined}>{row.title}</span>
                 <span className="meta">
                   {r.outcome !== "done" && <Chip square tone="red">{r.outcome}</Chip>}
                   {r.cost_usd != null ? money(r.cost_usd) : ""} · {ago(r.at)}
                 </span>
-              </Link>
+              </>
+            );
+            const key = r.workspace + r.unit + r.at;
+            return row.to ? (
+              <Link key={key} to={row.to} className="lrow">{body}</Link>
+            ) : (
+              <div key={key} className="lrow">{body}</div>
             );
           })}
         </div>

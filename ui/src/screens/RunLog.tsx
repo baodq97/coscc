@@ -78,7 +78,7 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
                   {unitCode(workspace, number)} {unitTitle(page.unit)}
                 </Link>
               ) : (
-                "No unit: a run of the workspace."
+                `No unit: a run of the workspace${page.started_by ? `, started by ${page.started_by}` : ""}.`
               )}{" "}
               {page.status === "running" ? <Chip tone="accent">running</Chip> : null}
             </>

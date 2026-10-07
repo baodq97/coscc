@@ -16,7 +16,7 @@ import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
 import { attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
-import { changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
+import { runRow, changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
 import { fieldLabel, isEmpty, itemLine } from "../screens/UnitPage";
 import { inboxView } from "../screens/Inbox";
 import { featureView } from "../screens/Feature";
@@ -624,5 +624,22 @@ describe("work and needs you", () => {
     expect(modelOptions("claude-sonnet-5-5[1m]", "Default").find((o) => o.value === "claude-sonnet-5-5[1m]")?.label).toBe("Sonnet 5.5");
     expect(modelOptions("my-model", "Default").map((o) => o.value)).toContain("my-model");
     expect(modelOptions(undefined, "Default")[0]).toEqual({ value: "", label: "Default" });
+  });
+});
+
+describe("runRow", () => {
+  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "" };
+  it("opens the log of a unitless run and names who started it", () => {
+    expect(runRow({ ...run, run: "abc", started_by: "leif" }, "ws")).toMatchObject({ to: "/run/ws/abc", title: "Run by Leif" });
+    expect(runRow({ ...run, run: "abc", started_by: "schedule" }, "ws").title).toBe("Scheduled run");
+  });
+  it("makes a skip a muted line, not a link", () => {
+    expect(runRow({ ...run, skipped: true, detail: "nothing new" }, "ws")).toMatchObject({ to: "", title: "Skipped — nothing new", muted: true });
+  });
+  it("says a run with no kept log has none", () => {
+    expect(runRow(run, "ws")).toMatchObject({ to: "", title: "Run — no log kept", muted: true });
+  });
+  it("sends a unit's run without a log to its unit", () => {
+    expect(runRow({ ...run, unit: "0007_a-thing" }, "ws").to).toBe("/unit/ws/7");
   });
 });
