@@ -70,6 +70,12 @@ class OnlyImplAndOnlyAutonomous(unittest.TestCase):
         """The grader's `verdict` and the scan's `proposal` reach the app only through `submit`."""
         self.assertTrue(row_for("outcome").submits)
         self.assertTrue(row_for("scan").submits)
+        self.assertTrue(row_for("dagaz").submits)
+        # Every kind a row may declare reaches the app through `submit`, but a reply read as it
+        # is and a helper's: a new kind left out here is a session that can hand back nothing.
+        from coscc.agent import pack
+
+        self.assertEqual(set(policy.SUBMIT_KINDS), set(pack.OUTPUT_KINDS) - {"reply", "helper"})
 
     def test_impl_writes_its_own_artifact_and_prose_stages_do_not(self):
         self.assertFalse(IMPL.app_writes_artifact)

@@ -96,7 +96,7 @@ _GIT_CONFIG_ROAD = re.compile(
 )
 
 # The `output.kind`s whose run hands back an object through `submit`.
-SUBMIT_KINDS = ("artifact", "review", "session", "proposal", "verdict")
+SUBMIT_KINDS = ("artifact", "review", "session", "proposal", "verdict", "draft")
 # The fewest turns such a step gets: a call to `submit` ends a turn, and a refused object is
 # submitted again after one more turn, so four holds a call, a refusal, a second call and the
 # reply. Chosen, not measured.
