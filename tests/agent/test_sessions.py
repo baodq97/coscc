@@ -444,6 +444,13 @@ class OptionsCarryTheKnobs(unittest.TestCase):
             hour = _options(Config(), "/p", None, tools=["Read"], cache_hour=True).env
         self.assertEqual((plain[sessions.CACHE_HOUR_ENV], hour[sessions.CACHE_HOUR_ENV]), ("", "1"))
 
+    def test_a_tool_call_may_wait_past_leifs_ask_agent(self):
+        from coscc.runner import triggers
+
+        env = _options(Config(), "/p", None, tools=["Read"]).env
+        self.assertEqual(env[sessions.TOOL_TIMEOUT_ENV], str(sessions.TOOL_TIMEOUT_MS))
+        self.assertGreater(sessions.TOOL_TIMEOUT_MS / 1000, triggers.ASK_WAIT)
+
     # One screenshot is one stdout line; every session gets the same ceiling on it.
 
     def test_the_installed_sdk_has_a_max_buffer_size_field(self):

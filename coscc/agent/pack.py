@@ -76,6 +76,9 @@ NAME_MAX = 24
 GLYPH_MAX = 2
 LINE_MAX = 200
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
+# Names no row takes, in any case: the runes of the stages the app runs with no row of their own
+# (pull request, ship) and a name retired with its agent. A row's own name is taken already.
+RESERVED_NAMES = {"Ansuz": "the pull-request stage", "Othala": "the ship stage", "Jera": "retired"}
 
 POLICIES = ("allow", "ask", "off")
 # A row a trigger starts may hold Bash only inside Claude Code's OS sandbox:
@@ -271,6 +274,8 @@ def _check_identity(
         out.append(
             f"name must be 1 to {NAME_MAX} ASCII letters, digits or hyphens, starting with a letter"
         )
+    elif reserved := next((n for n in RESERVED_NAMES if n.lower() == name.lower()), None):
+        out.append(f"name: {reserved} is reserved ({RESERVED_NAMES[reserved]}): take another")
     elif rows and any(
         str(r.get("name") or "").lower() == name.lower() for k, r in rows.items() if k != key
     ):
@@ -1549,21 +1554,27 @@ def owner_fields(key: str) -> tuple[dict[str, Any], str]:
 
 
 def write(
-    key: str, field: str, value: Any, catalog: Mapping[str, str] | None = None
+    key: str,
+    field: str,
+    value: Any,
+    catalog: Mapping[str, str] | None = None,
+    also: Mapping[str, Any] | None = None,
 ) -> tuple[Any, Any]:
     """Set `field` of `key` in the owner's pack: a frontmatter key, `body`, or `skill:<name>` (the
-    text of a skill the row names, for every row naming it). On another pack's row `None`, or that
-    pack's value, resets it; on a whole row of the owner's own `None` removes the key. The row is
-    checked as it would then stand, with `catalog` (`check`); a reason is a `ValueError` and
-    nothing is written. `(old, new)` effective values."""
+    text of a skill the row names, for every row naming it), and with it the frontmatter keys of
+    `also`, checked together (a chain's `trigger` and its `default: off`). On another pack's row
+    `None`, or that pack's value, resets it; on a whole row of the owner's own `None` removes the
+    key. The row is checked as it would then stand, with `catalog` (`check`); a reason is a
+    `ValueError` and nothing is written. `(old, new)` effective values of `field`."""
     found = row(key)
     if found is None:
         raise ValueError(f"no such agent: {key} (use one of {', '.join(rows())})")
-    if field.startswith(SKILL):
+    if field.startswith(SKILL) and not also:
         return _write_skill(found, field.removeprefix(SKILL), value)
-    if field not in (*KEYS, BODY):
+    if field not in (*KEYS, BODY) or any(f not in KEYS for f in also or {}):
         raise ValueError(
-            f"{field}: no such key (use one of {', '.join((*KEYS, BODY))}, {SKILL}<name>)"
+            f"{field}: no such key (use one of {', '.join((*KEYS, BODY))}, {SKILL}<name>; "
+            "saved with another, a frontmatter key)"
         )
     own = bool(found["own"])
     base = {"key": key} if own else found["builtin"]
@@ -1574,16 +1585,22 @@ def write(
             raise ValueError("the body is text")
         same = not own and value is not None and value.strip() == str(base.get(BODY) or "")
         body = "" if value is None or same else value
-    elif value is None or (not own and value == base.get(field)):
-        fields.pop(field, None)
-    else:
-        fields[field] = value
+    for f, v in (({} if field == BODY else {field: value}) | dict(also or {})).items():
+        if v is None or (not own and v == base.get(f)):
+            fields.pop(f, None)
+        else:
+            fields[f] = v
     after = {**_fields(base), **fields, **({BODY: body.strip()} if body.strip() else {})}
     others = {k: _fields(r) for k, r in rows().items() if k != key}
     reasons = check(after, catalog, {**others, key: after})
     # A stage's rules are its skills, or the body of a row no built-in ships (`prompt.skill_for`).
     bare = found["pack"] == manifest()["name"] or not str(after.get(BODY) or "").strip()
-    if field in ("skills", BODY) and not after.get("skills") and bare and (used := naming(key)):
+    if (
+        {field, *(also or {})} & {"skills", BODY}
+        and not after.get("skills")
+        and bare
+        and (used := naming(key))
+    ):
         reasons.append(f"skills: {key} runs in {', '.join(used)}, so it needs a skill")
     if reasons:
         raise ValueError("; ".join(reasons))

@@ -276,9 +276,10 @@ async def get_agent_prompt(key: str, request: Request) -> PromptPreview:
 
 @router.post("/api/agents/field")
 async def set_agent_field(request: Request) -> AgentPage:
-    """`{key, field, value}` saves one part of one agent's row in the owner's layer: a frontmatter
-    key whole, `body`, or `skill:<name>`; `value` `null` puts the built-in's back. A row that would
-    not pass its checks is a 400 naming every reason, and nothing is written.
+    """`{key, field, value, also?}` saves one part of one agent's row in the owner's layer: a
+    frontmatter key whole, `body`, or `skill:<name>`; `value` `null` puts the built-in's back;
+    `also` holds frontmatter keys saved with it, checked as one. A row that would not pass its
+    checks is a 400 naming every reason, and nothing is written.
 
     Whoever holds the password or a session can give any agent another model, larger ceilings,
     another prompt or more of the catalog's tools, never past the critical calls every session is
@@ -287,7 +288,11 @@ async def set_agent_field(request: Request) -> AgentPage:
     """
     body = await kernel.body(request)
     return _core(request).agents.set_agent_field(
-        body.get("key"), body.get("field"), body.get("value"), cwd=str(body.get("cwd") or "")
+        body.get("key"),
+        body.get("field"),
+        body.get("value"),
+        cwd=str(body.get("cwd") or ""),
+        also=body.get("also"),
     )
 
 

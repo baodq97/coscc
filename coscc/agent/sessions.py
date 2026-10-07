@@ -97,9 +97,14 @@ def child_env(
     if bash:
         env.update(FOREGROUND_ENV)
     env[CACHE_HOUR_ENV] = "1" if cache_hour else ""
+    env[TOOL_TIMEOUT_ENV] = str(TOOL_TIMEOUT_MS)
     return env
 
 
+# How long the CLI waits on one MCP tool call, in ms: past Leif's `ask_agent`, which waits up to
+# 10 minutes for the run it starts (`triggers.ASK_WAIT`), so the CLI never gives up first.
+TOOL_TIMEOUT_ENV = "MCP_TOOL_TIMEOUT"
+TOOL_TIMEOUT_MS = 15 * 60 * 1000
 # The CLI's switch for an hour-long prompt cache.
 CACHE_HOUR_ENV = "ENABLE_PROMPT_CACHING_1H"
 

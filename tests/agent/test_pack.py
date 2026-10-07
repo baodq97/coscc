@@ -669,6 +669,41 @@ class TriggersAreChecked(unittest.TestCase):
         # From below too: putting b after scan, when c and d already follow it.
         self.assertIn("not 3", self.chain(b, c, d))
 
+    def test_a_chain_and_its_default_are_one_write(self):
+        pack.write("scan", "default", "on")
+        chain = {"event": {"name": "agent-run.ended", "from": "outcome"}, "manual": True}
+        with self.assertRaises(ValueError):
+            pack.write("scan", "trigger", chain)
+        # Refused together: neither is saved.
+        with self.assertRaises(ValueError):
+            pack.write(
+                "scan",
+                "trigger",
+                {**chain, "event": {**chain["event"], "from": "x"}},
+                None,
+                {"default": "off"},
+            )
+        self.assertEqual((pack.row("scan")["default"], pack.after_of(pack.row("scan"))), ("on", ""))
+        pack.write("scan", "trigger", chain, None, {"default": "off"})
+        self.assertEqual(
+            (pack.row("scan")["default"], pack.after_of(pack.row("scan"))), ("off", "outcome")
+        )
+        # Undone with its default back, in one write too.
+        pack.write("scan", "trigger", None, None, {"default": "on"})
+        self.assertEqual((pack.row("scan")["default"], pack.after_of(pack.row("scan"))), ("on", ""))
+        with self.assertRaises(ValueError):
+            pack.write("scan", "trigger", chain, None, {"body": "x"})
+
+    def test_a_reserved_name_is_refused_in_any_case(self):
+        for name in ("Ansuz", "othala", "JERA"):
+            self.assertIn("is reserved", self.reasons(_scan(name=name)), name)
+            with self.assertRaises(ValueError):
+                pack.write("scan", "name", name)
+        # Neighbours stay open: a name holding one, and a row's own name kept.
+        self.assertEqual(self.reasons(_scan(name="Ansuz2")), "")
+        self.assertEqual(self.reasons(_scan(name="Sowilo")), "")
+        self.assertIn("is another agent's", self.reasons(_scan(name="tiwaz")))
+
     def test_an_engine_mixed_with_others(self):
         said = self.reasons(_scan(trigger={"engine": "estimate", "manual": True}, default=None))
         self.assertIn("an engine row has no other trigger", said)
