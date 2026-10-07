@@ -61,6 +61,7 @@ class _Core(unittest.IsolatedAsyncioTestCase):
             ws=SimpleNamespace(
                 check=lambda cwd: cwd,
                 key=lambda cwd: cwd,
+                name=lambda cwd: "proj",
                 journal=lambda: self.journal,
                 unit_meta=lambda: None,
                 all=lambda: {"paths": [self.ws]},
@@ -186,6 +187,19 @@ class APressRunsTheRow(_Core):
         await self.settle()
         self.assertEqual(len(self.given), 1)
 
+    async def test_a_held_run_is_listed_with_its_id_and_the_bus_says_when_it_starts_and_ends(self):
+        self.found = found(1)
+        heard = []
+        self.core.bus.watch(lambda e: heard.append((e.name, e.payload["run"])))
+        run = triggers.start(self.core, "scan", self.ws, by="manual")
+        [held] = triggers.running()
+        self.assertEqual((held["agent"], held["workspace"], held["run"]), ("scan", self.ws, run))
+        self.gate.set()
+        await self.settle()
+        self.assertEqual(triggers.running(), [])
+        self.assertEqual(heard, [("agent-run.started", run), ("agent-run.ended", run)])
+        self.assertTrue(self.ends()[-1]["name"])
+
     async def test_the_daily_cap_and_a_row_with_no_such_trigger_are_refused(self):
         self.found = found(1)
         self.core.autopilot.today = lambda cwd: (120.0, 120.0)
@@ -305,6 +319,7 @@ class DagazDraftsFromWords(_Core):
         )
         await self.settle()
         self.assertIn("/agents?draft=", said["content"][0]["text"])
+        self.assertRegex(said["content"][0]["text"], r"\[live run\]\(/run/proj/[0-9a-f]{32}\)")
         self.assertIn("Docs changes", self.given[0].prompt)
 
 

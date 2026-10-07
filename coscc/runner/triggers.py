@@ -54,9 +54,18 @@ STATE_KIND = "agent-state"
 # Leif's tool, on the chat's own `cos` server.
 LEIF_TOOL = policy.RUN_AGENT_TOOL.rsplit("__", 1)[-1]
 
-# The (workspace, agent) pairs a run of this process holds now, and the tasks `start` made.
-_RUNNING: set[tuple[str, str]] = set()
+# The (workspace, agent) pairs a run of this process holds now, each with its run id and start
+# time, and the tasks `start` made.
+_RUNNING: dict[tuple[str, str], tuple[str, str]] = {}
 _TASKS: set[asyncio.Task] = set()
+
+
+def running() -> list[dict[str, str]]:
+    """The runs held now: `{workspace, agent, run, started}`."""
+    return [
+        {"workspace": ws, "agent": key, "run": run, "started": at}
+        for (ws, key), (run, at) in _RUNNING.items()
+    ]
 
 
 def _trigger(found: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -152,8 +161,9 @@ def start(
     caller may follow before the run has begun."""
     loop = asyncio.get_running_loop()
     ws = check(core, key, workspace, unit, by=by, reason=reason, text=text)
-    _RUNNING.add((ws, key))
     run_id = uuid.uuid4().hex
+    _RUNNING[ws, key] = (run_id, now())
+    core.bus.publish("agent-run.started", {"workspace": ws, "agent": key, "run": run_id})
     task = loop.create_task(_held(core, key, workspace, ws, unit, by, reason, text, run_id))
     _TASKS.add(task)
     task.add_done_callback(_done)
@@ -186,8 +196,10 @@ async def run(
     """One run of the row `key` in `workspace` (on `unit` for a row that reads one): its `run` id,
     `""` when it was `skipped` (its input empty, no session, $0). `Invalid` from `check`."""
     ws = check(core, key, workspace, unit, by=by, reason=reason, text=text)
-    _RUNNING.add((ws, key))
-    return await _held(core, key, workspace, ws, unit, by, reason, text)
+    run_id = uuid.uuid4().hex
+    _RUNNING[ws, key] = (run_id, now())
+    core.bus.publish("agent-run.started", {"workspace": ws, "agent": key, "run": run_id})
+    return await _held(core, key, workspace, ws, unit, by, reason, text, run_id)
 
 
 async def _held(
@@ -205,7 +217,8 @@ async def _held(
     try:
         return await _run(core, key, cwd, ws, unit, by, reason, text, run_id)
     finally:
-        _RUNNING.discard((ws, key))
+        run, _ = _RUNNING.pop((ws, key), ("", ""))
+        core.bus.publish("agent-run.ended", {"workspace": ws, "agent": key, "run": run})
         core.updater.job_ended()
 
 
@@ -265,10 +278,11 @@ async def _run(
 
     async def finish(got: Run) -> Mapping[str, Any]:
         """What it handed back kept by kind, and how far it read, before its `end`."""
+        name = str(found_row.get("name") or key)
         if got.status != "done":
-            return {"data_until": since} if since else {}
+            return {"name": name, **({"data_until": since} if since else {})}
         until = taken[-1].at if taken else since
-        out: dict[str, Any] = {"data_until": until} if until else {}
+        out: dict[str, Any] = {"name": name, **({"data_until": until} if until else {})}
         if kind == "proposal":
             items = list((got.output or {}).get("proposals") or [])
             keep, rejected = proposals.kept(items, set(sources) if found else None)
@@ -647,7 +661,10 @@ async def leif_call(core: Core, cwd: str, args: Mapping[str, Any]) -> Reply:
         codes = ", ".join(getattr(e, "reasons", ()) or ())
         said = f"refused{f' ({codes})' if codes else ''}: {e}"
         return {"content": [{"type": "text", "text": said}], "is_error": True}
-    said = f"started {key}, run {run_id}; its output lands in the app"
+    said = (
+        f"started {key}, run {run_id}; its output lands in the app; "
+        f"[live run](/run/{core.ws.name(cwd)}/{run_id})"
+    )
     if (pack.row(key) or {}).get("output", {}).get("kind") == "draft":
         said += f"; the owner reads and saves its draft at /agents?draft={run_id}"
     return {"content": [{"type": "text", "text": said}]}
