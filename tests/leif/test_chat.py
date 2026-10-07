@@ -182,7 +182,7 @@ class EachReadAnswersFromTheAppsOwnState(_App):
         with mock.patch.object(chat.triggers, "last_words", lambda d, run: ""):
             again = await chat.read_runs(self.core, self.cwd, {"agent": "scan"})
         self.assertIn("run t-new", again.splitlines()[1])
-        self.assertIn("asked 1 question(s) since", again.splitlines()[1])
+        self.assertIn("the owner asked this run 1 follow-up question(s) afterwards, already answered", again.splitlines()[1])
         none = await chat.read_runs(self.core, self.cwd, {"agent": "dagaz"})
         self.assertEqual(none.splitlines()[1], "- none")
 
