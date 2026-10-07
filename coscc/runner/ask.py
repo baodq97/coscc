@@ -236,9 +236,9 @@ async def _decide(
     `plan.why`, the reason a new session is opened. `head` `None` leaves the code it read
     unasked (a look at the thread, every 2 s while one is answered: no git)."""
 
-    # A session stopped mid-turn is not gone on in: what it did last may be half done.
+    # A session stopped or failed mid-turn is not gone on in: what it did last may be half done.
     def kept(e: Mapping[str, Any]) -> bool:
-        return bool(e.get("session_id")) and e.get("outcome") != "cancelled"
+        return bool(e.get("session_id")) and e.get("outcome") not in ("cancelled", "failed")
 
     last: tuple[Mapping[str, Any], Mapping[str, Any]] | None = (
         (start, end) if plan.triggered and kept(end) else None
@@ -252,6 +252,8 @@ async def _decide(
             if not plan.triggered
             else "it was stopped before it ended"
             if end.get("outcome") == "cancelled"
+            else "it failed before it ended"
+            if end.get("outcome") == "failed"
             else "it kept no session"
         )
         return
