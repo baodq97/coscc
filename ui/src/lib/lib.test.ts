@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
 import { match } from "./router";
-import { findUnit, needsYou, proposalLink, type PlacedUnit } from "./boards";
+import { findUnit, needsYou, failedLink, proposalLink, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { fill, readLines } from "./api";
@@ -16,7 +16,8 @@ import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
-import { runRow, changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
+import { builtinOf, changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
+import { runRow, resultWords, shallowWords } from "../screens/AgentActivity";
 import { fieldLabel, isEmpty, itemLine } from "../screens/UnitPage";
 import { inboxView } from "../screens/Inbox";
 import { featureView } from "../screens/Feature";
@@ -228,11 +229,11 @@ describe("agents", () => {
   it("says when an agent runs, and what needs a look first", () => {
     const helper = row({ key: "scout", group: "helper", row: { name: "Scout" } });
     const impl = row({ key: "impl", row: { name: "Uruz", trigger: { state: "impl" }, helpers: ["scout"] } });
-    expect(triggerWords(impl)).toBe("on state impl");
+    expect(triggerWords(impl)).toBe("when a unit reaches impl");
     expect(triggerWords(helper, [impl, helper])).toBe("started by Uruz");
     expect(triggerWords(row({ row: { trigger: { engine: "chat" } } }))).toBe("when you talk to Leif");
-    expect(triggerWords(row({ group: "triggered", row: { trigger: { schedule: { hours: 24 }, manual: true, leif: true } } }))).toBe("every 24 h, on request");
-    expect(triggerWords(row({ group: "triggered", row: { trigger: { event: { name: "unit.shipped", after_hours: 168 }, manual: true } } }))).toBe("7 days after a ship, on request");
+    expect(triggerWords(row({ group: "triggered", row: { trigger: { schedule: { hours: 24 }, manual: true, leif: true } } }))).toBe("daily, when you or Leif ask");
+    expect(triggerWords(row({ group: "triggered", row: { trigger: { event: { name: "unit.shipped", after_hours: 168 }, manual: true } } }))).toBe("7 days after a ship, when you or Leif ask");
     expect(attention(row({ problems: ["bad"], chip: "failed" }))?.label).toBe("Cannot run");
     expect(attention(row({ chip: "costly" }))?.tone).toBe("amber");
     expect(attention(row({}))).toBeNull();
@@ -631,7 +632,7 @@ describe("work and needs you", () => {
 });
 
 describe("runRow", () => {
-  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "", made: null, session: false };
+  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "", made: null, session: false, verdict: "", refused: null, helpers: null, shallow: false };
   it("opens the log of a unitless run and names who started it", () => {
     expect(runRow({ ...run, run: "abc", started_by: "leif" }, "ws")).toMatchObject({ to: "/run/ws/abc", title: "Run by Leif" });
     expect(runRow({ ...run, run: "abc", started_by: "schedule" }, "ws").title).toBe("Run by the schedule");
@@ -640,10 +641,41 @@ describe("runRow", () => {
     expect(runRow({ ...run, skipped: true, detail: "nothing new" }, "ws")).toMatchObject({ to: "", title: "Skipped — nothing new", muted: true });
   });
   it("says a run with no kept log has none", () => {
-    expect(runRow(run, "ws")).toMatchObject({ to: "", title: "Run — no log kept", muted: true });
+    expect(runRow(run, "ws")).toMatchObject({ to: "", title: "An earlier run — no log kept", muted: true });
   });
   it("sends a unit's run without a log to its unit", () => {
     expect(runRow({ ...run, unit: "0007_a-thing" }, "ws").to).toBe("/unit/ws/7");
+  });
+});
+
+describe("builtinOf", () => {
+  const skill = (over: object) => ({ name: "write-spec", text: "mine", builtin: "", edited: false, ...over });
+  it("keeps an unedited part as the built-in's, so a reset of it is a no-op", () => {
+    const got = builtinOf({ row: { model: { id: "m" }, ceilings: { usd: 5 } }, builtin: { ceilings: { usd: 2 } }, edited: ["ceilings"], skills: [skill({}), skill({ name: "b", text: "new", builtin: "old", edited: true })] } as never);
+    expect(got.model).toEqual({ id: "m" });
+    expect(got.ceilings).toEqual({ usd: 2 });
+    expect(got["skill:write-spec"]).toBe("mine");
+    expect(got["skill:b"]).toBe("old");
+  });
+  it("leaves out a part the owner added that the built-in lacks", () => {
+    const got = builtinOf({ row: { description: "mine" }, builtin: {}, edited: ["description"], skills: [] } as never);
+    expect("description" in got).toBe(false);
+  });
+});
+
+describe("what a run made", () => {
+  const run = { made: null, verdict: "", refused: null, shallow: false } as unknown as Parameters<typeof resultWords>[0];
+  it("says proposed N, a verdict, or nothing", () => {
+    expect(resultWords({ ...run, made: 2 })).toBe("proposed 2");
+    expect(resultWords({ ...run, made: 0 })).toBe("proposed nothing");
+    expect(resultWords({ ...run, verdict: "not-met" })).toBe("verdict: not met");
+    expect(resultWords(run)).toBe("");
+  });
+  it("flags a run that was refused calls or left a criterion unclear", () => {
+    expect(shallowWords({ ...run, refused: 1 })).toBe("1 call was refused");
+    expect(shallowWords({ ...run, refused: 3 })).toBe("3 calls were refused");
+    expect(shallowWords({ ...run, verdict: "unclear" })).toBe("left a criterion unclear");
+    expect(shallowWords(run)).toBe("");
   });
 });
 
@@ -679,13 +711,25 @@ describe("until and statusWords", () => {
   const row = { on: true, on_in: ["a", "b"], off_reason: "", last: null, next_at: null } as unknown as AgentRow;
   it("tells on, last and next in one line", () => {
     const said = statusWords({ ...row, last: { at: "", made: 3 } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" }, "a");
-    expect(said).toMatch(/^On here \(also on in b\) · ran .*, made 3 · next in \d+ d$/);
+    expect(said).toMatch(/^On here \(also on in b\) · ran .*, and made 3 · next in \d+ d$/);
   });
   it("says why an agent is off and that it never ran", () => {
     expect(statusWords({ ...row, on: false, on_in: [], off_reason: "a run stopped at its ceiling" }, "a")).toBe("Off here: a run stopped at its ceiling · never ran");
   });
-  it("says nothing of on or off for an agent no schedule runs", () => {
-    expect(statusWords({ ...row, on: null }, "a")).toBe("");
+  it("tells a stage agent's last run and says it is always on", () => {
+    expect(statusWords({ ...row, on: null }, "a")).toBe("Always on · never ran");
+    expect(statusWords({ ...row, on: null, last: { at: "", made: null } as AgentRow["last"] }, "a")).toMatch(/^Always on · ran /);
+  });
+  it("says running now, not never ran or next, while the first run is in flight", () => {
+    const said = statusWords({ ...row, running: { run: "r", started: "" }, next_at: "2999-01-01T00:00:00Z" }, "a");
+    expect(said).toBe("On here (also on in b) · running now");
+  });
+});
+
+describe("failedLink", () => {
+  it("opens the run, or the agent's page in its workspace when no log was kept", () => {
+    expect(failedLink({ workspace: "my proj", agent: "scan", run: "r1" })).toBe("/run/my%20proj/r1");
+    expect(failedLink({ workspace: "my proj", agent: "scan", run: "" })).toBe("/agents/scan?ws=my%20proj");
   });
 });
 
@@ -697,6 +741,9 @@ describe("proposalLink", () => {
 
 describe("needsYou", () => {
   const unit = (over: object) => ({ why: "", phase: "full", open: 0, ...over }) as unknown as PlacedUnit;
+  it("counts a failed agent run beside the proposals", () => {
+    expect(needsYou([], [1, 2], [{}]).total).toBe(3);
+  });
   it("counts the units that need a person and the proposals once, for every screen", () => {
     const got = needsYou([unit({ open: 2 }), unit({ paused: { at: "impl" } }), unit({}), unit({ why: "dropped", open: 1 })], ["p1", "p2", "p3"]);
     expect(got.units.length).toBe(2);

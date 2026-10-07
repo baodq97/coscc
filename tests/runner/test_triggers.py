@@ -166,6 +166,14 @@ class APressRunsTheRow(_Core):
         (end,) = self.ends()
         self.assertEqual((end["data_until"], end["proposals"]), (self.found[-1].at, 1))
 
+    async def test_the_preview_is_the_prompt_a_run_is_given_and_starts_nothing(self):
+        self.found = found(2)
+        before = len(self.given)
+        shown = await triggers.preview(self.core, "scan", self.ws, self.ws)
+        self.assertEqual(len(self.given), before)
+        await self.go("scan", self.ws, by="manual")
+        self.assertEqual(shown, self.given[-1].prompt)
+
     async def test_the_next_run_reads_past_where_the_last_stopped(self):
         self.found = found(2)
         await self.go("scan", self.ws, by="manual")
@@ -673,6 +681,23 @@ class AnOffPackStartsNothing(_Core):
         with self.assertRaises(Invalid) as e:
             await self.go("look", self.ws, by="manual")
         self.assertEqual(e.exception.reasons, ("agent-invalid",))
+
+
+class ATriggeredRowIsHandedOnlyTheDataItsPromptReads(unittest.TestCase):
+    def test_what_the_page_offers_is_what_the_prompt_reads(self):
+        from coscc.units import contracts
+
+        base = contracts.input_of("scan")
+
+        def prompt(data):
+            declared = base | {"data": data, "artifacts": [], "outputs": []}
+            return triggers.prompt_of(declared, [], [], None, catalog="CAT")[0]
+
+        empty = prompt([])
+        # The idea comes in through `compose`, from the unit, when the row declares it.
+        for key in (k for k in contracts.DATA if k != "idea"):
+            read = prompt([key]) != empty
+            self.assertEqual(read, key in contracts.TRIGGERED_DATA, key)
 
 
 class ASandboxedRowIsToldItsBash(unittest.TestCase):

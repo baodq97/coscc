@@ -1267,6 +1267,24 @@ class Data:
             )
         return events, older
 
+    def step_event_counts(
+        self, runs: list[str], kinds: tuple[str, ...]
+    ) -> dict[str, dict[str, int]]:
+        """For each of `runs`, how many events of each of `kinds` it kept."""
+        out: dict[str, dict[str, int]] = {}
+        with self.connect() as conn:
+            for i in range(0, len(runs), 500):
+                part = runs[i : i + 500]
+                got = conn.execute(
+                    f"SELECT run, kind, COUNT(*) AS n FROM step_events WHERE run IN "
+                    f"({','.join('?' * len(part))}) AND kind IN ({','.join('?' * len(kinds))}) "
+                    "GROUP BY run, kind",
+                    [*part, *kinds],
+                )
+                for r in got:
+                    out.setdefault(r["run"], {})[r["kind"]] = r["n"]
+        return out
+
     def step_event(self, run: str, seq: int) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute(

@@ -4,7 +4,7 @@
 import { useState } from "react";
 import type { Question } from "../api.gen";
 import { api, useResource } from "../lib/api";
-import { allUnits, needsYou, proposalLink, useBoards, useLive, type PlacedUnit } from "../lib/boards";
+import { allUnits, failedLink, needsYou, proposalLink, useBoards, useLive, type PlacedUnit } from "../lib/boards";
 import { liveQuestions, unitState } from "../lib/model";
 import { ago, unitCode, unitTitle } from "../lib/format";
 import { Icon } from "../lib/icons";
@@ -20,9 +20,9 @@ export function inboxView(waiting: number, asked: boolean, found: boolean): "emp
 
 export function Inbox({ workspace, number }: { workspace?: string; number?: string }) {
   const { boards, loading: loadingBoards } = useBoards();
-  const { proposals, loading: loadingLive } = useLive();
+  const { proposals, failed, loading: loadingLive } = useLive();
   const loading = loadingBoards || loadingLive;
-  const needs = needsYou(allUnits(boards), proposals);
+  const needs = needsYou(allUnits(boards), proposals, failed);
   const newest = (a: PlacedUnit, b: PlacedUnit) => b.updated.localeCompare(a.updated);
   const waiting = needs.units.filter((u) => liveQuestions(u) > 0).sort(newest);
   // Units that need a person without a question: a pause at a ceiling, a missing file.
@@ -92,6 +92,25 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
             </div>
           </Link>
         ))}
+        {failed.length > 0 && (waiting.length > 0 || other.length > 0) && (
+          <div className="lgroup" style={{ background: "var(--panel)" }}>
+            Agent runs that failed <span className="n">{failed.length}</span>
+          </div>
+        )}
+        {failed.map((f) => (
+          <Link key={f.workspace + f.agent} to={failedLink(f)} className="ny">
+            <div className="ny-ic">
+              <Icon name="warn" size={15} />
+            </div>
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="row">
+                <span className="ny-t ellipsis" style={{ fontSize: 13 }}>{f.name} failed on {f.workspace}</span>
+                <span className="faint nowrap" style={{ fontSize: 12, marginLeft: "auto" }}>{ago(f.at)}</span>
+              </div>
+              <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{(f.detail || "Open the run to see why.").split("\n")[0]}</div>
+            </div>
+          </Link>
+        ))}
         {proposals.length > 0 && (waiting.length > 0 || other.length > 0) && (
           <div className="lgroup" style={{ background: "var(--panel)" }}>
             Proposals to decide <span className="n">{proposals.length}</span>
@@ -118,9 +137,9 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
         ) : (
           <Empty
             icon="inbox"
-            title={proposals.length ? `${proposals.length} proposal${proposals.length === 1 ? "" : "s"} to decide` : "No question waits for you"}
+            title={proposals.length || failed.length ? `${proposals.length + failed.length} thing${proposals.length + failed.length === 1 ? "" : "s"} to look at` : "No question waits for you"}
           >
-            {proposals.length ? "No question waits for you. Open a proposal to accept or dismiss it on Up next." : "Units that need you are listed on the left."}
+            {proposals.length || failed.length ? "No question waits for you. Open a proposal or a failed run on the left." : "Units that need you are listed on the left."}
           </Empty>
         )}
       </div>

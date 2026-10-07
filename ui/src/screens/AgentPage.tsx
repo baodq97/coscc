@@ -3,29 +3,32 @@
 // as it would then stand before writing anything. The next run uses what was saved.
 
 import { useState, type ReactNode } from "react";
-import type { AgentPage as Page, AgentRow, CatalogTool, RunGroup, RunView } from "../api.gen";
+import type { AgentPage as Page, AgentRow, CatalogTool } from "../api.gen";
 import { api, ApiError } from "../lib/api";
 import { refreshPacks } from "../lib/pack";
 import { sandboxed, sandboxLine, sandboxOf } from "../lib/build";
-import { ago, modelName, startedBy, money, unitCode, unitTitle } from "../lib/format";
+import { modelName, money } from "../lib/format";
 import { Link, navigate } from "../lib/router";
 import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
+import { useResource } from "../lib/api";
 import { useIndex } from "../lib/pack";
 import { AgentGlyph, WorkspaceSwitch, attention, inWorkspace, statusWords, triggerWords, useAgents } from "./Agents";
+import { Activity } from "./AgentActivity";
 
 export const TABS = [
+  { key: "activity", label: "Activity" },
   { key: "configuration", label: "Configuration" },
   { key: "tools", label: "Tools" },
   { key: "io", label: "Input/Output" },
   { key: "trigger", label: "Trigger" },
   { key: "prompt", label: "Prompt & skills" },
-  { key: "runs", label: "Runs & $" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
 const MODELS = ["claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]", "claude-haiku-4-5"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const DATA: Record<string, string> = {
+  catalog: "what agents and processes can be built from",
   idea: "the shared idea",
   siblings: "sibling checkouts",
   mentions: "units this one names",
@@ -99,8 +102,16 @@ export function changedParts(draft: Draft, saved: Record<string, unknown>): stri
   return [...new Set(out)];
 }
 
-export function AgentPage({ name, tab = "configuration" }: { name: string; tab?: string }) {
-  const { ws, list, workspace, cwd, agents } = useAgents();
+/** The built-in's value of each part, from what the page sends: the edited parts hold it, every other part is still the built-in's. */
+export function builtinOf(a: Pick<AgentRow, "row" | "builtin" | "edited" | "skills">): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...a.builtin };
+  for (const [k, v] of Object.entries(a.row)) if (!(k in out) && !a.edited.includes(k)) out[k] = v;
+  for (const s of a.skills) out[`skill:${s.name}`] = s.edited ? s.builtin : s.text;
+  return out;
+}
+
+export function AgentPage({ name, tab = "activity" }: { name: string; tab?: string }) {
+  const { ws, list, workspace, cwd, agents } = useAgents(name);
   const [draft, setDraft] = useState<Draft>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
@@ -128,8 +139,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
 
   const saved: Record<string, unknown> = { ...a.row };
   for (const s of a.skills) saved[`skill:${s.name}`] = s.text;
-  const builtin: Record<string, unknown> = { ...a.builtin };
-  for (const s of a.skills) builtin[`skill:${s.name}`] = s.builtin;
+  const builtin = builtinOf(a);
   const pending = changes(draft, saved);
   const value = (k: string) => (k in draft ? draft[k] : saved[k]);
   // `v` may be a function of the part as it then stands, so two quick edits both land.
@@ -176,14 +186,14 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
     }
   };
   const ctx: Ctx = { a, page, value, edit, saved, builtin, editable: a.editable && !busy, error, cwd, workspace: workspace?.name, setPage: setFresh };
-  const t: Tab = TABS.some((x) => x.key === tab) ? (tab as Tab) : "configuration";
+  const t: Tab = TABS.some((x) => x.key === tab) ? (tab as Tab) : "activity";
   const look = attention(a);
 
   return (
     <div className="page mid agent-page">
-      <div className="row" style={{ gap: 12, alignItems: "flex-start" }}>
+      <div className="agent-head">
         <AgentGlyph a={a} size="xl" />
-        <div className="grow">
+        <div className="agent-head-main">
           <h1 className="title">
             {a.row.name ?? a.key} <span className="faint mono" style={{ fontSize: 13 }}>{a.key}</span>
           </h1>
@@ -196,6 +206,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
             {own ? <Chip square tone="accent">Yours</Chip> : a.edited.length > 0 ? <Chip square tone="accent">{a.edited.length} part{a.edited.length > 1 ? "s" : ""} edited</Chip> : <Chip square tone="plain">as built in</Chip>}
           </div>
         </div>
+        <div className="agent-head-side">
         {own && (
           <div className="row" style={{ gap: 6 }}>
             {asking ? (
@@ -213,6 +224,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
         <div className="agent-spend">
           <b>{money(a.cost_30d)}</b> <span className="faint">in 30 days</span>
           <div className="faint" style={{ fontSize: 12 }}>{a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}</div>
+        </div>
         </div>
       </div>
       {a.group === "triggered" && <Controls {...ctx} />}
@@ -242,7 +254,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
       {t === "io" && <InputOutput {...ctx} />}
       {t === "trigger" && <Trigger {...ctx} />}
       {t === "prompt" && <Prompt {...ctx} />}
-      {t === "runs" && <Runs a={a} page={page} names={Object.fromEntries((ws.data?.workspaces ?? []).map((w) => [w.path, w.name]))} />}
+      {t === "activity" && <Activity a={a} page={page} names={Object.fromEntries((ws.data?.workspaces ?? []).map((w) => [w.path, w.name]))} workspace={workspace?.name ?? ""} />}
 
       {done && pending.length === 0 && !error && (
         <div className="savebar" role="status">
@@ -492,7 +504,7 @@ function Tools(ctx: Ctx) {
   const { a, page } = ctx;
   const tools = (ctx.value("tools") as Record<string, unknown> | undefined) ?? {};
   const output = (ctx.value("output") as { by?: string; kind?: string } | undefined) ?? {};
-  const readsOnly = output.by === "app";
+  const appWrites = output.by === "app";
   const helper = a.group === "helper";
   const helpers = page.rows.filter((r) => r.group === "helper");
   const chosen = (ctx.value("helpers") as string[] | undefined) ?? [];
@@ -504,19 +516,24 @@ function Tools(ctx: Ctx) {
     ctx.edit("tools", next);
   };
   // A row a trigger starts holds Bash only inside the OS sandbox.
-  const choices = (t: CatalogTool) => (triggered && t.name === "Bash" ? ["sandboxed", "off"] : ["allow", "ask", "off"]);
+  // What the row can never hold, from the rule saving it uses (`pack.reads_only`): no one to ask, no writes.
+  const noOneToAsk = a.reads_only;
+  const choices = (t: CatalogTool) => (triggered && t.name === "Bash" ? ["sandboxed", "off"] : noOneToAsk ? ["allow", "off"] : ["allow", "ask", "off"]);
   const why = (t: CatalogTool) =>
-    readsOnly && t.effect !== "read" ? "The app writes this agent's output from its reply, so it holds only reading tools." : helper && t.name === "Agent" ? "A helper starts no helper." : "";
+    appWrites && t.effect !== "read" ? "The app writes this agent's output from its reply, so it holds only reading tools." : helper && t.name === "Agent" ? "A helper starts no helper." : "";
+  const shown = page.catalog.filter((t) => !(noOneToAsk && t.effect !== "read" && t.name !== "Bash" && !tools[t.name]));
   return (
     <>
       <p className="muted" style={{ marginTop: 0 }}>
-        Allow gives the tool to its runs; Ask offers it and refuses every call until a person can be asked; Off leaves it out. No setting here lifts the app's critical blocks.
+        {noOneToAsk
+          ? "This agent starts on its own, so it has no one to ask and only reads: tools that change things are not offered. Allow gives a tool to its runs; Off leaves it out."
+          : "Allow gives the tool to its runs; Ask offers it and refuses every call until a person can be asked; Off leaves it out. No setting here lifts the app's critical blocks."}
       </p>
-      {(readsOnly || helper) && (
-        <p className="muted">{readsOnly ? "The app writes this agent's output from its reply, so it holds only reading tools." : "A helper starts no helper."}</p>
+      {(appWrites || helper) && (
+        <p className="muted">{appWrites ? "The app writes this agent's output from its reply, so it holds only reading tools." : "A helper starts no helper."}</p>
       )}
       <div className="card">
-        {page.catalog.map((t) => {
+        {shown.map((t) => {
           const box = sandboxOf(tools[t.name]);
           const p = box ? "sandboxed" : String(tools[t.name] ?? "off");
           const no = why(t);
@@ -531,7 +548,7 @@ function Tools(ctx: Ctx) {
               <span className="tmeta">
                 <Chip square tone="plain">{EFFECT[t.effect] ?? t.effect}</Chip>
                 <Chip square tone={TIER[t.tier] ?? "plain"}>{t.tier} risk</Chip>
-                {!same(tools[t.name] ?? "off", (a.builtin.tools ?? {})[t.name] ?? "off") && <Chip square tone="accent">edited</Chip>}
+                {!same(tools[t.name] ?? "off", ((ctx.builtin.tools as Record<string, unknown> | undefined) ?? {})[t.name] ?? "off") && <Chip square tone="accent">edited</Chip>}
               </span>
               <span className="seg">
                 {choices(t).map((x) => (
@@ -610,9 +627,9 @@ function InputOutput(ctx: Ctx) {
               ))}
             </Part>
             <Part ctx={ctx} path="input.data" label="The app's data">
-              {Object.entries(DATA).map(([k, words]) => (
-                <label key={k} className="check" title={words}>
-                  <input type="checkbox" checked={input.data.includes(k)} disabled={!ctx.editable} onChange={(e) => set("data", e.target.checked ? [...input.data, k] : input.data.filter((x) => x !== k))} /> {k}
+              {Object.entries(DATA).filter(([k]) => ctx.a.usable_data.includes(k) || input.data.includes(k)).map(([k, words]) => (
+                <label key={k} className="check" title={k}>
+                  <input type="checkbox" checked={input.data.includes(k)} disabled={!ctx.editable} onChange={(e) => set("data", e.target.checked ? [...input.data, k] : input.data.filter((x) => x !== k))} /> {words}
                 </label>
               ))}
             </Part>
@@ -629,8 +646,80 @@ function InputOutput(ctx: Ctx) {
       </div>
       <div className="sec-h">What it hands back</div>
       <div className="card card-b">
-        <JsonPart ctx={ctx} field="output" label="Output" hint="What it submits: its kind, version and fields. A field another stage reads cannot be removed." />
+        <OutputForm ctx={ctx} />
       </div>
+    </>
+  );
+}
+
+const KIND_WORDS: Record<string, string> = {
+  artifact: "A file in the unit's folder",
+  review: "A review round of a pull request",
+  session: "A working session on the branch",
+  proposal: "Proposals for the Backlog",
+  verdict: "A verdict, graded criterion by criterion",
+  draft: "A draft of an agent or a process",
+  reply: "A written reply",
+  helper: "A helper's answer to the agent that started it",
+};
+const WRITER_WORDS: Record<string, string> = {
+  app: "The app writes it from the agent's reply",
+  scratch: "The agent writes it in its scratch folder",
+  session: "The agent commits it on the unit's branch",
+};
+
+/** One field of an output, as a short phrase: its enum values, "a list", or "text". */
+function fieldWords(spec: unknown): string {
+  if (spec && typeof spec === "object") {
+    const o = spec as Record<string, unknown>;
+    if (Array.isArray(o.enum)) return (o.enum as string[]).join(" / ");
+    if (o.list) return "a list";
+  }
+  return "text";
+}
+
+/** What an agent hands back, as a form: its kind and who writes it in words, what it is for, and
+ * its fields; the row's own JSON stays one click away for an agent of yours. */
+function OutputForm({ ctx }: { ctx: Ctx }) {
+  const [raw, setRaw] = useState(false);
+  const out = (ctx.value("output") as { kind?: string; by?: string; purpose?: string; fields?: Record<string, unknown> } | undefined) ?? {};
+  const fields = Object.entries(out.fields ?? {});
+  return (
+    <>
+      <Part ctx={ctx} path="output.kind" label="Kind">
+        <div>{KIND_WORDS[out.kind ?? ""] ?? out.kind ?? "—"}</div>
+      </Part>
+      {out.by && (
+        <Part ctx={ctx} path="output.by" label="Written by">
+          <div>{WRITER_WORDS[out.by] ?? out.by}</div>
+        </Part>
+      )}
+      <Part ctx={ctx} path="output.purpose" label="What it is for" hint="Told to the agent beside its fields.">
+        <input
+          className="input"
+          style={{ width: "100%", maxWidth: 560 }}
+          value={out.purpose ?? ""}
+          disabled={!ctx.editable}
+          onChange={(e) => ctx.edit("output", { ...out, purpose: e.target.value })}
+        />
+      </Part>
+      {fields.length > 0 && (
+        <Part ctx={ctx} path="output.fields" label="Fields" hint="A field another stage reads cannot be removed.">
+          <ul className="fields">
+            {fields.map(([k, v]) => (
+              <li key={k}>
+                <b className="mono">{k}</b> <span className="faint">{fieldWords(v)}</span>
+              </li>
+            ))}
+          </ul>
+        </Part>
+      )}
+      {ctx.a.own && (
+        <div style={{ marginTop: 8 }}>
+          <Button size="sm" kind="ghost" onClick={() => setRaw(!raw)}>{raw ? "Hide the row's JSON" : "Edit as JSON"}</Button>
+          {raw && <JsonPart ctx={ctx} field="output" label="Output" hint="Its kind, version and fields." />}
+        </div>
+      )}
     </>
   );
 }
@@ -820,10 +909,40 @@ function RunNowButton({ a, cwd, workspace }: Ctx) {
   );
 }
 
+/** What a run is handed to work on beside its role: for an agent a trigger starts, the prompt the app builds
+ * from its input now (a preview that starts nothing); for a stage agent, where its input comes from. */
+function Receives({ a, cwd }: Ctx) {
+  const triggered = a.group === "triggered";
+  const got = useResource(triggered && cwd ? "/api/agents/{key}/prompt" : null, { key: a.key, cwd });
+  const input = a.row.input as { artifacts?: string[] } | undefined;
+  return (
+    <>
+      <div className="sec-h">What it receives {triggered && <span className="faint">a preview, not a run</span>}</div>
+      <div className="card card-b">
+        {!triggered ? (
+          <div className="faint">
+            {input?.artifacts?.length
+              ? `The unit's ${input.artifacts.map((n) => n.replace(/\?$/, "")).join(", ")} files, handed whole by the app when a step starts.`
+              : "What the app hands it when its step starts."}{" "}
+            Its role and skills are below.
+          </div>
+        ) : got.state === "error" ? (
+          <div className="field-err">Could not read it: {String((got.error as Error)?.message ?? "")}</div>
+        ) : !got.data ? (
+          <div className="faint">Reading…</div>
+        ) : (
+          <pre className="prompt-preview">{got.data.task || "(nothing but its role)"}</pre>
+        )}
+      </div>
+    </>
+  );
+}
+
 function Prompt(ctx: Ctx) {
   const { a } = ctx;
   return (
     <>
+      <Receives {...ctx} />
       <div className="sec-h">System prompt</div>
       <div className="card card-b">
         <TextPart ctx={ctx} field="body" label="Its role" hint="Given to every run before anything else." rows={6} />
@@ -854,81 +973,5 @@ function TextPart({ ctx, field, label, hint, rows, mono }: { ctx: Ctx; field: st
         onChange={(e) => ctx.edit(field, e.target.value)}
       />
     </Part>
-  );
-}
-
-/** What one setting record says, in words. */
-function settingWords(s: RunGroup["settings"][number]): string {
-  return s.new == null ? `${s.field} reset` : `${s.field} edited`;
-}
-
-
-/** One run's row: where it opens (only a run with a kept log, or its unit), and what it says. A
- * skip and a run without a log are not links. */
-export function runRow(r: RunView, ws: string): { to: string; code: string; title: string; muted: boolean } {
-  const n = Number(r.unit.slice(0, 4));
-  const code = r.unit ? unitCode(ws, n) : "—";
-  if (r.skipped) return { to: "", code, title: `Skipped — ${r.detail || "nothing to do"}`, muted: true };
-  const title = r.unit ? unitTitle(r.unit) : (r.started_by ? `Run by ${startedBy(r.started_by)}` : "Run");
-  if (r.run) return { to: `/run/${ws}/${r.run}`, code, title, muted: false };
-  if (r.unit) return { to: `/unit/${ws}/${n}`, code, title, muted: false };
-  return { to: "", code, title: `${title} — no log kept`, muted: true };
-}
-
-function Runs({ a, page, names }: { a: AgentRow; page: Page; names: Record<string, string> }) {
-  if (!a.groups.length)
-    return (
-      <Empty icon="clock" title="No runs in 30 days">
-        A run shows here with the definition it ran, so an edit's effect can be compared.
-      </Empty>
-    );
-  return (
-    <>
-      <p className="muted" style={{ marginTop: 0 }}>
-        Runs of the last 30 days, grouped by the definition they ran; an edit starts a new group. Total {money(a.cost_30d)} over {a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}.
-      </p>
-      {a.groups.map((g, i) => (
-        <div key={i} className="card run-group">
-          <div className="card-h">
-            <span className="grow">
-              {g.row_hash === a.row_hash ? "As it stands now" : g.row_hash ? "An earlier definition" : g.runs.length ? "Before definitions were recorded" : "Saved, not run yet"}{" "}
-              {g.row_hash && <span className="faint mono" title={g.row_hash}>#{g.row_hash.slice(0, 6)}</span>}
-            </span>
-            <span className="faint" style={{ fontWeight: 500 }}>
-              {g.runs.length} run{g.runs.length === 1 ? "" : "s"} · {money(g.cost_usd)} · {g.turns} turn{g.turns === 1 ? "" : "s"}
-            </span>
-          </div>
-          {g.settings.length > 0 && (
-            <div className="run-settings">
-              {g.settings.map((s, j) => (
-                <span key={j} className="faint">
-                  {settingWords(s)} {ago(s.at)}
-                  {j < g.settings.length - 1 ? " · " : ""}
-                </span>
-              ))}
-            </div>
-          )}
-          {g.runs.map((r) => {
-            const row = runRow(r, names[r.workspace] ?? "");
-            const body = (
-              <>
-                {r.unit && <span className="id">{row.code}</span>}
-                <span className="t" style={row.muted ? { color: "var(--text-3)", fontWeight: 400 } : undefined}>{row.title}</span>
-                <span className="meta">
-                  {r.outcome !== "done" && <Chip square tone="red">{r.outcome}</Chip>}
-                  {r.cost_usd != null ? money(r.cost_usd) : ""} · {ago(r.at)}
-                </span>
-              </>
-            );
-            const key = r.workspace + r.unit + r.at;
-            return row.to ? (
-              <Link key={key} to={row.to} className="lrow">{body}</Link>
-            ) : (
-              <div key={key} className="lrow">{body}</div>
-            );
-          })}
-        </div>
-      ))}
-    </>
   );
 }

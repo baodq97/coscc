@@ -4,7 +4,7 @@
 # novel: 250 turns chosen; $16 is 2 x $8 (the dearest turn measured $0.0568 across impl runs).
 name: "Uruz"
 glyph: "ᚢ"
-description: "the strength that gives shape"
+description: "Writes the code and tests the plan asks for."
 model: {"id": "claude-sonnet-5-5[1m]", "effort": "medium", "trial": ["claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]"]}
 variants: {"novel": {"model": {"id": "claude-opus-5-5[1m]", "effort": "high"}, "ceilings": {"turns": 250, "usd": 16.0}}}
 skills: ["write-impl"]

@@ -594,6 +594,10 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
   .lrow .meta .wide { display: none; }
   .lrow { height: auto; min-height: 40px; padding-top: 8px; padding-bottom: 8px; }
   .lrow .t { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .lrow.stack { flex-wrap: wrap; gap: 2px 10px; }
+  .lrow.stack .t { order: 1; flex: 1 1 100%; }
+  .lrow.stack .id { order: 2; width: auto; }
+  .lrow.stack .meta { order: 3; margin-left: auto; }
   .ny-slot { position: static; margin-top: 6px; }
   .ny-name { flex-wrap: wrap; }
   .ny-name .ny-title { white-space: normal; overflow: visible; text-overflow: clip; flex: 1 1 60%; }
@@ -716,3 +720,22 @@ a.btn { text-decoration: none; }
 .ask-q { font-weight: 500; }
 .ask-a { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
 .ask-meta { font-size: 12px; }
+
+.agents-head { display: flex; align-items: flex-start; gap: 16px; }
+.agents-head > :first-child { flex: 1; min-width: 0; }
+.agents-tools { display: flex; align-items: center; gap: 10px; flex: none; }
+@media (max-width: 700px) { .agents-head { flex-direction: column; gap: 4px; } .agents-tools { width: 100%; justify-content: space-between; margin-bottom: 8px; } }
+
+.agent-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.agent-head-main { flex: 1 1 280px; min-width: 0; }
+.agent-head-side { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-left: auto; }
+@media (max-width: 700px) { .agent-head-main { flex-basis: calc(100% - 52px); } .agent-head-side { flex-basis: 100%; margin-left: 0; } }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 6px 0 16px; }
+.stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--panel); min-width: 0; }
+.stat-l { font-size: 12px; margin-bottom: 2px; }
+.stat-v { font-size: 13.5px; }
+.fields { margin: 0; padding-left: 18px; }
+.prompt-preview { margin: 0; padding: 10px 12px; background: var(--hover); border-radius: 6px; font-size: 12px; white-space: pre-wrap; max-height: 360px; overflow: auto; font-family: var(--mono, monospace); }
+
+.crumb-line { font-size: 12.5px; margin-top: 2px; }
+.crumb-line a { color: inherit; text-decoration: underline; }

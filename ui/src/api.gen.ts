@@ -27,6 +27,12 @@ export type AgentRow = {
   "cost_30d": number;
   "chip": string;
   "groups": RunGroup[];
+  "accepted_30d": number;
+  "dismissed_30d": number;
+  "pending": number;
+  "skips_30d": number;
+  "reads_only": boolean;
+  "usable_data": string[];
   "on": boolean | null;
   "running": coscc__leif__agents__Running | null;
   "next_at": string | null;
@@ -310,6 +316,10 @@ export type EventsPage = {
   "outcome"?: string;
   "detail"?: string;
   "draft"?: Record<string, unknown>;
+  "made"?: number;
+  "verdict"?: string;
+  "refused"?: number;
+  "helpers"?: number;
 };
 
 export type Followup = {
@@ -369,6 +379,16 @@ export type LeifRun = {
 export type Live = {
   "running": LiveRun[];
   "proposals": LiveProposal[];
+  "failed": LiveFailed[];
+};
+
+export type LiveFailed = {
+  "workspace": string;
+  "agent": string;
+  "name": string;
+  "run": string;
+  "at": string;
+  "detail": string;
 };
 
 export type LiveProposal = {
@@ -475,6 +495,10 @@ export type ProcessShown = {
   "ref": string;
   "name": string;
   "own": boolean;
+};
+
+export type PromptPreview = {
+  "task": string;
 };
 
 export type Proposal = {
@@ -653,6 +677,10 @@ export type RunView = {
   "started_by": string;
   "made": number | null;
   "session": boolean;
+  "verdict": string;
+  "refused": number | null;
+  "helpers": number | null;
+  "shallow": boolean;
 };
 
 export type Saved = {
@@ -943,6 +971,7 @@ export type coscc__units__read__Running = {
 export type Get = {
   "/api/agents": AgentPage;
   "/api/agents/live": Live;
+  "/api/agents/{key}/prompt": PromptPreview;
   "/api/backlog": UpNext;
   "/api/chat/history": ChatHistory;
   "/api/chat/sessions": ChatSessions;

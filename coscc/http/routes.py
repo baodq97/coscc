@@ -232,11 +232,14 @@ async def remove_workspace(name: str, request: Request) -> Any:
 async def get_agents(request: Request) -> AgentPage:
     """Every agent, every part of its row as it stands and as built in, which keys the owner set,
     its problems, skills, hash and runs grouped by definition; the tool catalog, each feature on
-    or off for `cwd`; what was wrong."""
+    or off for `cwd`; what was wrong. `agent` names the one agent whose runs come with it."""
     core, cwd = _core(request), _cwd(request)
     with pack.held():
         return await asyncio.to_thread(
-            core.agents.agent_page, core.ws.key(cwd) if cwd else None, cwd=cwd
+            core.agents.agent_page,
+            core.ws.key(cwd) if cwd else None,
+            cwd=cwd,
+            agent=request.query_params.get("agent", ""),
         )
 
 
@@ -245,6 +248,28 @@ async def get_agents_live(request: Request) -> Live:
     """The agent runs in flight and the proposals waiting for a person, across every listed
     workspace: what the Briefing and Needs you show."""
     return await asyncio.to_thread(_core(request).agents.live)
+
+
+class PromptPreview(TypedDict):
+    # What a run is handed to work on beside the row's own text (its role); `""` for a row no
+    # trigger starts, whose input is the unit's, handed when a step begins.
+    task: str
+
+
+@router.get("/api/agents/{key}/prompt", response_model=PromptPreview)
+async def get_agent_prompt(key: str, request: Request) -> PromptPreview:
+    """What a run of a triggered agent would be handed now in `cwd`: the prompt
+    `triggers.compose` builds from its input. Read only, starts and spends nothing. A folder that
+    is no workspace, or an agent that does not exist, is a 400."""
+    core, cwd = _core(request), _cwd(request)
+    row = pack.row(key)
+    if row is None:
+        raise Invalid(f"no agent {key}")
+    ws = core.ws.key(core.ws.check(cwd)) if cwd else ""
+    task = ""
+    if ws and pack.triggered(row):
+        task = await triggers.preview(core, key, cwd, ws)
+    return {"task": task}
 
 
 @router.post("/api/agents/field")

@@ -206,6 +206,20 @@ def listed(data: Data, workspace: str, agent: str | None = None) -> list[Proposa
     return [_proposal(r) for r in rows]
 
 
+def counts(data: Data, workspace: str | None, since: str) -> dict[str, dict[str, int]]:
+    """Each agent's proposals made since `since` (all workspaces when `workspace` is None), by
+    their state."""
+    sql, args = "SELECT agent, decision, COUNT(*) AS n FROM proposals WHERE at >= ?", [since]
+    if workspace is not None:
+        sql += " AND workspace = ?"
+        args.append(workspace)
+    out: dict[str, dict[str, int]] = {}
+    with data.connect() as conn:
+        for r in conn.execute(sql + " GROUP BY agent, decision", args):
+            out.setdefault(r["agent"], {})[r["decision"]] = r["n"]
+    return out
+
+
 def one(data: Data, workspace: str, pid: int) -> Proposal:
     with data.connect() as conn:
         row = conn.execute(

@@ -628,6 +628,23 @@ class TriggersAreChecked(unittest.TestCase):
         with self.assertRaises(ValueError):
             pack.write("scan", "tools", {"Write": "allow"})
 
+    def test_a_triggered_row_has_no_one_to_ask(self):
+        said = self.reasons(_scan(tools={"Read": "ask"}))
+        self.assertIn("no one to ask, so Read is allow or off", said)
+        self.assertEqual(self.reasons(_scan(tools={"Read": "allow", "Grep": "off"})), "")
+        # A row a state runs may still ask; a trigger of the engine's is not a person-less start.
+        self.assertTrue(pack.reads_only(_scan()))
+        self.assertFalse(pack.reads_only(_scan(trigger={"engine": "estimate"})))
+        self.assertFalse(pack.reads_only({"tools": {"Write": "ask"}}))
+        # Both ask one rule: an engine row with another key, an unknown key, an empty trigger.
+        for trigger in ({"engine": "estimate", "manual": True}, {"cron": "x"}, {}, "x", None):
+            row = {"trigger": trigger}
+            self.assertEqual(pack.reads_only(row), pack.triggered(row), trigger)
+        self.assertEqual(
+            pack.check(_scan(tools={"Read": "ask"})),
+            pack.check(_scan(tools={"Read": "ask"}), CATALOG),
+        )
+
     def test_a_triggered_row_holds_bash_only_in_the_sandbox(self):
         boxed = {"Read": "allow", "Bash": {"sandbox": {"network": ["127.0.0.1:3000"]}}}
         self.assertEqual(self.reasons(_scan(tools=boxed)), "")

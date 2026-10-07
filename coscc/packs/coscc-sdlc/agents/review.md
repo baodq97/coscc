@@ -2,7 +2,7 @@
 # Reads, and only reads: the app writes review.md. 40/$4 chosen: 20/$2 stopped rounds.
 name: "Tiwaz"
 glyph: "ᛏ"
-description: "Tyr: justice and judgement"
+description: "Reviews the pull request and says whether it may merge."
 model: {"id": "claude-opus-5-5[1m]", "effort": "medium"}
 variants: {"novel": {"model": {"id": "claude-opus-5-5[1m]", "effort": "high"}}}
 skills: ["write-review"]

@@ -63,6 +63,7 @@ export function useLive() {
   return {
     running: got.data?.running ?? [],
     proposals: got.data?.proposals ?? [],
+    failed: got.data?.failed ?? [],
     loading: !got.data && got.state !== "error",
     // Failed with nothing to show: a screen says so, never "0".
     error: got.state === "error" && !got.data ? got.error : undefined,
@@ -71,10 +72,14 @@ export function useLive() {
 }
 
 /** What waits on the owner, defined once for the Briefing and Needs you: the units the board marks "Needs you" and the pending proposals. */
-export function needsYou<P>(units: PlacedUnit[], proposals: P[]) {
+export function needsYou<P, F>(units: PlacedUnit[], proposals: P[], failed: F[] = []) {
   const mine = units.filter((u) => unitState(u).group === "Needs you");
-  return { units: mine, proposals, total: mine.length + proposals.length };
+  return { units: mine, proposals, failed, total: mine.length + proposals.length + failed.length };
 }
+
+/** Where a failed agent run opens: its run page, or the agent's own page when no log was kept. */
+export const failedLink = (f: { workspace: string; agent: string; run: string }) =>
+  f.run ? `/run/${encodeURIComponent(f.workspace)}/${f.run}` : `/agents/${f.agent}?ws=${encodeURIComponent(f.workspace)}`;
 
 /** Where a proposal is decided: Up next, on its project, scrolled to it. */
 export const proposalLink = (p: { workspace: string; id: number }) => `/up-next?ws=${encodeURIComponent(p.workspace)}#proposal-${p.id}`;

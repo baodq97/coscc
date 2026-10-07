@@ -2,7 +2,7 @@
 # Reads, and only reads, as plan does; plan's ceilings, not measured.
 name: "Kenaz"
 glyph: "ᚲ"
-description: "torch: knowledge and craft"
+description: "Turns the intent into requirements and a design."
 model: {"id": "claude-opus-5-5[1m]", "effort": "medium"}
 skills: ["write-spec"]
 tools: {"Read": "allow", "Glob": "allow", "Grep": "allow"}
