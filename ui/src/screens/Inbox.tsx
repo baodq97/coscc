@@ -76,7 +76,7 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
             </div>
           </div>
         ))}
-        {proposals.length > 0 && (
+        {proposals.length > 0 && waiting.length > 0 && (
           <div className="lgroup" style={{ background: "var(--panel)" }}>
             Proposals to decide <span className="n">{proposals.length}</span>
           </div>

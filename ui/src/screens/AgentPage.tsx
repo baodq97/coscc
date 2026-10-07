@@ -189,9 +189,8 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
           </h1>
           <div className="muted">{a.row.description || triggerWords(a, page.rows)}</div>
           <div className="faint" style={{ fontSize: 12.5, marginTop: 2 }}>{statusWords(a, workspace?.name ?? "")}</div>
-          {a.group === "triggered" && <Controls {...ctx} />}
           <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-            {a.on === false ? <Chip square tone="amber">Off here</Chip> : <Chip square tone="plain">Runs {triggerWords(a, page.rows)}</Chip>}
+            {a.on !== false && <Chip square tone="plain">Runs {triggerWords(a, page.rows)}</Chip>}
             {a.running && <Chip square tone="accent"><span className="dot live" /> running</Chip>}
             {look && <Chip square tone={look.tone}>{look.label}</Chip>}
             {own ? <Chip square tone="accent">Yours</Chip> : a.edited.length > 0 ? <Chip square tone="accent">{a.edited.length} part{a.edited.length > 1 ? "s" : ""} edited</Chip> : <Chip square tone="plain">as built in</Chip>}
@@ -216,6 +215,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
           <div className="faint" style={{ fontSize: 12 }}>{a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}</div>
         </div>
       </div>
+      {a.group === "triggered" && <Controls {...ctx} />}
       {refused.length > 0 && (
         <div className="card card-b problems">
           <b>Not deleted:</b>
@@ -724,7 +724,7 @@ function Controls(ctx: Ctx) {
   const readsUnit = Boolean(input?.artifacts.length || input?.outputs.length);
   const t = a.row.trigger ?? {};
   return (
-    <div className="row agent-controls" style={{ gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+    <div className="row agent-controls" style={{ gap: 12, marginTop: 14, flexWrap: "wrap" }}>
       {a.on !== null && <OnHere {...ctx} />}
       {t.manual && !readsUnit && <RunNowButton {...ctx} />}
       {t.manual && readsUnit && <span className="faint" style={{ fontSize: 12.5 }}>It reads one unit: run it from that unit's page.</span>}
