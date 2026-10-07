@@ -75,6 +75,11 @@ Read this before adding a route, a button or a grant.
   run (≤ $0.50, 3 turns, the daily cap): a triggered row's session is resumed with its grant less
   `submit`, any other run gets a new reader holding Read, Grep and Glob only; it writes nothing
   and its `start` names the `parent_run` and the question. `POST /api/runs/{run}/stop` cancels one.
+  One agent starts another only through a row the owner turned on in that workspace whose
+  `trigger.event.from` names it: after its done run, `started_by: event`, its `start` naming the
+  `from_run`, under the daily cap, no circle, at most two agents after the first (`pack.check`);
+  the leader's words reach it as data. Leif's `ask_agent` is `run_agent` with a question, waiting
+  for the result, under the same `needs-confirm` and daily count.
 - **A screenshot is an agent's look,** not a person's.
 - **Say what a new route can do,** to whom, at what cost, and where the trace is. Prefer a row
   in the run log to a claim in prose.

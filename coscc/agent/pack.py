@@ -82,7 +82,7 @@ POLICIES = ("allow", "ask", "off")
 # `{"Bash": {"sandbox": {"network": ["127.0.0.1:3000"]}}}`, each host a loopback one with its port.
 SANDBOX_HOST = re.compile(r"(?:127\.0\.0\.1|localhost|\[::1\]):([0-9]{1,5})")
 # Issued by the engine with the grant, never named by a row.
-ENGINE_TOOLS = ("submit", "peers", "run_agent")
+ENGINE_TOOLS = ("submit", "peers", "run_agent", "ask_agent")
 # What a row's `output.kind` may be: the `submit` kinds, a reply read as it is, a helper.
 # `proposal` hands back work for the Backlog (`coscc/units/proposals.py`); `verdict` grades criteria;
 # `draft` a row or a process for a person to save (`coscc/units/submit.py` `draft_problem`).
@@ -104,6 +104,10 @@ CWDS = ("trunk",)
 THENS = ("proposal-if-no",)
 # A schedule's hours and an event's delay. Chosen: a year.
 HOURS_MAX = 8760
+# A row another agent's run starts (`trigger.event.from`) is at most this many agents after the
+# first of its chain, and reads that agent's result through this data source.
+CHAIN_MAX = 2
+FROM_DATA = "from-result"
 # Claude Code's tools known to only read, all of its own a row checked with no catalog may hold.
 KNOWN_READ = ("Read", "Glob", "Grep", "SendMessage", "peers")
 # What a process state may do in place of running an agent: the engine opens the pull request, or
@@ -247,6 +251,7 @@ def check(
     out += _check_tools(row, kind, output.get("by"), catalog)
     out += _check_links(row, rows, skills)
     out += _check_trigger(row, kind, catalog)
+    out += _check_chain(row, rows)
     if output.get("then") is not None and (output["then"] not in THENS or kind != "verdict"):
         out.append(f"output.then: a verdict may have {', '.join(THENS)}")
     if "cwd" in row and (row["cwd"] not in CWDS or not triggered(row)):
@@ -469,18 +474,25 @@ def _check_hours(where: str, given: Any, key: str, required: bool) -> list[str]:
 
 
 def _check_event(row: Mapping[str, Any], event: Any) -> list[str]:
-    """`{name, after_hours?}`: a bus fact whose payload names the workspace, and the unit when the
-    row reads one."""
-    if not isinstance(event, dict) or not set(event) <= {"name", "after_hours"}:
-        return ["trigger.event is {name, after_hours}"]
+    """`{name, after_hours?, from?}`: a bus fact whose payload names the workspace, and the unit
+    when the row reads one. Every agent's run publishes `agent-run.*`, this row's own too: a row
+    waits only on the end of the one agent `from` names (`_check_chain`)."""
+    if not isinstance(event, dict) or not set(event) <= {"name", "after_hours", "from"}:
+        return ["trigger.event is {name, after_hours, from}"]
     name = event.get("name")
     if name not in bus.NAMES:
         return [f"trigger.event.name: no bus event {name!r}"]
-    if str(name).startswith("agent-run."):
-        # Every agent's run publishes it, this row's own too: a row started on it starts itself.
+    if name == "agent-run.started":
         return [
-            f"trigger.event.name: {name} is every agent's, this one's too: it would start itself"
+            f"trigger.event.name: every run starts with {name}, this one's too: it would start itself"
         ]
+    if name == "agent-run.ended" and not isinstance(event.get("from"), str):
+        return [
+            "trigger.event.from: name the agent it runs after; on every run's end, its own too, "
+            "it would start itself"
+        ]
+    if "from" in event and name != "agent-run.ended":
+        return ["trigger.event.from: only agent-run.ended names the agent it runs after"]
     fields = bus.fields_of(str(name))
     out = [] if "workspace" in fields else [f"trigger.event.name: {name} names no workspace"]
     raw = row.get("input")
@@ -488,6 +500,78 @@ def _check_event(row: Mapping[str, Any], event: Any) -> list[str]:
     if (given.get("artifacts") or given.get("outputs")) and "unit" not in fields:
         out.append(f"trigger.event.name: {name} names no unit, and the row reads one")
     return out + _check_hours("trigger.event", event, "after_hours", required=False)
+
+
+def after_of(found: Mapping[str, Any] | None) -> str:
+    """The agent whose done run starts `found` (`trigger.event.from`), `""` for none."""
+    trigger = (found or {}).get("trigger")
+    event = trigger.get("event") if isinstance(trigger, dict) else None
+    got = event.get("from") if isinstance(event, dict) else None
+    return got if isinstance(got, str) else ""
+
+
+def _check_chain(row: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]] | None) -> list[str]:
+    """A row another agent's done run starts reads that agent's result (`FROM_DATA`), is off until
+    the owner turns it on in a workspace, and runs after a row its own trigger starts; among
+    `rows`, no circle and at most `CHAIN_MAX` agents after the first. A row that reads
+    `FROM_DATA` with no `from` is handed nothing of it: the page saves `trigger` last, so a chain
+    is made in any order and undone by its trigger alone."""
+    key, first = str(row.get("key") or ""), after_of(row)
+    if not first:
+        return []
+    raw = row.get("input")
+    data = raw.get("data") if isinstance(raw, dict) else None
+    reads = isinstance(data, list) and FROM_DATA in data
+    out = [] if reads else [f"input.data: a row that runs after {first} reads {FROM_DATA}"]
+    if row.get("default") != "off":
+        out.append("default: a row another agent starts is off until you turn it on in a workspace")
+    if first == key:
+        return [*out, "trigger.event.from: an agent cannot run after itself"]
+    if rows is None:
+        return out
+    every = {**rows, key: row}
+    if first not in every:
+        return [*out, f"trigger.event.from: no agent {first}"]
+    if not triggered(every[first]):
+        return [
+            *out,
+            f"trigger.event.from: no event, schedule, press or Leif starts {first}, so it never "
+            "ends a run of its own",
+        ]
+    up, at = [key], first
+    while at:
+        if at in up:
+            names = " runs after ".join(_named(every, k) for k in [*up, at])
+            return [
+                *out,
+                f"trigger.event.from: {names}: agents cannot start each other in a circle",
+            ]
+        up.append(at)
+        at = after_of(every.get(at))
+    chain = [*reversed(up), *_below(key, every)]
+    if len(chain) - 1 > CHAIN_MAX:
+        names = " → ".join(_named(every, k) for k in chain)
+        out.append(
+            f"trigger.event.from: a chain holds at most {CHAIN_MAX} agents after the first, "
+            f"not {len(chain) - 1} ({names})"
+        )
+    return out
+
+
+def _named(rows: Mapping[str, Mapping[str, Any]], key: str) -> str:
+    return str((rows.get(key) or {}).get("name") or key)
+
+
+def _below(
+    key: str, rows: Mapping[str, Mapping[str, Any]], seen: tuple[str, ...] = ()
+) -> list[str]:
+    """The longest line of agents that run after `key`, one after another."""
+    best: list[str] = []
+    for k, r in rows.items():
+        if after_of(r) == key and k not in seen and k != key:
+            line = [k, *_below(k, rows, (*seen, key))]
+            best = line if len(line) > len(best) else best
+    return best
 
 
 def reads_only(found: Mapping[str, Any] | None) -> bool:

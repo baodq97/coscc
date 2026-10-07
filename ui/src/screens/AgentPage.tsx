@@ -3,7 +3,7 @@
 // as it would then stand before writing anything. The next run uses what was saved.
 
 import { useState, type ReactNode } from "react";
-import type { AgentPage as Page, AgentRow, CatalogTool } from "../api.gen";
+import type { AgentPage as Page, AgentRow, CatalogTool, TriggerFields } from "../api.gen";
 import { api, ApiError } from "../lib/api";
 import { refreshPacks } from "../lib/pack";
 import { sandboxed, sandboxLine, sandboxOf } from "../lib/build";
@@ -39,6 +39,7 @@ const DATA: Record<string, string> = {
   screens: "the screenshots",
   interventions: "what people stepped in for since its last run",
   proposals: "the proposals already made",
+  "from-result": "what the agent it starts after found",
 };
 export const EFFECT: Record<string, string> = {
   read: "Reads",
@@ -69,8 +70,11 @@ export function put(tree: unknown, path: string[], value: unknown): unknown {
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 /** The draft's parts that differ from what is saved: what the save bar sends. */
+/** The parts that changed, `trigger` last: it is checked against the rest of the row (a chain
+ * needs its data source and `default: off` saved first). */
 export function changes(draft: Draft, saved: Record<string, unknown>): string[] {
-  return Object.keys(draft).filter((k) => !same(draft[k], saved[k]));
+  const out = Object.keys(draft).filter((k) => !same(draft[k], saved[k]));
+  return [...out.filter((k) => k !== "trigger"), ...out.filter((k) => k === "trigger")];
 }
 
 const LABELS: Record<string, string> = {
@@ -797,6 +801,7 @@ function Trigger(ctx: Ctx) {
           <span className="muted" style={{ alignSelf: "center" }}>hours</span>
         </Part>
       )}
+      <StartsAfter {...ctx} />
       {t.event?.after_hours !== undefined && (
         <Part ctx={ctx} path="trigger.event.after_hours" label="Wait" hint="Hours after the event before it runs.">
           <NumberField ctx={ctx} path="trigger.event.after_hours" />
@@ -804,6 +809,51 @@ function Trigger(ctx: Ctx) {
         </Part>
       )}
     </div>
+  );
+}
+
+/** A chain to the agent `from` (`""`: none): its trigger waits on that agent's finished run, it
+ * reads what that run found and stays off until turned on. Undone by the trigger alone. */
+export function chainTo(
+  trigger: TriggerFields,
+  input: Input | undefined,
+  from: string,
+): { trigger: TriggerFields; input?: Input; default?: "off" } {
+  const { event: _, ...rest } = trigger;
+  if (!from) return { trigger: rest };
+  const data = input?.data ?? [];
+  return {
+    trigger: { ...rest, event: { name: "agent-run.ended", from } },
+    default: "off",
+    ...(input && !data.includes("from-result") ? { input: { ...input, data: [...data, "from-result"] } } : {}),
+  };
+}
+
+/** Which agent's finished run starts this one: none, or another agent that runs by itself. */
+function StartsAfter(ctx: Ctx) {
+  const { a, page } = ctx;
+  const trigger = (ctx.value("trigger") ?? {}) as TriggerFields;
+  const from = trigger.event?.from ?? "";
+  // Another event starts it: that is not a chain to change here.
+  if (trigger.event && !from) return null;
+  const choices = page.rows.filter((r) => r.group === "triggered" && r.key !== a.key);
+  const pick = (to: string) => {
+    const next = chainTo(trigger, ctx.value("input") as Input | undefined, to);
+    if (next.input) ctx.edit("input", next.input);
+    if (next.default) ctx.edit("default", next.default);
+    ctx.edit("trigger", next.trigger);
+  };
+  return (
+    <Part ctx={ctx} path="trigger.event.from" label="Starts after" hint="When that agent finishes a run, this one runs with what it found. It stays off here until you turn it on.">
+      <select className="input sm" style={{ width: 260, maxWidth: "100%" }} value={from} disabled={!ctx.editable} onChange={(e) => pick(e.target.value)}>
+        <option value="">No other agent</option>
+        {choices.map((r) => (
+          <option key={r.key} value={r.key}>
+            {r.row.name ?? r.key}
+          </option>
+        ))}
+      </select>
+    </Part>
   );
 }
 

@@ -621,6 +621,62 @@ class TriggersAreChecked(unittest.TestCase):
         # The neighbour stays open: another fact naming a workspace.
         self.assertEqual(self.reasons(_scan(trigger={"event": {"name": "unit.shipped"}})), "")
 
+    def follower(self, key: str, after: str, **over) -> dict:
+        data = ["from-result"]
+        return _scan(
+            key=key,
+            name=key.capitalize(),
+            trigger={"event": {"name": "agent-run.ended", "from": after}, "manual": True},
+            input={**_scan()["input"], "data": data, "skip_when_empty": False},
+            **over,
+        )
+
+    def chain(self, row: dict, *others: dict) -> str:
+        rows = {k: r["builtin"] for k, r in pack.rows().items()}
+        rows.update({o["key"]: o for o in others})
+        return "\n".join(pack.check(row, CATALOG, {**rows, row["key"]: row}))
+
+    def test_a_row_runs_after_another_agents_done_run(self):
+        self.assertEqual(self.chain(self.follower("b", "scan")), "")
+        self.assertEqual(pack.after_of(self.follower("b", "scan")), "scan")
+        self.assertEqual(pack.after_of(_scan()), "")
+
+    def test_what_a_follower_must_say_and_the_neighbours_refused(self):
+        said = self.chain(self.follower("b", "scan", default="on"))
+        self.assertIn("off until you turn it on in a workspace", said)
+        plain = self.follower("b", "scan")
+        plain["input"] = _scan()["input"]
+        self.assertIn("a row that runs after scan reads from-result", self.chain(plain))
+        # Read with no agent to run after, it is handed nothing: undoing a chain is its trigger.
+        alone = _scan(input={**_scan()["input"], "data": ["from-result"]})
+        self.assertEqual(self.chain(alone), "")
+        self.assertIn("cannot run after itself", self.chain(self.follower("b", "b")))
+        self.assertIn("no agent nobody", self.chain(self.follower("b", "nobody")))
+        # A stage's agent ends no run of its own through a trigger.
+        self.assertIn("so it never ends a run", self.chain(self.follower("b", "plan")))
+        shipped = self.follower("b", "scan")
+        shipped["trigger"] = {"event": {"name": "unit.shipped", "from": "scan"}}
+        self.assertIn("only agent-run.ended names", self.chain(shipped))
+
+    def test_agents_cannot_start_each_other_in_a_circle(self):
+        b = self.follower("b", "c")
+        c = self.follower("c", "b")
+        self.assertIn("B runs after C runs after B", self.chain(b, c))
+        d = self.follower("d", "f")
+        e = self.follower("e", "d")
+        f = self.follower("f", "e")
+        self.assertIn("in a circle", self.chain(d, e, f))
+
+    def test_a_chain_holds_at_most_two_after_the_first(self):
+        b, c = self.follower("b", "scan"), self.follower("c", "b")
+        self.assertEqual(self.chain(c, b), "")
+        d = self.follower("d", "c")
+        self.assertIn(
+            "at most 2 agents after the first, not 3 (Sowilo → B → C → D)", self.chain(d, b, c)
+        )
+        # From below too: putting b after scan, when c and d already follow it.
+        self.assertIn("not 3", self.chain(b, c, d))
+
     def test_an_engine_mixed_with_others(self):
         said = self.reasons(_scan(trigger={"engine": "estimate", "manual": True}, default=None))
         self.assertIn("an engine row has no other trigger", said)

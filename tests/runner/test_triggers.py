@@ -11,7 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from coscc.agent import pack
+from coscc import kernel
+from coscc.agent import pack, policy
 from coscc.bus import Bus
 from coscc.kernel import Hooks, Parts, Run, Tool
 from coscc.runner import run as run_mod
@@ -115,6 +116,7 @@ class _Core(unittest.IsolatedAsyncioTestCase):
             agent.key,
             run_mod.OUTCOME[got.status],
             agent=agent.key,
+            run=given.run,
             **got.cost,
             **extra,
         )
@@ -710,8 +712,9 @@ class ATriggeredRowIsHandedOnlyTheDataItsPromptReads(unittest.TestCase):
             return triggers.prompt_of(declared, [], [], None, catalog="CAT")[0]
 
         empty = prompt([])
-        # The idea comes in through `compose`, from the unit, when the row declares it.
-        for key in (k for k in contracts.DATA if k != "idea"):
+        # The idea and the result of the agent it runs after come in through `compose`, when the
+        # row declares them.
+        for key in (k for k in contracts.DATA if k not in ("idea", "from-result")):
             read = prompt([key]) != empty
             self.assertEqual(read, key in contracts.TRIGGERED_DATA, key)
 
@@ -785,6 +788,15 @@ class ATrialRunsARowNotSaved(_Core):
         self.assertNotIn("proposals", end)
         self.assertEqual(triggers._data_until(self.journal, self.ws, "tidy"), "")
 
+    async def test_its_end_says_tried_so_it_starts_no_follower(self):
+        self.found = found(1)
+        ended: list = []
+        self.core.bus.watch(
+            lambda e: ended.append(e.payload) if e.name == "agent-run.ended" else None
+        )
+        await self.tried()
+        self.assertEqual([p["outcome"] for p in ended], ["tried"])
+
     async def test_its_bus_facts_and_the_updater_never_see_the_row(self):
         self.found = found(1)
         seen: list = []
@@ -839,3 +851,152 @@ class ATrialRunsARowNotSaved(_Core):
         self.core.autopilot = SimpleNamespace(today=lambda cwd: (0.0, 120.0))
         self.core.steps = SimpleNamespace(refuse_updating=updating, hooks=HOOKS)
         self.assertEqual(await self.refused(), ("updating",))
+
+
+FOLLOWER = {
+    "name": "Follower",
+    "tools": {},
+    "input": {
+        "artifacts": [],
+        "outputs": [],
+        "answers": False,
+        "findings": False,
+        "data": ["from-result"],
+    },
+    "output": pack.rows()["scan"]["builtin"]["output"],
+    "trigger": {"event": {"name": "agent-run.ended", "from": "scan"}, "manual": True},
+    "default": "off",
+    "ceilings": {"turns": 2, "usd": 0.1},
+}
+
+
+class OneAgentsResultStartsAnother(_Core):
+    """A row whose `trigger.event.from` names an agent runs after that agent's done run, where it
+    is on, with that run's result in its prompt and the run on its `start`."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        pack.new_row("follower", "Follower", None, given={"fields": FOLLOWER, "body": "Read it."})
+        pack.set_agent_on(self.data, "follower", self.ws, True)
+        triggers.listen(self.core)
+        self.found = found(1)
+
+    async def lead(self) -> None:
+        await self.go("scan", self.ws, by="manual")
+        while triggers._TASKS:
+            await self.settle()
+
+    async def test_a_done_run_starts_the_follower_once_with_its_result(self):
+        self.reply = Run("done", {"proposals": []}, {"cost_usd": 0.3}, detail="looked at 1")
+        await self.lead()
+        self.assertEqual([g.started_by for g in self.given], ["manual", "event"])
+        follower = self.given[1]
+        lead_run = self.given[0].run
+        self.assertEqual(follower.start["from_run"], lead_run)
+        self.assertIn("# The result of Sowilo, the agent this one runs after", follower.prompt)
+        self.assertIn("Agent: Sowilo.", follower.prompt)
+        self.assertIn("by manual; ended done, $0.30", follower.prompt)
+
+    async def test_a_run_that_did_not_end_done_starts_nothing(self):
+        for reply in (
+            Run("failed", None, {"cost_usd": 0.1}),
+            Run("cancelled", None, {}),
+            Run("paused-budget", None, {"cost_usd": 0.68}),
+        ):
+            self.reply = reply
+            await self.lead()
+        self.assertEqual([g.started_by for g in self.given], ["manual"] * 3)
+
+    async def test_a_skipped_run_starts_nothing(self):
+        self.found = []
+        await self.lead()
+        self.assertEqual(self.given, [])
+        self.assertEqual(len(self.journal.records(self.ws, kinds=("end",))), 1)
+
+    async def test_off_here_it_waits_for_the_owner(self):
+        pack.set_agent_on(self.data, "follower", self.ws, False)
+        await self.lead()
+        self.assertEqual([g.started_by for g in self.given], ["manual"])
+
+    async def test_another_workspaces_run_does_not_start_it_here(self):
+        self.core.bus.publish(
+            "agent-run.ended",
+            {"workspace": "/elsewhere", "agent": "scan", "run": "x", "outcome": "done"},
+        )
+        self.core.bus.publish(
+            "agent-run.ended",
+            {"workspace": self.ws, "agent": "other", "run": "y", "outcome": "done"},
+        )
+        await self.settle()
+        self.assertEqual(self.given, [])
+
+    async def test_the_daily_cap_holds_a_chained_run_too(self):
+        spent = iter([(0.0, 1.0), (0.95, 1.0)])
+        self.core.autopilot = SimpleNamespace(today=lambda cwd: next(spent))
+        with self.assertLogs("coscc.runner.triggers", "WARNING") as said:
+            await self.lead()
+        self.assertEqual([g.started_by for g in self.given], ["manual"])
+        self.assertIn("daily cap", "\n".join(said.output))
+
+    async def test_pressed_alone_it_reads_the_last_done_result_or_says_none(self):
+        await self.go("follower", self.ws, by="manual")
+        self.assertIn("none yet", self.given[-1].prompt)
+        self.assertNotIn("from_run", self.given[-1].start)
+
+
+class LeifAsksAnAgent(_Core):
+    """`ask_agent` runs the row with the question as its words and hands back what it found."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.found = found(1)
+        self.addCleanup(triggers._ASKED.clear)
+        self.addCleanup(triggers._LEIF_HELD.clear)
+
+    async def ask(self, wait=triggers.ASK_WAIT, **args) -> str:
+        said = await triggers.leif_call(
+            self.core,
+            self.ws,
+            {"key": "scan", "question": "why #3?", "reason": "the owner asked", **args},
+            {"run": "t1", "session": "S"},
+            wait=wait,
+        )
+        return said["content"][0]["text"]
+
+    async def test_it_answers_with_the_runs_result(self):
+        self.set_row("ceilings", {"turns": 4, "usd": 0.2})
+        self.reply = Run("done", {"proposals": []}, {"cost_usd": 0.12}, detail="looked")
+        said = await self.ask()
+        (given,) = self.given
+        self.assertEqual((given.started_by, given.start["chat_run"]), ("leif", "t1"))
+        self.assertIn("# The person's words\n\nwhy #3?", given.prompt)
+        self.assertIn("Agent: Sowilo.", said)
+        self.assertIn("ended done, $0.12", said)
+        self.assertIn("[live run](/run/proj/", said)
+
+    async def test_over_the_sum_it_asks_the_person_first(self):
+        said = await self.ask()
+        self.assertIn("needs-confirm", said)
+        self.assertEqual(self.given, [])
+
+    async def test_no_question_is_refused_before_spend(self):
+        self.set_row("ceilings", {"turns": 4, "usd": 0.2})
+        self.assertIn("ask a question", await self.ask(question=" "))
+        self.assertEqual(self.given, [])
+
+    async def test_past_its_wait_it_says_the_run_goes_on_and_leaves_it_running(self):
+        self.set_row("ceilings", {"turns": 4, "usd": 0.2})
+        self.gate.clear()
+        said = await self.ask(wait=0.01)
+        self.assertIn("still running", said)
+        self.assertEqual(len(triggers._TASKS), 1)
+        self.gate.set()
+        await self.settle()
+        self.assertEqual(len(self.ends()), 1)
+
+    def test_the_chat_holds_both_tools_and_no_row_may_name_them(self):
+        self.assertIn(policy.ASK_AGENT_TOOL, policy.LEIF_TOOLS)
+        self.assertIn("ask_agent", pack.ENGINE_TOOLS)
+        self.assertIn("ask_agent", {t.name for t in kernel.BUILTINS})
+        with self.assertRaises(ValueError):
+            pack.write("scan", "tools", {"ask_agent": "allow"})

@@ -177,9 +177,9 @@ class Tool:
                 raise ValueError(f"an MCP tool name is [a-z][a-z0-9_]* without '__': {name!r}")
 
 
-# The catalog's built-in entries: Claude Code's own tools and the kernel's `submit`, `peers` and
-# `run_agent`, which the engine issues with the grant (`submit` to every agent with an output,
-# `peers` with helpers, `run_agent` to Leif's chat) and no row names.
+# The catalog's built-in entries: Claude Code's own tools and the kernel's `submit`, `peers`,
+# `run_agent` and `ask_agent`, which the engine issues with the grant (`submit` to every agent with
+# an output, `peers` with helpers, `run_agent` and `ask_agent` to Leif's chat) and no row names.
 BUILTINS: tuple[Tool, ...] = (
     *(Tool(t, "read", "low") for t in policy.READ_TOOLS),
     *(Tool(t, "write-worktree", "medium") for t in policy.WRITE_TOOLS),
@@ -190,6 +190,8 @@ BUILTINS: tuple[Tool, ...] = (
     Tool("peers", "read", "low"),
     # Leif's: starts a triggered row's run, paid and read-only (`coscc/runner/triggers.py`).
     Tool("run_agent", "write-app", "medium"),
+    # Leif's: runs one with a question and waits for what it found.
+    Tool("ask_agent", "write-app", "medium"),
 )
 
 

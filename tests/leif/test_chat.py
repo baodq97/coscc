@@ -169,7 +169,7 @@ class EachReadAnswersFromTheAppsOwnState(_App):
         data = Data(str(self.root / "data"))
         item = {"type": "fix", "slug": "a-one", "title": "Reruns cost", "problem": "p" * 250}
         (pid,) = proposals.add(data, key, "scan", "", [item], run="t-new")
-        with mock.patch.object(chat.ask, "last_words", lambda d, run: f"found it in {run}"):
+        with mock.patch.object(chat.triggers, "last_words", lambda d, run: f"found it in {run}"):
             said = (await self.call("runs", agent="Sowilo"))["content"][0]["text"]
         lines = said.splitlines()
         self.assertIn("run t-new", lines[1])
@@ -179,7 +179,7 @@ class EachReadAnswersFromTheAppsOwnState(_App):
         self.assertIn("run t-old", lines[4])
         # A question asked of a run is no run of its own: it is counted on the run.
         journal.finished(key, "", "ask", "done", agent="scan", run="q1", parent_run="t-new")
-        with mock.patch.object(chat.ask, "last_words", lambda d, run: ""):
+        with mock.patch.object(chat.triggers, "last_words", lambda d, run: ""):
             again = await chat.read_runs(self.core, self.cwd, {"agent": "scan"})
         self.assertIn("run t-new", again.splitlines()[1])
         self.assertIn("asked 1 question(s) since", again.splitlines()[1])

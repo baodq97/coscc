@@ -878,6 +878,7 @@ export type Thread = {
 export type TriggerEvent = {
   "name"?: string;
   "after_hours"?: number;
+  "from"?: string;
 };
 
 export type TriggerFields = {

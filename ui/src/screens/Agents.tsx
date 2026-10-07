@@ -30,8 +30,10 @@ const EVENT_WORDS: Record<string, string> = {
   "unit.shipped": "a ship",
   "unit.merged": "a merge",
   "chat-turn.ended": "a chat turn",
-  "agent-run.ended": "another agent's run",
 };
+
+/** The name of the agent `key`, from `rows`, else the key. */
+const nameOf = (key: string, rows: AgentRow[]) => rows.find((r) => r.key === key)?.row.name ?? key;
 
 /** How often a schedule runs: `24` is "daily", `168` "weekly", `48` "every 2 days", `6` "every 6 hours". */
 export function everyWords(h: number): string {
@@ -53,7 +55,10 @@ export function triggerWords(a: AgentRow, rows: AgentRow[] = []): string {
   if (t.engine) return ENGINE_WORDS[t.engine] ?? `by the engine (${t.engine})`;
   const said: string[] = [];
   if (t.schedule) said.push(everyWords(t.schedule.hours));
-  if (t.event) {
+  if (t.event?.from) {
+    const who = nameOf(t.event.from, rows);
+    said.push(t.event.after_hours ? `${hoursWords(t.event.after_hours)} after ${who} ends` : `after ${who}`);
+  } else if (t.event) {
     const what = EVENT_WORDS[t.event.name ?? ""] ?? (t.event.name ?? "").replace(/[.-]/g, " ");
     said.push(t.event.after_hours ? `${hoursWords(t.event.after_hours)} after ${what}` : `on ${what}`);
   }

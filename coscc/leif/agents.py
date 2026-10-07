@@ -127,9 +127,10 @@ class Schedule(TypedDict):
     hours: int
 
 
-class TriggerEvent(TypedDict, total=False):
-    name: str
-    after_hours: int
+# `from` is a keyword: the agent whose done run starts the row (`pack.after_of`).
+TriggerEvent = TypedDict(
+    "TriggerEvent", {"name": str, "after_hours": int, "from": str}, total=False
+)
 
 
 class TriggerFields(TypedDict, total=False):
@@ -499,6 +500,12 @@ class Agents:
                 "hosts (127.0.0.1, localhost or [::1], each with its port)."
             ),
             "events": events,
+            "chain": (
+                f'A row runs after another agent with {{"event": {{"name": "agent-run.ended", '
+                f'"from": "<that agent\'s key>"}}}}, "default": "off" and the data source '
+                f"{pack.FROM_DATA}, that agent's last result; at most {pack.CHAIN_MAX} agents "
+                "after the first, never in a circle. agent-run.started starts nothing."
+            ),
             "guards": list(pack.PROCESS_GUARDS),
             "actions": list(pack.ACTIONS),
             "bounds": {

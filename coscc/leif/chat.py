@@ -19,6 +19,7 @@ from coscc.kernel import Invalid, Run
 from coscc.leif import spend
 from coscc.runner import ask
 from coscc.runner import run as run_mod
+from coscc.runner import triggers
 from coscc.runner.queue import Refused
 from coscc.runner.triggers import Reply
 from coscc.store.db import Busy, Data
@@ -657,7 +658,7 @@ def _runs(core: Core, ws: str, asked: str) -> list[str]:
         lines += [
             f"  proposed #{p['id']} ({p['state']}): {p['title']}" for p in made if p["run"] == run
         ]
-        said = ask.last_words(data, run)
+        said = triggers.last_words(data, run)
         if said:
             lines.append(f"  its last words: {said[:SUMMARY_CHARS]}")
     return lines
