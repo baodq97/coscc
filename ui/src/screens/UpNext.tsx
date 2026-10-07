@@ -8,7 +8,7 @@ import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { pausedAt, unitCode, unitTitle } from "../lib/format";
 import type { Workspace } from "../lib/model";
-import { Link } from "../lib/router";
+import { Link, useQuery } from "../lib/router";
 import { Proposals } from "../components/Proposals";
 import { Button, Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
@@ -26,7 +26,7 @@ export function moved(list: string[], unit: string, by: number): string[] {
 
 export function UpNext() {
   const { boards, loading } = useBoards();
-  const [project, setProject] = useState("");
+  const [project, setProject] = useState(useQuery("ws"));
   const workspace = boards.find((b) => b.workspace.name === project)?.workspace ?? boards[0]?.workspace;
   return (
     <div className="page mid">

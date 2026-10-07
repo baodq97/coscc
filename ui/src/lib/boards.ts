@@ -54,6 +54,15 @@ export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading:
   return { boards, loading: ws.state === "loading" || (list.length > 0 && boards.length === 0) };
 }
 
+/** What agents are doing across every project: the runs in flight and the proposals waiting for a decision. */
+export function useLive() {
+  const got = useResource("/api/agents/live", {}, { on: ["agent-run."], every: 60_000 });
+  return { running: got.data?.running ?? [], proposals: got.data?.proposals ?? [], loading: !got.data && got.state !== "error" };
+}
+
+/** Where a proposal is decided: Up next, on its project, scrolled to it. */
+export const proposalLink = (p: { workspace: string; id: number }) => `/up-next?ws=${encodeURIComponent(p.workspace)}#proposal-${p.id}`;
+
 export type PlacedUnit = Unit & { workspace: Workspace };
 
 export function allUnits(boards: WorkspaceBoard[]): PlacedUnit[] {

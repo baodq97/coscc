@@ -4,7 +4,7 @@
 import { useState } from "react";
 import type { Question } from "../api.gen";
 import { api, useResource } from "../lib/api";
-import { allUnits, useBoards, type PlacedUnit } from "../lib/boards";
+import { allUnits, proposalLink, useBoards, useLive, type PlacedUnit } from "../lib/boards";
 import { liveQuestions } from "../lib/model";
 import { ago, unitCode, unitTitle } from "../lib/format";
 import { Icon } from "../lib/icons";
@@ -19,7 +19,9 @@ export function inboxView(waiting: number, asked: boolean, found: boolean): "emp
 }
 
 export function Inbox({ workspace, number }: { workspace?: string; number?: string }) {
-  const { boards, loading } = useBoards();
+  const { boards, loading: loadingBoards } = useBoards();
+  const { proposals, loading: loadingLive } = useLive();
+  const loading = loadingBoards || loadingLive;
   const waiting = allUnits(boards)
     .filter((u) => liveQuestions(u) > 0)
     .sort((a, b) => b.updated.localeCompare(a.updated));
@@ -28,7 +30,7 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
   const chosen = found ?? (asked ? undefined : waiting[0]);
 
   if (loading) return <div className="page"><SkeletonRows rows={4} /></div>;
-  const view = inboxView(waiting.length, asked, Boolean(found));
+  const view = inboxView(waiting.length + proposals.length, asked, Boolean(found));
   if (view === "missing")
     return (
       <div className="page mid">
@@ -50,7 +52,7 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
     <div className="two">
       <div className="lp">
         <div className="lgroup" style={{ background: "var(--panel)" }}>
-          Needs you <span className="n">{waiting.length}</span>
+          Needs you <span className="n">{waiting.length + proposals.length}</span>
           <span className="r">newest first</span>
         </div>
         {waiting.map((u) => (
@@ -74,9 +76,34 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
             </div>
           </div>
         ))}
+        {proposals.length > 0 && (
+          <div className="lgroup" style={{ background: "var(--panel)" }}>
+            Proposals to decide <span className="n">{proposals.length}</span>
+          </div>
+        )}
+        {proposals.map((p) => (
+          <div key={p.workspace + p.id} className="ny" style={{ cursor: "pointer" }} onClick={() => navigate(proposalLink(p))}>
+            <div className="ny-ic">
+              <Icon name="arrow" size={15} />
+            </div>
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="row">
+                <span className="ny-t ellipsis" style={{ fontSize: 13 }}>{p.agent_name} proposed on {p.workspace}</span>
+                <span className="faint nowrap" style={{ fontSize: 12, marginLeft: "auto" }}>{ago(p.at)}</span>
+              </div>
+              <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{p.title}</div>
+            </div>
+          </div>
+        ))}
       </div>
       <div className="rp">
-        {chosen && <Questions unit={chosen} />}
+        {chosen ? (
+          <Questions unit={chosen} />
+        ) : (
+          <Empty icon="inbox" title="No question waits for you">
+            {proposals.length} proposal{proposals.length === 1 ? "" : "s"} wait for a decision: open one to accept or dismiss it on Up next.
+          </Empty>
+        )}
       </div>
     </div>
   );

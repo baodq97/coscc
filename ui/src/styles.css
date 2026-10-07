@@ -699,3 +699,5 @@ a.btn { text-decoration: none; }
 .pd-ways li { margin: 2px 0; }
 .rl-more { font-size: 11.5px; }
 .rl-full { margin: 4px 0 2px; padding: 6px 8px; background: var(--surface-2, rgba(127,127,127,.1)); border-radius: 4px; font: inherit; white-space: pre-wrap; word-break: break-word; }
+.live-link { color: var(--accent); font-size: 12.5px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.agent-controls .field-err { font-size: 12.5px; }

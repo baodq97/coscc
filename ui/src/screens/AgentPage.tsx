@@ -11,7 +11,7 @@ import { ago, modelName, startedBy, money, unitCode, unitTitle } from "../lib/fo
 import { Link, navigate } from "../lib/router";
 import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
 import { useIndex } from "../lib/pack";
-import { AgentGlyph, WorkspaceSwitch, attention, inWorkspace, triggerWords, useAgents } from "./Agents";
+import { AgentGlyph, WorkspaceSwitch, attention, inWorkspace, statusWords, triggerWords, useAgents } from "./Agents";
 
 export const TABS = [
   { key: "configuration", label: "Configuration" },
@@ -112,7 +112,9 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
   const [refused, setRefused] = useState<string[]>([]);
   const [done, setDone] = useState(false);
   const page = fresh ?? agents.data;
-  const a = page?.rows.find((r) => r.key === name);
+  // What it is doing now comes from the latest read, whatever a save handed back.
+  const mine = page?.rows.find((r) => r.key === name);
+  const a = mine && agents.data ? { ...mine, running: agents.data.rows.find((r) => r.key === name)?.running ?? null } : mine;
   if (agents.state === "error" && !page) return <ErrorState error={agents.error} onRetry={agents.reload} />;
   if (!page) return <div className="page"><SkeletonRows rows={5} /></div>;
   if (!a)
@@ -173,7 +175,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
       setBusy(false);
     }
   };
-  const ctx: Ctx = { a, page, value, edit, saved, builtin, editable: a.editable && !busy, error, cwd, setPage: setFresh };
+  const ctx: Ctx = { a, page, value, edit, saved, builtin, editable: a.editable && !busy, error, cwd, workspace: workspace?.name, setPage: setFresh };
   const t: Tab = TABS.some((x) => x.key === tab) ? (tab as Tab) : "configuration";
   const look = attention(a);
 
@@ -186,8 +188,11 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
             {a.row.name ?? a.key} <span className="faint mono" style={{ fontSize: 13 }}>{a.key}</span>
           </h1>
           <div className="muted">{a.row.description || triggerWords(a, page.rows)}</div>
+          <div className="faint" style={{ fontSize: 12.5, marginTop: 2 }}>{statusWords(a, workspace?.name ?? "")}</div>
+          {a.group === "triggered" && <Controls {...ctx} />}
           <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-            <Chip square tone="plain">Runs {triggerWords(a, page.rows)}</Chip>
+            {a.on === false ? <Chip square tone="amber">Off here</Chip> : <Chip square tone="plain">Runs {triggerWords(a, page.rows)}</Chip>}
+            {a.running && <Chip square tone="accent"><span className="dot live" /> running</Chip>}
             {look && <Chip square tone={look.tone}>{look.label}</Chip>}
             {own ? <Chip square tone="accent">Yours</Chip> : a.edited.length > 0 ? <Chip square tone="accent">{a.edited.length} part{a.edited.length > 1 ? "s" : ""} edited</Chip> : <Chip square tone="plain">as built in</Chip>}
           </div>
@@ -274,6 +279,7 @@ type Ctx = {
   editable: boolean;
   error: { field: string; message: string } | null;
   cwd: string;
+  workspace?: string;
   setPage: (p: Page) => void;
 };
 
@@ -695,7 +701,6 @@ function Trigger(ctx: Ctx) {
           <div className="muted" style={{ marginTop: 6 }}>It only reads; what it hands back waits for you on Up next.</div>
         </div>
       </div>
-      {a.on !== null && <OnHere {...ctx} />}
       {t.schedule && (
         <Part ctx={ctx} path="trigger.schedule.hours" label="Every" hint="Hours between two runs here, counted from the last.">
           <NumberField ctx={ctx} path="trigger.schedule.hours" />
@@ -708,7 +713,21 @@ function Trigger(ctx: Ctx) {
           <span className="muted" style={{ alignSelf: "center" }}>hours</span>
         </Part>
       )}
-      {t.manual && <RunNow {...ctx} />}
+    </div>
+  );
+}
+
+/** The two things an owner does with an agent that runs by itself: turn it on or off here, and run it now. */
+function Controls(ctx: Ctx) {
+  const { a } = ctx;
+  const input = ctx.value("input") as Input | undefined;
+  const readsUnit = Boolean(input?.artifacts.length || input?.outputs.length);
+  const t = a.row.trigger ?? {};
+  return (
+    <div className="row agent-controls" style={{ gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+      {a.on !== null && <OnHere {...ctx} />}
+      {t.manual && !readsUnit && <RunNowButton {...ctx} />}
+      {t.manual && readsUnit && <span className="faint" style={{ fontSize: 12.5 }}>It reads one unit: run it from that unit's page.</span>}
     </div>
   );
 }
@@ -728,75 +747,55 @@ function OnHere({ a, cwd, setPage }: Ctx) {
     setBusy(false);
   };
   return (
-    <div className="field">
-      <div>
-        <div className="lab">In this workspace</div>
-        <div className="hint">{a.on ? "Runs on its own here." : "Runs here only when you press Run now."}</div>
-      </div>
-      <div>
-        <div className="seg" role="group" aria-label="On or off in this workspace">
-          <button className={a.on ? "on" : ""} aria-pressed={!!a.on} disabled={busy} onClick={() => set(true)}>On</button>
-          <button className={a.on ? "" : "on"} aria-pressed={!a.on} disabled={busy} onClick={() => set(false)}>Off</button>
-        </div>
-        {error && <div className="field-err">{error}</div>}
-      </div>
-    </div>
+    <span className="row" style={{ gap: 8 }}>
+      <span className="seg" role="group" aria-label="On or off in this workspace" title={a.on ? "Runs on its own here." : "Runs here only when you press Run now."}>
+        <button className={a.on ? "on" : ""} aria-pressed={!!a.on} disabled={busy} onClick={() => set(true)}>On</button>
+        <button className={a.on ? "" : "on"} aria-pressed={!a.on} disabled={busy} onClick={() => set(false)}>Off</button>
+      </span>
+      {!a.on && a.off_reason && <span className="muted" style={{ fontSize: 12.5 }}>{a.off_reason}</span>}
+      {error && <span className="field-err">{error}</span>}
+    </span>
   );
 }
 
-/** One paid run now, asked once with its ceiling named. */
-function RunNow(ctx: Ctx) {
-  const input = ctx.value("input") as Input | undefined;
-  if (input?.artifacts.length || input?.outputs.length)
-    return (
-      <div className="field">
-        <div>
-          <div className="lab">Run now</div>
-        </div>
-        <div className="muted">It reads one unit: run it from that unit's page.</div>
-      </div>
-    );
-  return <RunNowButton {...ctx} />;
-}
-
-function RunNowButton({ a, cwd }: Ctx) {
+/** One paid run now, asked once with its ceiling named; once started, a link to its live page. */
+function RunNowButton({ a, cwd, workspace }: Ctx) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  const [started, setStarted] = useState("");
+  const [error, setError] = useState("");
   const usd = a.config.ceilings.max_budget_usd;
   const run = async () => {
     if (!asking) return setAsking(true);
     setBusy(true);
-    setSaid(null);
+    setError("");
     try {
-      await api.post("/api/agents/run", { cwd, key: a.key });
-      setSaid({ ok: true, text: "Started. Its run shows under Runs & $ once it ends." });
+      const got = await api.post<{ run: string }>("/api/agents/run", { cwd, key: a.key });
+      setStarted(got.run);
       setAsking(false);
     } catch (e) {
-      setSaid({ ok: false, text: (e as Error).message });
+      setError((e as Error).message);
     }
     setBusy(false);
   };
+  const live = a.running ? a.running.run : started;
   return (
-    <div className="field">
-      <div>
-        <div className="lab">Run now</div>
-        <div className="hint">One paid, read-only run{usd ? `, at most ${money(usd)}` : ""}.</div>
-      </div>
-      <div>
-        <div className="row" style={{ gap: 8 }}>
-          <Button size="sm" kind={asking ? "primary" : ""} icon="bolt" disabled={busy} onClick={run}>
-            {busy ? "Starting…" : asking ? `Spend up to ${money(usd ?? 0)} on a run?` : "Run now"}
-          </Button>
-          {asking && !busy && (
-            <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>
-              Cancel
-            </Button>
-          )}
-        </div>
-        {said && <div className={said.ok ? "muted" : "field-err"} style={{ marginTop: 6 }}>{said.text}</div>}
-      </div>
-    </div>
+    <span className="row" style={{ gap: 8 }}>
+      <Button size="sm" kind={asking ? "primary" : ""} icon="bolt" disabled={busy || !!a.running} onClick={run}>
+        {busy ? "Starting…" : a.running ? "Running" : asking ? `Spend up to ${money(usd ?? 0)}?` : "Run now"}
+      </Button>
+      {asking && !busy && (
+        <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>
+          Cancel
+        </Button>
+      )}
+      {live && workspace && (
+        <Link to={`/run/${workspace}/${live}`} className="live-link">
+          {a.running ? <><span className="dot live" /> Watch it live ▸</> : "Open its run ▸"}
+        </Link>
+      )}
+      {error && <span className="field-err">{error}</span>}
+    </span>
   );
 }
 
