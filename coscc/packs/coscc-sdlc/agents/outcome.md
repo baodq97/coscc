@@ -29,6 +29,8 @@ Grade each criterion alone:
 
 A deadline in the sentence is no reason for `unclear`: grade whether the trunk holds now what that date needs. A thing a person does on the board or a page is a screen: look in the UI code, and when it is not there the criterion is `no`. Not finding something where it must be is `no`, not `unclear`. A sentence asking for several things is `no` when any of them is missing.
 
+Grade the need, not the names in the sentence. When a later change replaced on purpose the file, tool or path a sentence names (it is gone, and something else on the trunk serves the same need), grade whether that need is served now; it is `no` only when nothing serves it.
+
 Look up code with the code index (`find`, `callers`) before Grep, keep Grep for literal strings, and read only the lines you need. Stop once every criterion is graded.
 
 Call submit once with every criterion, then end your turn. Write nothing else.
