@@ -1450,8 +1450,9 @@ def new_row(
     catalog: Mapping[str, str] | None = None,
     given: Mapping[str, Any] | None = None,
 ) -> None:
-    """Write `local/agents/<key>.md`: a copy of row `start` (every key, its body, its skills by
-    name) named `name`, the row `given` (`{fields, body}`, a draft a person saves), or the `BLANK`
+    """Write `local/agents/<key>.md`: a copy of row `start` (every key but `variants` and
+    `model.trial`, which would run what the page does not show; its body, its skills by name)
+    named `name`, the row `given` (`{fields, body}`, a draft a person saves), or the `BLANK`
     row. A taken or bad key, or a row `new_row_problems` refuses, is a `PackError` with every
     reason and nothing is written."""
     reasons: list[str] = []
@@ -1463,7 +1464,10 @@ def new_row(
         if found is None:
             reasons.append(f"no agent {start} to start from")
         else:
-            base = {**{k: found[k] for k in KEYS if k in found}, BODY: found.get(BODY) or ""}
+            copied = {k: found[k] for k in KEYS if k in found and k != "variants"}
+            if isinstance(copied.get("model"), dict):
+                copied["model"] = {k: v for k, v in copied["model"].items() if k != "trial"}
+            base = {**copied, BODY: found.get(BODY) or ""}
     elif given is not None:
         if not isinstance(given.get("fields"), dict) or not isinstance(given.get("body"), str):
             reasons.append("row is {fields, body}: fields an object, body text")

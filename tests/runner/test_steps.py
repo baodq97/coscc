@@ -1308,6 +1308,24 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         # The agent's key, as its `end` names it, and its name beside it.
         self.assertEqual((start["agent"], start["agent_name"]), ("impl", "Uruz"))
 
+    def test_start_and_end_name_the_agent_the_state_is_bound_to(self):
+        from coscc.agent import pack
+
+        pack.new_row("tidy", "Tidy", "impl")
+        real = pack.agent_for
+        bound = lambda ref, state: "tidy" if state == "impl" else real(ref, state)
+        with (
+            mock.patch.object(pack, "agent_for", bound),
+            mock.patch.object(pack, "problems", lambda *a, **k: []),
+        ):
+            self._run()
+        journal = self.core.ws.journal()
+        key = self.core.ws.key(str(self.repo))
+        start = journal.records(key, kind="start")[-1]
+        end = journal.records(key, kind="end")[-1]
+        self.assertEqual((start["agent"], start["pack"].split("@")[0]), ("tidy", "local"))
+        self.assertEqual(end["agent"], "tidy")
+
     def test_the_label_is_the_records_whatever_plan_md_says(self):
         self._plan("coscc/units/board.py")
         (self.dir / "plan.md").write_text(
