@@ -185,6 +185,7 @@ export type Ceilings = {
 export type ChatHistory = {
   "session_id": string;
   "messages": ChatMessage[];
+  "runs": LeifRun[];
 };
 
 export type ChatMessage = {
@@ -352,6 +353,16 @@ export type LastRun = {
 export type Leaks = {
   "unit": string;
   "names": string[];
+};
+
+export type LeifRun = {
+  "run": string;
+  "agent": string;
+  "name": string;
+  "at": string;
+  "outcome": string;
+  "cost_usd": number | null;
+  "proposals": number;
 };
 
 export type Live = {

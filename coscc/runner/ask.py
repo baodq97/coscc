@@ -298,7 +298,7 @@ async def state(core: Core, cwd: str, run: str) -> Thread:
                 why=str(s.get("fresh_why") or ""),
                 cache_read_tokens=int((e or {}).get("cache_read_tokens") or 0),
                 cache_creation_tokens=int((e or {}).get("cache_creation_tokens") or 0),
-                answer=_last_words(data, str(s.get("run") or "")) if e else "",
+                answer=last_words(data, str(s.get("run") or "")) if e else "",
             )
         )
     try:
@@ -316,7 +316,7 @@ async def state(core: Core, cwd: str, run: str) -> Thread:
     )
 
 
-def _last_words(data: Data, run: str) -> str:
+def last_words(data: Data, run: str) -> str:
     """The last thing `run`'s agent said, as its events kept it."""
     try:
         events, _ = data.step_events_page(run, None, 40)
@@ -344,7 +344,7 @@ def _summary(core: Core, start: Mapping[str, Any], end: Mapping[str, Any], tree:
         lines.append("It proposed:")
         lines += [f"- #{p['id']} {p['title']}: {p['problem'][:300]}" for p in made]
     parts = ["# The run you are asked about\n\n" + "\n".join(lines)]
-    if said := _last_words(data, run):
+    if said := last_words(data, run):
         parts.append(f"# Its last words\n\n{said}")
     session = str(end.get("session_id") or "")
     if session:

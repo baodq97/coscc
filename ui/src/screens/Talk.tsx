@@ -3,13 +3,13 @@
 // conversations are listed beside it; one begun in a terminal is read only.
 
 import { useEffect, useRef, useState } from "react";
-import type { ChatMessage, ChatSession } from "../api.gen";
+import type { ChatMessage, ChatSession, LeifRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
-import { ago } from "../lib/format";
+import { ago, money, toolName } from "../lib/format";
 import { Icon, LeifAvatar } from "../lib/icons";
-import { setQuery, useQuery } from "../lib/router";
-import { Button, SkeletonRows } from "../components/ui";
+import { Link, setQuery, useQuery } from "../lib/router";
+import { Button, Dot, Markdown, SkeletonRows } from "../components/ui";
 
 type Shown = { role: string; text: string; tools?: string[] };
 
@@ -28,6 +28,9 @@ export function Talk() {
   const [error, setError] = useState<Error | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const [elsewhere, setElsewhere] = useState(false);
+  // The runs Leif started from this conversation, read again as any agent run starts or ends.
+  const told = useResource(session?.resumable ? "/api/chat/history" : null, { cwd, session_id: session?.session_id ?? "" }, { on: ["agent-run.", "chat-turn."] });
+  const runs: LeifRun[] = told.data?.runs ?? [];
   // The app's own chats first; sessions begun in a terminal or by an agent's run are read only.
   const listed = sessions.data?.sessions.filter((s) => s.resumable) ?? [];
   // A conversation just begun is not in the server's list yet: keep it on top so the list does not jump.
@@ -108,9 +111,9 @@ export function Talk() {
               {m.role === "user" ? <span className="av">B</span> : <LeifAvatar />}
               <div className="mb">
                 <div className="who">{m.role === "user" ? "You" : "Leif"}</div>
-                {m.tools && m.tools.length > 0 && <div className="faint mono" style={{ fontSize: 12 }}>used {m.tools.join(", ")}</div>}
-                <div className="tx" style={{ whiteSpace: "pre-wrap" }}>
-                  {m.text ||
+                {m.tools && m.tools.length > 0 && <div className="faint" style={{ fontSize: 12 }}>used {[...new Set(m.tools.map(toolName))].join(", ")}</div>}
+                <div className="tx" style={m.role === "user" ? { whiteSpace: "pre-wrap" } : undefined}>
+                  {(m.text && (m.role === "user" ? m.text : <Markdown text={m.text} />)) ||
                     (busy && i === messages.length - 1 ? (
                       <span className="typing">
                         <i />
@@ -124,6 +127,22 @@ export function Talk() {
               </div>
             </div>
           ))}
+          {runs.length > 0 && (
+            <div className="col" style={{ gap: 4 }}>
+              {runs.map((r) => (
+                <div key={r.run} className="faint" style={{ fontSize: 12.5 }}>
+                  {r.outcome === "running" ? (
+                    <>
+                      <Dot tone="live" /> {r.name} is running, started by Leif.{" "}
+                    </>
+                  ) : (
+                    `${r.name} ${r.outcome === "done" ? "finished" : r.outcome}: ${r.proposals} proposal${r.proposals === 1 ? "" : "s"}, ${money(r.cost_usd)}. `
+                  )}
+                  <Link to={`/run/${workspace?.name ?? ""}/${r.run}`}>{r.outcome === "running" ? "Watch it" : "Open the run"}</Link>
+                </div>
+              ))}
+            </div>
+          )}
           {error && <div style={{ color: "var(--red)", fontSize: 12.5 }}>{error.message}</div>}
           <div ref={end} />
         </div>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -16,12 +17,14 @@ from coscc.agent.sessions import Sessions
 from coscc.config import Config
 from coscc.kernel import Invalid, Run
 from coscc.leif import spend
+from coscc.runner import ask
 from coscc.runner import run as run_mod
 from coscc.runner.queue import Refused
 from coscc.runner.triggers import Reply
-from coscc.store.db import Busy
+from coscc.store.db import Busy, Data
 from coscc.units.board import FOLDED_STATES, paused_label
 from coscc.units.read import Card, cards
+from coscc.units import proposals
 from coscc.units.submit import SERVER
 from coscc.units.workspaces import Workspaces
 
@@ -56,9 +59,28 @@ class ChatMessage(TypedDict):
     uuid: str
 
 
+class LeifRun(TypedDict):
+    """A run Leif started from a conversation, and how it ended (`running` until it has)."""
+
+    run: str
+    agent: str
+    name: str
+    at: str
+    outcome: str
+    cost_usd: float | None
+    proposals: int
+
+
 class ChatHistory(TypedDict):
     session_id: str
     messages: list[ChatMessage]
+    runs: list[LeifRun]
+
+
+# What the app puts before a person's message when runs Leif started have ended since its last
+# turn, and the line after which the person's own words follow; `history` shows only those.
+NOTE_HEAD = "[The app: runs you started that ended since your last turn]"
+NOTE_END = "[The person's message]"
 
 
 class Chat:
@@ -69,14 +91,14 @@ class Chat:
         sessions: Sessions,
         refuse_updating: Callable[[], None],
         agent_for: Callable[[str, Row], run_mod.Agent],
-        leif_server: Callable[[str], Any] | None = None,
+        leif_server: Callable[[str, Mapping[str, str]], Any] | None = None,
     ) -> None:
         self.config = config
         self.ws = ws
         self.sessions = sessions
         self.refuse_updating = refuse_updating
         self.agent_for = agent_for
-        # The `cos` server holding `run_agent` and the reads below, made per workspace
+        # The `cos` server holding `run_agent` and the reads below, made per workspace and turn
         # (`triggers.leif_server`).
         self.leif_server = leif_server
 
@@ -118,13 +140,88 @@ class Chat:
         return journal.session_cost(session_id)
 
     def history(self, cwd: str, session_id: str) -> dict[str, Any]:
+        """The conversation as its transcript holds it, the app's notes left out, and the runs
+        Leif started from it."""
         self.ws.check(cwd)
         if not session_id:
             raise Invalid("session_id is required")
+        messages = reader.history(session_id, cwd)
+        for m in messages:
+            if m["role"] == "user" and m["text"].startswith(NOTE_HEAD) and NOTE_END in m["text"]:
+                m["text"] = m["text"].split(NOTE_END, 1)[1].lstrip("\n")
         return {
             "session_id": session_id,
-            "messages": reader.history(session_id, cwd),
+            "messages": messages,
+            "runs": self.leif_runs(session_id),
         }
+
+    def leif_runs(self, session_id: str) -> list[LeifRun]:
+        """The runs Leif started from the conversation `session_id`, oldest first."""
+        journal = self.ws.journal()
+        if journal is None or not session_id:
+            return []
+        try:
+            turns = {
+                str(r.get("run"))
+                for r in journal.where("session_id", session_id, ("end",))
+                if r.get("stage") == CHAT
+            }
+            started = [
+                r
+                for r in journal.where("started_by", "leif", ("start",))
+                if r.get("chat_run") in turns
+            ]
+            out = []
+            for r in started:
+                run = str(r.get("run") or "")
+                end = next(iter(journal.where("run", run, ("end",))), {})
+                key = str(r.get("agent") or r.get("stage") or "")
+                out.append(
+                    LeifRun(
+                        run=run,
+                        agent=key,
+                        name=str(end.get("name") or (pack.row(key) or {}).get("name") or key),
+                        at=str(end.get("at") or r.get("at") or ""),
+                        outcome=str(end.get("outcome") or "running"),
+                        cost_usd=end.get("cost_usd"),
+                        proposals=int(end.get("proposals") or 0),
+                    )
+                )
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        return out
+
+    def _note(self, session_id: str) -> tuple[str, list[str]]:
+        """What the app tells Leif before the person's message, and the runs it names: those Leif
+        started from this conversation that ended and no earlier turn was told of (each turn's
+        `start` keeps `told`)."""
+        journal = self.ws.journal()
+        if journal is None or not session_id:
+            return "", []
+        turns = [
+            str(r.get("run"))
+            for r in journal.where("session_id", session_id, ("end",))
+            if r.get("stage") == CHAT
+        ]
+        told = {
+            str(t)
+            for run in turns
+            for r in journal.where("run", run, ("start",))
+            for t in r.get("told") or ()
+        }
+        ended = [
+            r
+            for r in self.leif_runs(session_id)
+            if r["outcome"] != "running" and r["run"] not in told
+        ]
+        if not ended:
+            return "", []
+        lines = [
+            f"- {r['name']} ({r['agent']}) run {r['run']}: {r['outcome']}, "
+            f"{r['proposals']} proposals, {_usd(r['cost_usd'])}; read it with runs() when asked"
+            for r in ended
+        ]
+        return "\n".join([NOTE_HEAD, *lines, NOTE_END, ""]), [r["run"] for r in ended]
 
     def check_send(self, cwd: str, text: str, session_id: str | None = None) -> None:
         """Everything a caller can reject with a status code, decided before any output.
@@ -158,7 +255,9 @@ class Chat:
         or failed is `Invalid` once its `end` is written.
         """
         self.check_send(cwd, text, session_id)
-        spent = await asyncio.to_thread(self._spent, session_id or "")
+        spent = self._spent(session_id or "")
+        note, told = self._note(session_id or "")
+        run_id = uuid.uuid4().hex
         # Leif's row, holding the machine's own tools (`COS_TOOLS`) rather than the row's.
         row = replace(policy.row_for(LEIF), tools=tuple(self.config.effective_tools()))
         agent = self.agent_for(LEIF, row)
@@ -173,9 +272,11 @@ class Chat:
             agent,
             run_mod.Input(
                 cwd,
-                text,
+                note + text,
                 self.ws.key(cwd),
                 stage=CHAT,
+                run=run_id,
+                start={"told": told} if told else {},
                 session_id=session_id,
                 keep=True,
                 resume=resume,
@@ -183,7 +284,11 @@ class Chat:
                 cache_hour=True,
                 **(
                     {
-                        "servers": {SERVER: self.leif_server(cwd)},
+                        "servers": {
+                            SERVER: self.leif_server(
+                                cwd, {"run": run_id, "session": session_id or ""}
+                            )
+                        },
                         "mcp": policy.LEIF_TOOLS,
                     }
                     if self.leif_server is not None
@@ -451,28 +556,89 @@ def _source(s: Mapping[str, Any]) -> str:
     )
 
 
+def _is(key: str, asked: str) -> bool:
+    """Whether `asked` names the agent `key`: its key, its name, or a word of either."""
+    asked = asked.strip().lower()
+    name = str((pack.row(key) or {}).get("name") or "").lower()
+    return not asked or asked in key.lower() or asked == name
+
+
 async def read_proposals(core: Core, cwd: str, args: Mapping[str, Any]) -> str:
     name, here = where(core, cwd, args.get("workspace"))
     got = await asyncio.to_thread(core.agents.proposals_view, here)
-    made = got["proposals"]
-    pending = [p for p in made if p["state"] == "pending"]
-    decided = [p for p in made if p["state"] != "pending"] if args.get("include_decided") else []
+    asked = str(args.get("agent") or "")
+    made = [p for p in got["proposals"] if _is(p["agent"], asked)]
+    shown = made if args.get("include_decided") else [p for p in made if p["state"] == "pending"]
     lines = []
-    for p in pending + decided:
+    for p in shown:
         sources = "; ".join(_source(s) for s in p["sources"])
         line = (
-            f"#{p['id']} · {p['agent']} · {p['type']} · {p['title']} · {p['at'][:16]} · "
-            f"problem: {p['problem'][:PROBLEM_CHARS]} · sources: {sources[:SOURCE_CHARS]}"
+            f"#{p['id']} · {p['state']} · {p['agent']} · {p['type']} · {p['title']} · "
+            f"{p['at'][:16]} · run {p['run'] or '-'} · problem: {p['problem'][:PROBLEM_CHARS]} · "
+            f"sources: {sources[:SOURCE_CHARS]}"
         )
         if p["state"] != "pending":
-            line += f" · {p['state']} by {p['by'] or '-'}: {p['reason'][:200]}"
+            line += f" · by {p['by'] or '-'}: {p['reason'][:200]}"
         lines.append(line)
+    pending = sum(p["state"] == "pending" for p in made)
     head = [
-        f"workspace {name}: {len(pending)} pending proposals"
-        + (f", {len(decided)} decided shown" if decided else "")
+        f"workspace {name}: {pending} pending proposals"
+        + (f" from {asked}" if asked else "")
+        + (f", {len(made) - pending} decided shown" if args.get("include_decided") else "")
         + ", newest first"
     ]
     return _fit(head, lines)
+
+
+# Runs `runs` lists at most, newest first, and characters of each one's last words.
+RUNS_SHOWN = 8
+SUMMARY_CHARS = 700
+
+
+def _runs(core: Core, ws: str, asked: str) -> list[str]:
+    journal = core.ws.journal()
+    if journal is None:
+        return []
+    try:
+        ends = [
+            r
+            for r in journal.records(ws, kinds=("end",))
+            if pack.triggered(pack.row(str(r.get("agent") or r.get("stage") or "")))
+            and _is(str(r.get("agent") or r.get("stage")), asked)
+        ]
+    except Busy as e:
+        raise Invalid(str(e)) from e
+    data = Data(core.config.data_dir)
+    made = proposals.listed(data, ws)
+    lines = []
+    for end in reversed(ends[-RUNS_SHOWN:]):
+        run, key = str(end.get("run") or ""), str(end.get("agent") or end.get("stage"))
+        start = next(iter(journal.where("run", run, ("start",))), {})
+        what = "a question asked of it" if end.get("stage") == "ask" else "a run"
+        lines.append(
+            f"- {what} of {end.get('name') or key} ({key}), run {run}, {str(end.get('at'))[:16]}, "
+            f"started by {start.get('started_by') or '?'}: {end.get('outcome')}, "
+            f"{_usd(end.get('cost_usd'))}" + (f", {end.get('detail')}" if end.get("detail") else "")
+        )
+        lines += [
+            f"  proposed #{p['id']} ({p['state']}): {p['title']}" for p in made if p["run"] == run
+        ]
+        said = ask.last_words(data, run)
+        if said:
+            lines.append(f"  its last words: {said[:SUMMARY_CHARS]}")
+    return lines
+
+
+async def read_runs(core: Core, cwd: str, args: Mapping[str, Any]) -> str:
+    name, here = where(core, cwd, args.get("workspace"))
+    asked = str(args.get("agent") or "")
+    lines = await asyncio.to_thread(_runs, core, core.ws.key(here), asked)
+    head = [
+        f"workspace {name}: the last {RUNS_SHOWN} runs of the agents a trigger starts"
+        + (f", {asked}'s" if asked else "")
+        + ", newest first; each one's page is /run/<workspace>/<run>"
+    ]
+    return _fit(head, lines or ["- none"])
 
 
 READS: dict[str, tuple[Callable[..., Any], str, dict[str, Any]]] = {
@@ -520,11 +686,27 @@ READS: dict[str, tuple[Callable[..., Any], str, dict[str, Any]]] = {
     "proposals": (
         read_proposals,
         "Use instead of guessing when asked what agents proposed for the Backlog: pending "
-        "proposals first, by agent, with their problem and sources. `include_decided` adds the "
-        "accepted and dismissed ones with their reason.",
+        "proposals, newest first, each with its number, agent, run, problem and sources. `agent` "
+        "keeps one agent's (its key or name); `include_decided` adds the accepted and dismissed "
+        "ones with their reason.",
         {
             "type": "object",
-            "properties": {**_WORKSPACE, "include_decided": {"type": "boolean"}},
+            "properties": {
+                **_WORKSPACE,
+                "agent": {"type": "string"},
+                "include_decided": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+        },
+    ),
+    "runs": (
+        read_runs,
+        "Use instead of agents or proposals when asked what an agent did or found: its last runs, "
+        "newest first, each with who started it, how it ended, its cost, what it proposed and its "
+        "last words. `agent` keeps one agent's (its key or name).",
+        {
+            "type": "object",
+            "properties": {**_WORKSPACE, "agent": {"type": "string"}},
             "additionalProperties": False,
         },
     ),

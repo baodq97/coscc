@@ -100,7 +100,7 @@ class Core:
             self.sessions,
             lambda: refuse_while_updating(self.updater),
             self.models.agent,
-            lambda cwd: triggers.leif_server(self, cwd, chat.read_tools(self, cwd)),
+            lambda cwd, turn: triggers.leif_server(self, cwd, chat.read_tools(self, cwd), turn),
         )
         self.ideas = Ideas(self.config, self.ws)
         self.backlog = Backlog(

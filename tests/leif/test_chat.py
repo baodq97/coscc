@@ -128,7 +128,7 @@ class EachReadAnswersFromTheAppsOwnState(_App):
         self.assertIn("≤10 turns, $1.00", leif)
         self.assertRegex(said.splitlines()[0], r"^\d+ agents:")
 
-    async def test_proposals_lists_pending_first_and_decided_only_when_asked(self):
+    async def test_proposals_lists_newest_first_one_agents_and_decided_only_when_asked(self):
         from coscc.units import proposals
 
         data = Data(str(self.root / "data"))
@@ -148,11 +148,37 @@ class EachReadAnswersFromTheAppsOwnState(_App):
         lines = said.splitlines()
         self.assertEqual(lines[0], "workspace proj: 1 pending proposals, newest first")
         self.assertEqual(len(lines), 2)
-        self.assertIn(f"#{second} · telemetry-audit · feat · Second", lines[1])
+        self.assertIn(f"#{second} · pending · telemetry-audit · feat · Second", lines[1])
         full = await chat.read_proposals(self.core, self.cwd, {"include_decided": True})
         last = full.splitlines()[-1]
-        self.assertIn("dismissed by owner: not now", last)
+        self.assertIn(f"#{first} · dismissed", last)
+        self.assertIn("by owner: not now", last)
         self.assertNotIn("p" * 401, last)
+        for asked, n in (("telemetry", 1), ("telemetry-audit", 1), ("scan", 0)):
+            said = await chat.read_proposals(self.core, self.cwd, {"agent": asked})
+            self.assertEqual(len(said.splitlines()) - 1, n, asked)
+
+    async def test_runs_names_an_agents_last_runs_with_what_they_proposed_and_said(self):
+        from coscc.units import proposals
+
+        key = self.core.ws.key(self.cwd)
+        journal = self.core.ws.journal()
+        for run, by in (("t-old", "schedule"), ("t-new", "leif")):
+            journal.started(key, "", "scan", "manual", run=run, started_by=by)
+            journal.finished(key, "", "scan", "done", agent="scan", run=run, cost_usd=0.08)
+        data = Data(str(self.root / "data"))
+        item = {"type": "fix", "slug": "a-one", "title": "Reruns cost", "problem": "p" * 250}
+        (pid,) = proposals.add(data, key, "scan", "", [item], run="t-new")
+        with mock.patch.object(chat.ask, "last_words", lambda d, run: f"found it in {run}"):
+            said = (await self.call("runs", agent="Sowilo"))["content"][0]["text"]
+        lines = said.splitlines()
+        self.assertIn("run t-new", lines[1])
+        self.assertIn("started by leif: done, $0.08", lines[1])
+        self.assertIn(f"proposed #{pid} (pending): Reruns cost", lines[2])
+        self.assertIn("its last words: found it in t-new", lines[3])
+        self.assertIn("run t-old", lines[4])
+        none = await chat.read_runs(self.core, self.cwd, {"agent": "dagaz"})
+        self.assertEqual(none.splitlines()[1], "- none")
 
     async def test_a_named_workspace_is_read_and_a_long_list_is_cut_with_a_count(self):
         self.assertIn(
@@ -211,7 +237,7 @@ class NoReadWritesAnything(_App):
 
 class TheChatIsGrantedTheReads(_App):
     async def test_the_server_holds_them_and_the_start_names_them(self):
-        server = triggers.leif_server(self.core, self.cwd, chat.read_tools(self.core, self.cwd))
+        server = triggers.leif_server(self.core, self.cwd, chat.read_tools(self.core, self.cwd), {})
         self.assertEqual(server["type"], "sdk")
         given = []
 
@@ -228,7 +254,7 @@ class TheChatIsGrantedTheReads(_App):
         )
         self.assertEqual(
             [g for g in policy.granted(grant) if g in ("run_agent", *policy.LEIF_READS)],
-            ["run_agent", "board", "unit", "needs_you", "spend", "agents", "proposals"],
+            ["run_agent", "board", "unit", "needs_you", "spend", "agents", "proposals", "runs"],
         )
 
 
@@ -272,3 +298,64 @@ class TalkListsConversationsNotRuns(_App):
         self.assertEqual(e.exception.reasons, ("no-run",))
         self.ended("chat", "c1")
         self.core.chat.check_send(self.cwd, "hi", "c1")
+
+
+class LeifHearsOfTheRunsItStarted(_App):
+    """A run Leif started shows in its conversation once it ends, and Leif is told on its next
+    turn, from the run log; the note never shows as the person's words."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        key, j = self.core.ws.key(self.cwd), self.core.ws.journal()
+        j.finished(key, "", "chat", "done", agent="leif", run="c1", session_id="S")
+        j.started(
+            key, "", "scan", "manual", run="a1", started_by="leif", agent="scan", chat_run="c1"
+        )
+        j.finished(
+            key,
+            "",
+            "scan",
+            "done",
+            agent="scan",
+            run="a1",
+            name="Sowilo",
+            proposals=2,
+            cost_usd=0.08,
+        )
+
+    async def test_the_conversation_lists_it_and_the_next_turn_is_told(self):
+        said = [{"role": "user", "text": "hi", "uuid": "u"}]
+        with mock.patch.object(chat.reader, "history", return_value=said):
+            got = self.core.chat.history(self.cwd, "S")
+        (run,) = got["runs"]
+        self.assertEqual(
+            (run["run"], run["name"], run["outcome"], run["proposals"]), ("a1", "Sowilo", "done", 2)
+        )
+        prompts, starts = [], []
+
+        async def run_(agent, inp, ctx):
+            prompts.append(inp.prompt)
+            starts.append(dict(inp.start))
+            yield ("done", run_mod.Run("done", None, session="S"))
+
+        with (
+            mock.patch.object(run_mod, "run", run_),
+            mock.patch.object(self.core.sessions, "known", lambda s: True),
+        ):
+            async for _ in self.core.chat.stream(self.cwd, "what did it find?", "S"):
+                pass
+        self.assertTrue(prompts[0].startswith(chat.NOTE_HEAD))
+        self.assertIn("Sowilo (scan) run a1: done, 2 proposals, $0.08", prompts[0])
+        self.assertTrue(prompts[0].endswith(f"{chat.NOTE_END}\nwhat did it find?"))
+        # Once a turn has heard it, the next one is not told again.
+        self.assertEqual(starts[0], {"told": ["a1"]})
+        key, j = self.core.ws.key(self.cwd), self.core.ws.journal()
+        j.started(key, "", "chat", "manual", run="c2", agent="leif", **starts[0])
+        j.finished(key, "", "chat", "done", agent="leif", run="c2", session_id="S")
+        self.assertEqual(self.core.chat._note("S"), ("", []))
+        with mock.patch.object(
+            chat.reader, "history", return_value=[{"role": "user", "text": prompts[0], "uuid": "v"}]
+        ):
+            self.assertEqual(
+                self.core.chat.history(self.cwd, "S")["messages"][0]["text"], "what did it find?"
+            )

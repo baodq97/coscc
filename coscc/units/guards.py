@@ -92,6 +92,9 @@ REASONS = (
     # A question about a run refused before spend (`coscc/runner/ask.py`): no such run here, or
     # one a follow-up does not ask (a conversation with Leif goes on in Talk).
     "no-run",
+    # Leif's `run_agent`: a run over the sum Leif asks about first, and the most it starts a day.
+    "needs-confirm",
+    "leif-daily-runs",
 )
 
 # Who may skip a stage. `agent` and `code` never may.
