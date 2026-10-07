@@ -60,7 +60,7 @@ export function Proposals({ workspace }: { workspace: Workspace }) {
       </div>
       <div className="row muted" style={{ gap: 12, fontSize: 12.5, marginBottom: 10, flexWrap: "wrap" }}>
         {v.agents.map((a) => (
-          <Link key={a.key} to={`/agents/${a.key}/trigger`}>
+          <Link key={a.key} to={`/agents/${a.key}/trigger?ws=${encodeURIComponent(workspace.name)}`}>
             {a.name}: {a.on === null ? "on request" : a.on ? "runs on its own here" : "off here, runs when you press Run now"}
           </Link>
         ))}

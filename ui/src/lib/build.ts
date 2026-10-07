@@ -351,3 +351,24 @@ export function draftTools(fields: Record<string, unknown>, catalog: CatalogTool
     return { name, policy: String(policy), effect: c?.effect ?? "not in the catalog", tier: c?.tier ?? "" };
   });
 }
+
+/** The agent Dagaz drafted beside a process that is not saved yet: none once the loaded rows hold its key, and none while they are not loaded. */
+export function unsavedAgent(d: Drafted | undefined, rows: { key: string }[]): Drafted["agent"] {
+  const agent = d?.agent;
+  return agent && rows.length && !rows.some((r) => r.key === agent.key) ? agent : undefined;
+}
+
+/**
+ * What a new unit of one project may walk: every process of every pack that is on, and the stored
+ * default (`stored`) even when its pack is off, so the select shows what is stored and any other
+ * choice is a change.
+ */
+export function walkChoices(packs: Pick<PackShown, "name" | "on" | "own" | "process" | "processes">[]): { stored: string; choices: { ref: string; label: string }[] } {
+  const stored = packs[0]?.process ?? "";
+  const choices = packs.flatMap((p) =>
+    p.processes
+      .filter((x) => p.on || x.ref === stored)
+      .map((x) => ({ ref: x.ref, label: `${x.name} · ${p.own ? "yours" : p.name}${p.on ? "" : " (off)"}` })),
+  );
+  return { stored, choices };
+}

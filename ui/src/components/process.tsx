@@ -27,6 +27,7 @@ import {
   type Drafted,
   type Step,
   type Way,
+  unsavedAgent,
 } from "../lib/build";
 import { Rune } from "../lib/icons";
 import { agentFace, stageLabel } from "../lib/pack";
@@ -219,7 +220,7 @@ export function ProcessEditor({
   const problem = editing ? null : nameProblem(draft.name, taken);
   const agents = stateAgents(rows);
   // An agent Dagaz drafted beside the process, not saved yet: a step may name it.
-  const fresh = drafted?.d.agent && !rows.some((r) => r.key === drafted.d.agent?.key) ? drafted.d.agent : undefined;
+  const fresh = unsavedAgent(drafted?.d, rows);
   // A way on may read the drafted agent's output fields like any row's.
   const withFresh = fresh ? [...rows, { key: fresh.key, row: fresh.fields } as unknown as BuildAgent] : rows;
   // The catalog, to show the drafted agent's tools with what each does.

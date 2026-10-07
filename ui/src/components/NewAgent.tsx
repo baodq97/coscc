@@ -25,9 +25,6 @@ function Part({ label, hint, errors, children }: { label: string; hint?: string;
   );
 }
 
-/** The run named in the address, `?draft=<run>`: Leif hands the owner Dagaz's run this way. */
-export const draftInAddress = (): string => new URLSearchParams(location.search).get("draft") ?? "";
-
 type Phase = { at: "idle" } | { at: "running"; run: string; line: string } | { at: "failed"; why: string } | { at: "drafted"; run: string };
 
 /**

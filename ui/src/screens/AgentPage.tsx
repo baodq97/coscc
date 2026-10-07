@@ -10,7 +10,7 @@ import { ago, modelName, money, unitCode, unitTitle } from "../lib/format";
 import { Link, navigate } from "../lib/router";
 import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
 import { useIndex } from "../lib/pack";
-import { AgentGlyph, attention, triggerWords, useAgents } from "./Agents";
+import { AgentGlyph, WorkspaceSwitch, attention, inWorkspace, triggerWords, useAgents } from "./Agents";
 
 export const TABS = [
   { key: "configuration", label: "Configuration" },
@@ -69,11 +69,14 @@ export function changes(draft: Draft, saved: Record<string, unknown>): string[] 
 }
 
 export function AgentPage({ name, tab = "configuration" }: { name: string; tab?: string }) {
-  const { ws, cwd, agents } = useAgents();
+  const { ws, list, workspace, cwd, agents } = useAgents();
   const [draft, setDraft] = useState<Draft>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
-  const [fresh, setFresh] = useState<Page | null>(null);
+  // A page a save handed back, for the workspace it was saved in.
+  const [freshAt, setFreshAt] = useState<{ cwd: string; page: Page } | null>(null);
+  const fresh = freshAt?.cwd === cwd ? freshAt.page : null;
+  const setFresh = (p: Page) => setFreshAt({ cwd, page: p });
   const [asking, setAsking] = useState(false);
   const [refused, setRefused] = useState<string[]>([]);
   const page = fresh ?? agents.data;
@@ -83,7 +86,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
   if (!a)
     return (
       <div className="page">
-        <Empty icon="team" title="No such agent" actions={<Button onClick={() => navigate("/agents")}>All agents</Button>}>
+        <Empty icon="team" title="No such agent" actions={<Button onClick={() => navigate(inWorkspace("/agents", workspace))}>All agents</Button>}>
           The team has no {name}.
         </Empty>
       </div>
@@ -125,7 +128,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
     try {
       await api.post<Page>("/api/agents/delete", { key: a.key, cwd });
       refreshPacks();
-      navigate("/agents");
+      navigate(inWorkspace("/agents", workspace));
     } catch (e) {
       setRefused(e instanceof ApiError && e.reasons.length ? e.reasons : [(e as Error).message]);
       setAsking(false);
@@ -165,6 +168,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
             )}
           </div>
         )}
+        <WorkspaceSwitch list={list} workspace={workspace} to={`/agents/${a.key}/${t}`} />
         <div className="agent-spend">
           <b>{money(a.cost_30d)}</b> <span className="faint">in 30 days</span>
           <div className="faint" style={{ fontSize: 12 }}>{a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}</div>
@@ -185,7 +189,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
 
       <div className="tabs agent-tabs" style={{ marginTop: 18 }}>
         {TABS.map((x) => (
-          <Link key={x.key} to={`/agents/${a.key}/${x.key}`} className={x.key === t ? "on" : ""}>
+          <Link key={x.key} to={inWorkspace(`/agents/${a.key}/${x.key}`, workspace)} className={x.key === t ? "on" : ""}>
             {x.label}
           </Link>
         ))}

@@ -2,14 +2,15 @@
 // the agent runs, on what, what it cost in 30 days and whether anything needs a look; the agent's
 // own page (`AgentPage.tsx`) changes any part of it.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AgentRow } from "../api.gen";
-import { useResource } from "../lib/api";
+import { api, useResource } from "../lib/api";
 import { LeifAvatar, Rune } from "../lib/icons";
 import { modelName, money } from "../lib/format";
-import { Link } from "../lib/router";
+import type { Workspace } from "../lib/model";
+import { Link, navigate, useQuery } from "../lib/router";
 import { isBuiltIn, packTitle, type BuildAgent } from "../lib/build";
-import { NewAgent, draftInAddress } from "../components/NewAgent";
+import { NewAgent } from "../components/NewAgent";
 import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 export const GROUPS: { key: AgentRow["group"]; title: string; lede: string }[] = [
@@ -70,28 +71,93 @@ export function AgentGlyph({ a, size = "" }: { a: AgentRow; size?: "" | "lg" | "
   );
 }
 
-/** The agents of the first workspace's view: one read gives every row and the catalog. */
+/**
+ * The workspace a team page reads: the one `?ws=<name>` names, else the one Dagaz's run
+ * `?draft=<run>` ran in (`ofRun`, `null` while still asked), else the first.
+ */
+export function pickWorkspace<W extends { name: string; path: string }>(list: W[], named: string, ofRun: string | null): W | undefined {
+  const byName = list.find((w) => w.name === named);
+  if (byName || ofRun === null) return byName;
+  return list.find((w) => w.path === ofRun) ?? list[0];
+}
+
+/** The path of the workspace whose run `run` is: `""` for no run or none found, `null` while asking each. */
+export function useRunWorkspace(run: string, list: { path: string }[]): string | null {
+  const [found, setFound] = useState<{ run: string; path: string } | null>(null);
+  const key = list.map((w) => w.path).join("|");
+  useEffect(() => {
+    if (!run || !list.length) return;
+    let live = true;
+    Promise.all(list.map((w) => api.get("/api/runs/{run}", { cwd: w.path, run, limit: "1" }).then(() => w.path, () => ""))).then(
+      (got) => live && setFound({ run, path: got.find(Boolean) ?? "" }),
+    );
+    return () => {
+      live = false;
+    };
+    // `key` stands for the list.
+  }, [run, key]);
+  if (!run) return "";
+  return found?.run === run ? found.path : null;
+}
+
+/** `?ws=<name>` for an address of the team pages. */
+export const inWorkspace = (to: string, w?: Workspace) => (w ? `${to}?ws=${encodeURIComponent(w.name)}` : to);
+
+/** The agents of the workspace the address names: one read gives every row and the catalog. */
 export function useAgents() {
   const ws = useResource("/api/workspaces");
-  const first = ws.data?.workspaces[0];
-  const agents = useResource("/api/agents", first ? { cwd: first.path } : {});
-  return { ws, cwd: first?.path ?? "", agents };
+  const list = ws.data?.workspaces ?? [];
+  const named = useQuery("ws");
+  const ofRun = useRunWorkspace(named ? "" : useQuery("draft"), list);
+  const workspace = pickWorkspace(list, named, ofRun);
+  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path } : {});
+  return { ws, list, workspace, cwd: workspace?.path ?? "", agents };
+}
+
+/** Which project's agents the page shows; drawn only when there is more than one. */
+export function WorkspaceSwitch({ list, workspace, to }: { list: Workspace[]; workspace?: Workspace; to: string }) {
+  if (list.length < 2 || !workspace) return null;
+  return (
+    <select className="input sm" aria-label="Project" value={workspace.name} onChange={(e) => navigate(`${to}?ws=${encodeURIComponent(e.target.value)}`)}>
+      {list.map((w) => (
+        <option key={w.path} value={w.name}>
+          {w.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * The section an agent lists under: what opens it, whoever made it. One of yours or of an
+ * imported pack that nothing opens yet (no state, trigger or agent starts it) has none: it lists
+ * under its pack.
+ */
+export function groupOf(a: AgentRow): AgentRow["group"] | null {
+  if (isBuiltIn(a as BuildAgent) || a.group !== "engine" || a.row.trigger?.engine) return a.group;
+  return null;
 }
 
 export function Agents() {
-  const { cwd, agents } = useAgents();
+  const { list, workspace, cwd, agents } = useAgents();
   // `?draft=<run>` opens the dialog on Dagaz's run, as Leif hands it over.
-  const [run] = useState(draftInAddress);
+  const run = useQuery("draft");
   const [adding, setAdding] = useState(Boolean(run));
   const rows = (agents.data?.rows ?? []) as BuildAgent[];
-  const others = [...new Set(rows.filter((a) => !isBuiltIn(a)).map(packTitle))].sort((a, b) => (a === "Yours" ? -1 : b === "Yours" ? 1 : a.localeCompare(b)));
   const look = rows.filter((a) => attention(a));
+  const idle = rows.filter((a) => groupOf(a) === null);
+  const packs = [...new Set(idle.map(packTitle))].sort((a, b) => (a === "Yours" ? -1 : b === "Yours" ? 1 : a.localeCompare(b)));
   return (
     <div className="page" style={{ maxWidth: 1040 }}>
       <PageHead
         title="Agents"
         lede="Every agent the app runs: when it runs, on what model, what it may do and what it cost. Open one to change any part; its next run uses the change."
-        actions={<Button kind="primary" icon="plus" disabled={!agents.data} onClick={() => setAdding(true)}>New agent</Button>}
+        actions={
+          <>
+            <WorkspaceSwitch list={list} workspace={workspace} to="/agents" />
+            <Button kind="primary" icon="plus" disabled={!agents.data} onClick={() => setAdding(true)}>New agent</Button>
+          </>
+        }
       />
       {adding && agents.data && <NewAgent rows={rows} catalog={agents.data.catalog} cwd={cwd} run={run || undefined} onClose={() => setAdding(false)} />}
       {agents.state === "error" ? (
@@ -104,7 +170,7 @@ export function Agents() {
             <div className="card card-b attn" style={{ marginTop: 16 }}>
               <b>Needs a look</b>
               {look.map((a) => (
-                <Link key={a.key} to={`/agents/${a.key}`} className="attn-row">
+                <Link key={a.key} to={inWorkspace(`/agents/${a.key}`, workspace)} className="attn-row">
                   <Chip square tone={attention(a)!.tone}>{attention(a)!.label}</Chip>
                   <span>{a.row.name ?? a.key}</span>
                   <span className="faint">{a.problems[0] ?? "open it to see its runs"}</span>
@@ -113,7 +179,7 @@ export function Agents() {
             </div>
           )}
           {GROUPS.map((g) => {
-            const mine = rows.filter((a) => isBuiltIn(a) && a.group === g.key);
+            const mine = rows.filter((a) => groupOf(a) === g.key);
             if (!mine.length) return null;
             return (
               <section key={g.key}>
@@ -122,20 +188,20 @@ export function Agents() {
                 </div>
                 <div className="card">
                   {mine.map((a) => (
-                    <AgentLine key={a.key} a={a} rows={rows} />
+                    <AgentLine key={a.key} a={a} rows={rows} workspace={workspace} />
                   ))}
                 </div>
               </section>
             );
           })}
-          {others.map((title) => (
+          {packs.map((title) => (
             <section key={title}>
               <div className="sec-h">
-                {title} <span className="faint">{title === "Yours" ? "Agents you made on this page." : "From an imported pack."}</span>
+                {title} <span className="faint">Nothing runs these yet: put one in a process or give it a trigger.</span>
               </div>
               <div className="card">
-                {rows.filter((a) => packTitle(a) === title).map((a) => (
-                  <AgentLine key={a.key} a={a} rows={rows} />
+                {idle.filter((a) => packTitle(a) === title).map((a) => (
+                  <AgentLine key={a.key} a={a} rows={rows} workspace={workspace} />
                 ))}
               </div>
             </section>
@@ -146,10 +212,11 @@ export function Agents() {
   );
 }
 
-function AgentLine({ a, rows }: { a: AgentRow; rows: AgentRow[] }) {
+function AgentLine({ a, rows, workspace }: { a: AgentRow; rows: AgentRow[]; workspace?: Workspace }) {
   const look = attention(a);
+  const whose = isBuiltIn(a as BuildAgent) ? "" : packTitle(a as BuildAgent);
   return (
-    <Link to={`/agents/${a.key}`} className="agent-line">
+    <Link to={inWorkspace(`/agents/${a.key}`, workspace)} className="agent-line">
       <AgentGlyph a={a} />
       <span className="who">
         <b>{a.row.name ?? a.key}</b> <span className="faint mono">{a.key}</span>
@@ -169,6 +236,7 @@ function AgentLine({ a, rows }: { a: AgentRow; rows: AgentRow[] }) {
         )}
       </span>
       <span className="marks">
+        {whose && <Chip square tone={whose === "Yours" ? "accent" : "plain"}>{whose === "Yours" ? "yours" : whose}</Chip>}
         {look && <Chip square tone={look.tone}>{look.label}</Chip>}
         {a.edited.length > 0 && <Chip square tone="accent">edited</Chip>}
       </span>
