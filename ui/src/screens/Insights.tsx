@@ -42,7 +42,7 @@ export function Insights() {
   const workspace = boards.find((b) => b.workspace.name === project)?.workspace ?? boards[0]?.workspace;
   return (
     <div className="page mid">
-      <PageHead title="Insights" lede="The last 30 days against your targets: $15 a shipped unit and 1.5 review rounds. Every figure names its units." />
+      <PageHead title="Insights" lede="The last 30 days against your targets: $15 a shipped unit, 1.5 review rounds, every outcome graded and met. Every figure names its units." />
       {loading ? (
         <SkeletonRows rows={5} />
       ) : (

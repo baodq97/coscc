@@ -562,6 +562,8 @@ function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: b
   const paused = run.outcome === "paused-budget";
   const stopped = run.ended && run.outcome !== "done";
   const verb = live ? "is working on" : paused ? "paused" : stopped ? run.outcome : "finished";
+  // A row no state names (a grader, a scan) has no stage word: its run is "a run".
+  const what = stageLabel(run.stage) === name ? "a run" : stageLabel(run.stage).toLowerCase();
   return (
     <div className="tl-i">
       <span className="tl-ic">
@@ -571,7 +573,7 @@ function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: b
         <div className="tl-h">
           <b>{name}</b>
           <span>
-            {stopped ? <Chip square tone={paused ? "amber" : "red"}>{verb}</Chip> : verb} {stageLabel(run.stage).toLowerCase()}
+            {stopped ? <Chip square tone={paused ? "amber" : "red"}>{verb}</Chip> : verb} {what}
           </span>
           {live && <Dot tone="live" />}
           {run.cost_usd != null && <span className="faint">· {money(run.cost_usd)}</span>}

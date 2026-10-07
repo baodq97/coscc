@@ -135,7 +135,7 @@ class InsightsCountTheGradedOutcomes(unittest.TestCase):
         with mock.patch.object(service.activity, "_records_or_none", return_value=rows):
             got = service.activity.insights("w", units, days=30, now=now)
         o = got["outcomes"]
-        # Due: the four shipped a week ago or more. 0002_b was graded late, 0004_d never.
+        # Due: the four shipped a week ago or more; one was graded late and one never.
         self.assertEqual((o["due"], o["on_time"], o["graded"], o["met"]), (4, 2, 3, 1))
         self.assertEqual(o["missed"], ["0002_b", "0003_c"])
         self.assertEqual(
