@@ -41,27 +41,28 @@ and `0008` removed it — see `.claude/CLAUDE.md`.
 | Needs you | `/inbox` | answers a question, holds or reruns a unit |
 | A project | `/work/<project>` | pulls, relabels, removes it from the list |
 | A unit | `/unit/<project>/<number>` | runs its next step, stops it, holds it |
-| Up next | `/up-next` | the shortlist and its order |
+| Up next | `/up-next` | the shortlist and its order; accepts or dismisses an agent's proposals |
 | Talk to Leif | `/leif` | sends a message, which starts or resumes a chat |
-| Agents | `/agents` | an agent's model, effort and ceilings |
+| Agents | `/agents` | every part of an agent row; a new agent (a copy, a blank one, or Dagaz's draft); *Run now* on a triggered row |
 | Insights | `/insights` | nothing |
-| What Leif may do | `/may-do` | features, autopilot and grants |
+| What Leif may do | `/may-do` | features, autopilot, and per project its packs, default process and the owner's processes |
 
 Removing a project takes it off the list. The directory on disk is never deleted.
 
 ## What it costs
 
-Two controls spend real account quota, and both say so before they are used:
+Every control that opens a session spends real account quota and says so before it is used:
 
-- **Send**, on Talk to Leif. One message, chat only, no tools.
-- **Run**, on a unit's page. A real step of the loop. In `autonomous` mode on `impl`
-  it carries a $5 ceiling, and on `pr` it can reach every repository this machine's GitHub
-  login reaches. The page shows the tools the step would get and that warning *before*
-  the button, which is `0006 spec.md` R17.
+- **Send**, on Talk to Leif. One chat turn; no tools unless the app is configured with some.
+- **Run**, on a unit's page. One step of the unit's process: the agent row its state names,
+  under that row's turn and $ ceilings and the grant the app issues for the run. A state that
+  is an engine action (open the pull request, merge) opens no session.
+- **Run now** on a triggered row, and **Describe the task** (Dagaz), on the Agents page. One
+  read-only session each, under the row's ceilings.
 
-Six of the eight stages — idea, intent, spec, plan, review, ship — get no tools in either
-mode. A session with no tools cannot write a file, so the app writes the artifact from the
-reply. The Settings screen says so, because otherwise it looks like the agent wrote it.
+What an agent may touch is its row's tools: a row whose artifact the app writes from the reply
+holds only reading tools, so it cannot write a file. The agent's page shows its tools, model
+and ceilings.
 
 ## Proofs
 

@@ -11,9 +11,10 @@ Read this before changing `/api/settings/*`, model resolution, `/api/backlog/*` 
   the contracts; `trigger` is saved only on a row its own trigger starts. A model id is not checked when
   saved; a wrong one fails the next step. A hand-edited owner file that breaks the row refuses
   that agent's runs (`agent-invalid`) and shows on the Agents page.
-- A stage marked `novel` runs on a dearer row with higher ceilings, so one press can cost more.
-  A temporary model trial can override a stage's model without showing on Settings; the step's
-  `start` row names it.
+- A step whose plan marks it `novel`, that touches the security surface, or has no plan runs
+  its row's `novel` variant, a dearer model with higher ceilings, unless the owner's layer sets
+  the model; one press can cost more. A row's `model.trial` can pick a routine step's model without showing on Settings; the
+  step's `start` row names it. A copied row keeps neither.
 - A step that hits its turn or $ ceiling pauses and keeps its session: a person raises the ceiling
   on the unit's page and it goes on where it stopped. A raise is a person's; the autopilot stops
   there and never raises one.

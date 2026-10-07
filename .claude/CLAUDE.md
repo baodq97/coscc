@@ -1,6 +1,6 @@
 # coscc
 
-A local SDLC harness. `coscc.loop` decides every gate; each stage's rules live in its skill.
+A local SDLC harness. `coscc.loop` decides every gate; agents and processes are data.
 
 ## Commands
 
@@ -38,14 +38,17 @@ every test. Never skip a test or switch a check off: fix the code.
 ## Architecture
 
 A unit is `.cos/NNNN_<slug>/` holding its artifacts; its state is in the app's `cos.db`.
-`coscc.loop` is the one definition of the loop. The app runs every stage.
-A stage's `judgement` (`ready`, in `submit`) is the agent's, not a person's approval.
+It walks one process (a pack's `process.json`): each state runs an agent row or an engine
+action. `coscc.loop` decides every way on; the app runs every agent, a grant per run. Agents
+are rows (`coscc/packs/coscc-sdlc/agents/`); the core names no state. A `judgement` (in
+`submit`) is the agent's, not a person's.
 
 ## Things agents get wrong
 
 - Re-asking a gate the prompt answered; at a terminal, ask `uv run python -m coscc.loop gate` and stop on non-zero.
-- No code while `gate <unit> impl` is closed; in the `fast` lane the first commit is the failing
-  test.
+- No code while `gate <unit> impl` is closed; on the fast-lane branch the first commit is the
+  failing test.
+- Coding an agent's or a state's behaviour in Python: edit its row or process.
 - A skip is a person's: `uv run coscc skip <workspace> <unit> <state> <reason>`, for any state the
   process marks `skip`.
 - Committing on `main`: cut the branch from `unit-branch` first.

@@ -1170,8 +1170,8 @@ class Integration:
         return done
 
     async def shipped(self, cwd: str, key: str, unit: str, result: str) -> dict[str, Any] | None:
-        """The `ship` row notices read, and after a merge the cleanup. From `mechanical`, and from the PR reader and the start-up reconcile
-        when they record a merge no `ship` step follows any more. Never raises; the cleanup's answer after a merge, else `None`."""
+        """The `merge` record notices read, and after a merge the cleanup. From `mechanical`, and from the PR reader and the start-up reconcile
+        when they record a merge no step follows. Never raises; the cleanup's answer after a merge, else `None`."""
         journal = self.ws.journal()
         if journal is not None:
             try:
