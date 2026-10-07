@@ -223,7 +223,10 @@ class EveryPartReachesTheNextRun(_WithAService):
         self.assertIn("note", json.dumps(contracts.schema("spec")))
         self.core.agents.set_agent_field("spec", "body", "Begin with MARKER-M4.")
         agent = self.core.models.agent("spec", policy.row_for("spec"))
-        self.assertEqual(agent.system, "Begin with MARKER-M4.")
+        # A run with no stage prompt gets the row's skills after its body (`skills.system`).
+        self.assertEqual(
+            agent.system, f"Begin with MARKER-M4.\n\n{pack.skill('write-spec').strip()}"
+        )
         self.core.agents.set_agent_field("spec", "skill:write-spec", "# Write a spec\n\nShort.")
         self.assertEqual(pack.skill("write-spec"), "# Write a spec\n\nShort.\n")
         row = self._row(self.core.agents.agent_page(now=NOW), "spec")
