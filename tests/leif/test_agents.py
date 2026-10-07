@@ -467,9 +467,7 @@ class ThePage(_WithAService):
         self.assertEqual(len(self.core.agents.live()["failed"]), 1)
         pack.set_agent_on(self.data, "scan", "w", False)
         self.assertEqual(len(self.core.agents.live()["failed"]), 1)
-        self._seed(
-            [dict(triggers.state_record("w", "scan", False, "owner"), at=now.isoformat())]
-        )
+        self._seed([dict(triggers.state_record("w", "scan", False, "owner"), at=now.isoformat())])
         self.assertEqual(self.core.agents.live()["failed"], [])
 
     def test_a_failure_of_an_agent_off_here_stays_listed_unless_it_was_turned_off_after(self):
