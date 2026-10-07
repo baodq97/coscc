@@ -15,6 +15,7 @@ import { attention, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
 import { changes, get, put } from "../screens/AgentPage";
 import type { AgentRow } from "../api.gen";
+import { addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, moveStep, reasonsByStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -233,5 +234,94 @@ describe("whenWords", () => {
     expect(whenWords({ guard: "ship-ready" })).toBe("ship ready");
     expect(whenWords([{ field: "judgement", is: "ready" }, { guard: "dependency-merged" }])).toBe("ready and dependency merged");
     expect(whenWords(undefined)).toBe("");
+  });
+});
+
+describe("build: a new agent", () => {
+  it("makes a key from words and says why a key will not do", () => {
+    expect(slugKey("Add a Line!")).toBe("add-a-line");
+    expect(slugKey("9 lives")).toBe("lives");
+    expect(keyProblem("tidy", ["impl"])).toBeNull();
+    expect(keyProblem("impl", ["impl"])).toMatch(/already/);
+    expect(keyProblem("Tidy", [])).toMatch(/lowercase/);
+    expect(keyProblem("a".repeat(25), [])).toMatch(/24/);
+  });
+
+  it("puts a refusal's reason beside its field", () => {
+    expect(fieldOf("key tidy is taken")).toBe("key");
+    expect(fieldOf("name must be text")).toBe("name");
+    expect(fieldOf("ceilings.usd must be number")).toBeNull();
+  });
+});
+
+describe("build: a process", () => {
+  const impl = { key: "impl", row: { output: { kind: "artifact", fields: { judgement: { enum: ["ready", "not-ready"] }, "unmeasured?": { list: "U" } } } } } as unknown as AgentRow;
+
+  it("lists what a way may ask of an output", () => {
+    expect(fieldOptions(impl)).toEqual([
+      { field: "judgement", values: ["ready", "not-ready"] },
+      { field: "unmeasured", values: ["non-empty", "empty"] },
+    ]);
+    expect(fieldOptions(undefined)).toEqual([]);
+  });
+
+  it("builds steps into a process, each going on to the next", () => {
+    let d = blankDraft("tiny");
+    d = addStep(d, { agent: "intent" });
+    d = addStep(d, { agent: "tidy" });
+    d = addStep(d, { action: "open-pr" });
+    d = addStep(d, { agent: "review" });
+    d = addStep(d, { action: "merge" });
+    const p = toProcess(d);
+    expect(p.start).toBe("intent");
+    expect(Object.keys(p.states)).toEqual(["intent", "tidy", "pr", "review", "ship"]);
+    expect(p.states.intent.next).toEqual([{ to: "tidy" }]);
+    expect(p.states.pr).toEqual({ action: "open-pr", next: [{ to: "review" }] });
+    expect(p.states.ship).toEqual({ action: "merge", when: { guard: "ship-ready" } });
+  });
+
+  it("adds a way on with its condition, ahead of the otherwise", () => {
+    let d = addStep(addStep(addStep(blankDraft("x"), { agent: "impl" }), { action: "open-pr" }), { agent: "review" });
+    d = setStep(d, "review", { ways: [{ to: "impl", cond: { field: "verdict", is: "changes-requested" }, rest: [] }] });
+    const p = toProcess(d);
+    expect(p.states.review.next).toEqual([{ to: "impl", when: { field: "verdict", is: "changes-requested" } }]);
+    d = setStep(d, "impl", { ways: [{ to: "review", cond: { guard: "fast-lane" }, rest: [] }] });
+    expect(toProcess(d).states.impl.next).toEqual([{ to: "review", when: { guard: "fast-lane" } }, { to: "pr" }]);
+  });
+
+  it("reads a process back into the steps it was built from", () => {
+    const d = addStep(addStep(addStep(blankDraft("x"), { agent: "intent" }), { agent: "impl" }), { agent: "review" });
+    const d2 = setStep(d, "review", { ways: [{ to: "impl", cond: { field: "verdict", is: "changes-requested" }, rest: [] }] });
+    const p = toProcess(d2);
+    expect(toProcess(fromProcess("x", p))).toEqual(p);
+    expect(fromProcess("x", p).steps.map((s) => [s.key, s.then, s.ways.length])).toEqual([["intent", true, 0], ["impl", true, 0], ["review", false, 1]]);
+  });
+
+  it("removes a step with the ways that led to it, and moves one", () => {
+    let d = addStep(addStep(addStep(blankDraft("x"), { agent: "a" }), { agent: "b" }), { agent: "c" });
+    d = setStep(d, "c", { ways: [{ to: "a", cond: null, rest: [] }] });
+    const gone = removeStep(d, "a");
+    expect(gone.steps.map((s) => s.key)).toEqual(["b", "c"]);
+    expect(gone.steps[1].ways).toEqual([]);
+    const moved = moveStep(d, "c", -1);
+    expect(moved.steps.map((s) => s.key)).toEqual(["a", "c", "b"]);
+    expect(toProcess(moved).states.c.next).toEqual([{ to: "a" }, { to: "b" }]);
+    expect(toProcess(moved).states.b.next).toBeUndefined();
+    expect(moveStep(d, "a", -1)).toBe(d);
+  });
+
+  it("keeps a second copy of an agent apart and follows a changed agent", () => {
+    let d = addStep(addStep(blankDraft("x"), { agent: "impl" }), { agent: "impl" });
+    expect(d.steps.map((s) => s.key)).toEqual(["impl", "impl-2"]);
+    d = setAgent(d, "impl-2", "review");
+    expect(d.steps.map((s) => [s.key, s.agent])).toEqual([["impl", "impl"], ["review", "review"]]);
+  });
+
+  it("puts a check's reasons beside the step they name", () => {
+    const got = reasonsByStep(["tiny.ship: a review state is not on every path to it", "tiny.review.next[0]: 'x' is no state", "tiny: no path reaches the end", "local/tiny.tidy: its input intent is not produced on every path to it"], ["intent", "tidy", "review", "ship"]);
+    expect(got.byStep.ship).toEqual(["a review state is not on every path to it"]);
+    expect(got.byStep.review).toEqual(["'x' is no state"]);
+    expect(got.byStep.tidy).toHaveLength(1);
+    expect(got.rest).toEqual(["tiny: no path reaches the end"]);
   });
 });

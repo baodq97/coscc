@@ -2,12 +2,15 @@
 // the agent runs, on what, what it cost in 30 days and whether anything needs a look; the agent's
 // own page (`AgentPage.tsx`) changes any part of it.
 
+import { useState } from "react";
 import type { AgentRow } from "../api.gen";
 import { useResource } from "../lib/api";
 import { LeifAvatar, Rune } from "../lib/icons";
 import { modelName, money } from "../lib/format";
 import { Link } from "../lib/router";
-import { Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
+import { isBuiltIn, packTitle, type BuildAgent } from "../lib/build";
+import { NewAgent } from "../components/NewAgent";
+import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 export const GROUPS: { key: AgentRow["group"]; title: string; lede: string }[] = [
   { key: "stage", title: "Stage agents", lede: "Each opens when a unit reaches its state." },
@@ -76,15 +79,19 @@ export function useAgents() {
 }
 
 export function Agents() {
-  const { agents } = useAgents();
-  const rows = agents.data?.rows ?? [];
+  const { cwd, agents } = useAgents();
+  const [adding, setAdding] = useState(false);
+  const rows = (agents.data?.rows ?? []) as BuildAgent[];
+  const others = [...new Set(rows.filter((a) => !isBuiltIn(a)).map(packTitle))].sort((a, b) => (a === "Yours" ? -1 : b === "Yours" ? 1 : a.localeCompare(b)));
   const look = rows.filter((a) => attention(a));
   return (
     <div className="page" style={{ maxWidth: 1040 }}>
       <PageHead
         title="Agents"
         lede="Every agent the app runs: when it runs, on what model, what it may do and what it cost. Open one to change any part; its next run uses the change."
+        actions={<Button kind="primary" icon="plus" disabled={!agents.data} onClick={() => setAdding(true)}>New agent</Button>}
       />
+      {adding && <NewAgent rows={rows} cwd={cwd} onClose={() => setAdding(false)} />}
       {agents.state === "error" ? (
         <ErrorState error={agents.error} onRetry={agents.reload} />
       ) : !agents.data ? (
@@ -104,7 +111,7 @@ export function Agents() {
             </div>
           )}
           {GROUPS.map((g) => {
-            const mine = rows.filter((a) => a.group === g.key);
+            const mine = rows.filter((a) => isBuiltIn(a) && a.group === g.key);
             if (!mine.length) return null;
             return (
               <section key={g.key}>
@@ -119,6 +126,18 @@ export function Agents() {
               </section>
             );
           })}
+          {others.map((title) => (
+            <section key={title}>
+              <div className="sec-h">
+                {title} <span className="faint">{title === "Yours" ? "Agents you made on this page." : "From an imported pack."}</span>
+              </div>
+              <div className="card">
+                {rows.filter((a) => packTitle(a) === title).map((a) => (
+                  <AgentLine key={a.key} a={a} rows={rows} />
+                ))}
+              </div>
+            </section>
+          ))}
         </>
       )}
     </div>
