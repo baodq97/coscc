@@ -264,9 +264,17 @@ export function RunLog({ cwd, run, live, whole = false, onEnd }: { cwd: string; 
       source.close();
       setRound((r) => r + 1);
     };
+    // Ended, stopped or gone: read its head again, so how it ended shows without a reload.
     const over = () => {
       source.close();
       setFollowing(false);
+      api
+        .get("/api/runs/{run}", { cwd, run, limit: PAGE })
+        .then((p) => {
+          setPage(p);
+          setEvents((now) => merged(now, p.events));
+        })
+        .catch(setError);
       onEnd?.();
     };
     source.addEventListener("end", again);
