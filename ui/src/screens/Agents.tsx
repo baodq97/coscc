@@ -9,7 +9,7 @@ import { LeifAvatar, Rune } from "../lib/icons";
 import { modelName, money } from "../lib/format";
 import { Link } from "../lib/router";
 import { isBuiltIn, packTitle, type BuildAgent } from "../lib/build";
-import { NewAgent } from "../components/NewAgent";
+import { NewAgent, draftInAddress } from "../components/NewAgent";
 import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 export const GROUPS: { key: AgentRow["group"]; title: string; lede: string }[] = [
@@ -80,7 +80,9 @@ export function useAgents() {
 
 export function Agents() {
   const { cwd, agents } = useAgents();
-  const [adding, setAdding] = useState(false);
+  // `?draft=<run>` opens the dialog on Dagaz's run, as Leif hands it over.
+  const [run] = useState(draftInAddress);
+  const [adding, setAdding] = useState(Boolean(run));
   const rows = (agents.data?.rows ?? []) as BuildAgent[];
   const others = [...new Set(rows.filter((a) => !isBuiltIn(a)).map(packTitle))].sort((a, b) => (a === "Yours" ? -1 : b === "Yours" ? 1 : a.localeCompare(b)));
   const look = rows.filter((a) => attention(a));
@@ -91,7 +93,7 @@ export function Agents() {
         lede="Every agent the app runs: when it runs, on what model, what it may do and what it cost. Open one to change any part; its next run uses the change."
         actions={<Button kind="primary" icon="plus" disabled={!agents.data} onClick={() => setAdding(true)}>New agent</Button>}
       />
-      {adding && <NewAgent rows={rows} cwd={cwd} onClose={() => setAdding(false)} />}
+      {adding && agents.data && <NewAgent rows={rows} catalog={agents.data.catalog} cwd={cwd} run={run || undefined} onClose={() => setAdding(false)} />}
       {agents.state === "error" ? (
         <ErrorState error={agents.error} onRetry={agents.reload} />
       ) : !agents.data ? (

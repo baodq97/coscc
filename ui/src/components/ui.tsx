@@ -105,7 +105,7 @@ export function SkeletonRows({ rows = 6 }: { rows?: number }) {
 
 
 /** A box over the screen for one small job; Esc or a press outside closes it. */
-export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function Dialog({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     addEventListener("keydown", onKey);
@@ -113,7 +113,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
   }, [onClose]);
   return (
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dlg" role="dialog" aria-label={title}>
+      <div className={`dlg${wide ? " wide" : ""}`} role="dialog" aria-label={title}>
         <div className="dlg-h">{title}</div>
         <div className="dlg-b">{children}</div>
       </div>

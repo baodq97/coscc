@@ -65,6 +65,10 @@ agent has no run: `idea`), and one chat conversation in a temporary `CLAUDE_CONF
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
 visible text as `<address slug>-<W>x<H>.txt`.
 
+Three Dagaz runs ended (`seed_drafts`): `/agents?draft=capture-draft-agent` opens New agent filled
+with a drafted reader, `/may-do?draft=capture-draft-process` the process editor with a drafted
+`docs` process, and `/agents?draft=capture-draft-refused` the dialog on a run that left no draft.
+
 `intent` is edited on the Agents page (Haiku, low effort, `Grep` off, `Glob` on ask, a line
 added to its role) and `spike` has a hand-written owner file its checks refuse (`seed_agents`).
 
@@ -702,6 +706,105 @@ def seed_transitions(work: Path, data_dir: Path, proj: Path) -> None:
         )
 
 
+# Three ended Dagaz runs of `proj`, each a stand-in for the session's output: `?draft=<run>` on
+# `/agents` and `/may-do` opens the New agent dialog or the process editor on it.
+DRAFT_AGENT = {
+    "why": "A reader you start: it reads the interventions since its last run and proposes at most "
+    "two changes to the review skill, each with the interventions it rests on. It holds no tool, "
+    "so a run costs about $0.10; check its trigger and ceiling.",
+    "agent": {
+        "key": "review-coach",
+        "fields": {
+            "name": "Review-coach",
+            "glyph": "ᚹ",
+            "description": "Proposes changes to the review skill from what people stepped in for.",
+            "model": {"id": "claude-sonnet-5-5[1m]", "effort": "low"},
+            "tools": {},
+            "input": {
+                "artifacts": [],
+                "outputs": [],
+                "answers": False,
+                "findings": False,
+                "data": ["interventions", "proposals"],
+                "skip_when_empty": True,
+            },
+            "output": {
+                "kind": "proposal",
+                "version": 1,
+                "purpose": "Hand the app at most two changes to the review skill.",
+                "fields": {
+                    "proposals": {
+                        "list": {
+                            "type": "text",
+                            "slug": "text",
+                            "title": "text",
+                            "problem": "text",
+                            "sources": {"list": "text"},
+                        }
+                    }
+                },
+            },
+            "trigger": {"manual": True},
+            "ceilings": {"turns": 3, "usd": 0.3},
+            "warning": "Each run opens one paid, read-only session ($0.30 ceiling).",
+        },
+        "body": "You read the interventions since your last run and propose at most two "
+        "changes to the review skill, each citing the interventions it rests on.",
+    },
+}
+DRAFT_PROCESS = {
+    "why": "Docs changes walk intent, build, review and merge on the agents you have; spec and "
+    "plan are left out, and review still stands before the merge.",
+    "process": {
+        "name": "docs",
+        "process": {
+            "start": "intent",
+            "end": "shipped",
+            "states": {
+                "intent": {
+                    "label": "Intent",
+                    "agent": "intent",
+                    "next": [{"to": "impl", "when": {"field": "judgement", "is": "ready"}}],
+                },
+                "impl": {
+                    "label": "Build",
+                    "agent": "impl",
+                    "next": [{"to": "pr", "when": {"field": "judgement", "is": "ready"}}],
+                },
+                "pr": {"label": "Pull request", "action": "open-pr", "next": [{"to": "review"}]},
+                "review": {
+                    "label": "Review",
+                    "agent": "review",
+                    "next": [
+                        {"to": "impl", "when": {"field": "verdict", "is": "changes-requested"}},
+                        {"to": "ship", "when": {"field": "verdict", "is": "pass"}},
+                    ],
+                },
+                "ship": {"label": "Ship", "action": "merge", "when": {"guard": "ship-ready"}},
+            },
+        },
+    },
+}
+
+
+def seed_drafts(journal: Any, key: str) -> None:
+    for run, outcome, extra in (
+        ("capture-draft-agent", "done", {"draft": DRAFT_AGENT, "cost_usd": 0.41}),
+        ("capture-draft-process", "done", {"draft": DRAFT_PROCESS, "cost_usd": 0.38}),
+        (
+            "capture-draft-refused",
+            "failed",
+            {
+                "cost_usd": 0.52,
+                "detail": "Dagaz stopped at its ceiling: the app refused its last draft "
+                "(agent: tools.send_email: no such tool in the catalog).",
+            },
+        ),
+    ):
+        journal.started(key, "", "dagaz", "manual", run=run, started_by="manual")
+        journal.finished(key, "", "dagaz", outcome, run=run, agent="dagaz", **extra)
+
+
 def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     """A run whose cost is unknown on two units and one whose
     cost is known, written where the app reads its run log, under the key it reads by; and
@@ -711,6 +814,7 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
 
     seed_pilot(data_dir, proj)
     journal, key = Journal(work, Data(data_dir)), str(proj.resolve())
+    seed_drafts(journal, key)
     journal.started(key, "0002_open-question", "spec", "manual")
     journal.finished(key, "0002_open-question", "spec", "done", turns=4, cost_usd=0.52)
     journal.started(key, "0002_open-question", "impl", "autonomous", run="capture-run-1")

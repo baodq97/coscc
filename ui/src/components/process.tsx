@@ -2,7 +2,7 @@
 // (glyph and name) or the engine's action, and every other way on as a labelled arrow. Plain SVG.
 
 import { useEffect, useId, useState } from "react";
-import type { Condition, PackShown, ProcessShown, State } from "../api.gen";
+import type { AgentPage, Condition, PackShown, ProcessShown, State } from "../api.gen";
 import { api, ApiError } from "../lib/api";
 import {
   ACTION_WORDS,
@@ -24,11 +24,14 @@ import {
   toProcess,
   type BuildAgent,
   type Draft,
+  type Drafted,
   type Step,
   type Way,
 } from "../lib/build";
 import { Rune } from "../lib/icons";
-import { agentFace, stageLabel } from "../lib/pack";
+import { agentFace, refreshPacks, stageLabel } from "../lib/pack";
+import { Link } from "../lib/router";
+import { DescribeTask } from "./NewAgent";
 import { Button } from "./ui";
 
 const NODE_W = 176;
@@ -192,6 +195,7 @@ export function ProcessEditor({
   cwd,
   taken,
   initial,
+  run,
   onClose,
   onSaved,
 }: {
@@ -199,6 +203,8 @@ export function ProcessEditor({
   cwd: string;
   taken: string[];
   initial?: { name: string; process: Pick<ProcessShown, "start" | "states"> };
+  /** Dagaz's run to fill a new process from (`?draft=<run>`). */
+  run?: string;
   onClose: () => void;
   onSaved: (packs: PackShown[]) => void;
 }) {
@@ -207,11 +213,33 @@ export function ProcessEditor({
   const [busy, setBusy] = useState(false);
   const [reasons, setReasons] = useState<string[]>([]);
   const [asking, setAsking] = useState(false);
+  const [drafted, setDrafted] = useState<{ d: Drafted; run: string } | null>(null);
+  const [agentSaved, setAgentSaved] = useState<"" | "saving" | "saved">("");
   const keys = draft.steps.map((s) => s.key);
   const { byStep, rest } = reasonsByStep(reasons, keys);
   const problem = editing ? null : nameProblem(draft.name, taken);
   const agents = stateAgents(rows);
+  // An agent Dagaz drafted beside the process, not saved yet: a step may name it.
+  const fresh = drafted?.d.agent && !rows.some((r) => r.key === drafted.d.agent?.key) ? drafted.d.agent : undefined;
   const edit = (f: (d: Draft) => Draft) => (setReasons([]), setDraft(f));
+  const take = (d: Drafted, id: string) => {
+    setDrafted({ d, run: id });
+    setReasons([]);
+    setAgentSaved("");
+    if (d.process) setDraft(fromProcess(d.process.name, d.process.process));
+  };
+  const saveAgent = async () => {
+    if (!fresh) return;
+    setAgentSaved("saving");
+    try {
+      await api.post<AgentPage>("/api/agents/new", { cwd, key: fresh.key, name: String(fresh.fields.name ?? fresh.key), row: { fields: fresh.fields, body: fresh.body } });
+      setAgentSaved("saved");
+      refreshPacks();
+    } catch (e) {
+      setAgentSaved("");
+      setReasons(e instanceof ApiError && e.reasons.length ? e.reasons : [(e as Error).message]);
+    }
+  };
 
   const send = async (process: unknown) => {
     setBusy(true);
@@ -232,6 +260,33 @@ export function ProcessEditor({
   return (
     <div className="pe">
       <div className="pe-form">
+        {!editing && <DescribeTask cwd={cwd} want="process" run={run} onDraft={take} />}
+        {drafted && !drafted.d.process && (
+          <div className="callout amber">
+            <span>
+              Dagaz drafted an agent, not a process. <Link to={`/agents?draft=${drafted.run}`}>Open it in New agent</Link>.
+            </span>
+          </div>
+        )}
+        {drafted?.d.process && (
+          <div className="callout accent why">
+            <span>
+              <b>Why this process</b>
+              <br />
+              {drafted.d.why}
+            </span>
+          </div>
+        )}
+        {fresh && drafted?.d.process && (
+          <div className="callout amber">
+            <span className="grow">
+              {agentSaved === "saved" ? `${String(fresh.fields.name ?? fresh.key)} is saved; save the process next.` : `It runs a new agent, ${String(fresh.fields.name ?? fresh.key)}: save that first.`}
+            </span>
+            {agentSaved !== "saved" && (
+              <Button size="sm" disabled={agentSaved === "saving"} onClick={saveAgent}>{agentSaved === "saving" ? "Saving…" : `Save ${String(fresh.fields.name ?? fresh.key)}`}</Button>
+            )}
+          </div>
+        )}
         <label className="f">
           <span className="lab">Process name</span>
           <input className="input mono" value={draft.name} disabled={editing} placeholder="tiny" onChange={(e) => edit((d) => ({ ...d, name: e.target.value }))} />
@@ -255,7 +310,7 @@ export function ProcessEditor({
                     edit((d) => (kind === "agent" ? (s.agent ? setAgent(d, s.key, v) : setStep(d, s.key, { agent: v, action: "", ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) })) : setStep(d, s.key, { agent: "", action: v, ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) })));
                   }}
                 >
-                  <StepOptions agents={agents} />
+                  <StepOptions agents={agents} fresh={fresh} />
                 </select>
                 <StepName value={s.key} onCommit={(to) => edit((d) => renameStep(d, s.key, to))} />
                 <button className="icon-btn" aria-label="Move up" disabled={i === 0} onClick={() => edit((d) => moveStep(d, s.key, -1))}>↑</button>
@@ -297,7 +352,7 @@ export function ProcessEditor({
           }}
         >
           <option value="">+ Add a step…</option>
-          <StepOptions agents={agents} />
+          <StepOptions agents={agents} fresh={fresh} />
         </select>
 
         {rest.length > 0 && (
@@ -343,13 +398,14 @@ function StepName({ value, onCommit }: { value: string; onCommit: (to: string) =
   );
 }
 
-function StepOptions({ agents }: { agents: BuildAgent[] }) {
+function StepOptions({ agents, fresh }: { agents: BuildAgent[]; fresh?: Drafted["agent"] }) {
   return (
     <>
       <optgroup label="An agent runs it">
         {agents.map((a) => (
           <option key={a.key} value={`agent:${a.key}`}>{a.row.name && a.row.name.toLowerCase() !== a.key ? `${a.row.name} (${a.key})` : a.key}</option>
         ))}
+        {fresh && <option value={`agent:${fresh.key}`}>{String(fresh.fields.name ?? fresh.key)} (new, drafted)</option>}
       </optgroup>
       <optgroup label="The app does it">
         <option value="action:open-pr">Opens the PR</option>

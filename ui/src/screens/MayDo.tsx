@@ -2,13 +2,14 @@
 // how fast, what runs on its own in each project, which features are on, and the app itself.
 // Delegations in the owner's words come with Leif's own backend.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { PackShown, Shown } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { money } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { ProcessDiagram, ProcessEditor } from "../components/process";
+import { draftInAddress } from "../components/NewAgent";
 import { useAgents } from "./Agents";
 import { refreshPacks } from "../lib/pack";
 import { ApiError } from "../lib/api";
@@ -18,6 +19,8 @@ import { Button, Chip, Dialog, ErrorState, Meter, PageHead, SkeletonRows } from 
 export function MayDo() {
   const { boards, loading } = useBoards();
   const cap = boards.map((b) => b.board?.autopilot?.cap).find(Boolean);
+  // `?draft=<run>`: Dagaz's process opens in the first project's editor, as Leif hands it over.
+  const [run] = useState(draftInAddress);
 
   return (
     <div className="page mid">
@@ -34,7 +37,7 @@ export function MayDo() {
         </div>
       </Section>
       <Section title="Each project">
-        {loading ? <SkeletonRows rows={3} /> : boards.map((b) => <Project key={b.workspace.path} workspace={b.workspace} />)}
+        {loading ? <SkeletonRows rows={3} /> : boards.map((b, i) => <Project key={b.workspace.path} workspace={b.workspace} run={i === 0 ? run : ""} />)}
       </Section>
       <Section title="The app">
         <TheApp />
@@ -77,7 +80,7 @@ function useSaving(reload: () => void) {
   return { error, busy, save };
 }
 
-function Project({ workspace }: { workspace: Workspace }) {
+function Project({ workspace, run }: { workspace: Workspace; run: string }) {
   const cwd = workspace.path;
   const settings = useResource("/api/settings/autopilot", { cwd });
   const shown = useResource("/api/features/shown", { cwd });
@@ -121,7 +124,7 @@ function Project({ workspace }: { workspace: Workspace }) {
           </>
         )}
         {packs.data && (
-          <Packs cwd={cwd} workspace={workspace.name} packs={packs.data} disabled={busy} onSave={(name, body) => save("/api/packs", { cwd, name, ...body })} onChanged={() => (packs.reload(), refreshPacks())} />
+          <Packs cwd={cwd} workspace={workspace.name} packs={packs.data} run={run} disabled={busy} onSave={(name, body) => save("/api/packs", { cwd, name, ...body })} onChanged={() => (packs.reload(), refreshPacks())} />
         )}
         {shown.data && shown.data.map((f) => <Feature key={f.name} feature={f} disabled={busy} onState={(state) => save("/api/features", { cwd, name: f.name, state })} />)}
         {error && <div style={{ color: "var(--red)", marginTop: 8, fontSize: 12.5 }}>{error.message}</div>}
@@ -131,7 +134,7 @@ function Project({ workspace }: { workspace: Workspace }) {
 }
 
 /** The packs of one project, each as a card, and the one door in for a pack from outside. */
-function Packs({ cwd, workspace, packs, disabled, onSave, onChanged }: { cwd: string; workspace: string; packs: PackShown[]; disabled: boolean; onSave: (name: string, body: { on?: boolean; process?: string }) => void; onChanged: () => void }) {
+function Packs({ cwd, workspace, packs, run, disabled, onSave, onChanged }: { cwd: string; workspace: string; packs: PackShown[]; run: string; disabled: boolean; onSave: (name: string, body: { on?: boolean; process?: string }) => void; onChanged: () => void }) {
   const { agents } = useAgents();
   const [importing, setImporting] = useState(false);
   const [added, setAdded] = useState("");
@@ -145,7 +148,7 @@ function Packs({ cwd, workspace, packs, disabled, onSave, onChanged }: { cwd: st
       </div>
       {added && <div className="pack-added" role="status">{added}</div>}
       {packs.map((p) => (
-        <Pack key={p.name} cwd={cwd} workspace={workspace} pack={p as BuildPack} rows={rows} disabled={disabled} onSave={(body) => onSave(p.name, body)} onChanged={onChanged} />
+        <Pack key={p.name} cwd={cwd} workspace={workspace} pack={p as BuildPack} rows={rows} run={p.own ? run : ""} disabled={disabled} onSave={(body) => onSave(p.name, body)} onChanged={onChanged} />
       ))}
       {importing && (
         <ImportPack
@@ -167,9 +170,13 @@ function Packs({ cwd, workspace, packs, disabled, onSave, onChanged }: { cwd: st
 const KIND_WORDS = (p: BuildPack) => (p.own ? "Yours" : p.imported ? "Imported" : "Built in");
 
 /** A pack in one project: what it is, on or off, the process a new unit walks, those processes drawn, and its export. */
-function Pack({ cwd, workspace, pack, rows, disabled, onSave, onChanged }: { cwd: string; workspace: string; pack: BuildPack; rows: BuildAgent[]; disabled: boolean; onSave: (body: { on?: boolean; process?: string }) => void; onChanged: () => void }) {
+function Pack({ cwd, workspace, pack, rows, run, disabled, onSave, onChanged }: { cwd: string; workspace: string; pack: BuildPack; rows: BuildAgent[]; run: string; disabled: boolean; onSave: (body: { on?: boolean; process?: string }) => void; onChanged: () => void }) {
   const [shown, setShown] = useState(pack.process);
-  const [editor, setEditor] = useState<"new" | string | null>(null);
+  const [editor, setEditor] = useState<"new" | string | null>(run ? "new" : null);
+  const here = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (run) here.current?.scrollIntoView({ block: "start" });
+  }, [run]);
   const [removing, setRemoving] = useState(false);
   const [refused, setRefused] = useState<string[]>([]);
   const processes = pack.processes as BuildProcess[];
@@ -230,7 +237,7 @@ function Pack({ cwd, workspace, pack, rows, disabled, onSave, onChanged }: { cwd
         {pack.own && <span className="faint grow" style={{ fontSize: 12 }}>Export holds your own agents and processes, not your changes to built-in ones.</span>}
       </div>
       {editor && (
-        <div className="pack-editor">
+        <div className="pack-editor" ref={here}>
           <div className="sec-h" style={{ marginTop: 0 }}>{editing ? `Change ${editing.name}` : "New process"}</div>
           <ProcessEditor
             key={editor}
@@ -238,6 +245,7 @@ function Pack({ cwd, workspace, pack, rows, disabled, onSave, onChanged }: { cwd
             cwd={cwd}
             taken={processes.map((p) => p.name)}
             initial={editing ? { name: editing.name, process: editing } : undefined}
+            run={editor === "new" && run ? run : undefined}
             onClose={() => setEditor(null)}
             onSaved={() => (setEditor(null), onChanged())}
           />

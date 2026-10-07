@@ -1421,7 +1421,7 @@ BLANK: dict[str, Any] = {
 }
 
 
-def plain_rows() -> dict[str, dict[str, Any]]:
+def plain_rows() -> dict[str, Mapping[str, Any]]:
     """Every row's frontmatter, `key` and body, as `check` and `check_process` read them."""
     return {k: _fields(r) for k, r in rows().items()}
 
