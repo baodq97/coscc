@@ -4,7 +4,8 @@
 
 import { useState, type ReactNode } from "react";
 import type { AgentPage as Page, AgentRow, CatalogTool, RunGroup } from "../api.gen";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
+import { refreshPacks } from "../lib/pack";
 import { ago, modelName, money, unitCode, unitTitle } from "../lib/format";
 import { Link, navigate } from "../lib/router";
 import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
@@ -73,6 +74,8 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
   const [fresh, setFresh] = useState<Page | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [refused, setRefused] = useState<string[]>([]);
   const page = fresh ?? agents.data;
   const a = page?.rows.find((r) => r.key === name);
   if (agents.state === "error" && !page) return <ErrorState error={agents.error} onRetry={agents.reload} />;
@@ -102,7 +105,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
     for (const field of pending) {
       try {
         const v = draft[field];
-        const next = await api.post<Page>("/api/agents/field", { key: a.key, field, value: v === undefined || same(v, builtin[field]) ? null : v, cwd });
+        const next = await api.post<Page>("/api/agents/field", { key: a.key, field, value: v === undefined || (!a.own && same(v, builtin[field])) ? null : v, cwd });
         setFresh(next);
         setDraft((d) => {
           const { [field]: _, ...rest } = d;
@@ -114,6 +117,21 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
       }
     }
     setBusy(false);
+  };
+  const own = a.own;
+  const remove = async () => {
+    setBusy(true);
+    setRefused([]);
+    try {
+      await api.post<Page>("/api/agents/delete", { key: a.key, cwd });
+      refreshPacks();
+      navigate("/agents");
+    } catch (e) {
+      setRefused(e instanceof ApiError && e.reasons.length ? e.reasons : [(e as Error).message]);
+      setAsking(false);
+    } finally {
+      setBusy(false);
+    }
   };
   const ctx: Ctx = { a, page, value, edit, saved, builtin, editable: a.editable && !busy, error, cwd, setPage: setFresh };
   const t: Tab = TABS.some((x) => x.key === tab) ? (tab as Tab) : "configuration";
@@ -131,14 +149,33 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
           <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
             <Chip square tone="plain">Runs {triggerWords(a, page.rows)}</Chip>
             {look && <Chip square tone={look.tone}>{look.label}</Chip>}
-            {a.edited.length > 0 ? <Chip square tone="accent">{a.edited.length} part{a.edited.length > 1 ? "s" : ""} edited</Chip> : <Chip square tone="plain">as built in</Chip>}
+            {own ? <Chip square tone="accent">Yours</Chip> : a.edited.length > 0 ? <Chip square tone="accent">{a.edited.length} part{a.edited.length > 1 ? "s" : ""} edited</Chip> : <Chip square tone="plain">as built in</Chip>}
           </div>
         </div>
+        {own && (
+          <div className="row" style={{ gap: 6 }}>
+            {asking ? (
+              <>
+                <span className="faint" style={{ fontSize: 12.5 }}>Delete {a.key} for good?</span>
+                <Button size="sm" kind="danger" disabled={busy} onClick={remove}>Yes, delete</Button>
+                <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>Keep it</Button>
+              </>
+            ) : (
+              <Button size="sm" kind="ghost" onClick={() => setAsking(true)}>Delete</Button>
+            )}
+          </div>
+        )}
         <div className="agent-spend">
           <b>{money(a.cost_30d)}</b> <span className="faint">in 30 days</span>
           <div className="faint" style={{ fontSize: 12 }}>{a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}</div>
         </div>
       </div>
+      {refused.length > 0 && (
+        <div className="card card-b problems">
+          <b>Not deleted:</b>
+          <ul>{refused.map((p) => <li key={p}>{p}</li>)}</ul>
+        </div>
+      )}
       {a.problems.length > 0 && (
         <div className="card card-b problems">
           <b>Its runs are refused until this is fixed:</b>
@@ -205,8 +242,8 @@ function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; la
       <div>
         <div className="lab">{label}</div>
         <div className="hint">
-          <Chip square tone={source === "built-in" ? "plain" : source === "edited" ? "accent" : "amber"}>{source}</Chip>
-          {source !== "built-in" && ctx.editable && (
+          {(!ctx.a.own || source === "unsaved") && <Chip square tone={source === "built-in" ? "plain" : source === "edited" ? "accent" : "amber"}>{source}</Chip>}
+          {!ctx.a.own && source !== "built-in" && ctx.editable && (
             <button className="linkish" onClick={() => ctx.edit(top, put(ctx.value(top), rest, base))}>
               Reset to built-in
             </button>

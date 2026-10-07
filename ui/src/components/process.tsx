@@ -1,10 +1,35 @@
 // One process drawn as a diagram: its states in walk order down the main line, each with its agent
 // (glyph and name) or the engine's action, and every other way on as a labelled arrow. Plain SVG.
 
-import { useId } from "react";
-import type { Condition, ProcessShown, State } from "../api.gen";
+import { useEffect, useId, useState } from "react";
+import type { Condition, PackShown, ProcessShown, State } from "../api.gen";
+import { api, ApiError } from "../lib/api";
+import {
+  ACTION_WORDS,
+  GUARDS,
+  GUARD_WORDS,
+  addStep,
+  artifactNames,
+  missingInput,
+  renameStep,
+  fieldOptions,
+  fromProcess,
+  moveStep,
+  nameProblem,
+  reasonsByStep,
+  removeStep,
+  setAgent,
+  setStep,
+  stateAgents,
+  toProcess,
+  type BuildAgent,
+  type Draft,
+  type Step,
+  type Way,
+} from "../lib/build";
 import { Rune } from "../lib/icons";
 import { agentFace, stageLabel } from "../lib/pack";
+import { Button } from "./ui";
 
 const NODE_W = 176;
 const NODE_H = 42;
@@ -149,6 +174,225 @@ export function ProcessDiagram({ process, current, done = [] }: { process: Proce
         {side.map((k) => node(k, sideX, sideY[k], SIDE_W))}
         </g>
       </svg>
+    </div>
+  );
+}
+
+type Kind = "always" | "field" | "guard";
+const kindOf = (w: Way): Kind => (!w.cond ? "always" : w.cond.guard ? "guard" : "field");
+const what = (s: Step) => (s.agent ? `agent:${s.agent}` : `action:${s.action}`);
+
+/**
+ * Build or change a process of your own beside its diagram: steps in order, each run by an agent
+ * or by the app, and the ways on from a step. Saving sends it to the app, whose check's reasons
+ * show next to the step they name; the diagram redraws with every edit.
+ */
+export function ProcessEditor({
+  rows,
+  cwd,
+  taken,
+  initial,
+  onClose,
+  onSaved,
+}: {
+  rows: BuildAgent[];
+  cwd: string;
+  taken: string[];
+  initial?: { name: string; process: Pick<ProcessShown, "start" | "states"> };
+  onClose: () => void;
+  onSaved: (packs: PackShown[]) => void;
+}) {
+  const editing = Boolean(initial);
+  const [draft, setDraft] = useState<Draft>(() => (initial ? fromProcess(initial.name, initial.process) : { name: "", steps: [] }));
+  const [busy, setBusy] = useState(false);
+  const [reasons, setReasons] = useState<string[]>([]);
+  const [asking, setAsking] = useState(false);
+  const keys = draft.steps.map((s) => s.key);
+  const { byStep, rest } = reasonsByStep(reasons, keys);
+  const problem = editing ? null : nameProblem(draft.name, taken);
+  const agents = stateAgents(rows);
+  const edit = (f: (d: Draft) => Draft) => (setReasons([]), setDraft(f));
+
+  const send = async (process: unknown) => {
+    setBusy(true);
+    setReasons([]);
+    try {
+      onSaved(await api.post<PackShown[]>("/api/packs/process", { cwd, name: draft.name, process }));
+    } catch (e) {
+      setAsking(false);
+      setReasons(e instanceof ApiError && e.reasons.length ? e.reasons : [(e as Error).message]);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const process = toProcess(draft);
+  const drawn: ProcessShown = { ...process, own: true, ref: `local/${draft.name}`, name: draft.name || "new process" };
+  const why = !draft.steps.length ? "Add a step first." : problem;
+
+  return (
+    <div className="pe">
+      <div className="pe-form">
+        <label className="f">
+          <span className="lab">Process name</span>
+          <input className="input mono" value={draft.name} disabled={editing} placeholder="tiny" onChange={(e) => edit((d) => ({ ...d, name: e.target.value }))} />
+          {draft.name && problem && <span className="field-err">{problem}</span>}
+        </label>
+
+        <div className="lab" style={{ marginTop: 14 }}>Steps, in the order a unit walks them</div>
+        {!draft.steps.length && <div className="faint" style={{ margin: "6px 0 10px", fontSize: 13 }}>Nothing yet. Add the first step below.</div>}
+        <datalist id="pe-names">{artifactNames(rows).map((n) => <option key={n} value={n} />)}</datalist>
+        <ol className="pe-steps">
+          {draft.steps.map((s, i) => (
+            <li key={s.key} className={`pe-step ${byStep[s.key] ? "bad" : ""}`}>
+              <div className="pe-head">
+                <span className="pe-n">{i + 1}</span>
+                <select
+                  className="input"
+                  aria-label={`Step ${i + 1} runs`}
+                  value={what(s)}
+                  onChange={(e) => {
+                    const [kind, v] = e.target.value.split(":");
+                    edit((d) => (kind === "agent" ? (s.agent ? setAgent(d, s.key, v) : setStep(d, s.key, { agent: v, action: "", ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) })) : setStep(d, s.key, { agent: "", action: v, ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) })));
+                  }}
+                >
+                  <StepOptions agents={agents} />
+                </select>
+                <StepName value={s.key} onCommit={(to) => edit((d) => renameStep(d, s.key, to))} />
+                <button className="icon-btn" aria-label="Move up" disabled={i === 0} onClick={() => edit((d) => moveStep(d, s.key, -1))}>↑</button>
+                <button className="icon-btn" aria-label="Move down" disabled={i === draft.steps.length - 1} onClick={() => edit((d) => moveStep(d, s.key, 1))}>↓</button>
+                <button className="icon-btn" aria-label={`Remove step ${i + 1}`} onClick={() => edit((d) => removeStep(d, s.key))}>✕</button>
+              </div>
+              {s.action && <div className="faint pe-sub">The app {ACTION_WORDS[s.action]}.</div>}
+              {byStep[s.key]?.map((r) => (
+                <div key={r} className="field-err">
+                  {r}
+                  {missingInput(r) && <> Name the step that makes it {missingInput(r)}, in its name box.</>}
+                </div>
+              ))}
+              {s.ways.map((w, wi) => (
+                <WayRow key={wi} way={w} step={s} keys={keys} rows={rows} onChange={(nw) => edit((d) => setStep(d, s.key, { ways: s.ways.map((x, n) => (n === wi ? nw : x)) }))} onRemove={() => edit((d) => setStep(d, s.key, { ways: s.ways.filter((_, n) => n !== wi) }))} />
+              ))}
+              <div className="pe-foot">
+                {i < draft.steps.length - 1 && (
+                  <label className="pe-then">
+                    <input type="checkbox" checked={s.then} onChange={(e) => edit((d) => setStep(d, s.key, { then: e.target.checked }))} /> otherwise go on to {stageLabel(draft.steps[i + 1].key)}
+                  </label>
+                )}
+                {draft.steps.length > 1 && (
+                  <button className="linkish" onClick={() => edit((d) => setStep(d, s.key, { ways: [...s.ways, { to: keys.find((k) => k !== s.key) ?? s.key, cond: null, rest: [] }] }))}>
+                    + Add a way on
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ol>
+        <select
+          className="input"
+          aria-label="Add a step"
+          value=""
+          onChange={(e) => {
+            const [kind, v] = e.target.value.split(":");
+            if (v) edit((d) => addStep(d, kind === "agent" ? { agent: v } : { action: v }));
+          }}
+        >
+          <option value="">+ Add a step…</option>
+          <StepOptions agents={agents} />
+        </select>
+
+        {rest.length > 0 && (
+          <div className="pe-refused" role="alert">
+            <b>Not saved</b>
+            <ul>{rest.map((r) => <li key={r}>{r}</li>)}</ul>
+          </div>
+        )}
+        {Object.keys(byStep).length > 0 && <div className="field-err" style={{ marginTop: 8 }}>Not saved: fix what is marked on the steps.</div>}
+        <div className="pe-actions">
+          {editing &&
+            (asking ? (
+              <>
+                <span className="faint" style={{ fontSize: 12.5 }}>Delete {draft.name} for good?</span>
+                <Button size="sm" kind="danger" disabled={busy} onClick={() => send(null)}>Yes, delete</Button>
+                <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>Keep it</Button>
+              </>
+            ) : (
+              <Button size="sm" kind="ghost" onClick={() => setAsking(true)}>Delete process</Button>
+            ))}
+          <span className="grow" />
+          {why && <span className="faint" style={{ fontSize: 12.5 }}>{why}</span>}
+          <Button kind="ghost" onClick={onClose}>Cancel</Button>
+          <Button kind="primary" disabled={busy || Boolean(why)} onClick={() => send(process)}>{busy ? "Saving…" : "Save process"}</Button>
+        </div>
+      </div>
+      <div className="pe-draw">
+        <div className="lab" style={{ marginBottom: 8 }}>How a unit walks it</div>
+        {draft.steps.length ? <ProcessDiagram process={drawn} /> : <div className="faint" style={{ fontSize: 13 }}>The diagram appears as you add steps.</div>}
+      </div>
+    </div>
+  );
+}
+
+/** A step's name: what other agents' inputs call its result (`impl`). Kept when it is a fresh, valid name. */
+function StepName({ value, onCommit }: { value: string; onCommit: (to: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <>
+      <input className="input mono pe-key" aria-label="Step name" list="pe-names" value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={() => (onCommit(draft), setDraft(value))} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />
+    </>
+  );
+}
+
+function StepOptions({ agents }: { agents: BuildAgent[] }) {
+  return (
+    <>
+      <optgroup label="An agent runs it">
+        {agents.map((a) => (
+          <option key={a.key} value={`agent:${a.key}`}>{a.row.name && a.row.name.toLowerCase() !== a.key ? `${a.row.name} (${a.key})` : a.key}</option>
+        ))}
+      </optgroup>
+      <optgroup label="The app does it">
+        <option value="action:open-pr">Opens the PR</option>
+        <option value="action:merge">Merges it</option>
+      </optgroup>
+    </>
+  );
+}
+
+function WayRow({ way, step, keys, rows, onChange, onRemove }: { way: Way; step: Step; keys: string[]; rows: BuildAgent[]; onChange: (w: Way) => void; onRemove: () => void }) {
+  const options = fieldOptions(rows.find((r) => r.key === step.agent));
+  const kind = kindOf(way);
+  const field = options.find((o) => o.field === way.cond?.field);
+  const kinds = (["always", "field", "guard"] as Kind[]).filter((k) => k !== "field" || options.length);
+  const setKind = (k: Kind) => onChange({ ...way, cond: k === "always" ? null : k === "guard" ? { guard: GUARDS[0] } : { field: options[0].field, is: options[0].values[0] }, rest: [] });
+  return (
+    <div className="pe-way">
+      <span className="faint">go to</span>
+      <select className="input" aria-label="Goes to" value={way.to} onChange={(e) => onChange({ ...way, to: e.target.value })}>
+        {keys.map((k) => <option key={k} value={k}>{stageLabel(k)}</option>)}
+      </select>
+      <span className="faint">when</span>
+      <select className="input" aria-label="When" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
+        {kinds.map((k) => <option key={k} value={k}>{k === "always" ? "always" : k === "field" ? "its answer says" : "a check holds"}</option>)}
+      </select>
+      {kind === "field" && way.cond && (
+        <>
+          <select className="input" aria-label="Field" value={way.cond.field} onChange={(e) => { const o = options.find((x) => x.field === e.target.value); if (o) onChange({ ...way, cond: { field: o.field, is: o.values[0] } }); }}>
+            {options.map((o) => <option key={o.field} value={o.field}>{o.field}</option>)}
+          </select>
+          <span className="faint">is</span>
+          <select className="input" aria-label="Value" value={way.cond.is} onChange={(e) => onChange({ ...way, cond: { field: way.cond?.field, is: e.target.value } })}>
+            {(field?.values ?? [way.cond.is ?? ""]).map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </>
+      )}
+      {kind === "guard" && way.cond && (
+        <select className="input" aria-label="Check" value={way.cond.guard} onChange={(e) => onChange({ ...way, cond: { guard: e.target.value } })}>
+          {GUARDS.map((g) => <option key={g} value={g}>{GUARD_WORDS[g]}</option>)}
+        </select>
+      )}
+      {way.rest.length > 0 && <span className="faint">and {way.rest.length} more</span>}
+      <button className="icon-btn" aria-label="Remove this way" onClick={onRemove}>✕</button>
     </div>
   );
 }
