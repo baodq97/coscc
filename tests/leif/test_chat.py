@@ -304,6 +304,15 @@ class TalkListsConversationsNotRuns(_App):
         self.assertEqual(e.exception.reasons, ("no-run",))
         self.ended("chat", "c1")
         self.core.chat.check_send(self.cwd, "hi", "c1")
+        # Another workspace's run or chat, and a session both a chat and a run, are refused too.
+        journal = self.core.ws.journal()
+        journal.finished("/elsewhere", "", "scan", "done", agent="scan", session_id="x1")
+        journal.finished("/elsewhere", "", "chat", "done", agent="leif", session_id="x2")
+        journal.finished("/elsewhere", "", "ask", "done", agent="scan", session_id="c1")
+        for sid in ("x1", "x2", "c1"):
+            with self.assertRaises(Invalid) as e:
+                self.core.chat.check_send(self.cwd, "hi", sid)
+            self.assertEqual(e.exception.reasons, ("no-run",), sid)
 
 
 class LeifHearsOfTheRunsItStarted(_App):

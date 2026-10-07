@@ -235,11 +235,24 @@ class Chat:
         self.refuse_updating()
         if not text.strip():
             raise Invalid("text is required")
-        if session_id and session_id in self._sessions(cwd)[1]:
+        if session_id and not self._is_chat(cwd, session_id):
             raise Refused(
-                "that session is an agent's run, not a conversation: ask it from its run page",
+                "that session is not a conversation of this workspace: ask a run from its page",
                 ("no-run",),
             )
+
+    def _is_chat(self, cwd: str, session_id: str) -> bool:
+        """Whether every `end` naming `session_id`, in any workspace, is a chat turn of `cwd`'s.
+        With no run log nothing names it, and nothing is resumed either (`Sessions.known`)."""
+        journal = self.ws.journal()
+        if journal is None:
+            return True
+        try:
+            ends = journal.where("session_id", session_id, ("end",))
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        ws = self.ws.key(cwd)
+        return all(r.get("stage") == CHAT and r.get("workspace") == ws for r in ends)
 
     async def stream(
         self,
