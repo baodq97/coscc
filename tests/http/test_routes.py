@@ -2343,6 +2343,33 @@ class OwnAgentsAndPacksOverHttp(unittest.IsolatedAsyncioTestCase):
         logged = core.ws.journal().records(None, kinds=("pack-setting",))
         self.assertEqual([(x["field"], x["by"]) for x in logged], [("process:tiny", "owner")])
 
+    async def test_a_state_no_built_in_process_has_is_a_stage_the_unit_runs(self):
+        await self.post("/api/agents/new", key="changelog", name="Changelog", **{"from": "impl"})
+        found = json.loads(json.dumps(pack.process("coscc-sdlc/short")))
+        found["states"]["impl"]["next"] = [{"to": "changelog"}]
+        changelog = {"agent": "changelog", "next": [{"to": "pr"}]}
+        states = list(found["states"].items())
+        found["states"] = dict([*states[:2], ("changelog", changelog), *states[2:]])
+        r = await self.post("/api/packs/process", name="changelog", process=found)
+        self.assertEqual(r.status_code, 200, r.text)
+        await self.post("/api/packs", name="local", process="local/changelog")
+        made = (await self.open_unit("add-a-line")).json()
+        core = self.app.state.core
+        seed_unit(core, self.cwd, made["unit"], statuses={"intent.md": "accepted", "impl.md": "accepted"}, type="docs")  # fmt: skip
+        folder = Path(core.ws.units_root(self.cwd)) / ".cos" / made["unit"]
+        for name in ("intent.md", "impl.md"):
+            (folder / name).write_text("# A line\n")
+        board = await core.board(self.cwd, "fresh")
+        (unit,) = board["units"]
+        self.assertEqual(
+            [s["stage"] for s in unit["stages"]],
+            ["intent", "impl", "changelog", "pr", "review", "ship"],
+        )
+        r = await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": made["unit"]})
+        self.assertEqual(r.json()["stage"], "changelog", r.json())
+        _, _, row = await core.steps._find_stage(self.cwd, made["unit"], "changelog")
+        self.assertEqual(row["stage"], "changelog")
+
     async def test_export_import_off_refused_and_removed(self):
         await self.post("/api/agents/new", key="tidy", name="Tidy", **{"from": "impl"})
         r = await self.client.get("/api/packs/local/export")

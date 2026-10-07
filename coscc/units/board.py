@@ -171,6 +171,8 @@ async def read(
         raise Unavailable(f"the loop did not return JSON: {e}") from e
 
     stages = data.get("stages") or []
+    # The loop sends the stages of a process other than the default one under its ref.
+    others = data.get("processes") or {}
     # The stages whose answered draft runs again, as the loop lists them; the app keeps no copy.
     after_answers = [str(s) for s in data.get("afterAnswers") or []]
     units = [
@@ -180,7 +182,10 @@ async def read(
             "slug": u.get("slug"),
             # The process the unit walks, `<pack>/<name>`, as its row records it.
             "process": str(u.get("process") or ""),
-            "stages": _stage_rows(stages, u.get("artifacts") or {}),
+            # The rows of the unit's own process.
+            "stages": _stage_rows(
+                others.get(str(u.get("process") or "")) or stages, u.get("artifacts") or {}
+            ),
             # Carried through rather than recomputed.
             "next": (u.get("next") or {}).get("action", ""),
             # The same answer as a stage name, read off the files alone, for the card's mode badge.
