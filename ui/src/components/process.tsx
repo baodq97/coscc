@@ -1,7 +1,7 @@
 // One process drawn as a diagram: its states in walk order down the main line, each with its agent
 // (glyph and name) or the engine's action, and every other way on as a labelled arrow. Plain SVG.
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { Condition, PackShown, ProcessShown, State } from "../api.gen";
 import { api, ApiError, useResource } from "../lib/api";
 import {
@@ -68,27 +68,52 @@ function walk(p: ProcessShown): { main: string[]; side: string[]; edges: Edge[] 
   return { main, side: Object.keys(p.states).filter((k) => !main.includes(k)), edges };
 }
 
+/** Whether a drawing `width` wide fits the box it is in, asked again as the box changes size. */
+function useFits(width: number) {
+  const box = useRef<HTMLDivElement>(null);
+  const [fits, setFits] = useState(true);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const look = () => setFits(el.clientWidth >= width);
+    look();
+    const watch = new ResizeObserver(look);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [width]);
+  return { box, fits };
+}
+
 export function ProcessDiagram({ process, current, done = [] }: { process: ProcessShown; current?: string; done?: string[] }) {
   const id = useId();
-  const { main, side, edges } = walk(process);
+  const walked = walk(process);
+  const { main } = walked;
   const y = (k: string) => main.indexOf(k) * ROW;
   const mid = (k: string) => y(k) + NODE_H / 2;
 
   // A side state sits beside the main states that lead to it or come back from it.
   const sideY: Record<string, number> = {};
-  for (const s of side) {
-    const near = edges.filter((e) => e.to === s || e.from === s).map((e) => (e.to === s ? e.from : e.to)).filter((k) => main.includes(k));
+  for (const s of walked.side) {
+    const near = walked.edges.filter((e) => e.to === s || e.from === s).map((e) => (e.to === s ? e.from : e.to)).filter((k) => main.includes(k));
     sideY[s] = near.length ? near.reduce((n, k) => n + mid(k), 0) / near.length - NODE_H / 2 : 0;
   }
   // Jumps along the main line: forward ones bulge to the right, backward ones to the left, where
   // their words have room; the longest is outermost.
   const span = (e: Edge) => Math.abs(main.indexOf(e.to) - main.indexOf(e.from));
-  const jumps = edges.filter((e) => main.includes(e.from) && main.includes(e.to) && main.indexOf(e.to) !== main.indexOf(e.from) + 1);
-  const fwd = jumps.filter((e) => main.indexOf(e.to) > main.indexOf(e.from)).sort((a, b) => span(b) - span(a));
-  const back = jumps.filter((e) => main.indexOf(e.to) < main.indexOf(e.from)).sort((a, b) => span(b) - span(a));
+  const jumps = walked.edges.filter((e) => main.includes(e.from) && main.includes(e.to) && main.indexOf(e.to) !== main.indexOf(e.from) + 1);
+  const allFwd = jumps.filter((e) => main.indexOf(e.to) > main.indexOf(e.from)).sort((a, b) => span(b) - span(a));
+  const allBack = jumps.filter((e) => main.indexOf(e.to) < main.indexOf(e.from)).sort((a, b) => span(b) - span(a));
+  const sideX = LANE0 + Math.max(1, allFwd.length) * LANE_STEP + 140;
+  const full = (allBack.length ? 118 + allBack.length * LANE_STEP : 0) + (walked.side.length ? sideX + SIDE_W + 8 : LANE0 + Math.max(1, allFwd.length) * LANE_STEP + 70);
+  const { box, fits } = useFits(full);
+  // Too narrow a box (a phone) draws the main line alone and lists every other way under it.
+  const side = fits ? walked.side : [];
+  const fwd = fits ? allFwd : [];
+  const back = fits ? allBack : [];
+  const edges = fits ? walked.edges : walked.edges.filter((e) => main.includes(e.from) && main.indexOf(e.to) === main.indexOf(e.from) + 1);
+  const listed = walked.edges.filter((e) => !edges.includes(e));
   const left = back.length ? 118 + back.length * LANE_STEP : 0;
-  const sideX = LANE0 + Math.max(1, fwd.length) * LANE_STEP + 140;
-  const width = left + (side.length ? sideX + SIDE_W + 8 : LANE0 + Math.max(1, fwd.length) * LANE_STEP + 70);
+  const width = fits ? full : NODE_W + 150;
   const height = main.length * ROW - GAP + 4;
 
   const node = (k: string, x: number, top: number, w: number) => {
@@ -119,7 +144,7 @@ export function ProcessDiagram({ process, current, done = [] }: { process: Proce
     ) : null;
 
   return (
-    <div className="pd-wrap">
+    <div className="pd-wrap" ref={box}>
       <svg className="pd" viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img" aria-label={`The ${process.name} process`}>
         <defs>
           <marker id={`${id}a`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
@@ -178,6 +203,16 @@ export function ProcessDiagram({ process, current, done = [] }: { process: Proce
         {side.map((k) => node(k, sideX, sideY[k], SIDE_W))}
         </g>
       </svg>
+      {listed.length > 0 && (
+        <ul className="pd-ways">
+          {listed.map((e, i) => (
+            <li key={`${e.from}${e.to}${i}`}>
+              {stageLabel(e.from)} → {stageLabel(e.to)}
+              {e.label && <span className="faint"> when {e.label}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

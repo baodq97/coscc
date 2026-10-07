@@ -682,3 +682,5 @@ a.btn { text-decoration: none; }
 .dlg-f.sticky { position: sticky; bottom: -16px; background: var(--panel); padding: 10px 0 12px; margin-bottom: -16px; border-top: 1px solid var(--line); }
 .drafted-first { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r3); margin-bottom: 10px; }
 .drafted-first .callout { margin-bottom: 0; }
+.pd-ways { margin: 10px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-2); }
+.pd-ways li { margin: 2px 0; }
