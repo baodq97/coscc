@@ -1126,6 +1126,22 @@ class Scripted(_Base):
             (self.core.autopilot.cap(log.records(), 30.0)["spent"], 30.0),
         )
 
+    async def test_the_cap_figure_reads_no_run_log_before_its_day(self):
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        old = {"kind": "end", "workspace": self.key, "unit": "0009_z", "stage": "spec"}
+        log.append({**old, "at": "2020-01-01T00:00:00+00:00", "cost_usd": 7.0})
+        log.finished(self.key, "0009_z", "spec", "done", cost_usd=1.0)
+        with mock.patch.object(
+            Journal, "records", autospec=True, side_effect=Journal.records
+        ) as read:
+            spent, _ = self.core.autopilot.today(self.ws)
+            self.core.autopilot.show(self.key, {"units": []})
+        self.assertEqual(spent, 1.0)
+        capped = [c for c in read.call_args_list if "start" in c.kwargs.get("kinds", ())]
+        self.assertEqual(len(capped), 2)
+        for call in capped:
+            self.assertGreater(call.kwargs["since"], "2020-01-01T00:00:00+00:00")
+
     async def test_ci_pending_is_quiet(self):
         self.add(
             "0001_a",

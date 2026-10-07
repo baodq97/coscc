@@ -546,6 +546,13 @@ class TheDaysMoney(unittest.TestCase):
         got = decide.spent_today(rows, NOW)
         self.assertEqual((got["known"], got["estimated"]), (1.0, decide.estimate("spec")))
 
+    def test_the_cap_reads_from_before_the_day_and_every_open_start(self):
+        since = decide.cap_since(NOW)
+        midnight = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
+        self.assertLessEqual(since, midnight.astimezone(timezone.utc).isoformat())
+        self.assertLessEqual(since, (NOW - decide.OPEN_FOR).astimezone(timezone.utc).isoformat())
+        self.assertGreater(since, (NOW - timedelta(days=3)).astimezone(timezone.utc).isoformat())
+
     def test_a_new_day_by_the_machines_clock_starts_again(self):
         local_midnight = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
         yesterday = (local_midnight - timedelta(seconds=1)).astimezone(timezone.utc).isoformat()
