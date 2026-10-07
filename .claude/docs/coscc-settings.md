@@ -25,8 +25,8 @@ Read this before changing `/api/settings/*`, model resolution, `/api/backlog/*` 
 - A pack is on or off per project, and a project has a default process (`GET/POST /api/packs`, the
   prefs `packs.state` and `packs.process`; Settings › Each project). Off, a new unit or idea is
   refused `no-process` and units already open carry on; a unit records its process when it opens and
-  never re-reads the default. A unit whose process no pack has, or whose process no longer has a
-  state it recorded, is held `state-gone`.
+  never re-reads the default. A unit whose process no pack has, or lacks a state the unit
+  recorded, is held `state-gone`.
 - Packs live under `<data root>/packs/<name>/`, each a plugin folder; the built-in stays in the
   package. `local` is the owner's: a file there whose key another pack has is laid over that row,
   any other is a whole row of their own (`POST /api/agents/new`, `/api/agents/delete`), and its
