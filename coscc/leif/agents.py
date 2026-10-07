@@ -595,35 +595,11 @@ class Agents:
                 )
         return ends, settings, onoff, []
 
-    def _made(self, data: Data, workspace: str | None, since: str) -> dict[str, dict[str, int]]:
-        """Each agent's proposals of the window by their state, in `workspace` or in all."""
-        sql = "SELECT agent, decision, COUNT(*) FROM proposals WHERE at >= ?"
-        args: list[str] = [since]
-        if workspace is not None:
-            sql += " AND workspace = ?"
-            args.append(workspace)
-        out: dict[str, dict[str, int]] = {}
-        with data.connect() as conn:
-            for agent, state, n in conn.execute(sql + " GROUP BY agent, decision", args):
-                out.setdefault(agent, {})[state] = n
-        return out
-
     @staticmethod
     def _counts(data: Data, runs: list[str]) -> dict[str, tuple[int, int]]:
         """For each run: the tool calls it was refused and the helpers it started."""
-        out: dict[str, tuple[int, int]] = {}
-        with data.connect() as conn:
-            for i in range(0, len(runs), 500):
-                part = runs[i : i + 500]
-                marks = ",".join("?" * len(part))
-                for run, kind, n in conn.execute(
-                    f"SELECT run, kind, COUNT(*) FROM step_events WHERE kind IN "
-                    f"('denied', 'worker_start') AND run IN ({marks}) GROUP BY run, kind",
-                    part,
-                ):
-                    refused, helpers = out.get(run, (0, 0))
-                    out[run] = (refused + n, helpers) if kind == "denied" else (refused, n)
-        return out
+        kept = data.step_event_counts(runs, ("denied", "worker_start"))
+        return {r: (k.get("denied", 0), k.get("worker_start", 0)) for r, k in kept.items()}
 
     def agent_page(
         self,
@@ -649,7 +625,7 @@ class Agents:
         effects = self._effects()
         data = Data(self.config.data_dir)
         rows: list[AgentRow] = []
-        made = self._made(data, workspace, since)
+        made = proposals.counts(data, workspace, since)
         by = _Now(
             running=triggers.running(),
             names={

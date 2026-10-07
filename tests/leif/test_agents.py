@@ -420,6 +420,17 @@ class ThePage(_WithAService):
         self._seed([_end("scan", "done", 0, unit="") | later])
         self.assertEqual(self.core.agents.live()["failed"], [])
 
+    def test_an_off_reason_is_said_once_and_plainly(self):
+        from coscc.leif.agents import _plain
+
+        said = "a run stopped at its ceiling: stopped at its ceiling: max_turns"
+        self.assertEqual(_plain(said), "its last run stopped at its turn limit")
+        self.assertEqual(
+            _plain("stopped at its ceiling: error_max_budget_usd"),
+            "its last run stopped at its spend limit",
+        )
+        self.assertEqual(_plain("turned off by you"), "turned off by you")
+
     def test_a_pause_or_a_stop_is_not_called_a_failure(self):
         from coscc.leif.agents import chip_of
 
