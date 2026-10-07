@@ -53,6 +53,28 @@ class Decision(TypedDict):
     date: str
 
 
+class RoundCriterion(TypedDict):
+    criterion: str
+    source: str
+    met: Literal["yes", "no", "unclear"]
+    evidence: str
+
+
+class RoundFinding(TypedDict):
+    id: str
+    label: str
+    severity: str
+    criterion: str
+    # `path:lines`, or `(none)`.
+    place: str
+    text: str
+
+
+class RoundGrades(TypedDict):
+    criteria: list[RoundCriterion]
+    items: list[RoundFinding]
+
+
 class OutputRecord(TypedDict):
     """What an agent handed back, as the unit page shows it: the latest record of one agent."""
 
@@ -198,8 +220,8 @@ class UnitMeta:
         obj = dict(submitted.get("object") or {})
         screens = {**dict(submitted.get("screens") or {}), "shots": list(obj.get("screens") or ())}
         cur = conn.execute(
-            "INSERT INTO review_rounds (at, root, workspace, unit, n, run, head, verdict, screens) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO review_rounds (at, root, workspace, unit, n, run, head, verdict, screens, criteria) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 now(),
                 self.root,
@@ -210,10 +232,11 @@ class UnitMeta:
                 str(submitted.get("head") or ""),
                 str(obj["verdict"]),
                 json.dumps(screens, ensure_ascii=False),
+                json.dumps(obj.get("criteria") or [], ensure_ascii=False),
             ),
         )
         conn.executemany(
-            "INSERT INTO review_findings (round, finding, open, label, fixed_in, severity, rule, path, lines, text) "
+            "INSERT INTO review_findings (round, finding, open, label, fixed_in, severity, criterion, path, lines, text) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
@@ -223,7 +246,7 @@ class UnitMeta:
                     f["state"],
                     f["fixed_in"],
                     f["severity"],
-                    f["rule"],
+                    f["criterion"],
                     f["path"],
                     f["lines"],
                     f["text"],
@@ -468,6 +491,51 @@ class UnitMeta:
             for r in found
         ]
 
+    def graded(self, workspace: str, unit: str) -> dict[int, RoundGrades]:
+        """What each review round of a unit graded and found, by round number: the unit page's
+        Review tab. The board carries the counts; this carries the words."""
+        out: dict[int, RoundGrades] = {}
+        with self.data.connect() as conn:
+            rounds = conn.execute(
+                f"SELECT id, n, criteria FROM review_rounds WHERE {_ONE} ORDER BY n",
+                (self.root, workspace, unit),
+            ).fetchall()
+            for r in rounds:
+                items = conn.execute(
+                    "SELECT finding, label, severity, criterion, path, lines, text "
+                    "FROM review_findings WHERE round = ? ORDER BY rowid",
+                    (r["id"],),
+                ).fetchall()
+                out[r["n"]] = {
+                    "criteria": [
+                        {
+                            "criterion": str(c["criterion"]),
+                            "source": str(c["source"]),
+                            "met": "yes"
+                            if c["met"] == "yes"
+                            else "no"
+                            if c["met"] == "no"
+                            else "unclear",
+                            "evidence": str(c["evidence"]),
+                        }
+                        for c in json.loads(r["criteria"])
+                    ],
+                    "items": [
+                        {
+                            "id": f["finding"],
+                            "label": f["label"],
+                            "severity": f["severity"],
+                            "criterion": f["criterion"],
+                            "place": f"{f['path']}:{f['lines']}"
+                            if f["path"] and f["lines"]
+                            else f["path"] or "(none)",
+                            "text": f["text"],
+                        }
+                        for f in items
+                    ],
+                }
+        return out
+
     def plan(self, workspace: str, unit: str) -> contracts.Plan | None:
         """The unit's latest plan record (the output of an agent that hands back `variant`),
         `None` when none has."""
@@ -678,7 +746,7 @@ class UnitMeta:
             # Every round a review handed back, read in place of the round of the same number in `review.md`.
             by_id: dict[int, dict[str, Any]] = {}
             for r in rows(
-                "SELECT id, workspace, unit, n, head, verdict, screens FROM review_rounds WHERE {where} ORDER BY n"
+                "SELECT id, workspace, unit, n, head, verdict, screens, criteria FROM review_rounds WHERE {where} ORDER BY n"
             ):
                 a = artifact(
                     {
@@ -693,6 +761,7 @@ class UnitMeta:
                         "reviewed": r["head"],
                         "verdict": r["verdict"],
                         "screens": json.loads(r["screens"]),
+                        "criteria": json.loads(r["criteria"]),
                         "findings": [],
                     }
                     a.setdefault("rounds", []).append(by_id[r["id"]])
@@ -700,7 +769,7 @@ class UnitMeta:
                     if a["questions"] is None:
                         a["questions"] = []
             for r in rows(
-                "SELECT f.round, f.finding, f.label, f.fixed_in, f.severity, f.rule, f.path, f.lines, f.text "
+                "SELECT f.round, f.finding, f.label, f.fixed_in, f.severity, f.criterion, f.path, f.lines, f.text "
                 "FROM review_findings f JOIN review_rounds ON f.round = review_rounds.id WHERE {where} ORDER BY f.rowid"
             ):
                 if r["round"] in by_id:
@@ -710,7 +779,8 @@ class UnitMeta:
                             "label": r["label"],
                             "fixedIn": r["fixed_in"] or None,
                             "severity": r["severity"],
-                            "rule": r["rule"],
+                            "rule": r["criterion"],  # the loop's name for it: its output is pinned
+                            "criterion": r["criterion"],
                             "path": r["path"],
                             "lines": r["lines"],
                             "text": r["text"],

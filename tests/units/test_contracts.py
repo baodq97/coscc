@@ -90,9 +90,9 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
                     _refusal(raw), f"contract-field-missing: {agent}.{field} (read by {reader})"
                 )
                 cases += 1
-        # judgement and questions for six artifacts, three review fields, one field each for
+        # judgement and questions for six artifacts, four review fields, one field each for
         # integrate, estimate and the scan's proposals; then the nine read by name.
-        self.assertEqual(cases, 6 * 2 + 3 + 3 + 9)
+        self.assertEqual(cases, 6 * 2 + 4 + 3 + 9)
 
     def test_the_intents_type_names_branch_for(self):
         raw = _shipped()
@@ -240,7 +240,7 @@ PINNED = {
     "spike": (2, "95f4668e18e5"),
     "plan": (4, "f49d1faf3b5f"),
     "impl": (3, "0e0331fd23e0"),
-    "review": (1, "c88ced722098"),
+    "review": (2, "86f63317e692"),
     "integrate": (1, "9e29819d42c2"),
     "estimate": (1, "cd5fc053a8e3"),
     "scan": (1, "b4482adace0e"),

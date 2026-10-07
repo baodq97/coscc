@@ -147,9 +147,18 @@ def _finding_from_row(f):
     return out
 
 
-def round_text(verdict, findings):
-    """A round's words, built from its rows: its verdict, then a line per finding."""
+def round_text(verdict, findings, criteria=()):
+    """A round's words, built from its rows: its verdict, a table of the criteria graded, then a
+    line per finding. The finding's `rule` is the criterion it was raised under."""
     said = [f"Verdict: {js(verdict)}."]
+    if criteria:
+        cell = lambda t: " ".join(str(t).split()).replace("|", "\\|")
+        said += ["", "| Criterion | Met | Source | Evidence |", "|---|---|---|---|"]
+        said += [
+            f"| {c['criterion']} | {c['met']} | {cell(c['source'])} | {cell(c['evidence'])} |"
+            for c in criteria
+        ]
+        said.append("")
     said += [f"- {js(f['id'])} [{js(f['label'])}] {f['text']}" for f in findings]
     return "\n".join(said)
 
@@ -160,6 +169,7 @@ def review_from(rows):
     for row in rows:
         shots = nullish(dig(row, "screens", "shots"), [])
         findings = [_finding_from_row(f) for f in row["findings"]]
+        criteria = row.get("criteria") or []
         by_n[row["n"]] = {
             "n": row["n"],
             "reviewed": row.get("reviewed") or None,
@@ -174,7 +184,7 @@ def review_from(rows):
                     {k: dig(s, k) for k in ("path", "size", "address", "result")} for s in shots
                 ],
             } if shots else None,
-            "text": round_text(dig(row, "verdict"), findings),
+            "text": round_text(dig(row, "verdict"), findings, criteria),
         }  # fmt: skip
     ordered = sorted(by_n.values(), key=lambda r: r["n"])
     return with_dropped(

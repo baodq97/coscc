@@ -29,7 +29,14 @@ from coscc.store.journal import last_runs, paused_stage, timelines_of, totals_of
 from coscc.units import BadUnit, Invalid, backlog, contracts, scratch, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable, attention_reason, unit_state
-from coscc.units.meta import By, DecisionKind, OutputRecord
+from coscc.units.meta import (
+    By,
+    DecisionKind,
+    OutputRecord,
+    RoundCriterion,
+    RoundFinding,
+    RoundGrades,
+)
 from coscc.units.meta import Decision as DecisionRow
 from coscc.units.workspaces import Workspaces
 
@@ -410,6 +417,8 @@ class Round(TypedDict):
     findings: int
     findings_open: int
     unfinished: bool
+    criteria: list[RoundCriterion]
+    items: list[RoundFinding]
 
 
 class Dependency(TypedDict):
@@ -494,9 +503,12 @@ def detail(
     timeline: Sequence[Mapping[str, Any]],
     outputs: list[OutputRecord],
     decisions: Sequence[DecisionRow] = (),
+    graded: Mapping[int, RoundGrades] | None = None,
 ) -> Detail:
     """`unit`, one unit of `Board.read`, with `timeline` (`Journal.timeline`), its `outputs`
-    (`UnitMeta.outputs`) and its `decisions` (`UnitMeta.decisions`) as a page shows it."""
+    (`UnitMeta.outputs`), its `decisions` (`UnitMeta.decisions`) and what each review round graded
+    and found (`UnitMeta.graded`) as a page shows it."""
+    graded = graded or {}
 
     def last(r: Mapping[str, Any] | None) -> LastRun | None:
         if not r:
@@ -553,6 +565,8 @@ def detail(
                 "findings": int(r.get("findings") or 0),
                 "findings_open": int(r.get("findings_open") or 0),
                 "unfinished": bool(r.get("unfinished")),
+                "criteria": graded.get(int(r.get("n") or 0), {"criteria": []})["criteria"],
+                "items": graded.get(int(r.get("n") or 0), {"items": []})["items"],
             }
             for r in unit.get("rounds") or []
         ],

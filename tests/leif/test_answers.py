@@ -190,8 +190,9 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         body = gh.comments[0]["body"]
         self.assertIn("round 2 of", body.splitlines()[0])
         self.assertIn("Verdict: changes-requested.", body)
-        self.assertIn("- F1 [fixed] (none) — high — the first thing", body)
-        self.assertIn("- F2 [open] (none) — low — the second thing", body)
+        self.assertIn("| R1 | yes | a requirement | a.py:1 |", body)
+        self.assertIn("- F1 [fixed] (none) — high — R1 the first thing", body)
+        self.assertIn("- F2 [open] (none) — low — R1 the second thing", body)
         self.assertEqual([(c["round"], c["state"]) for c in done["comments"]], [(2, "posted")])
 
     def test_changes_requested_reaches_the_history(self):

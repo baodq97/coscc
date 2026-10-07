@@ -300,7 +300,7 @@ class Place2(_Review):
         # The file is the app's rendering of the object, the head its own read.
         text = (self.dir / "review.md").read_text(encoding="utf-8")
         self.assertIn(f"Reviewed: {self.head}. Verdict: changes-requested.", text)
-        self.assertIn("- F1 [open] coscc/x.py:3 — high — broken", text)
+        self.assertIn("- F1 [open] coscc/x.py:3 — high — R1 broken", text)
         self.assertIn("### What was checked\n\nEverything.", text)
         self.assertNotIn("0000000", text)
 

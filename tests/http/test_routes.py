@@ -1014,7 +1014,7 @@ def record_rounds(core, cwd: str, unit: str, rounds) -> None:
                             "state": state,
                             "fixed_in": "",
                             "severity": "low",
-                            "rule": "",
+                            "criterion": "R1",
                             "path": "",
                             "lines": "",
                             "text": "a",

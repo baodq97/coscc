@@ -5,6 +5,7 @@ its object. Which findings are open is read from `cos.db`'s rounds, never from t
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from coscc.runner.reply import RunError
@@ -65,13 +66,26 @@ UI_STANDARD = ".claude/rules/ui-standard.md"
 
 
 def finding_line(f: dict[str, Any]) -> str:
-    """One finding of a round's object: `- F<k> [label] path:lines — severity — S<n> text`."""
+    """One finding of a round's object: `- F<k> [label] path:lines — severity — <criterion> text`."""
     label = f"fixed {f['fixed_in']}" if f["state"] == "fixed" else f["state"]
     where = f"{f['path']}:{f['lines']}" if f["path"] and f["lines"] else (f["path"] or "(none)")
-    text_lines = ((f"{f['rule']} " if f["rule"] else "") + f["text"].strip()).splitlines() or [""]
+    text_lines = (
+        (f"{f['criterion']} " if f.get("criterion") else "") + f["text"].strip()
+    ).splitlines() or [""]
     out = [f"- {f['id']} [{label}] {where} — {f['severity']} — {text_lines[0]}"]
     out += [f"  {line}" if line.strip() else "" for line in text_lines[1:]]
     return "\n".join(out).rstrip()
+
+
+def criteria_table(criteria: list[Mapping[str, str]]) -> str:
+    """The criteria a round graded, one row each: its id, met or not, what it was read from and
+    the evidence."""
+    cell = lambda t: " ".join(str(t).split()).replace("|", "\\|")
+    rows = [
+        f"| {c['criterion']} | {c['met']} | {cell(c['source'])} | {cell(c['evidence'])} |"
+        for c in criteria
+    ]
+    return "\n".join(["| Criterion | Met | Source | Evidence |", "|---|---|---|---|", *rows])
 
 
 def render_round(
@@ -80,9 +94,9 @@ def render_round(
     """A round of `review.md` from the object its run handed back.
 
     The app decides the heading's number, the line naming the head it read and the verdict,
-    `### Findings` and `### Screens`. Other `###` sections the session wrote are kept in place;
-    whatever it wrote above its first `###` is not. A missing `### Findings` or `### Screens` is
-    added at the end; one written while the object names no screenshot is dropped.
+    `### Criteria`, `### Findings` and `### Screens`. Other `###` sections the session wrote are kept in place;
+    whatever it wrote above its first `###` is not. A missing one of them is
+    added at the end; `### Screens` written while the object names no screenshot is dropped.
     """
     body = section.splitlines()[1:]
     first = next((i for i, line in enumerate(body) if line.startswith("### ")), len(body))
@@ -94,7 +108,10 @@ def render_round(
             sections[-1][1].append(line)
     findings = "\n".join(finding_line(f) for f in obj.get("findings") or ()) or "None."
     shots = list(obj.get("screens") or ())
-    rendered = {"### Findings": findings}
+    rendered = {
+        "### Criteria": criteria_table(obj["criteria"]) if obj.get("criteria") else "None.",
+        "### Findings": findings,
+    }
     if shots and screens is not None:
         rendered["### Screens"] = (
             f"Taken at: {screens.get('taken') or '(no manifest)'}. Standard: {screens['standard']}. "
@@ -106,8 +123,12 @@ def render_round(
         )
     out = [f"## Round {n}", "", f"Reviewed: {head}. Verdict: {obj['verdict']}.", ""]
     done: set[str] = set()
+    kept = {heading for heading, _ in sections}
     for heading, lines in sections:
-        if heading in ("### Findings", "### Screens"):
+        if heading == "### Findings" and "### Criteria" not in done and "### Criteria" not in kept:
+            out += ["### Criteria", "", rendered["### Criteria"], ""]
+            done.add("### Criteria")
+        if heading in ("### Criteria", "### Findings", "### Screens"):
             if heading in rendered and heading not in done:
                 out += [heading, "", rendered[heading], ""]
                 done.add(heading)

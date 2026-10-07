@@ -695,10 +695,14 @@ _KIND_SAYS = {
     "you recommend and why, in a sentence or two, so a person can take it with one press.",
     "verdict": "`pass` when nothing blocks the merge, `changes-requested` when a finding must be "
     "fixed first, `needs-person` when only a person can settle one.",
+    "criteria": "Every criterion you graded, once each: `criterion` is `R<n>` of the spec, `P<n>` the "
+    "n-th `## Proof` item of the plan, `O<n>` the n-th sentence of the intent's proposed outcome when "
+    "there is no spec or plan, or `S<n>` of the UI standard; `source` quotes it; `evidence` is "
+    "`path:lines`. `pass` is refused while one is `no`.",
     "findings": "Every finding of this round, those an earlier round raised carried forward with "
-    'their id. `fixed_in` is the commit of a `fixed` one and `""` otherwise; `rule` is the `S<n>` of the '
-    'UI standard it names, or `""`; `text` is what the finding says, without its id, label, '
-    "place or severity.",
+    'their id. `fixed_in` is the commit of a `fixed` one and `""` otherwise; `criterion` is one '
+    "of the criteria above that the finding breaks or leaves unclear; `text` is what the finding "
+    "says, without its id, label, place or severity.",
     "screens": "One entry per screenshot you opened, `size` as `1440x900`; `[]` when you opened "
     "none.",
 }

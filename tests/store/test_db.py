@@ -659,10 +659,19 @@ class AV12DatabaseTakesOneStepTo13(unittest.TestCase):
                 conn.execute(f"DROP TABLE {table}")
             for statement in V12:
                 conn.execute(statement)
+            conn.execute("ALTER TABLE review_rounds DROP COLUMN criteria")
+            conn.execute("ALTER TABLE review_findings DROP COLUMN criterion")
             self._rows(conn)
             conn.execute("PRAGMA user_version=12")
         self.assertEqual(self.data.version(), SCHEMA_VERSION)
-        self.assertEqual(SCHEMA_VERSION, 17)
+        self.assertEqual(SCHEMA_VERSION, 18)
+
+    def test_review_rounds_and_findings_gain_their_criteria_columns(self):
+        with self.data.connect() as conn:
+            rounds = {r[1] for r in conn.execute("PRAGMA table_info(review_rounds)")}
+            findings = {r[1] for r in conn.execute("PRAGMA table_info(review_findings)")}
+        self.assertIn("criteria", rounds)
+        self.assertIn("criterion", findings)
 
     def _rows(self, conn):
         for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):
@@ -958,6 +967,22 @@ class AV16DatabaseTakesOneStepTo17(unittest.TestCase):
             self.assertEqual(data.pref("agents.state"), {"scan": {"/w": "on", "/v": "off"}})
             self.assertEqual(data.pref("features.state"), {"release": {"/w": "on"}})
             self.assertIsNone(data.pref("features.schedule"))
+
+
+class AV17DatabaseTakesOneStepTo18(unittest.TestCase):
+    def test_a_review_round_and_its_findings_gain_their_criteria_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with Data(tmp).connect() as conn:
+                conn.execute("ALTER TABLE review_rounds DROP COLUMN criteria")
+                conn.execute("ALTER TABLE review_findings DROP COLUMN criterion")
+                conn.execute("PRAGMA user_version=17")
+            data = Data(tmp)
+            with data.connect() as conn:
+                rounds = {r[1] for r in conn.execute("PRAGMA table_info(review_rounds)")}
+                findings = {r[1] for r in conn.execute("PRAGMA table_info(review_findings)")}
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            self.assertIn("criteria", rounds)
+            self.assertIn("criterion", findings)
 
 
 if __name__ == "__main__":

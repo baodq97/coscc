@@ -303,6 +303,39 @@ class AnArtifactWithARecordHasNoQuestionsYet(Base):
             )
         self.assertEqual(self.artifact("review.md")["questions"], [])
 
+    def test_a_round_keeps_what_it_graded_and_what_it_found(self):
+        met = {"criterion": "R1", "source": "s", "met": "no", "evidence": "a.py:1"}
+        found = {
+            "id": "F1",
+            "state": "open",
+            "fixed_in": "",
+            "severity": "high",
+            "criterion": "R1",
+            "path": "a.py",
+            "lines": "1",
+            "text": "t",
+        }
+        obj = {"verdict": "changes-requested", "criteria": [met], "findings": [found]}
+        with self.data.write() as conn:
+            self.meta.record_round(
+                conn, WS, self.UNIT, {"n": 1, "run": "r", "head": "h", "object": obj}
+            )
+        got = self.meta.graded(WS, self.UNIT)[1]
+        self.assertEqual(got["criteria"], [met])
+        self.assertEqual(
+            got["items"],
+            [
+                {
+                    "id": "F1",
+                    "label": "open",
+                    "severity": "high",
+                    "criterion": "R1",
+                    "place": "a.py:1",
+                    "text": "t",
+                }
+            ],
+        )
+
     def test_an_artifact_with_a_state_and_no_rows_asks_none_and_one_with_neither_is_unknown(self):
         self.meta.history.record(WS, self.UNIT, "plan.md", "accepted", source="test")
         self.assertEqual(self.artifact("plan.md")["questions"], [])

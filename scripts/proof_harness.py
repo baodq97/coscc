@@ -225,7 +225,7 @@ def seed_fixture(
     of `statuses` (`{artifact: state}`), `type` (an intent record), `shipped` (the merge
     row the PR machine writes), `questions` (`{artifact: [text or (text, recommendation)]}`,
     numbered from 1), `pr` (the number the PR machine's `open` row names), `rounds` (`[(n,
-    head, verdict, [finding])]`, a finding as `review_findings` takes it), `answers` (`[(artifact,
+    head, verdict, [finding], [criterion])]`, a finding as `review_findings` takes it), `answers` (`[(artifact,
     n, text, by, name, date)]`) and `decisions` (`[(kind, fields, date)]`, a person's). The
     files a proof writes beside them are prose only; the app reads no state from them."""
     from coscc.units.meta import UnitMeta
@@ -251,9 +251,13 @@ def seed_fixture(
                         for n, q in enumerate(asked, 1)
                     ],
                 )
-            for n, head, verdict, findings in kw.get("rounds") or ():
+            for n, head, verdict, findings, *graded in kw.get("rounds") or ():
                 submitted = {"n": n, "run": f"r{n}", "head": head}
-                submitted["object"] = {"verdict": verdict, "findings": findings}
+                submitted["object"] = {
+                    "verdict": verdict,
+                    "findings": findings,
+                    "criteria": graded[0] if graded else [],
+                }
                 meta.record_round(conn, key, unit, submitted)
             for artifact, n, text, by, name, date in kw.get("answers") or ():
                 meta.add_answer(key, unit, artifact, n, text, by, name, date, "product", conn=conn)

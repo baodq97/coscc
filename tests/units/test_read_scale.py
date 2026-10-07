@@ -49,7 +49,7 @@ def rounds(unit: str) -> list[dict]:
                         "state": "fixed",
                         "fixed_in": f"{n:07x}",
                         "severity": "low",
-                        "rule": "",
+                        "criterion": "R1",
                         "path": "",
                         "lines": "",
                         "text": f"a long sentence about what the reviewer found, number {i}",
