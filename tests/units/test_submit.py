@@ -566,7 +566,9 @@ class ADraftMayAskFirst(unittest.TestCase):
         self.assertIn(pack.row("dagaz")["output"]["kind"], policy.SUBMIT_KINDS)
         self.assertTrue(policy.row_for("dagaz").submits)
         props = contracts.schema("dagaz")["properties"]
-        self.assertEqual(set(props["questions"]["items"]["required"]), {"n", "text", "recommendation"})
+        self.assertEqual(
+            set(props["questions"]["items"]["required"]), {"n", "text", "recommendation"}
+        )
         self.assertEqual(
             props["gaps"]["items"]["properties"]["part"]["enum"],
             ["tool", "data", "trigger", "output", "event"],

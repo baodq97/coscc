@@ -131,3 +131,45 @@ class AnOwnerDecides(_Table):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AProposalKnowsTheUnitItMade(_Table):
+    async def test_the_accepted_proposal_is_the_units_origin(self):
+        self.assertIsNone(proposals.origin(self.data, WS, "0007_steps-stop"))
+        await proposals.accept(self.data, WS, self.pid, "steps-stop", self.create)
+        got = proposals.origin(self.data, WS, "0007_steps-stop")
+        self.assertEqual((got["id"], got["agent"], got["run"]), (self.pid, "scan", "r1"))
+        self.assertIsNone(proposals.origin(self.data, "/other", "0007_steps-stop"))
+
+    async def test_a_unit_that_could_not_be_made_has_no_origin(self):
+        async def fail(slug: str, brief: str) -> str:
+            raise Invalid("no")
+
+        with self.assertRaises(Invalid):
+            await proposals.accept(self.data, WS, self.pid, "steps-stop", fail)
+        self.assertIsNone(proposals.origin(self.data, WS, ""))
+
+
+class AGapBecomesAProposal(unittest.TestCase):
+    def test_a_gap_is_a_feat_resting_on_its_run(self):
+        gap = {
+            "part": "trigger",
+            "need": "a time of day, as every morning at 7",
+            "instead": "every 24 h",
+        }
+        item = proposals.of_gap("It tells the person which units got stuck.", gap, "r9")
+        self.assertEqual((item["type"], item["sources"]), ("feat", ["r9"]))
+        self.assertEqual(item["slug"], "trigger-a-time-of-day-as-every-morning-at-7")
+        self.assertIn("every 24 h", item["problem"])
+        self.assertTrue(proposals.SLUG.match(item["slug"]))
+
+    def test_a_long_need_keeps_a_slug_and_title_within_bounds(self):
+        item = proposals.of_gap("w", {"part": "data", "need": "word " * 80, "instead": ""}, "r")
+        self.assertLessEqual(len(item["slug"]), proposals.SLUG_MAX)
+        self.assertTrue(proposals.SLUG.match(item["slug"]))
+        self.assertLessEqual(len(item["title"]), proposals.TITLE_MAX)
+
+    def test_a_gap_without_its_part_or_need_is_refused(self):
+        for gap in ({"part": "tool", "need": " "}, {"need": "x"}):
+            with self.assertRaises(Invalid):
+                proposals.of_gap("w", gap, "r")

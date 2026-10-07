@@ -475,6 +475,39 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
             (r.status_code, r.json()["state"], r.json()["by"]), (200, "dismissed", "owner")
         )
 
+    async def test_a_drafts_gap_becomes_one_pending_proposal_in_the_drafts_words(self):
+        key = str(self.ws.resolve())
+        journal = self.core.ws.journal()
+        gap = {"part": "trigger", "need": "a time of day", "instead": "every 24 h"}
+        for run, extra in (
+            ("r-gap", {"draft": {"why": "stuck units", "gaps": [gap]}}),
+            ("r-no", {}),
+        ):
+            journal.started(key, "", "dagaz", "manual", run=run, started_by="manual")
+            journal.finished(key, "", "dagaz", "done", run=run, agent="dagaz", **extra)
+        body = {"cwd": str(self.ws), "run": "r-gap", "gap": 0}
+        r = await self.client.post("/api/proposals", json=body)
+        self.assertEqual(r.status_code, 200, r.text)
+        got = r.json()
+        self.assertEqual((got["agent"], got["state"], got["run"]), ("dagaz", "pending", "r-gap"))
+        self.assertEqual([s["id"] for s in got["sources"]], ["r-gap"])
+        self.assertIn("a time of day", got["title"])
+        self.assertEqual((await self.client.post("/api/proposals", json=body)).status_code, 400)
+        for bad in (
+            {**body, "gap": 1},
+            {**body, "gap": "0"},
+            {**body, "gap": True},
+            {**body, "run": "r-no"},
+            {**body, "run": "nope"},
+            {**body, "cwd": "/etc"},
+        ):
+            r = await self.client.post("/api/proposals", json=bad)
+            self.assertEqual(r.status_code, 400, bad)
+        from coscc.store.db import Data
+        from coscc.units import proposals
+
+        self.assertEqual(len(proposals.listed(Data(self.root), key)), 1)
+
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
     """Without a store: the write routes say why rather than crashing."""

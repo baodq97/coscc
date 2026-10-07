@@ -107,7 +107,9 @@ def draft_problem(obj: Mapping[str, Any], catalog: Mapping[str, str] | None) -> 
     questions = obj.get("questions") or []
     if questions:
         if len(questions) > QUESTIONS_MAX:
-            return f"ask at most {QUESTIONS_MAX} questions: the ones whose answer changes the draft."
+            return (
+                f"ask at most {QUESTIONS_MAX} questions: the ones whose answer changes the draft."
+            )
         if any(not str(q.get("recommendation") or "").strip() for q in questions):
             return "each question carries the answer you recommend."
         if agent is not None or process is not None:

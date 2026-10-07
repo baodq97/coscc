@@ -375,10 +375,38 @@ async def decide_proposal(pid: int, request: Request) -> proposals.Proposal:
         async def create(slug: str, brief: str) -> str:
             return str((await core.answers.create_unit(cwd, slug, brief))["unit"])
 
-        return await proposals.accept(data, ws, pid, str(body.get("slug") or ""), create)
+        made = await proposals.accept(data, ws, pid, str(body.get("slug") or ""), create)
+        # The page opens the unit next: the held board must hold it, as after `POST /api/units`.
+        if ws in core.boards.held:
+            await asyncio.shield(core.boards.refresh(cwd, again=True))
+        return made
     if action == "dismiss":
         return await proposals.dismiss(data, ws, pid, str(body.get("reason") or ""))
     raise Invalid("action must be accept or dismiss")
+
+
+@router.post("/api/proposals")
+async def propose_gap(request: Request) -> proposals.Proposal:
+    """`{cwd, run, gap}`: the person's "propose this capability" on the `gap`-th gap (from 0)
+    the draft of `run` names, as a `pending` proposal of the run's agent resting on the run. The
+    words are the draft's, kept on the run's `end`, never the page's; a gap proposed once is
+    refused again. Acts for whoever holds the password; it only adds a row to decide."""
+    body = await kernel.body(request)
+    core = _core(request)
+    cwd = core.ws.check(str(body.get("cwd") or ""))
+    run, at = str(body.get("run") or ""), body.get("gap")
+    page = await asyncio.to_thread(core.watch.events_page, cwd, run, None, 1)
+    gaps = (page.get("draft") or {}).get("gaps") or []
+    if not isinstance(at, int) or isinstance(at, bool) or not 0 <= at < len(gaps):
+        raise Invalid(f"run {run} drafted no gap {at}")
+    item = proposals.of_gap(str(page["draft"].get("why") or ""), gaps[at], run)
+    ws, data = core.ws.key(cwd), Data(core.config.data_dir)
+    agent = str(page.get("stage") or "dagaz")
+    made = await asyncio.to_thread(proposals.listed, data, ws, agent)
+    if any(p["run"] == run and p["slug"] == item["slug"] for p in made):
+        raise Invalid("this capability is proposed already")
+    (pid,) = await asyncio.to_thread(proposals.add, data, ws, agent, "", [item], run=run)
+    return await asyncio.to_thread(proposals.one, data, ws, pid)
 
 
 @router.get("/api/insights")

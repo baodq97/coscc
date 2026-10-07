@@ -230,6 +230,41 @@ def one(data: Data, workspace: str, pid: int) -> Proposal:
     return _proposal(row)
 
 
+def origin(data: Data, workspace: str, unit: str) -> Proposal | None:
+    """The proposal whose acceptance made `unit`, `None` for a unit a person opened."""
+    with data.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM proposals WHERE workspace = ? AND made = ? AND decision = 'accepted' "
+            "ORDER BY id DESC LIMIT 1",
+            (workspace, unit),
+        ).fetchone()
+    return _proposal(row) if row is not None else None
+
+
+def of_gap(why: str, gap: Mapping[str, Any], run: str) -> Item:
+    """A person's "propose this capability" on a gap a draft named (`{part, need, instead}`): a
+    `feat` for the part the catalog lacks, resting on the draft's run."""
+    need = " ".join(str(gap.get("need") or "").split())
+    part = str(gap.get("part") or "")
+    if not need or not part:
+        raise Invalid("a gap names its part and what is needed")
+    title = f"Agents can have a {part}: {need}"
+    words = re.sub(r"[^a-z0-9]+", "-", f"{part} {need}".lower()).strip("-")
+    slug = words[:SLUG_MAX].rsplit("-", 1)[0] if len(words) > SLUG_MAX else words
+    problem = (
+        f"A person asked for an agent the catalog cannot build whole. It lacks a {part}: {need}. "
+        f"The draft does instead: {' '.join(str(gap.get('instead') or '').split()) or 'nothing'}."
+        f"\n\nWhat the draft understood of the task: {' '.join(why.split())}"
+    )
+    return {
+        "type": "feat",
+        "slug": slug or "capability",
+        "title": title if len(title) <= TITLE_MAX else title[: TITLE_MAX - 1] + "…",
+        "problem": problem[:PROBLEM_MAX],
+        "sources": [run],
+    }
+
+
 def lists_of(made: Sequence[Proposal]) -> str:
     """The proposals already made, newest first, as three lists within `LISTS_MAX`: what a run
     must not propose again, and why a person dismissed one."""
