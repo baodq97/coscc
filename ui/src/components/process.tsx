@@ -220,6 +220,8 @@ export function ProcessEditor({
   const agents = stateAgents(rows);
   // An agent Dagaz drafted beside the process, not saved yet: a step may name it.
   const fresh = drafted?.d.agent && !rows.some((r) => r.key === drafted.d.agent?.key) ? drafted.d.agent : undefined;
+  // A way on may read the drafted agent's output fields like any row's.
+  const withFresh = fresh ? [...rows, { key: fresh.key, row: fresh.fields } as unknown as BuildAgent] : rows;
   // The catalog, to show the drafted agent's tools with what each does.
   const page = useResource(fresh ? "/api/agents" : null, { cwd });
   const edit = (f: (d: Draft) => Draft) => (setReasons([]), setDraft(f));
@@ -268,10 +270,11 @@ export function ProcessEditor({
         )}
         {fresh && drafted?.d.process && (
           <div className="drafted-first" id="draft-agent-first">
-            <div className="callout amber">
-              <span>
-                It runs a new agent Dagaz drafted with it, <b>{String(fresh.fields.name ?? fresh.key)}</b> <span className="mono">{fresh.key}</span>. Read its parts, then <Link to={`/agents?draft=${drafted.run}`}>save it in New agent</Link>; this process opens again after.
+            <div className="callout amber" style={{ alignItems: "center", flexWrap: "wrap" }}>
+              <span className="grow">
+                It runs a new agent Dagaz drafted with it, <b>{String(fresh.fields.name ?? fresh.key)}</b> <span className="mono">{fresh.key}</span>. Read its parts below, save it first, and this process opens again after.
               </span>
+              <Link to={`/agents?draft=${drafted.run}`} className="btn sm">Save {String(fresh.fields.name ?? fresh.key)} first</Link>
             </div>
             <DraftedRow fields={fresh.fields} body={fresh.body} catalog={page.data?.catalog ?? []} />
           </div>
@@ -314,7 +317,7 @@ export function ProcessEditor({
                 </div>
               ))}
               {s.ways.map((w, wi) => (
-                <WayRow key={wi} way={w} step={s} keys={keys} rows={rows} onChange={(nw) => edit((d) => setStep(d, s.key, { ways: s.ways.map((x, n) => (n === wi ? nw : x)) }))} onRemove={() => edit((d) => setStep(d, s.key, { ways: s.ways.filter((_, n) => n !== wi) }))} />
+                <WayRow key={wi} way={w} step={s} keys={keys} rows={withFresh} onChange={(nw) => edit((d) => setStep(d, s.key, { ways: s.ways.map((x, n) => (n === wi ? nw : x)) }))} onRemove={() => edit((d) => setStep(d, s.key, { ways: s.ways.filter((_, n) => n !== wi) }))} />
               ))}
               <div className="pe-foot">
                 {i < draft.steps.length - 1 && (
