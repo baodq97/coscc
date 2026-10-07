@@ -19,6 +19,7 @@ import { Insights } from "./screens/Insights";
 import { RunPage } from "./screens/RunLog";
 import { Feature } from "./screens/Feature";
 import { Decided } from "./screens/Decided";
+import { Skills } from "./screens/Skills";
 
 export type Screen = {
   path: string;
@@ -68,6 +69,7 @@ export const SCREENS: Screen[] = [
     render: () => <NewWork />,
   },
   { path: "/agents", title: "Agents", nav: "Team", icon: "team", keys: "G T", render: () => <Agents /> },
+  { path: "/skills", title: "Skills", nav: "Team", icon: "wand", keys: "G R", render: () => <Skills /> },
   { path: "/agents/:key", title: "Agent", crumbs: (p) => ["Agents", agentFace(p.key).name], render: (p) => <AgentPage name={p.key} /> },
   { path: "/agents/:key/:tab", title: "Agent", crumbs: (p) => ["Agents", agentFace(p.key).name], render: (p) => <AgentPage name={p.key} tab={p.tab} /> },
   {

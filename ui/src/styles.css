@@ -749,3 +749,5 @@ a.btn { text-decoration: none; }
 .try-it { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r3); }
 .try-out { display: grid; gap: 8px; font-size: 13px; scroll-margin-bottom: 72px; }
 .try-items { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
+.skill-line { width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); font: inherit; cursor: pointer; }
+.skill-text { white-space: pre-wrap; max-height: 50vh; overflow: auto; margin: 14px 0 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r2); background: var(--panel); font-size: 12.5px; line-height: 1.5; }
