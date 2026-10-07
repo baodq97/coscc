@@ -160,7 +160,7 @@ export function Talk() {
         </div>
       </div>
       <aside className="props" style={{ width: 280 }}>
-        <div className="seg" style={{ marginBottom: 12, maxWidth: "100%", overflowX: "auto" }}>
+        <div className="seg" style={{ marginBottom: 12, maxWidth: "100%", flexWrap: "wrap" }}>
           {boards.map((b) => (
             <button
               key={b.workspace.path}

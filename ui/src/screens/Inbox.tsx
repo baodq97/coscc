@@ -12,6 +12,12 @@ import { stageLabel } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
 import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
 
+/** What the page shows: a link to an item that is not waiting is "missing", whether or not others wait. */
+export function inboxView(waiting: number, asked: boolean, found: boolean): "empty" | "missing" | "list" {
+  if (asked && !found) return "missing";
+  return waiting ? "list" : "empty";
+}
+
 export function Inbox({ workspace, number }: { workspace?: string; number?: string }) {
   const { boards, loading } = useBoards();
   const waiting = allUnits(boards)
@@ -22,7 +28,16 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
   const chosen = found ?? (asked ? undefined : waiting[0]);
 
   if (loading) return <div className="page"><SkeletonRows rows={4} /></div>;
-  if (!waiting.length)
+  const view = inboxView(waiting.length, asked, Boolean(found));
+  if (view === "missing")
+    return (
+      <div className="page mid">
+        <Empty icon="search" title="Not found in what needs you" actions={<Button kind="primary" onClick={() => navigate("/inbox")}>Back to Needs you</Button>}>
+          {unitCode(workspace ?? "", Number(number))} has no question waiting on you: it may be answered, dropped or shipped.
+        </Empty>
+      </div>
+    );
+  if (view === "empty")
     return (
       <div className="page mid">
         <Empty icon="inbox" title="Nothing needs you">
@@ -61,13 +76,7 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
         ))}
       </div>
       <div className="rp">
-        {chosen ? (
-          <Questions unit={chosen} />
-        ) : (
-          <Empty icon="search" title="Not found in what needs you">
-            {unitCode(workspace ?? "", Number(number))} has no question waiting on you: it may be answered, dropped or shipped. The list on the left is what waits.
-          </Empty>
-        )}
+        {chosen && <Questions unit={chosen} />}
       </div>
     </div>
   );

@@ -19,7 +19,7 @@ export function LeifPanel() {
         <Link className="iconbtn" to="/leif" title="Open the conversation">
           <Icon name="ext" size={14} />
         </Link>
-        <button className="iconbtn" onClick={shell.toggleLeif} title="Close (L)">
+        <button className="iconbtn" onClick={shell.toggleLeif} title="Close (L)" aria-label="Close Leif">
           <Icon name="x" size={14} />
         </button>
       </div>

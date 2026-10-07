@@ -16,8 +16,11 @@ import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
 import { attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
-import { changedParts, changes, get, put } from "../screens/AgentPage";
-import { fieldLabel, isEmpty } from "../screens/UnitPage";
+import { changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
+import { fieldLabel, isEmpty, itemLine } from "../screens/UnitPage";
+import { inboxView } from "../screens/Inbox";
+import { featureView } from "../screens/Feature";
+import { filterUnits } from "../screens/Work";
 import type { NextStep } from "../api.gen";
 import type { AgentRow } from "../api.gen";
 import { afterAgentSaved, draftOf, draftParts, draftTools, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
@@ -582,5 +585,44 @@ describe("work and needs you", () => {
     expect(fieldLabel("judgement")).toBe("Judgement");
     expect([[], "", null, {}, { a: [] }].every(isEmpty)).toBe(true);
     expect(["x", ["x"], 0].some(isEmpty)).toBe(false);
+  });
+
+  it("says an unknown inbox item is not found, with or without other items", () => {
+    expect(inboxView(3, true, false)).toBe("missing");
+    expect(inboxView(0, true, false)).toBe("missing");
+    expect(inboxView(0, false, false)).toBe("empty");
+    expect(inboxView(3, true, true)).toBe("list");
+    expect(inboxView(3, false, false)).toBe("list");
+  });
+
+  it("reads list items of an output as one line", () => {
+    expect(itemLine({ n: 1, text: "When?", recommendation: "Today" })).toBe("1. When? \u2014 recommends: Today");
+    expect(itemLine({ n: 2, text: "Why?", recommendation: "" })).toBe("2. Why?");
+    expect(itemLine({ id: "U1", verdict: "holds", rests_on: [] })).toBe("U1 \u2014 Verdict: holds");
+    expect(itemLine({ path: "a.py", note: "x" })).toBe("Path: a.py \u00b7 Note: x");
+  });
+
+  it("filters work by every word in the title or the code", () => {
+    const u = (name: string, number: number) => ({ workspace: { name: "coscc" }, number, name });
+    const list = [u("0077_a-newer-database", 77), u("0018_command-filter", 18)];
+    expect(filterUnits(list, "").length).toBe(2);
+    expect(filterUnits(list, "DATABASE newer").map((x) => x.number)).toEqual([77]);
+    expect(filterUnits(list, "cos-18").map((x) => x.number)).toEqual([18]);
+    expect(filterUnits(list, "zzz")).toEqual([]);
+  });
+
+  it("ends a feature page's wait when the answer cannot come", () => {
+    expect(featureView(false, false, "error", false)).toBe("none");
+    expect(featureView(false, false, "ready", false)).toBe("none");
+    expect(featureView(false, false, "loading", false)).toBe("wait");
+    expect(featureView(false, true, "ready", false)).toBe("wait");
+    expect(featureView(false, false, "ready", true)).toBe("wait");
+    expect(featureView(true, true, "loading", false)).toBe("page");
+  });
+
+  it("names a model as a person reads it and keeps an id the list lacks", () => {
+    expect(modelOptions("claude-sonnet-5-5[1m]", "Default").find((o) => o.value === "claude-sonnet-5-5[1m]")?.label).toBe("Sonnet 5.5");
+    expect(modelOptions("my-model", "Default").map((o) => o.value)).toContain("my-model");
+    expect(modelOptions(undefined, "Default")[0]).toEqual({ value: "", label: "Default" });
   });
 });

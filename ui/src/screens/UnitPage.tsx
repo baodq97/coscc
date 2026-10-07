@@ -537,6 +537,21 @@ export function isEmpty(value: unknown): boolean {
   return false;
 }
 
+/** One line for a list item that is an object: a question is "1. text — recommends: rec"; any other
+ * is its non-empty fields, an id first ("U1 — Verdict: holds"). */
+export function itemLine(item: Record<string, unknown>): string {
+  const text = (v: unknown): string => (Array.isArray(v) ? v.map(text).join(", ") : v && typeof v === "object" ? itemLine(v as Record<string, unknown>) : String(v ?? ""));
+  if (typeof item.text === "string" && item.n != null) {
+    const rec = text(item.recommendation).trim();
+    return `${item.n}. ${item.text.trim()}${rec ? ` — recommends: ${rec}` : ""}`;
+  }
+  const parts = Object.entries(item)
+    .filter(([k, v]) => k !== "id" && !isEmpty(v))
+    .map(([k, v]) => `${fieldLabel(k)}: ${text(v)}`);
+  const id = text(item.id);
+  return id ? [id, parts.join(" · ")].filter(Boolean).join(" — ") : parts.join(" · ");
+}
+
 /** A list is one line per item; an object is each field under its name, a list field (a plan
  * step's paths) as a short list; anything else is text. */
 function FieldValue({ value }: { value: unknown }) {
@@ -544,9 +559,7 @@ function FieldValue({ value }: { value: unknown }) {
     return value.length ? (
       <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
         {value.map((item, i) => (
-          <li key={i}>
-            <FieldValue value={item} />
-          </li>
+          <li key={i}>{item && typeof item === "object" && !Array.isArray(item) ? itemLine(item as Record<string, unknown>) : <FieldValue value={item} />}</li>
         ))}
       </ul>
     ) : (
@@ -770,6 +783,11 @@ function Actions({ unit, running, stage, upNext, lines, moves, onDone }: { unit:
         <Button icon="pause" disabled={busy} onClick={() => act("paused", () => hold("paused"))}>
           {asking === "paused" ? (dropped ? "Reopen it, paused?" : "Pause it?") : dropped ? "Reopen, paused" : "Pause"}
         </Button>
+      )}
+      {moves.includes("paused") && dropped && (
+        <div className="faint" style={{ fontSize: 12 }}>
+          Brings the unit back on the board, paused; nothing starts until you resume it.
+        </div>
       )}
       {moves.includes("dropped") &&
         (asking === "dropped" ? (
