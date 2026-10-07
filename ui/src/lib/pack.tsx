@@ -4,7 +4,6 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { PackShown } from "../api.gen";
 import { useResource } from "./api";
-import { usePath } from "./router";
 import { SkeletonRows } from "../components/ui";
 
 export type AgentFace = { name: string; glyph: string };
@@ -30,17 +29,16 @@ export const refreshPacks = () => index.reload();
 
 export const useIndex = () => useContext(Ctx);
 
+// Every screen waits on this one read, so it is the packs alone (a few KB, no run log): the agents'
+// names ride with them. Never the Agents page's read, which counts every run.
 export function PackProvider({ children }: { children: ReactNode }) {
   const ws = useResource("/api/workspaces");
   const cwd = ws.data?.workspaces[0]?.path;
-  const agents = useResource(cwd ? "/api/agents" : null, cwd ? { cwd } : {});
   const packs = useResource(cwd ? "/api/packs" : null, cwd ? { cwd } : {});
-  const settled = ws.state !== "loading" && (!cwd || (agents.state !== "loading" && packs.state !== "loading"));
-  // The Briefing names agents from its own reads: it starts them now, not after these two.
-  const home = usePath() === "/";
-  if (!settled && !home) return <div className="page"><SkeletonRows rows={4} /></div>;
+  const settled = ws.state !== "loading" && (!cwd || packs.state !== "loading");
+  if (!settled) return <div className="page"><SkeletonRows rows={4} /></div>;
 
-  const faces = Object.fromEntries((agents.data?.rows ?? []).map((a) => [a.key, { name: a.row.name ?? a.key, glyph: a.row.glyph ?? (a.row.name ?? a.key).slice(0, 1) }]));
+  const faces = Object.fromEntries((packs.data ?? []).flatMap((p) => p.agents.map((a) => [a.key, { name: a.name, glyph: a.glyph }])));
   const states = (packs.data ?? []).flatMap((p) => p.processes.flatMap((pr) => Object.entries(pr.states)));
   const labels: Record<string, string> = {};
   const withAgent = new Set<string>();
@@ -48,6 +46,6 @@ export function PackProvider({ children }: { children: ReactNode }) {
     if (st.label) labels[key] = st.label;
     if (st.agent) withAgent.add(key);
   }
-  index = { faces, labels, withAgent: [...withAgent], packs: packs.data ?? [], reload: () => (agents.reload(), packs.reload()) };
+  index = { faces, labels, withAgent: [...withAgent], packs: packs.data ?? [], reload: packs.reload };
   return <Ctx.Provider value={index}>{children}</Ctx.Provider>;
 }

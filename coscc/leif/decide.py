@@ -346,6 +346,14 @@ def spent_today(records: Iterable[dict[str, Any]], now: datetime) -> dict[str, A
     return spent_on(records, today(now))
 
 
+def cap_since(now: datetime) -> str:
+    """The oldest `at` the cap's figures can count (`spent_today`, `reserved`): a whole day and
+    `OPEN_FOR` back, so a read for them skips the run log before it."""
+    return (
+        (now - timedelta(days=1) - OPEN_FOR).astimezone(timezone.utc).isoformat(timespec="seconds")
+    )
+
+
 def reservation(stage: str) -> float:
     """What a step of `stage` is counted at before it ends: the largest dollar ceiling any
     label can give it, as `models.ceilings` resolves it from its row, so a raised ceiling is

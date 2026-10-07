@@ -1,5 +1,11 @@
 // Made by `uv run python -m coscc.http > ui/src/api.gen.ts` from the app's routes. Do not edit.
 
+export type AgentFace = {
+  "key": string;
+  "name": string;
+  "glyph": string;
+};
+
 export type AgentPage = {
   "rows": AgentRow[];
   "catalog": CatalogTool[];
@@ -488,6 +494,7 @@ export type PackShown = {
   "on": boolean;
   "process": string;
   "processes": ProcessShown[];
+  "agents": AgentFace[];
   "own": boolean;
   "imported": boolean;
   "problems": string[];

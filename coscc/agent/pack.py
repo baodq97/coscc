@@ -1399,6 +1399,12 @@ class ProcessShown(Process):
     own: bool
 
 
+class AgentFace(TypedDict):
+    key: str
+    name: str
+    glyph: str
+
+
 class PackShown(TypedDict):
     name: str
     version: str
@@ -1406,6 +1412,8 @@ class PackShown(TypedDict):
     on: bool
     process: str
     processes: list[ProcessShown]
+    # Each of its agents as every screen names it: what the studio reads before any screen shows.
+    agents: list[AgentFace]
     # `local`, the owner's own pack; one they imported (which they may remove).
     own: bool
     imported: bool
@@ -1453,6 +1461,11 @@ def packs_shown(data: Any, key: str) -> list[PackShown]:
     whose it is and what does not load."""
     _loaded()
     builtin_name = manifest()["name"]
+    faces: dict[str, list[AgentFace]] = {}
+    for agent, found in rows().items():
+        named = str(found.get("name") or agent)
+        glyph = str(found.get("glyph") or named[:1])
+        faces.setdefault(found["pack"], []).append(AgentFace(key=agent, name=named, glyph=glyph))
     out: list[PackShown] = []
     for name in pack_names():
         info: dict[str, Any] = _CACHE["packs"].get(name) or {"manifest": manifest(), "problems": []}
@@ -1469,6 +1482,7 @@ def packs_shown(data: Any, key: str) -> list[PackShown]:
                     for ref, p in processes().items()
                     if ref.partition("/")[0] == name
                 ],
+                "agents": faces.get(name, []),
                 "own": name == LOCAL_NAME,
                 "imported": name not in (builtin_name, LOCAL_NAME),
                 "problems": list(info["problems"]),
