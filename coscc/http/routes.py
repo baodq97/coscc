@@ -353,6 +353,23 @@ async def run_agent(request: Request) -> Started:
     return {"agent": key, "started": True, "run": run}
 
 
+@router.post("/api/agents/try")
+async def try_agent(request: Request) -> Started:
+    """`{cwd, key, fields, body}` **opens one paid, read-only session** of a row not saved yet
+    (Dagaz's draft, *Try it*), on the owner's press: the checks a save runs and the read-only rule
+    of a row that runs unpressed, no unit, its own ceilings and the daily cap; `started_by` and
+    `stage` `trial`. What it hands back is shown on its run's `end` (`tried`) and kept nowhere
+    else: no proposal, no verdict, no row. Refused before spend (`code`)."""
+    body = await kernel.body(request)
+    key, fields = str(body.get("key") or ""), body.get("fields")
+    if not isinstance(fields, dict):
+        raise Invalid("fields is the row's frontmatter, an object")
+    run = await triggers.trial(
+        _core(request), str(body.get("cwd") or ""), key, fields, str(body.get("body") or "")
+    )
+    return {"agent": key, "started": True, "run": run}
+
+
 @router.get("/api/proposals")
 async def get_proposals(request: Request) -> ProposalsView:
     """`?cwd=`: every agent's proposals in the workspace, newest first, and the rows that

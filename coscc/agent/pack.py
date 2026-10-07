@@ -836,14 +836,35 @@ def _fields(row: Mapping[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k not in _BOOKKEEPING}
 
 
+# A row tried before it is saved (`triggers.trial`), seen only inside that run's context:
+# `[the row, the loaded rows it was laid over, the two together]`.
+_TRIED: ContextVar[list[Any] | None] = ContextVar("pack_tried", default=None)
+
+
+@contextmanager
+def trying(made: Mapping[str, Any]) -> Iterator[None]:
+    """`made` (a whole new row, as `new_row_problems` takes it) among the rows for what starts
+    inside: a task begun here keeps seeing it; nothing is written and nothing else sees it."""
+    token = _TRIED.set([_entry(dict(made), LOCAL_NAME, own=True), None, None])
+    try:
+        yield
+    finally:
+        _TRIED.reset(token)
+
+
 def rows() -> dict[str, dict[str, Any]]:
     """Every agent's effective row: the built-in's in the manifest's order, then each imported
-    pack's, then the owner's own."""
-    return _loaded()
+    pack's, then the owner's own; and the row tried, inside `trying`."""
+    loaded, tried = _loaded(), _TRIED.get()
+    if tried is None:
+        return loaded
+    if tried[1] is not loaded:
+        tried[1:] = [loaded, {**loaded, str(tried[0]["key"]): tried[0]}]
+    return tried[2]
 
 
 def row(key: str) -> dict[str, Any] | None:
-    return _loaded().get(key)
+    return rows().get(key)
 
 
 def problems(key: str, catalog: Mapping[str, str] | None = None) -> list[str]:

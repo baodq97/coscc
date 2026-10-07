@@ -519,6 +519,23 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(r.status_code, 400, (run, r.text))
         self.assertEqual(journal.records(key, kinds=("start",))[-1]["run"], "r-scan")
 
+    async def test_a_trial_of_an_unsaved_row_is_refused_before_spend_and_saves_no_row(self):
+        from coscc.agent import pack
+        from tests.units.test_submit import _draft_agent
+
+        made = _draft_agent(tools={"Write": "allow"})
+        body = {"cwd": str(self.ws), "key": "tidy", "fields": made["fields"], "body": "Read."}
+        for bad in (
+            body,
+            {**body, "fields": "x"},
+            {**body, "cwd": "/etc"},
+            {**body, "key": "scan"},
+        ):
+            r = await self.client.post("/api/agents/try", json=bad)
+            self.assertEqual(r.status_code, 400, bad)
+        self.assertIsNone(pack.row("tidy"))
+        self.assertEqual(triggers._TASKS, set())
+
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
     """Without a store: the write routes say why rather than crashing."""

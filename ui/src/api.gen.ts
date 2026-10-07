@@ -321,6 +321,7 @@ export type EventsPage = {
   "verdict"?: string;
   "refused"?: number;
   "helpers"?: number;
+  "tried"?: unknown;
 };
 
 export type Followup = {

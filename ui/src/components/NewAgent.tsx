@@ -253,6 +253,7 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
       {agent ? (
         <DraftedRow fields={agent.fields} body={agent.body} catalog={catalog}>
           {drafted.d.gaps && <Gaps cwd={cwd} run={drafted.run} gaps={drafted.d.gaps} />}
+          <TryIt cwd={cwd} keyName={shownKey} fields={{ ...agent.fields, ...(name.trim() ? { name: name.trim() } : {}), ...(glyph.trim() ? { glyph: glyph.trim() } : {}) }} body={agent.body} />
         </DraftedRow>
       ) : (
         <Part label="Start from" errors={at("from")} hint="A copy of that agent, which you then change on its page.">
@@ -283,6 +284,95 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
       </div>
       {!ready && (name || shownKey) && <div className="faint" style={{ fontSize: 12 }}>{!name.trim() ? "Give it a name to continue." : nameBad ? "Fix the name to continue." : "Fix the key to continue."}</div>}
     </Dialog>
+  );
+}
+
+type Trial = { at: "idle" } | { at: "running"; run: string; line: string } | { at: "ended"; run: string; outcome: string; detail: string; tried: unknown } | { at: "refused"; why: string };
+
+/**
+ * *Try it*: one read-only run of the draft as it would be saved, on this project, before saving:
+ * its live line, then what it handed back. Nothing is kept: no proposal, no verdict, no agent.
+ */
+export function TryIt({ cwd, keyName, fields, body }: { cwd: string; keyName: string; fields: Record<string, unknown>; body: string }) {
+  const [trial, setTrial] = useState<Trial>({ at: "idle" });
+  const source = useRef<EventSource | null>(null);
+  useEffect(() => () => source.current?.close(), []);
+  const usd = Number((fields.ceilings as { usd?: number } | undefined)?.usd ?? 0);
+
+  const ended = async (run: string, tries = 0): Promise<void> => {
+    const page = await api.get("/api/runs/{run}", { cwd, run, limit: "1" });
+    if (page.outcome) setTrial({ at: "ended", run, outcome: page.outcome, detail: page.detail ?? "", tried: page.tried });
+    else if (tries < 4) setTimeout(() => void ended(run, tries + 1), 800);
+    else setTrial({ at: "ended", run, outcome: "unknown", detail: "The run left no end.", tried: undefined });
+  };
+  const start = async () => {
+    setTrial({ at: "running", run: "", line: "Starting…" });
+    try {
+      const said = await api.post<Started>("/api/agents/try", { cwd, key: keyName, fields, body });
+      const s = new EventSource(`/api/runs/${encodeURIComponent(said.run)}/follow?${new URLSearchParams({ cwd })}`);
+      source.current = s;
+      setTrial({ at: "running", run: said.run, line: "Starting…" });
+      s.onmessage = (m) => {
+        const events = JSON.parse(m.data) as StepEvent[];
+        const last = events[events.length - 1];
+        setTrial((t) => (t.at === "running" ? { ...t, line: last?.kind === "tool_use" ? `Using ${last.name ?? "a tool"}…` : "Working…" } : t));
+      };
+      const over = () => (s.close(), void ended(said.run));
+      for (const e of ["done", "status", "end", "cut"]) s.addEventListener(e, over);
+    } catch (e) {
+      setTrial({ at: "refused", why: e instanceof ApiError && e.reasons.length ? e.reasons.join(" ") : (e as Error).message });
+    }
+  };
+
+  return (
+    <div className="try-it" id="draft-try">
+      <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <Button size="sm" disabled={trial.at === "running" || !keyName} onClick={() => void start()}>
+          {trial.at === "ended" ? "Try it again" : "Try it"}
+        </Button>
+        {trial.at === "running" ? (
+          <span className="describe-live" role="status">
+            <Dot tone="live" /> {trial.line}
+          </span>
+        ) : (
+          <span className="faint" style={{ fontSize: 12 }}>One read-only run on this project{usd ? `, at most $${usd.toFixed(2)}` : ""}, before you save; nothing it hands back is kept.</span>
+        )}
+      </div>
+      {trial.at === "refused" && <div className="field-err">{trial.why}</div>}
+      {trial.at === "ended" && <TrialOutput cwd={cwd} trial={trial} />}
+    </div>
+  );
+}
+
+function TrialOutput({ cwd, trial }: { cwd: string; trial: Extract<Trial, { at: "ended" }> }) {
+  const ws = useResource("/api/workspaces").data?.workspaces.find((w) => w.path === cwd)?.name ?? "";
+  const items = (trial.tried as { proposals?: { title?: string; problem?: string }[] } | undefined)?.proposals;
+  return (
+    <div className="try-out">
+      <div className="row" style={{ gap: 8, alignItems: "center" }}>
+        <Chip square tone={trial.outcome === "done" ? "green" : "amber"}>{trial.outcome === "done" ? "Ran" : trial.outcome}</Chip>
+        <span className="grow faint" style={{ fontSize: 12 }}>{trial.detail}</span>
+        {ws && <Link to={`/run/${ws}/${trial.run}`}>Its log</Link>}
+      </div>
+      {items ? (
+        items.length ? (
+          <ol className="try-items">
+            {items.map((p, i) => (
+              <li key={i}>
+                <b>{p.title}</b>
+                <div className="muted">{p.problem}</div>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div className="faint">It proposed nothing this time.</div>
+        )
+      ) : trial.tried !== undefined ? (
+        <pre className="drafted-body">{JSON.stringify(trial.tried, null, 2)}</pre>
+      ) : (
+        <div className="faint">It handed nothing back.</div>
+      )}
+    </div>
   );
 }
 
