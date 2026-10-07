@@ -265,8 +265,12 @@ class AProcessIsCheckedAtLoad(unittest.TestCase):
         self.assertIn("p: start 'idea' is no state", self.reasons({**_process(), "start": "idea"}))
 
     def test_a_state_no_path_reaches(self):
-        bad = _process(spec={"agent": "spec", "next": [{"to": "impl"}]})
+        bad = _process(spec={"agent": "spec", "rerun": ["answers"], "next": [{"to": "impl"}]})
         self.assertIn("p.spec: no path from start reaches it", self.reasons(bad))
+
+    def test_a_state_whose_agent_asks_goes_on_from_answers(self):
+        bad = _process(intent={"agent": "intent", "next": [{"to": "impl"}]})
+        self.assertEqual("p.intent.rerun names answers", self.reasons(bad).split(":")[0])
 
     def test_no_path_to_the_end(self):
         bad = _process(ship={"action": "merge", "next": [{"to": "review"}]})
@@ -953,9 +957,10 @@ class WhatTheSecurityReviewFound(unittest.TestCase):
             "states": {
                 "intent": {
                     "agent": "intent",
+                    "rerun": ["answers"],
                     "next": [{"to": "rv", "when": {"guard": "skip-decision"}}, {"to": "x"}],
                 },
-                "x": {"agent": "rv", "next": [{"to": "pr"}]},
+                "x": {"agent": "rv", "rerun": ["answers"], "next": [{"to": "pr"}]},
                 "pr": {"action": "open-pr", "next": [{"to": "ship"}]},
                 "rv": {
                     "agent": "review",

@@ -2347,7 +2347,7 @@ class OwnAgentsAndPacksOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.post("/api/agents/new", key="changelog", name="Changelog", **{"from": "impl"})
         found = json.loads(json.dumps(pack.process("coscc-sdlc/short")))
         found["states"]["impl"]["next"] = [{"to": "changelog"}]
-        changelog = {"agent": "changelog", "next": [{"to": "pr"}]}
+        changelog = {"agent": "changelog", "rerun": ["answers"], "next": [{"to": "pr"}]}
         states = list(found["states"].items())
         found["states"] = dict([*states[:2], ("changelog", changelog), *states[2:]])
         r = await self.post("/api/packs/process", name="changelog", process=found)

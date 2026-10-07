@@ -940,6 +940,13 @@ def _check_state(
         out.append(f"{where}.skip: only skip-decision, not {st['skip']}")
     if not set(st.get("rerun") or []) <= {"fresh", "answers"}:
         out.append(f"{where}.rerun is a list of fresh, answers")
+    elif (
+        fields is not None
+        and "questions" in fields
+        and not st.get("optional")
+        and "answers" not in (st.get("rerun") or [])
+    ):
+        out.append(f"{where}.rerun names answers: its agent asks, and an answer goes on from it")
     for c in _conditions(st.get("when")):
         out += _check_condition(f"{where}.when", c, fields)
     for i, edge in enumerate(st.get("next") or []):
