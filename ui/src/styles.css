@@ -656,3 +656,6 @@ a.btn { text-decoration: none; }
 .icon-btn:hover:not(:disabled) { background: var(--bg-sunk); color: var(--text); }
 .icon-btn:disabled { opacity: .35; }
 @media (max-width: 860px) { .pe { grid-template-columns: 1fr; } .pe-draw { position: static; } .pe-way, .pe-foot { padding-left: 0; } }
+
+.pe-key { width: 92px !important; flex: none !important; height: 28px; font-size: 12px; }
+@media (max-width: 860px) { .pe-head { flex-wrap: wrap; } .pe-head .pe-key { order: 5; } }

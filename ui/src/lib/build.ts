@@ -218,3 +218,21 @@ export function nameProblem(name: string, taken: string[]): string | null {
 export function sizeWords(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
+
+/** Names the agents ask for as input (`impl`, `plan`): the step that produces one carries its name. */
+export function artifactNames(rows: AgentRow[]): string[] {
+  const names = rows.flatMap((r) => {
+    const i = (r.row.input ?? {}) as { artifacts?: unknown; outputs?: unknown };
+    return [...(Array.isArray(i.artifacts) ? i.artifacts : []), ...(Array.isArray(i.outputs) ? i.outputs : [])];
+  });
+  return [...new Set(names.filter((n): n is string => typeof n === "string").map((n) => n.replace(/\?$/, "")))].sort();
+}
+
+/** A step under another name, with every way that led to it following; the same draft when the name will not do. */
+export function renameStep(d: Draft, key: string, to: string): Draft {
+  if (to === key || !KEY.test(to) || to.length > KEY_MAX || d.steps.some((s) => s.key === to)) return d;
+  return { ...d, steps: d.steps.map((s) => ({ ...(s.key === key ? { ...s, key: to } : s), ways: s.ways.map((w) => (w.to === key ? { ...w, to } : w)) })) };
+}
+
+/** The input a reason says is not produced, from "its input impl is not produced on every path". */
+export const missingInput = (reason: string): string | null => /input (\S+) is not produced/.exec(reason)?.[1] ?? null;

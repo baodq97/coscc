@@ -15,7 +15,7 @@ import { attention, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
 import { changes, get, put } from "../screens/AgentPage";
 import type { AgentRow } from "../api.gen";
-import { addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, moveStep, reasonsByStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
+import { addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -323,5 +323,17 @@ describe("build: a process", () => {
     expect(got.byStep.review).toEqual(["'x' is no state"]);
     expect(got.byStep.tidy).toHaveLength(1);
     expect(got.rest).toEqual(["tiny: no path reaches the end"]);
+  });
+
+  it("renames a step with the ways to it, and says which input is missing", () => {
+    let d = addStep(addStep(addStep(blankDraft("x"), { agent: "a" }), { agent: "tidy" }), { agent: "review" });
+    d = setStep(d, "review", { ways: [{ to: "tidy", cond: null, rest: [] }] });
+    const r = renameStep(d, "tidy", "impl");
+    expect(r.steps.map((s) => s.key)).toEqual(["a", "impl", "review"]);
+    expect(r.steps[2].ways[0].to).toBe("impl");
+    expect(renameStep(d, "tidy", "a")).toBe(d);
+    expect(renameStep(d, "tidy", "Bad Name")).toBe(d);
+    expect(missingInput("tiny.review: its input impl is not produced on every path to it")).toBe("impl");
+    expect(missingInput("tiny: no path reaches the end")).toBeNull();
   });
 });

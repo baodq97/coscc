@@ -193,6 +193,8 @@ def a_person_builds_an_agent_and_a_process(context, base, api) -> bool:
         page.get_by_label("Process name").fill("tiny")
         for what in ("agent:intent", "agent:tidy", "action:open-pr", "action:merge"):
             page.get_by_label("Add a step").select_option(what)
+        page.get_by_label("Step name").nth(1).fill("impl")
+        page.get_by_label("Step name").nth(1).blur()
         page.get_by_role("button", name="Save process").click()
         page.wait_for_selector("text=a review state is not on every path")
         refused = page.locator(".pe-step.bad").count()
@@ -205,7 +207,7 @@ def a_person_builds_an_agent_and_a_process(context, base, api) -> bool:
         page.get_by_label("When").last.select_option("field")
         page.get_by_label("Field").last.select_option("verdict")
         page.get_by_label("Value").last.select_option("changes-requested")
-        page.get_by_label("Goes to").last.select_option("tidy")
+        page.get_by_label("Goes to").last.select_option("impl")
         page.get_by_role("button", name="Save process").click()
         page.wait_for_selector(".pack-editor", state="detached")
         refs = [
@@ -268,9 +270,11 @@ def a_pack_is_exported_and_imported(context, base, api) -> bool:
             z.writestr(
                 ".claude-plugin/plugin.json", json.dumps({"name": "extra", "version": "1.0.0"})
             )
-            z.writestr("agents/tidy-two.md", row)
+            z.writestr("agents/tidy-two.md", row.replace(b"Tidy", b"TidyTwo", 1))
         upload(good.getvalue())
-        page.wait_for_selector("text=Added extra")
+        page.locator("text=Added extra").or_(page.locator(".pe-refused")).first.wait_for()
+        if page.locator(".pe-refused").count():
+            return say(False, "a good pack is imported", page.locator(".pe-refused").inner_text())
         extra = next(
             p for p in api.get("/api/packs", params={"cwd": cwd}).json() if p["name"] == "extra"
         )

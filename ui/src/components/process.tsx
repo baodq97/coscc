@@ -1,7 +1,7 @@
 // One process drawn as a diagram: its states in walk order down the main line, each with its agent
 // (glyph and name) or the engine's action, and every other way on as a labelled arrow. Plain SVG.
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { Condition, PackShown, ProcessShown, State } from "../api.gen";
 import { api, ApiError } from "../lib/api";
 import {
@@ -9,6 +9,9 @@ import {
   GUARDS,
   GUARD_WORDS,
   addStep,
+  artifactNames,
+  missingInput,
+  renameStep,
   fieldOptions,
   fromProcess,
   moveStep,
@@ -237,6 +240,7 @@ export function ProcessEditor({
 
         <div className="lab" style={{ marginTop: 14 }}>Steps, in the order a unit walks them</div>
         {!draft.steps.length && <div className="faint" style={{ margin: "6px 0 10px", fontSize: 13 }}>Nothing yet. Add the first step below.</div>}
+        <datalist id="pe-names">{artifactNames(rows).map((n) => <option key={n} value={n} />)}</datalist>
         <ol className="pe-steps">
           {draft.steps.map((s, i) => (
             <li key={s.key} className={`pe-step ${byStep[s.key] ? "bad" : ""}`}>
@@ -253,13 +257,17 @@ export function ProcessEditor({
                 >
                   <StepOptions agents={agents} />
                 </select>
+                <StepName value={s.key} onCommit={(to) => edit((d) => renameStep(d, s.key, to))} />
                 <button className="icon-btn" aria-label="Move up" disabled={i === 0} onClick={() => edit((d) => moveStep(d, s.key, -1))}>↑</button>
                 <button className="icon-btn" aria-label="Move down" disabled={i === draft.steps.length - 1} onClick={() => edit((d) => moveStep(d, s.key, 1))}>↓</button>
                 <button className="icon-btn" aria-label={`Remove step ${i + 1}`} onClick={() => edit((d) => removeStep(d, s.key))}>✕</button>
               </div>
               {s.action && <div className="faint pe-sub">The app {ACTION_WORDS[s.action]}.</div>}
               {byStep[s.key]?.map((r) => (
-                <div key={r} className="field-err">{r}</div>
+                <div key={r} className="field-err">
+                  {r}
+                  {missingInput(r) && <> Name the step that makes it {missingInput(r)}, in its name box.</>}
+                </div>
               ))}
               {s.ways.map((w, wi) => (
                 <WayRow key={wi} way={w} step={s} keys={keys} rows={rows} onChange={(nw) => edit((d) => setStep(d, s.key, { ways: s.ways.map((x, n) => (n === wi ? nw : x)) }))} onRemove={() => edit((d) => setStep(d, s.key, { ways: s.ways.filter((_, n) => n !== wi) }))} />
@@ -321,6 +329,17 @@ export function ProcessEditor({
         {draft.steps.length ? <ProcessDiagram process={drawn} /> : <div className="faint" style={{ fontSize: 13 }}>The diagram appears as you add steps.</div>}
       </div>
     </div>
+  );
+}
+
+/** A step's name: what other agents' inputs call its result (`impl`). Kept when it is a fresh, valid name. */
+function StepName({ value, onCommit }: { value: string; onCommit: (to: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <>
+      <input className="input mono pe-key" aria-label="Step name" list="pe-names" value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={() => (onCommit(draft), setDraft(value))} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />
+    </>
   );
 }
 
