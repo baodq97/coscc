@@ -153,6 +153,37 @@ class RowFields(TypedDict, total=False):
 Group = Literal["stage", "engine", "helper", "triggered"]
 
 
+class Running(TypedDict):
+    """A run of an agent that this app holds now: its id (the run page follows it) and start."""
+
+    run: str
+    started: str
+
+
+class LiveRun(Running):
+    workspace: str
+    agent: str
+    name: str
+
+
+class LiveProposal(TypedDict):
+    id: int
+    workspace: str
+    agent: str
+    agent_name: str
+    type: str
+    title: str
+    at: str
+
+
+class Live(TypedDict):
+    """What agents are doing across every listed workspace: the runs in flight and the proposals
+    waiting for a person (workspaces by their names)."""
+
+    running: list[LiveRun]
+    proposals: list[LiveProposal]
+
+
 class AgentRow(TypedDict):
     key: str
     # The pack the row comes from: `coscc-sdlc`, `local` or an imported pack's name.
@@ -184,6 +215,14 @@ class AgentRow(TypedDict):
     # Whether its event or schedule runs it in the workspace asked about; `None` for a row with
     # neither, or no workspace.
     on: bool | None
+    # The run of it in the workspace asked about that is going now (any workspace for "all").
+    running: Running | None
+    # When its schedule or a due event next runs it there; `None` off, with neither, or unscheduled.
+    next_at: str | None
+    # The names of the workspaces where its event or schedule is on.
+    on_in: list[str]
+    # Why it is off in the workspace asked about: what the app or the owner logged; `""` when on.
+    off_reason: str
 
 
 class ProposingAgent(TypedDict):
@@ -491,6 +530,7 @@ class Agents:
             )
             rows[-1]["problems"] = pack.problems(key, effects)
             rows[-1]["on"] = self._on(data, key, workspace)
+            self._live_fields(rows[-1], found, data, workspace, ends.get(key, []), now)
         table = agents.table()
         return AgentPage(
             rows=rows,
@@ -499,6 +539,102 @@ class Agents:
             cos_model=self.config.model,
             scope="all" if workspace is None else "workspace",
         )
+
+    def _live_fields(
+        self,
+        row: AgentRow,
+        found: dict[str, Any],
+        data: Data,
+        workspace: str | None,
+        mine: list[dict[str, Any]],
+        now: datetime,
+    ) -> None:
+        """`running`, `next_at`, `on_in` and `off_reason` of `row`."""
+        for held in triggers.running():
+            if held["agent"] == row["key"] and workspace in (None, held["workspace"]):
+                row["running"] = Running(run=held["run"], started=held["started"])
+        if not (pack.triggered(found, "event") or pack.triggered(found, "schedule")):
+            return
+        names = {
+            self.ws.key(w["path"]): w["name"]
+            for w in self.ws.all()["workspaces"]
+            if not w["missing"]
+        }
+        row["on_in"] = [n for k, n in names.items() if pack.agent_on(data, row["key"], k)]
+        if workspace is None or row["on"] is None:
+            return
+        if not row["on"]:
+            row["off_reason"] = self._off_reason(row["key"], workspace)
+            return
+        due = self._due(data, row["key"], workspace)
+        hours = (found.get("trigger", {}).get("schedule") or {}).get("hours")
+        if hours:
+            last = datetime.fromisoformat(mine[-1]["at"]) if mine else now
+            due = min(due or "~", (last + timedelta(hours=hours)).isoformat(timespec="seconds"))
+        row["next_at"] = due
+
+    @staticmethod
+    def _due(data: Data, key: str, workspace: str) -> str | None:
+        with data.connect() as conn:
+            got = conn.execute(
+                "SELECT MIN(due_at) FROM trigger_due WHERE workspace = ? AND agent = ?",
+                (workspace, key),
+            ).fetchone()
+        return got[0] if got else None
+
+    def _off_reason(self, key: str, workspace: str) -> str:
+        """What the newest `agent-state` row that turned `key` off in `workspace` says."""
+        journal = self.ws.journal()
+        if journal is None:
+            return ""
+        try:
+            rows = journal.records(workspace, kinds=(triggers.STATE_KIND,))
+        except Unusable, Busy, sqlite3.Error, OSError:
+            return ""
+        for r in reversed(rows):
+            if r.get("agent") == key:
+                if r.get("on"):
+                    break
+                return str(r.get("reason") or "") or (
+                    "turned off by you" if r.get("by") == OWNER else "turned off"
+                )
+        return ""
+
+    def live(self) -> Live:
+        """The runs in flight and the proposals pending in every listed workspace."""
+        data = Data(self.config.data_dir)
+        rows = pack.rows()
+        by_key = {self.ws.key(w["path"]): w["name"] for w in self.ws.all()["workspaces"]}
+
+        def name(key: str) -> str:
+            return str((rows.get(key) or {}).get("name") or key)
+
+        running = [
+            LiveRun(
+                workspace=by_key.get(h["workspace"], ""),
+                agent=h["agent"],
+                name=name(h["agent"]),
+                run=h["run"],
+                started=h["started"],
+            )
+            for h in triggers.running()
+            if h["workspace"] in by_key
+        ]
+        waiting = [
+            LiveProposal(
+                id=p["id"],
+                workspace=label,
+                agent=p["agent"],
+                agent_name=name(p["agent"]),
+                type=p["type"],
+                title=p["title"],
+                at=p["at"],
+            )
+            for key, label in by_key.items()
+            for p in proposals.listed(data, key)
+            if p["state"] == "pending"
+        ]
+        return Live(running=running, proposals=sorted(waiting, key=lambda p: p["at"], reverse=True))
 
     def _row(
         self,
@@ -538,6 +674,10 @@ class Agents:
             chip=chip_of(last, budget, len(recent)),
             groups=groups_of(views, [s for s in settings.get(key, []) if s["at"] >= since]),
             on=None,
+            running=None,
+            next_at=None,
+            on_in=[],
+            off_reason="",
         )
 
     @staticmethod

@@ -39,7 +39,7 @@ from coscc.store.db import Data
 from coscc.bus import Event
 from coscc.http import plugin
 from coscc.kernel import Invalid
-from coscc.leif.agents import AgentPage, ProposalsView
+from coscc.leif.agents import AgentPage, Live, ProposalsView
 from coscc.leif.chat import ChatHistory, ChatSessions
 from coscc.leif.insights import Insights
 from coscc.runner import triggers
@@ -235,6 +235,13 @@ async def get_agents(request: Request) -> AgentPage:
     core, cwd = _core(request), _cwd(request)
     with pack.held():
         return core.agents.agent_page(core.ws.key(cwd) if cwd else None, cwd=cwd)
+
+
+@router.get("/api/agents/live")
+async def get_agents_live(request: Request) -> Live:
+    """The agent runs in flight and the proposals waiting for a person, across every listed
+    workspace: what the Briefing and Needs you show."""
+    return await asyncio.to_thread(_core(request).agents.live)
 
 
 @router.post("/api/agents/field")
