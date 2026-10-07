@@ -479,6 +479,42 @@ class Journal:
                 out.append(item)
         return out
 
+    def where(
+        self, field: str, value: str, kinds: Iterable[str] = ("start", "end")
+    ) -> list[Mapping[str, Any]]:
+        """The records of `kinds` whose top-level `field` is `value`, oldest first: a run's
+        `start` and `end` by `run`, a session's by `session_id`, a run's follow-ups by
+        `parent_run`. `field` is a record key, never a value a request sent."""
+        if not field.isidentifier():
+            raise ValueError(f"not a record field: {field!r}")
+        if not value:
+            return []
+        wanted = list(kinds)
+        sql = (
+            "SELECT record FROM runs WHERE root = ? AND json_extract(record, ?) = ? "
+            f"AND kind IN ({', '.join('?' for _ in wanted)}) ORDER BY id"
+        )
+        with self.data.connect(timeout=LOCK_TIMEOUT) as conn:
+            rows = conn.execute(sql, [self._root, f"$.{field}", value, *wanted]).fetchall()
+        out = []
+        for row in rows:
+            try:
+                item = json.loads(row["record"])
+            except json.JSONDecodeError, ValueError, TypeError:
+                continue
+            if isinstance(item, dict):
+                out.append(item)
+        return out
+
+    def session_cost(self, session_id: str) -> dict[str, float]:
+        """What one session cost so far: the sum of its `end`s, each holding its own part. A
+        client that resumes it is told this (`spent_before`), so its run is charged only its own."""
+        total = {name: 0.0 for name in (*TOKEN_FIELDS, COST_USD)}
+        for r in self.where("session_id", session_id, ("end",)):
+            for name in total:
+                total[name] += float(r.get(name) or 0)
+        return total
+
     def last_id(self, timeout: float | None = None) -> int:
         """The largest `runs.id` in the database, 0 when there is none.
 

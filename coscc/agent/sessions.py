@@ -66,6 +66,7 @@ def child_env(
     app_db: Path,
     bash: bool = False,
     scratch: tuple[str, str] | None = None,
+    cache_hour: bool = False,
 ) -> dict[str, str]:
     """What to lay over the environment a session would otherwise inherit whole.
 
@@ -75,6 +76,8 @@ def child_env(
     `cos.db`; both are required. `bash` is true when the session holds `Bash`; it then also
     gets `FOREGROUND_ENV`. `scratch` is the unit's `(ram, disk)` directories (`units.scratch`):
     named in `COS_SCRATCH_RAM` and `COS_SCRATCH_DISK`, and the disk one is the child's `TMPDIR`.
+    `cache_hour` keeps the session's prompt cache an hour instead of five minutes (its writes cost
+    2x, not 1.25x): for a run that may be asked again or continued later.
     """
     env = {
         "VIRTUAL_ENV": str(Path(cwd) / ".venv"),
@@ -92,7 +95,12 @@ def child_env(
         env.update(COS_SCRATCH_RAM=scratch[0], COS_SCRATCH_DISK=scratch[1], TMPDIR=scratch[1])
     if bash:
         env.update(FOREGROUND_ENV)
+    env[CACHE_HOUR_ENV] = "1" if cache_hour else ""
     return env
+
+
+# The CLI's switch for an hour-long prompt cache.
+CACHE_HOUR_ENV = "ENABLE_PROMPT_CACHING_1H"
 
 
 # The app closes a step's session once its turn ends, so a command must end in the foreground
@@ -546,6 +554,7 @@ def _options(
     mcp_servers: dict[str, Any] | None = None,
     agents: dict[str, dict[str, Any]] | None = None,
     unit_scratch: tuple[str, str] | None = None,
+    cache_hour: bool = False,
 ) -> ClaudeAgentOptions:
     """Map the knobs onto the SDK.
 
@@ -596,6 +605,7 @@ def _options(
         app_db=Data(config.data_dir).db_path,
         bash="Bash" in resolved,
         scratch=unit_scratch,
+        cache_hour=cache_hour,
     )
     sandbox = gate.grant.sandbox
     if sandbox is not None:
@@ -769,7 +779,9 @@ class Sessions:
         # gate is not refused here; the guard stays as the last thing before a CLI spawns.
         self.membership: Callable[[str], bool] = config.is_workspace
         self._live: dict[str, Live] = {}
-        self._created_here: set[str] = set()
+        # Whether the run log names a session as one of this app's runs (an `end` or a `suspend`
+        # row): what may be resumed, after a restart too. `Core` sets it from its run log.
+        self.known: Callable[[str], bool] = lambda _session_id: False
         # Board steps in flight, each with the one client it spawned. Never in `_live`: a step
         # is not resumed, so its client is closed when the step ends.
         self._steps: set[StepHandle] = set()
@@ -786,9 +798,6 @@ class Sessions:
     def secrets(self) -> tuple[str, ...]:
         """What no tool of any session may reach (`policy.protected_paths`)."""
         return secrets_of(self.config)
-
-    def created_here(self, session_id: str) -> bool:
-        return session_id in self._created_here
 
     def live_in(self, directory: str) -> list[str]:
         """Session ids with a live client in this directory, newest registration last.
@@ -831,11 +840,6 @@ class Sessions:
         self._turns[turn["id"]] = turn
         return turn
 
-    def adopt(self, session_id: str) -> None:
-        """Record a session as this app's; otherwise a session created and resumed in one
-        process would look foreign to knob 4."""
-        self._created_here.add(session_id)
-
     async def stream(
         self,
         cwd: str,
@@ -858,6 +862,7 @@ class Sessions:
         agents: dict[str, dict[str, Any]] | None = None,
         unit_scratch: tuple[str, str] | None = None,
         recorder: Any = None,
+        cache_hour: bool = False,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -886,6 +891,7 @@ class Sessions:
         `unit_scratch` is the unit's `(ram, disk)` directories, in the session's environment
         (`child_env`); the caller made them, and the gate it passes holds the same two.
         `recorder` hears every message of a stream with no `step` (chat); a step's is its handle's.
+        `cache_hour`: `child_env`'s. A `session_id` is resumed only when `known` names it.
         """
         if self.paused:
             raise Refused(PAUSED)
@@ -935,6 +941,7 @@ class Sessions:
             agents=agents,
             unit_scratch=unit_scratch,
             recorder=step.recorder if step is not None else recorder,
+            cache_hour=cache_hour,
         )
         if isinstance(flow, dict):  # noqa: PLR1702 - still to split
             turn = flow
@@ -994,11 +1001,16 @@ class Sessions:
         agents: dict[str, dict[str, Any]] | None = None,
         unit_scratch: tuple[str, str] | None = None,
         recorder: Any = None,
+        cache_hour: bool = False,
     ):
         member = workspace if workspace is not None else cwd
         if not self.membership(member):
             raise Refused(f"not a configured workspace: {member}")
-        if session_id is not None and not self.config.may_resume(self.created_here(session_id)):
+        if (
+            session_id is not None
+            and session_id not in self._live
+            and not self.config.may_resume(self.known(session_id))
+        ):
             # The transcript is visible in the listing, but writing to it would put a second
             # process on a record another one may still hold open.
             raise Refused(
@@ -1039,6 +1051,7 @@ class Sessions:
                             mcp_servers=mcp_servers,
                             agents=agents,
                             unit_scratch=unit_scratch,
+                            cache_hour=cache_hour,
                         )
                     )
                     if step is None:
@@ -1192,7 +1205,6 @@ class Sessions:
             live.session_id = resolved
             if step is None:
                 self._live[resolved] = live
-            self._created_here.add(resolved)
             cost: dict[str, int | float] = {name: int(turn.get(name, 0.0)) for name in TOKEN_FIELDS}
             cost["turns"] = turns
             cost["duration_ms"] = duration_ms

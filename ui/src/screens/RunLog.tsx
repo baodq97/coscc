@@ -3,12 +3,12 @@
 // a chat turn). A running run is followed live; an ended one is read once.
 
 import { useEffect, useRef, useState } from "react";
-import type { EventsPage, StepEvent } from "../api.gen";
+import type { Asked, EventsPage, Followup, StepEvent } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { stageLabel } from "../lib/pack";
-import { modelName, startedBy, money, unitCode, unitTitle } from "../lib/format";
-import { Link } from "../lib/router";
-import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
+import { modelName, startedBy, money, toolName, unitCode, unitTitle } from "../lib/format";
+import { Link, useQuery } from "../lib/router";
+import { Button, Chip, ErrorState, Markdown, PageHead, SkeletonRows } from "../components/ui";
 
 const PAGE = "200";
 
@@ -74,14 +74,36 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
   const list = useResource("/api/workspaces");
   const cwd = list.data?.workspaces.find((w) => w.name === workspace)?.path ?? "";
   const head = useResource(cwd ? "/api/runs/{run}" : null, { cwd, run, limit: "1" });
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState("");
   if (list.state === "error") return <ErrorState error={list.error} onRetry={list.reload} />;
   if (head.state === "error") return <ErrorState error={head.error} onRetry={head.reload} />;
   const page = head.data;
   const number = page?.unit ? Number(page.unit.slice(0, 4)) : 0;
+  // A board step is stopped from its unit; an agent's run or a question here.
+  const stoppable = page?.status === "running" && !page.unit;
+  const stop = async () => {
+    setStopping(true);
+    try {
+      await api.post("/api/runs/" + encodeURIComponent(run) + "/stop", { cwd });
+      head.reload();
+    } catch (e) {
+      setStopError((e as Error).message);
+    } finally {
+      setStopping(false);
+    }
+  };
   return (
     <div className="page mid">
       <PageHead
-        title={page ? `${stageLabel(page.stage)} run` : "Run"}
+        title={page ? (page.stage === "ask" ? "A question asked of a run" : `${stageLabel(page.stage)} run`) : "Run"}
+        actions={
+          stoppable ? (
+            <Button size="sm" kind="danger" icon="x" disabled={stopping} onClick={stop}>
+              {stopping ? "Stopping…" : "Stop this run"}
+            </Button>
+          ) : undefined
+        }
         lede={
           page ? (
             <>
@@ -97,13 +119,106 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
           ) : undefined
         }
       />
-      <div style={{ marginTop: 16 }}>{cwd ? <RunLog cwd={cwd} run={run} live={false} whole /> : <SkeletonRows rows={3} />}</div>
+      {stopError && <div className="rl-bad" style={{ fontSize: 12.5 }}>{stopError}</div>}
+      <div style={{ marginTop: 16 }}>{cwd ? <RunLog cwd={cwd} run={run} live={false} whole onEnd={head.reload} /> : <SkeletonRows rows={3} />}</div>
+      {cwd && page && page.status !== "running" && page.stage !== "chat" && <AskRun cwd={cwd} run={run} workspace={workspace} />}
+    </div>
+  );
+}
+
+/** What a question cost and how it was answered: in the run's warm session, or afresh and why. */
+function howAnswered(f: Pick<Followup, "resumed" | "why" | "cost_usd">): string {
+  const how = f.resumed ? "Answered in the run's own session" : `Answered afresh: ${f.why}`;
+  return f.cost_usd != null ? `${how} · ${money(f.cost_usd)}` : how;
+}
+
+/** Questions asked of an ended run, their answers, and the box to ask one more. */
+function AskRun({ cwd, run, workspace }: { cwd: string; run: string; workspace: string }) {
+  const thread = useResource("/api/runs/{run}/thread", { cwd, run });
+  const wanted = useQuery("ask");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [asked, setAsked] = useState<Asked | null>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (wanted) box.current?.focus();
+  }, [wanted, thread.state]);
+  if (thread.state === "error") return <ErrorState error={thread.error} onRetry={thread.reload} />;
+  if (!thread.data) return <SkeletonRows rows={2} />;
+  const { followups, ask } = thread.data;
+  const going = followups.find((f) => f.outcome === "running");
+  const send = async () => {
+    const said = text.trim();
+    if (!said || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      setAsked(await api.post<Asked>("/api/runs/" + encodeURIComponent(run) + "/ask", { cwd, text: said }));
+      setText("");
+      thread.reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const live = asked && !followups.some((f) => f.run === asked.run && f.outcome !== "running") ? asked.run : going?.run;
+  return (
+    <div className="ask">
+      <div className="sec-h">Ask this run</div>
+      {followups.map((f) => (
+        <div key={f.run} className="col" style={{ gap: 6 }}>
+          <div className="ask-q">{f.question}</div>
+          {f.outcome === "running" ? null : (
+            <div className="ask-a">
+              {f.answer ? <Markdown text={f.answer} /> : <span className="faint">No answer: it {f.outcome}.</span>}
+            </div>
+          )}
+          <div className="faint ask-meta">
+            {howAnswered(f)} · <Link to={`/run/${workspace}/${f.run}`}>its log</Link>
+          </div>
+        </div>
+      ))}
+      {live && (
+        <div>
+          <div className="faint ask-meta">Answering{asked && asked.run === live ? (asked.resumed ? " in the run's own session" : `, afresh: ${asked.why}`) : ""}…</div>
+          <RunLog cwd={cwd} run={live} live onEnd={() => { setAsked(null); thread.reload(); }} />
+        </div>
+      )}
+      {!live && (
+        <div className="composer">
+          <textarea
+            ref={box}
+            rows={2}
+            placeholder="Why did it propose this? What did it read?"
+            value={text}
+            disabled={busy || !ask.may}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+          <div className="cf">
+            <span className="faint grow" style={{ fontSize: 12 }}>
+              {!ask.may ? ask.why : ask.resume ? "Goes on in the run's own session while it is warm. A paid, read-only answer, up to $0.50." : `Starts afresh (${ask.why}). A paid, read-only answer, up to $0.50.`}
+            </span>
+            <Button size="sm" kind="primary" icon="send" disabled={busy || !ask.may || !text.trim()} onClick={send}>
+              {busy ? "Asking…" : "Ask"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && <div className="rl-bad" style={{ fontSize: 12.5 }}>{error}</div>}
     </div>
   );
 }
 
 /** `whole`: the run on a page of its own, with a header; an ended run opens at its start. */
-export function RunLog({ cwd, run, live, whole = false }: { cwd: string; run: string; live: boolean; whole?: boolean }) {
+export function RunLog({ cwd, run, live, whole = false, onEnd }: { cwd: string; run: string; live: boolean; whole?: boolean; onEnd?: () => void }) {
   const [page, setPage] = useState<EventsPage | null>(null);
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [error, setError] = useState<Error | null>(null);
@@ -138,6 +253,7 @@ export function RunLog({ cwd, run, live, whole = false }: { cwd: string; run: st
     const over = () => {
       source.close();
       setFollowing(false);
+      onEnd?.();
     };
     source.addEventListener("end", again);
     source.addEventListener("cut", again);
@@ -224,7 +340,7 @@ function ToolUse({ event: e, unit, who }: { event: StepEvent; unit: string; who:
   return (
     <div className="rl-l mono">
       {who}
-      <span className="rl-tool">{e.name?.replace(/^mcp__\w+?__/, "")}</span>{" "}
+      <span className="rl-tool">{toolName(e.name ?? "")}</span>{" "}
       {open ? null : inUnit(first, unit)}
       {more > 0 && (
         <>

@@ -76,6 +76,18 @@ export type Arms = {
   "off": ArmStats;
 };
 
+export type AskState = {
+  "may": boolean;
+  "resume": boolean;
+  "why": string;
+};
+
+export type Asked = {
+  "run": string;
+  "resumed": boolean;
+  "why": string;
+};
+
 export type AutopilotBrief = {
   "on": boolean;
   "may_ship": boolean;
@@ -297,6 +309,19 @@ export type EventsPage = {
   "outcome"?: string;
   "detail"?: string;
   "draft"?: Record<string, unknown>;
+};
+
+export type Followup = {
+  "run": string;
+  "at": string;
+  "question": string;
+  "outcome": string;
+  "cost_usd": number | null;
+  "resumed": boolean;
+  "why": string;
+  "cache_read_tokens": number;
+  "cache_creation_tokens": number;
+  "answer": string;
 };
 
 export type HoldView = {
@@ -767,6 +792,12 @@ export type Target = {
   "over": string[];
 };
 
+export type Thread = {
+  "run": string;
+  "followups": Followup[];
+  "ask": AskState;
+};
+
 export type TriggerEvent = {
   "name"?: string;
   "after_hours"?: number;
@@ -910,6 +941,7 @@ export type Get = {
   "/api/proposals": ProposalsView;
   "/api/release": ReleaseView | null;
   "/api/runs/{run}": EventsPage;
+  "/api/runs/{run}/thread": Thread;
   "/api/settings/autopilot": AutopilotSettings;
   "/api/units": Cards;
   "/api/units/next": NextStep;

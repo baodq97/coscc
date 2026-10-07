@@ -397,7 +397,7 @@ class Input(TypedDict):
     """What a stage is handed, and nothing else: earlier artifacts whole (`name?` when it may be
     absent), earlier stages' records, the unit's answers and open findings, the app's data. A
     triggered row may say `skip_when_empty` (no interventions, no session: the run is `skipped`
-    at $0) and `given` (a person's words, from a press or Leif, handed whole)."""
+    at $0). Every triggered row takes a person's words, from a press or Leif, handed whole."""
 
     artifacts: list[str]
     outputs: list[str]
@@ -405,7 +405,6 @@ class Input(TypedDict):
     findings: bool
     data: list[str]
     skip_when_empty: NotRequired[bool]
-    given: NotRequired[bool]
 
 
 # The app's data a stage may declare: the shared idea, the sibling checkouts, the units this one
@@ -425,7 +424,7 @@ DATA = (
     "proposals",
     "catalog",
 )
-_OPTIONAL_INPUT = ("skip_when_empty", "given")
+_OPTIONAL_INPUT = ("skip_when_empty",)
 
 
 def check_input(

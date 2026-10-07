@@ -236,6 +236,19 @@ class APressRunsTheRow(_Core):
         await self.settle()
         self.assertEqual(len(self.given), 1)
 
+    async def test_any_row_takes_a_note_and_its_start_says_what_it_read_on(self):
+        self.found = found(1)
+
+        async def head(tree):
+            return "abc123"
+
+        with mock.patch.object(triggers, "tree_head", head):
+            await triggers.run(self.core, "scan", self.ws, by="manual", text="Look at reruns.")
+        (given,) = self.given
+        self.assertIn("# The person's words\n\nLook at reruns.", given.prompt)
+        self.assertEqual(given.start["head"], "abc123")
+        self.assertTrue(given.cache_hour)
+
     async def test_the_daily_cap_and_a_row_with_no_such_trigger_are_refused(self):
         self.found = found(1)
         self.core.autopilot.today = lambda cwd: (120.0, 120.0)

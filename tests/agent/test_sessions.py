@@ -423,6 +423,12 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         env = _options(Config(), "/p", None, tools=["Read", "Bash"]).env
         self.assertEqual({k: env.get(k) for k in self.FOREGROUND}, self.FOREGROUND)
 
+    def test_an_hour_long_cache_only_when_asked_and_never_inherited(self):
+        with mock.patch.dict(os.environ, {sessions.CACHE_HOUR_ENV: "1"}):
+            plain = _options(Config(), "/p", None, tools=["Read"]).env
+            hour = _options(Config(), "/p", None, tools=["Read"], cache_hour=True).env
+        self.assertEqual((plain[sessions.CACHE_HOUR_ENV], hour[sessions.CACHE_HOUR_ENV]), ("", "1"))
+
     # One screenshot is one stdout line; every session gets the same ceiling on it.
 
     def test_the_installed_sdk_has_a_max_buffer_size_field(self):
@@ -603,11 +609,17 @@ class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
             await s.send("/tmp", "hi", session_id="not-ours")
         self.assertIn("not created by this app", str(e.exception))
 
-    async def test_adopting_a_session_makes_it_resumable(self):
+    async def test_a_session_the_run_log_names_is_resumable_in_a_new_process(self):
+        # A fresh `Sessions` is what a restart leaves: nothing in memory, the run log intact.
         s = Sessions(Config(workspaces=("/tmp",)))
-        self.assertFalse(s.created_here("x"))
-        s.adopt("x")
-        self.assertTrue(s.created_here("x"))
+        s.known = lambda sid: sid == "ours"
+        with self.assertRaises(Refused):
+            await s.send("/tmp", "hi", session_id="not-ours")
+        with mock.patch(
+            "coscc.agent.sessions.ClaudeSDKClient", side_effect=RuntimeError("connect")
+        ):
+            with self.assertRaises(RuntimeError):
+                await s.send("/tmp", "hi", session_id="ours")
 
     async def test_knob_4_on_allows_a_foreign_session(self):
         s = Sessions(Config(workspaces=("/tmp",), resume_foreign_sessions=True))
@@ -680,7 +692,7 @@ class TheSessionIdIsToldBeforeTheStepIsOver(unittest.IsolatedAsyncioTestCase):
         s = Sessions(Config(workspaces=("/tmp",)))
         self.addAsyncCleanup(s.close_all)  # a chat keeps its data root until closed
         if adopt:
-            s.adopt(adopt)
+            s.known = lambda sid: sid == adopt
         _FakeClient.messages = messages
         with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _FakeClient):
             return [item async for item in s.stream("/tmp", "hi", session_id=session_id)]
@@ -1039,7 +1051,6 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.disconnects, 1)
         self.assertEqual(self.s._live, {})
         self.assertEqual(self.s._steps, set())
-        self.assertTrue(self.s.created_here("sid-s"))
 
     async def test_a_step_that_raises_is_closed_once(self):
         _CountingClient.fail = True
@@ -1514,7 +1525,7 @@ class ASessionIsKnownWhileItRuns(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_different_session_id_in_init_is_refused(self):
         s = Sessions(Config(workspaces=("/tmp",)))
-        s.adopt("sid-a")
+        s.known = lambda sid: sid == "sid-a"
         _FakeClient.messages = [_init("sid-b"), _result("sid-b")]
         with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _FakeClient):
             with self.assertRaises(Refused):

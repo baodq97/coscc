@@ -230,3 +230,45 @@ class TheChatIsGrantedTheReads(_App):
             [g for g in policy.granted(grant) if g in ("run_agent", *policy.LEIF_READS)],
             ["run_agent", "board", "unit", "needs_you", "spend", "agents", "proposals"],
         )
+
+
+class TalkListsConversationsNotRuns(_App):
+    """Which sessions Talk shows and may write to comes from the run log, so a restart keeps it,
+    and an agent's run is never continued as a conversation."""
+
+    def ended(self, stage: str, session: str) -> None:
+        self.core.ws.journal().finished(
+            self.core.ws.key(self.cwd), "", stage, "done", agent=stage, session_id=session
+        )
+
+    def listed(self, core) -> dict[str, bool]:
+        rows = [
+            {"session_id": s, "summary": s, "cwd": self.cwd, "last_modified": 1}
+            for s in ("c1", "a1", "t1")
+        ]
+        rows = [{**r, "created_at": None, "git_branch": None} for r in rows]
+        with mock.patch.object(chat.reader, "list_for_directory", return_value=rows):
+            got = core.chat.sessions_for(self.cwd)["sessions"]
+        return {r["session_id"]: r["resumable"] for r in got}
+
+    async def test_a_chat_is_resumable_a_terminals_read_only_and_an_agents_run_absent(self):
+        self.ended("chat", "c1")
+        self.ended("scan", "a1")
+        self.assertEqual(self.listed(self.core), {"c1": True, "t1": False})
+        self.assertTrue(self.core.sessions.known("c1"))
+        self.assertFalse(self.core.sessions.known("t1"))
+
+    async def test_after_a_restart_the_same(self):
+        self.ended("chat", "c1")
+        again = build(self.core.config)
+        self.addAsyncCleanup(again.state.core.shutdown)
+        self.assertEqual(self.listed(again.state.core)["c1"], True)
+        self.assertTrue(again.state.core.sessions.known("c1"))
+
+    async def test_an_agents_run_is_refused_as_a_conversation_before_anything_opens(self):
+        self.ended("scan", "a1")
+        with self.assertRaises(Invalid) as e:
+            self.core.chat.check_send(self.cwd, "hi", "a1")
+        self.assertEqual(e.exception.reasons, ("no-run",))
+        self.ended("chat", "c1")
+        self.core.chat.check_send(self.cwd, "hi", "c1")

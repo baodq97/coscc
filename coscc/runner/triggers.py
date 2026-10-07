@@ -27,6 +27,7 @@ from typing import Any, NotRequired, TypedDict
 from coscc import kernel
 from coscc.agent import pack, policy
 from coscc.bus import Event
+from coscc.git import gitops
 from coscc.git.gitops import GitError
 from coscc.kernel import Run
 from coscc.runner import run as run_mod
@@ -99,7 +100,8 @@ def check(
 ) -> str:
     """The workspace's run-log key, or `Invalid` (codes `guards.REASONS`) before anything is spent:
     a row this trigger does not start, Leif without a reason, a unit the row does not read or the
-    workspace does not hold (`no-unit`), words it takes none of, an update under way, the daily cap reached, a run of it already here."""
+    workspace does not hold (`no-unit`), an update under way, the daily cap reached, a run of it
+    already here. Every row takes a person's words (`text`)."""
     if by not in BY:
         raise Invalid(f"started_by must be one of {', '.join(BY)}")
     found = pack.row(key)
@@ -121,8 +123,6 @@ def check(
         raise Refused(f"{workspace} holds no unit {unit}", ("no-unit",))
     if _unit_scoped(key) != bool(unit):
         raise Invalid(f"{key} reads {'a unit' if _unit_scoped(key) else 'no unit'}")
-    if text and not contracts.input_of(key).get("given"):
-        raise Invalid(f"{key} takes no words")
     if (found.get("output") or {}).get("kind") == "draft" and not text.strip():
         raise Invalid(f"{key} drafts from a task in words: give the task")
     if len(text) > TEXT_MAX:
@@ -200,12 +200,28 @@ def _hold(
     run_id = uuid.uuid4().hex
     _RUNNING[ws, key] = (run_id, now())
     core.bus.publish("agent-run.started", {"workspace": ws, "agent": key, "run": run_id})
-    task = asyncio.get_running_loop().create_task(
-        _held(core, key, cwd, ws, unit, by, reason, text, run_id)
+    spawn(
+        asyncio.get_running_loop(),
+        _held(core, key, cwd, ws, unit, by, reason, text, run_id),
+        run_id,
     )
+    return run_id
+
+
+def spawn(loop: asyncio.AbstractEventLoop, work: Any, run_id: str) -> None:
+    """`work` as a background task named by its run, which `stop_run` and `stop` reach."""
+    task = loop.create_task(work, name=run_id)
     _TASKS.add(task)
     task.add_done_callback(_done)
-    return run_id
+
+
+def stop_run(run_id: str) -> bool:
+    """Cancel the one background run `run_id` (it writes its `cancelled` `end`); whether this
+    process runs it."""
+    found = [t for t in _TASKS if t.get_name() == run_id and not t.done()]
+    for task in found:
+        task.cancel()
+    return bool(found)
 
 
 def _done(task: asyncio.Task) -> None:
@@ -293,7 +309,8 @@ async def _run(
             )
             return ""
     row = policy.row_for(key)
-    tools = _feature_tools(core, key, row, cwd, ws, unit, tree, directory)
+    tools = feature_tools(core, key, row, cwd, ws, unit, tree, directory)
+    head = await tree_head(tree)
 
     async def finish(got: Run) -> Mapping[str, Any]:
         """What it handed back kept by kind, and how far it read, before its `end`."""
@@ -331,7 +348,11 @@ async def _run(
             workspace_dir=cwd,
             unit=unit,
             started_by=by,
-            start={"trigger": by, **({"reason": reason.strip()} if reason.strip() else {})},
+            start={
+                "trigger": by,
+                **({"reason": reason.strip()} if reason.strip() else {}),
+                **({"head": head} if head else {}),
+            },
             channel=(
                 submit.Collector(key, effects(core.steps.hooks))
                 if key in contracts.declarations()
@@ -341,6 +362,7 @@ async def _run(
             mcp=kernel.granted(tuple(t for t, _ in tools)),
             features=tuple(t for t in row.tools if t not in _BUILTIN),
             run=run_id,
+            cache_hour=True,
         ),
         ctx=run_mod.Ctx(core.sessions, journal, core.config.data_dir),
         finish=finish,
@@ -436,7 +458,16 @@ def effects(hooks: kernel.Hooks) -> dict[str, str]:
 _BUILTIN = frozenset(t.name for t in kernel.BUILTINS)
 
 
-def _feature_tools(
+async def tree_head(tree: str) -> str:
+    """The commit `tree` stands on, `""` when it is no git tree: what a run's `start` records so a
+    follow-up knows whether it still reads the same code."""
+    try:
+        return (await gitops.head_and_branch(Path(tree)))[0] or ""
+    except GitError, OSError:
+        return ""
+
+
+def feature_tools(
     core: Core,
     key: str,
     row: Any,
@@ -516,7 +547,7 @@ def prompt_of(
         parts.append(f"# The idea this unit was opened from\n\n{idea.strip()}")
     if "proposals" in declared["data"]:
         parts.append(f"# Proposals already made\n\n{proposals.lists_of(made)}")
-    if declared.get("given") and text.strip():
+    if text.strip():
         parts.append(f"# The person's words\n\n{text.strip()}")
     taken: list[Intervention] = []
     if "interventions" in declared["data"]:

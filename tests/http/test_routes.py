@@ -397,6 +397,32 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((r.status_code, r.json()["code"]), (400, "no-unit"))
         self.assertEqual(triggers._TASKS, set())
 
+    async def test_asking_a_run_says_its_thread_and_refuses_one_that_is_not_here(self):
+        cwd = str(self.ws)
+        r = await self.client.post("/api/runs/nope/ask", json={"cwd": cwd, "text": "why?"})
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "no-run"))
+        r = await self.client.get("/api/runs/nope/thread", params={"cwd": cwd})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual((r.json()["followups"], r.json()["ask"]["may"]), ([], False))
+        told = {"run": "f1", "resumed": True, "why": ""}
+
+        async def asked(core, cwd_, run, text):
+            return told
+
+        with mock.patch("coscc.http.routes.ask.ask", asked):
+            r = await self.client.post("/api/runs/p1/ask", json={"cwd": cwd, "text": "why?"})
+        self.assertEqual((r.status_code, r.json()), (200, told))
+        self.assertEqual(triggers._TASKS, set())
+
+    async def test_stop_reaches_one_run_of_this_process_and_none_other(self):
+        r = await self.client.post("/api/runs/nope/stop", json={"cwd": str(self.ws)})
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "no-run"))
+        with mock.patch("coscc.http.routes.triggers.stop_run", return_value=True) as stop:
+            r = await self.client.post("/api/runs/r1/stop", json={"cwd": str(self.ws)})
+        self.assertEqual((r.status_code, stop.call_args.args), (200, ("r1",)))
+        r = await self.client.post("/api/runs/r1/stop", json={"cwd": "/etc"})
+        self.assertEqual(r.status_code, 400)
+
     async def test_proposals_name_their_agent_and_the_owner_decides(self):
         from coscc.store.db import Data
         from coscc.units import proposals

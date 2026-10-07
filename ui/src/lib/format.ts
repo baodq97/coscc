@@ -58,3 +58,57 @@ const WHO: Record<string, string> = { manual: "you", person: "you", leif: "Leif"
 export function startedBy(by: string | null | undefined): string {
   return by ? (WHO[by] ?? by) : "";
 }
+
+/** `mcp__cos__proposals` reads "proposals": a tool by its own name, not its server's. */
+export function toolName(name: string): string {
+  return name.replace(/^mcp__[\w-]+?__/, "");
+}
+
+/** One run of text in a line of markdown: plain, bold, italic, code, or a link. */
+export type MdSpan = { kind: "text" | "b" | "i" | "code" | "link"; text: string; href?: string };
+/** One block of markdown: a paragraph, a heading, a list, or code. */
+export type MdBlock = { kind: "p" | "h" | "ul" | "ol" | "pre"; lines: MdSpan[][]; code?: string };
+
+const INLINE = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\([^)\s]+\)|\*[^*\s][^*\n]*\*)/g;
+
+/** The spans of one line. A link goes only to the app (`/…`) or the web (`http(s)://…`). */
+export function mdSpans(line: string): MdSpan[] {
+  const out: MdSpan[] = [];
+  let at = 0;
+  for (const m of line.matchAll(INLINE)) {
+    if (m.index > at) out.push({ kind: "text", text: line.slice(at, m.index) });
+    const s = m[0];
+    if (s.startsWith("**")) out.push({ kind: "b", text: s.slice(2, -2) });
+    else if (s.startsWith("`")) out.push({ kind: "code", text: s.slice(1, -1) });
+    else if (s.startsWith("[")) {
+      const [, text, href] = s.match(/^\[([^\]]+)\]\(([^)]+)\)$/) ?? [];
+      out.push(/^(\/(?!\/)|https?:\/\/)/.test(href ?? "") ? { kind: "link", text, href } : { kind: "text", text: s });
+    } else out.push({ kind: "i", text: s.slice(1, -1) });
+    at = m.index + s.length;
+  }
+  if (at < line.length) out.push({ kind: "text", text: line.slice(at) });
+  return out;
+}
+
+/** Markdown as blocks: what an agent writes (headings, lists, code, emphasis), never HTML. */
+export function mdBlocks(text: string): MdBlock[] {
+  const blocks: MdBlock[] = [];
+  const lines = text.replace(/\r/g, "").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("```")) {
+      const code: string[] = [];
+      while (++i < lines.length && !lines[i].startsWith("```")) code.push(lines[i]);
+      blocks.push({ kind: "pre", lines: [], code: code.join("\n") });
+      continue;
+    }
+    const list = line.match(/^\s*(?:([-*])|\d+[.)])\s+(.*)$/);
+    const kind = !line.trim() ? null : /^#{1,6}\s/.test(line) ? "h" : list ? (list[1] ? "ul" : "ol") : "p";
+    if (!kind) continue;
+    const body = kind === "h" ? line.replace(/^#+\s+/, "") : list ? list[2] : line;
+    const last = blocks[blocks.length - 1];
+    if (last && last.kind === kind && kind !== "h" && lines[i - 1]?.trim()) last.lines.push(mdSpans(body));
+    else blocks.push({ kind, lines: [mdSpans(body)] });
+  }
+  return blocks;
+}

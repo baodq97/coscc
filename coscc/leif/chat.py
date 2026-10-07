@@ -17,6 +17,7 @@ from coscc.config import Config
 from coscc.kernel import Invalid, Run
 from coscc.leif import spend
 from coscc.runner import run as run_mod
+from coscc.runner.queue import Refused
 from coscc.runner.triggers import Reply
 from coscc.store.db import Busy
 from coscc.units.board import FOLDED_STATES, paused_label
@@ -82,12 +83,39 @@ class Chat:
     # -- sessions -----------------------------------------------------------
 
     def sessions_for(self, cwd: str, limit: int | None = None) -> dict[str, Any]:
+        """The conversations in the workspace's folder: the app's chats, resumable, and those begun
+        in a terminal, read only. An agent's run is no conversation: it is asked from its run page."""
         self.ws.check(cwd)
-        rows = reader.list_for_directory(cwd, limit=limit)
-        for row in rows:
-            # Terminal sessions show up here too; this flag says which may be written to.
-            row["resumable"] = self.config.may_resume(self.sessions.created_here(row["session_id"]))
+        chats, runs = self._sessions(cwd)
+        rows = []
+        for row in reader.list_for_directory(cwd, limit=limit):
+            if row["session_id"] in runs:
+                continue
+            row["resumable"] = self.config.may_resume(row["session_id"] in chats)
+            rows.append(row)
         return {"cwd": cwd, "sessions": rows}
+
+    def _sessions(self, cwd: str) -> tuple[set[str], set[str]]:
+        """The session ids the run log names in the workspace: chat turns', and every other run's."""
+        journal = self.ws.journal()
+        if journal is None:
+            return set(), set()
+        try:
+            ends = journal.records(self.ws.key(cwd), kinds=("end",))
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        chats = {
+            str(r["session_id"]) for r in ends if r.get("session_id") and r.get("stage") == CHAT
+        }
+        runs = {str(r["session_id"]) for r in ends if r.get("session_id")} - chats
+        return chats, runs
+
+    def _spent(self, session_id: str) -> dict[str, float]:
+        """What the conversation cost before this turn (`Journal.session_cost`)."""
+        journal = self.ws.journal()
+        if journal is None or not session_id:
+            return {}
+        return journal.session_cost(session_id)
 
     def history(self, cwd: str, session_id: str) -> dict[str, Any]:
         self.ws.check(cwd)
@@ -98,7 +126,7 @@ class Chat:
             "messages": reader.history(session_id, cwd),
         }
 
-    def check_send(self, cwd: str, text: str) -> None:
+    def check_send(self, cwd: str, text: str, session_id: str | None = None) -> None:
         """Everything a caller can reject with a status code, decided before any output.
 
         Separate from `stream` because a generator's first item is pulled only after the
@@ -108,6 +136,11 @@ class Chat:
         self.refuse_updating()
         if not text.strip():
             raise Invalid("text is required")
+        if session_id and session_id in self._sessions(cwd)[1]:
+            raise Refused(
+                "that session is an agent's run, not a conversation: ask it from its run page",
+                ("no-run",),
+            )
 
     async def stream(
         self,
@@ -124,7 +157,8 @@ class Chat:
         model, with what is left of its ceiling, and opens nothing when none is. A turn refused
         or failed is `Invalid` once its `end` is written.
         """
-        self.check_send(cwd, text)
+        self.check_send(cwd, text, session_id)
+        spent = await asyncio.to_thread(self._spent, session_id or "")
         # Leif's row, holding the machine's own tools (`COS_TOOLS`) rather than the row's.
         row = replace(policy.row_for(LEIF), tools=tuple(self.config.effective_tools()))
         agent = self.agent_for(LEIF, row)
@@ -145,6 +179,8 @@ class Chat:
                 session_id=session_id,
                 keep=True,
                 resume=resume,
+                spent_before=spent or None,
+                cache_hour=True,
                 **(
                     {
                         "servers": {SERVER: self.leif_server(cwd)},
