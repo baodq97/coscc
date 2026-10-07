@@ -29,7 +29,7 @@ import claude_agent_sdk as sdk
 from claude_agent_sdk import HookMatcher, tool
 from claude_agent_sdk.types import HookEvent, SyncHookJSONOutput
 
-from coscc.agent import pack
+from coscc.agent import pack, skills
 from coscc.agent.policy import (
     BACKGROUND_REFUSAL,
     PEERS_TOOL,
@@ -83,8 +83,9 @@ The agents of this step talk through `SendMessage`, to `"main"` (the leading ses
 
 
 def definitions(keys: tuple[str, ...]) -> dict[str, dict[str, Any]]:
-    """The helper rows `keys` as the session gets them (`AgentDefinition`): the row's body is its
-    prompt, and a helper that holds `SendMessage` is told `PROTOCOL` and handed `peers`."""
+    """The helper rows `keys` as the session gets them (`AgentDefinition`): the row's body and its
+    skills are its prompt (`skills.system`), and a helper that holds `SendMessage` is told
+    `PROTOCOL` and handed `peers`."""
     out: dict[str, dict[str, Any]] = {}
     for key in keys:
         found = pack.row(key) or {}
@@ -92,7 +93,7 @@ def definitions(keys: tuple[str, ...]) -> dict[str, dict[str, Any]]:
         talks = SEND_MESSAGE in tools
         out[key] = {
             "description": str(found.get("description") or ""),
-            "prompt": str(found.get(pack.BODY) or "") + (f"\n\n{PROTOCOL}" if talks else ""),
+            "prompt": skills.system(key) + (f"\n\n{PROTOCOL}" if talks else ""),
             "tools": tools + ([PEERS_TOOL] if talks else []),
             "model": (found.get("model") or {}).get("id"),
         }

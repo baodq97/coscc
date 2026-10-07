@@ -16,7 +16,7 @@ from typing import Any, AsyncIterator
 from collections.abc import Callable, Mapping
 
 from coscc import units
-from coscc.agent import agents, pack
+from coscc.agent import agents, pack, skills
 from coscc.agent import steps as steps_mod
 from coscc.agent.policy import row_for
 from coscc.agent.sessions import Sessions
@@ -833,9 +833,7 @@ class Integration:
                 if path.exists():
                     own[artifact] = path
             try:
-                skill = "\n\n".join(
-                    pack.skill(n) for n in (pack.row("integrate") or {}).get("skills") or []
-                )
+                skill = skills.text((pack.row("integrate") or {}).get("skills") or [])
             except LookupError as e:
                 raise Invalid(f"the integrate skill could not be read: {e}") from e
             prompt = integrate.build_prompt(
