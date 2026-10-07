@@ -194,6 +194,12 @@ export type Ceilings = {
   "max_budget_source": string;
 };
 
+export type Change = {
+  "kind": string;
+  "path": string;
+  "text": string;
+};
+
 export type ChatHistory = {
   "session_id": string;
   "messages": ChatMessage[];
@@ -539,6 +545,10 @@ export type Proposal = {
   "at": string;
   "decided": string;
   "reason": string;
+  "change": Change | null;
+  "signal": Signal | null;
+  "measure": string;
+  "usd": number | null;
 };
 
 export type ProposalRow = {
@@ -557,6 +567,10 @@ export type ProposalRow = {
   "at": string;
   "decided": string;
   "reason": string;
+  "change": Change | null;
+  "signal": Signal | null;
+  "measure": string;
+  "usd": number | null;
   "agent_name": string;
 };
 
@@ -767,6 +781,12 @@ export type Shown = {
   "sentence": string;
   "locked": boolean;
   "summary"?: string;
+};
+
+export type Signal = {
+  "kind": string;
+  "now": number;
+  "target": number;
 };
 
 export type Skill = {

@@ -94,6 +94,31 @@ export function Proposals({ workspace }: { workspace: Workspace }) {
   );
 }
 
+const CHANGE: Record<string, string> = { skill: "Skill line", check: "Check", guard: "Guard", tool: "Tool description" };
+
+/** The one change a proposal makes, the signal it should lower, how to measure it and its cost. */
+function Measured({ p }: { p: ProposalRow }) {
+  const c = p.change!;
+  const parts: [string, React.ReactNode][] = [
+    ["Change", CHANGE[c.kind] ?? c.kind],
+    ["File", <code className="mono" style={{ fontSize: 12, wordBreak: "break-word" }}>{c.path}</code>],
+    ["Text", <span style={{ whiteSpace: "pre-wrap" }}>{c.text}</span>],
+    ...(p.signal ? [["Signal", `${KIND[p.signal.kind] ?? p.signal.kind}: ${p.signal.now} → ${p.signal.target}`] as [string, string]] : []),
+    ["Measure", p.measure],
+    ...(p.usd !== null ? [["Estimated cost", `$${p.usd.toFixed(2)}`] as [string, string]] : []),
+  ];
+  return (
+    <div className="kv" style={{ margin: "0 0 12px" }}>
+      {parts.map(([k, v]) => (
+        <div key={k} style={{ display: "contents" }}>
+          <span className="k">{k}</span>
+          <span>{v}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** The page of the unit a proposal made: `0165_slug` in `workspace`. */
 export const madeAt = (workspace: string, made: string) => `/unit/${workspace}/${Number(made.slice(0, 4))}`;
 
@@ -123,6 +148,7 @@ function Row({ p, open, onToggle, busy, act, workspace, chip }: { p: ProposalRow
       </div>
       {open && (
         <div className="card-b" style={{ paddingTop: 0 }}>
+          {p.change && <Measured p={p} />}
           <p style={{ margin: "0 0 10px", whiteSpace: "pre-wrap" }}>{p.problem}</p>
           <table className="t">
             <thead>
