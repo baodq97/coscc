@@ -177,6 +177,12 @@ class EachReadAnswersFromTheAppsOwnState(_App):
         self.assertIn(f"proposed #{pid} (pending): Reruns cost", lines[2])
         self.assertIn("its last words: found it in t-new", lines[3])
         self.assertIn("run t-old", lines[4])
+        # A question asked of a run is no run of its own: it is counted on the run.
+        journal.finished(key, "", "ask", "done", agent="scan", run="q1", parent_run="t-new")
+        with mock.patch.object(chat.ask, "last_words", lambda d, run: ""):
+            again = await chat.read_runs(self.core, self.cwd, {"agent": "scan"})
+        self.assertIn("run t-new", again.splitlines()[1])
+        self.assertIn("asked 1 question(s) since", again.splitlines()[1])
         none = await chat.read_runs(self.core, self.cwd, {"agent": "dagaz"})
         self.assertEqual(none.splitlines()[1], "- none")
 
@@ -359,3 +365,40 @@ class LeifHearsOfTheRunsItStarted(_App):
             self.assertEqual(
                 self.core.chat.history(self.cwd, "S")["messages"][0]["text"], "what did it find?"
             )
+
+
+class LeifsYesComesFromALaterTurn(_App):
+    """Through the chat itself: the turn Leif asked in and the turn the person said yes in are
+    two turns of one conversation, each with its own run, so the second call starts the run. A
+    kept client keeps the server its first turn was given, so that server must hear each turn."""
+
+    async def test_ask_then_yes_in_the_next_turn_starts_it(self):
+        turns, said = [], []
+
+        def server(core, cwd, reads=(), turn=None):
+            turns.append(turn)
+            return {"type": "sdk"}
+
+        async def run_(agent, inp, ctx):
+            ctx.journal.started(inp.workspace, "", "chat", "manual", run=inp.run, agent="leif")
+            args = {"key": "scan", "reason": "asked", **({"confirmed": True} if said else {})}
+            with mock.patch.object(triggers, "start", return_value="r9"):
+                # The server the client was built with: the first turn's.
+                said.append(await triggers.leif_call(self.core, self.cwd, args, turns[0]))
+            ctx.journal.finished(
+                inp.workspace, "", "chat", "done", agent="leif", run=inp.run, session_id="S"
+            )
+            yield ("done", run_mod.Run("done", None, session="S", run=inp.run))
+
+        self.addCleanup(triggers._ASKED.clear)
+        with (
+            mock.patch.object(triggers, "leif_server", server),
+            mock.patch.object(run_mod, "run", run_),
+            mock.patch.object(self.core.sessions, "known", lambda s: True),
+        ):
+            async for _ in self.core.chat.stream(self.cwd, "run scan"):
+                pass
+            async for _ in self.core.chat.stream(self.cwd, "yes", "S"):
+                pass
+        self.assertIn("needs-confirm", said[0]["content"][0]["text"])
+        self.assertFalse(said[1].get("is_error"), said[1])

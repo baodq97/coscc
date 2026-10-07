@@ -134,20 +134,28 @@ function howAnswered(f: Pick<Followup, "resumed" | "why" | "cost_usd">): string 
 
 /** Questions asked of an ended run, their answers, and the box to ask one more. */
 function AskRun({ cwd, run, workspace }: { cwd: string; run: string; workspace: string }) {
-  const thread = useResource("/api/runs/{run}/thread", { cwd, run });
+  // Read again every 2 s while a question is being answered: its answer lands with its `end`.
+  const [waiting, setWaiting] = useState(false);
+  const thread = useResource("/api/runs/{run}/thread", { cwd, run }, { every: waiting ? 2000 : 0 });
   const wanted = useQuery("ask");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [asked, setAsked] = useState<Asked | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+  const followups = thread.data?.followups ?? [];
+  const known = followups.find((f) => f.run === asked?.run);
+  // The question being answered: the one just asked until the thread lists it ended, else any still running.
+  const live = asked && (!known || known.outcome === "running") ? asked.run : followups.find((f) => f.outcome === "running")?.run;
+  useEffect(() => {
+    setWaiting(!!live);
+  }, [live]);
   useEffect(() => {
     if (wanted) box.current?.focus();
   }, [wanted, thread.state]);
   if (thread.state === "error") return <ErrorState error={thread.error} onRetry={thread.reload} />;
   if (!thread.data) return <SkeletonRows rows={2} />;
-  const { followups, ask } = thread.data;
-  const going = followups.find((f) => f.outcome === "running");
+  const { ask } = thread.data;
   const send = async () => {
     const said = text.trim();
     if (!said || busy) return;
@@ -163,29 +171,34 @@ function AskRun({ cwd, run, workspace }: { cwd: string; run: string; workspace: 
       setBusy(false);
     }
   };
-  const live = asked && !followups.some((f) => f.run === asked.run && f.outcome !== "running") ? asked.run : going?.run;
+  const answering = (r: string) => (
+    <div>
+      <div className="faint ask-meta">
+        Answering
+        {asked && asked.run === r ? (asked.resumed ? " in the run's own session" : `, afresh: ${asked.why}`) : ""}…
+      </div>
+      <RunLog cwd={cwd} run={r} live />
+    </div>
+  );
   return (
     <div className="ask">
       <div className="sec-h">Ask this run</div>
       {followups.map((f) => (
         <div key={f.run} className="col" style={{ gap: 6 }}>
           <div className="ask-q">{f.question}</div>
-          {f.outcome === "running" ? null : (
-            <div className="ask-a">
-              {f.answer ? <Markdown text={f.answer} /> : <span className="faint">No answer: it {f.outcome}.</span>}
-            </div>
+          {f.outcome === "running" ? (
+            answering(f.run)
+          ) : (
+            <>
+              <div className="ask-a">{f.answer ? <Markdown text={f.answer} /> : <span className="faint">No answer: it {f.outcome}.</span>}</div>
+              <div className="faint ask-meta">
+                {howAnswered(f)} · <Link to={`/run/${workspace}/${f.run}`}>its log</Link>
+              </div>
+            </>
           )}
-          <div className="faint ask-meta">
-            {howAnswered(f)} · <Link to={`/run/${workspace}/${f.run}`}>its log</Link>
-          </div>
         </div>
       ))}
-      {live && (
-        <div>
-          <div className="faint ask-meta">Answering{asked && asked.run === live ? (asked.resumed ? " in the run's own session" : `, afresh: ${asked.why}`) : ""}…</div>
-          <RunLog cwd={cwd} run={live} live onEnd={() => { setAsked(null); thread.reload(); }} />
-        </div>
-      )}
+      {live && !known && answering(live)}
       {!live && (
         <div className="composer">
           <textarea

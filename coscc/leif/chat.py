@@ -101,6 +101,8 @@ class Chat:
         # The `cos` server holding `run_agent` and the reads below, made per workspace and turn
         # (`triggers.leif_server`).
         self.leif_server = leif_server
+        # Each conversation's turn, as its `run_agent` reads it (`stream`).
+        self._turn: dict[str, dict[str, str]] = {}
 
     # -- sessions -----------------------------------------------------------
 
@@ -258,6 +260,10 @@ class Chat:
         spent = self._spent(session_id or "")
         note, told = self._note(session_id or "")
         run_id = uuid.uuid4().hex
+        # The turn `run_agent` is called from. A kept client keeps the server its first turn made,
+        # so the conversation's one dict is updated each turn rather than a new one handed over.
+        turn = self._turn.get(session_id or "") or {}
+        turn.update(run=run_id, session=session_id or "")
         # Leif's row, holding the machine's own tools (`COS_TOOLS`) rather than the row's.
         row = replace(policy.row_for(LEIF), tools=tuple(self.config.effective_tools()))
         agent = self.agent_for(LEIF, row)
@@ -284,11 +290,7 @@ class Chat:
                 cache_hour=True,
                 **(
                     {
-                        "servers": {
-                            SERVER: self.leif_server(
-                                cwd, {"run": run_id, "session": session_id or ""}
-                            )
-                        },
+                        "servers": {SERVER: self.leif_server(cwd, turn)},
                         "mcp": policy.LEIF_TOOLS,
                     }
                     if self.leif_server is not None
@@ -303,6 +305,9 @@ class Chat:
                 yield (kind, payload)
         if got is None:
             return
+        if got.session:
+            turn["session"] = got.session
+            self._turn[got.session] = turn
         if got.status in ("refused", "failed"):
             raise Invalid(got.detail)
         yield (
@@ -603,22 +608,25 @@ def _runs(core: Core, ws: str, asked: str) -> list[str]:
         ends = [
             r
             for r in journal.records(ws, kinds=("end",))
-            if pack.triggered(pack.row(str(r.get("agent") or r.get("stage") or "")))
-            and _is(str(r.get("agent") or r.get("stage")), asked)
+            if pack.triggered(pack.row(str(r.get("agent") or "")))
+            and _is(str(r.get("agent")), asked)
         ]
     except Busy as e:
         raise Invalid(str(e)) from e
+    asks = Counter(str(r.get("parent_run")) for r in ends if r.get("stage") == ask.STAGE)
+    runs = [r for r in ends if r.get("stage") != ask.STAGE]
     data = Data(core.config.data_dir)
     made = proposals.listed(data, ws)
     lines = []
-    for end in reversed(ends[-RUNS_SHOWN:]):
-        run, key = str(end.get("run") or ""), str(end.get("agent") or end.get("stage"))
+    for end in reversed(runs[-RUNS_SHOWN:]):
+        run, key = str(end.get("run") or ""), str(end.get("agent"))
         start = next(iter(journal.where("run", run, ("start",))), {})
-        what = "a question asked of it" if end.get("stage") == "ask" else "a run"
         lines.append(
-            f"- {what} of {end.get('name') or key} ({key}), run {run}, {str(end.get('at'))[:16]}, "
+            f"- {end.get('name') or key} ({key}), run {run}, ended {str(end.get('at'))[:16]}, "
             f"started by {start.get('started_by') or '?'}: {end.get('outcome')}, "
-            f"{_usd(end.get('cost_usd'))}" + (f", {end.get('detail')}" if end.get("detail") else "")
+            f"{_usd(end.get('cost_usd'))}"
+            + (f", {end.get('detail')}" if end.get("detail") else "")
+            + (f"; asked {asks[run]} question(s) since" if asks[run] else "")
         )
         lines += [
             f"  proposed #{p['id']} ({p['state']}): {p['title']}" for p in made if p["run"] == run

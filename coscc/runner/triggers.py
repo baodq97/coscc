@@ -767,8 +767,9 @@ def _leif_may(core: Core, key: str, args: Mapping[str, Any], turn: Mapping[str, 
         return
     _ASKED.add((turn.get("run") or "", key))
     raise Refused(
-        f"{key} may spend up to ${usd:.2f}: ask the person first, naming that sum, and end your "
-        "turn; call again with confirmed: true only after they say yes",
+        f"{key} may spend up to ${usd:.2f} and no yes was asked for in an earlier turn: ask the "
+        "person now, naming that sum, and end your turn; after they say yes, call again with "
+        "confirmed: true",
         ("needs-confirm",),
     )
 
@@ -820,9 +821,10 @@ def leif_server(
         "answer a question yourself. "
         f"`key` is one of: {named}; `unit` only for an agent that "
         "reads one; `reason` is why, in a sentence, and is recorded on the run; `text` the "
-        "person's words (Dagaz drafts from the task they state). A run that may cost over "
-        f"${ASK_OVER:.2f} is refused `needs-confirm`: ask the person, naming the sum, and call "
-        "again with `confirmed: true` only after they say yes in a later message."
+        "person's words (Dagaz drafts from the task they state). Call it without `confirmed` "
+        f"first: a run that may cost over ${ASK_OVER:.2f} is refused `needs-confirm`, which "
+        "records the ask; then ask the person, naming the sum, and end your turn, and after they "
+        "say yes call again with `confirmed: true`."
     )
     return create_sdk_mcp_server(
         submit.SERVER, "1.0.0", [tool(LEIF_TOOL, described, LEIF_SCHEMA)(_handle), *reads]
