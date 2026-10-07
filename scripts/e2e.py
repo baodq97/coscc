@@ -19,6 +19,7 @@ build, no chromium). It is not part of `npm test`.
 from __future__ import annotations
 
 import io
+import re
 import json
 import shutil
 import signal
@@ -129,11 +130,15 @@ def a_feature_page_is_drawn_by_the_studio(context, base) -> bool:
 def a_pack_is_turned_off_and_its_default_process_chosen(context, base, api) -> bool:
     """Settings › Each project holds the pack: its select changes what a new unit walks, its
     toggle refuses new units, and the diagram of the chosen process is drawn."""
-    cwd = api.get("/api/workspaces").json()["workspaces"][0]["path"]
+    shown = api.get("/api/workspaces").json()["workspaces"][0]
+    cwd = shown["path"]
     page = open_studio(context, base, "/may-do")
     try:
         page.wait_for_selector("text=New units walk")
-        page.get_by_label("New units walk").first.select_option("coscc-sdlc/short")
+        project = page.locator(
+            ".card", has=page.locator(".card-h", has_text=re.compile(f"^{shown['name']}$"))
+        )
+        project.get_by_label("New units walk").select_option("coscc-sdlc/short")
         page.wait_for_function(
             "fetch('/api/packs?cwd=' + encodeURIComponent(%r)).then(r => r.json()).then(p => p[0].process === 'coscc-sdlc/short')"
             % cwd
@@ -145,7 +150,7 @@ def a_pack_is_turned_off_and_its_default_process_chosen(context, base, api) -> b
             "the select saves the default and the diagram is drawn",
             f"{got}, {drawn}",
         )
-        page.locator(".toggle").nth(2).click()
+        project.locator(".toggle").nth(2).click()
         page.wait_for_timeout(500)
         off = api.get("/api/packs", params={"cwd": cwd}).json()[0]["on"]
         refused = api.post("/api/units", json={"cwd": cwd, "slug": "nope", "brief": "x"})
