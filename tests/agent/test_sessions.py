@@ -430,6 +430,8 @@ class OptionsCarryTheKnobs(unittest.TestCase):
             again = sessions.scratch_dir(Path("/app-root"), "a" * 32)
             self.assertEqual((again, list(again.iterdir())), (first, []))
             self.assertEqual(again.stat().st_mode & 0o777, 0o700)
+            # Short: the sandbox's sockets sit below it, a socket's path at most 107 bytes.
+            self.assertEqual(again.name, sessions.SCRATCH_PREFIX + "a" * 12)
             for bad in ("../x", "a" * 31, "A" * 32):
                 with self.assertRaises(ValueError):
                     sessions.scratch_dir(Path("/app-root"), bad)

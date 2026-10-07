@@ -140,7 +140,9 @@ def scratch_dir(app_root: Path, name: str = "") -> Path:
     if name:
         if not re.fullmatch(r"[0-9a-f]{32}", name):
             raise ValueError(f"a data root is named after a run id, not {name!r}")
-        made = Path(tempfile.gettempdir()).resolve() / f"{SCRATCH_PREFIX}{name}"
+        # 12 of its 32: the sandbox makes its sockets below this root, and a socket's path is
+        # at most 107 bytes (the whole id broke the sandbox's start).
+        made = Path(tempfile.gettempdir()).resolve() / f"{SCRATCH_PREFIX}{name[:12]}"
         _drop(made)
         made.mkdir(mode=0o700)
     else:
