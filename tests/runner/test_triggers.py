@@ -770,6 +770,21 @@ class ATrialRunsARowNotSaved(_Core):
         self.assertNotIn("proposals", end)
         self.assertEqual(triggers._data_until(self.journal, self.ws, "tidy"), "")
 
+    async def test_its_bus_facts_and_the_updater_never_see_the_row(self):
+        self.found = found(1)
+        seen: list = []
+        self.core.bus = SimpleNamespace(
+            publish=lambda name, p: seen.append((name, pack.row("tidy")))
+        )
+        self.core.updater = SimpleNamespace(
+            job_ended=lambda: seen.append(("job", pack.row("tidy")))
+        )
+        await self.tried()
+        self.assertEqual(
+            seen, [("agent-run.started", None), ("agent-run.ended", None), ("job", None)]
+        )
+        self.assertEqual(self.agents[0][2], "Read the interventions.")
+
     async def test_the_row_is_seen_only_inside_its_run(self):
         self.found = found(1)
         self.gate.clear()

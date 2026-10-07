@@ -17,6 +17,7 @@ and says so in the run log; nothing here raises a ceiling.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 import uuid
@@ -140,19 +141,25 @@ def check(
         raise Refused(
             f"agent-invalid: {key}'s row cannot run: {'; '.join(bad)}", ("agent-invalid",)
         )
+    _within_cap(core, workspace, found)
+    if (ws, key) in _RUNNING:
+        raise Refused(f"a run of {key} in this workspace is already going", ("unit-busy",))
+    return ws
+
+
+def _within_cap(core: Core, workspace: str, found: Mapping[str, Any] | None) -> None:
+    """Refused unless the day's spend in `workspace` leaves room for the row's own `usd`."""
     today = core.autopilot.today(workspace)
     if today is None:
         raise Refused("the daily spend cannot be read now", ("unavailable",))
-    ceiling = float(((found or {}).get("ceilings") or {}).get("usd") or 0.0)
+    ceilings = (found or {}).get("ceilings")
+    ceiling = float(ceilings.get("usd") or 0.0) if isinstance(ceilings, dict) else 0.0
     if today[0] + ceiling > today[1]:
         raise Refused(
             f"the daily cap of ${today[1]:.2f} would pass (${today[0]:.2f} spent, "
             f"${ceiling:.2f} reserved)",
             ("budget-reached",),
         )
-    if (ws, key) in _RUNNING:
-        raise Refused(f"a run of {key} in this workspace is already going", ("unit-busy",))
-    return ws
 
 
 def _words(by: str) -> str:
@@ -205,7 +212,7 @@ def _hold(
     reason: str,
     text: str,
     asked_in: str = "",
-    trial: bool = False,
+    tried: Mapping[str, Any] | None = None,
 ) -> str:
     """The run in the background, holding its (workspace, agent) from here, so a second press is
     refused at once (`unit-busy`; asked again, since `check` may have run off the loop). Its run
@@ -218,7 +225,7 @@ def _hold(
     core.bus.publish("agent-run.started", {"workspace": ws, "agent": key, "run": run_id})
     spawn(
         asyncio.get_running_loop(),
-        _held(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in, trial),
+        _held(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in, tried),
         run_id,
         ws,
     )
@@ -269,11 +276,13 @@ async def _held(
     text: str,
     run_id: str = "",
     asked_in: str = "",
-    trial: bool = False,
+    tried: Mapping[str, Any] | None = None,
 ) -> str:
-    """`_run` while its (workspace, agent) is held; let go however it ends."""
+    """`_run` while its (workspace, agent) is held, a trial's row seen by it alone; let go
+    however it ends."""
     try:
-        return await _run(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in, trial)
+        with pack.trying(tried) if tried is not None else contextlib.nullcontext():
+            return await _run(core, key, cwd, ws, unit, by, reason, text, run_id, asked_in)
     finally:
         run, _ = _RUNNING.pop((ws, key), ("", ""))
         core.bus.publish("agent-run.ended", {"workspace": ws, "agent": key, "run": run})
@@ -334,13 +343,13 @@ async def _run(
     text: str,
     run_id: str = "",
     asked_in: str = "",
-    trial: bool = False,
 ) -> str:
-    """One run of `key`. A `trial` keeps nothing it hands back: its output goes on its `end` as
-    `tried`, and it never skips, reads up to no mark and turns nothing off."""
+    """One run of `key`. A trial (`by` `TRIAL`) keeps nothing it hands back: its output goes on
+    its `end` as `tried`, and it never skips, reads up to no mark and turns nothing off."""
     journal = core.ws.journal()
     if journal is None:
         raise Invalid("no working folder is set, so a run cannot be recorded")
+    trial = by == TRIAL
     declared = contracts.input_of(key)
     data = Data(core.config.data_dir)
     since = "" if trial else await asyncio.to_thread(_data_until, journal, ws, key)
@@ -450,8 +459,7 @@ async def trial(core: Core, cwd: str, key: str, fields: Mapping[str, Any], body:
     before spend; else its run id."""
     with pack.held():
         ws, checked = await asyncio.to_thread(_trial_check, core, cwd, key, fields, body)
-    with pack.trying(checked):
-        return _hold(core, key, cwd, ws, "", TRIAL, "", "", trial=True)
+    return _hold(core, key, cwd, ws, "", TRIAL, "", "", tried=checked)
 
 
 def _trial_check(
@@ -472,16 +480,7 @@ def _trial_check(
         if _unit_scoped(key):
             raise Invalid(f"{key} reads a unit: a trial runs with none")
     core.steps.refuse_updating()
-    today = core.autopilot.today(cwd)
-    if today is None:
-        raise Refused("the daily spend cannot be read now", ("unavailable",))
-    ceilings = fields.get("ceilings")
-    usd = float(ceilings.get("usd") or 0.0) if isinstance(ceilings, dict) else 0.0
-    if today[0] + usd > today[1]:
-        raise Refused(
-            f"the daily cap of ${today[1]:.2f} would pass (${today[0]:.2f} spent)",
-            ("budget-reached",),
-        )
+    _within_cap(core, cwd, checked)
     return ws, checked
 
 
