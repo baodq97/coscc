@@ -614,6 +614,7 @@ export type RunView = {
   "skipped": boolean;
   "detail": string;
   "started_by": string;
+  "made": number | null;
 };
 
 export type Saved = {

@@ -49,7 +49,8 @@ class RunView(TypedDict):
     """One `end` record of an agent, as the page shows it; `workspace` is the run-log key, the
     workspace's resolved path; `row_hash` the definition its `start` ran (`""` before rows had
     one). `run` is the run-log id its events were kept under (`""` when none); `skipped` and
-    `detail` say a run that spent nothing and why; `started_by` is who started it."""
+    `detail` say a run that spent nothing and why; `started_by` is who started it; `made` how many
+    proposals it kept (`None` when it makes none)."""
 
     workspace: str
     unit: str
@@ -62,6 +63,7 @@ class RunView(TypedDict):
     skipped: bool
     detail: str
     started_by: str
+    made: int | None
 
 
 class Setting(TypedDict):
@@ -280,6 +282,7 @@ def _run_view(record: dict[str, Any]) -> RunView:
         skipped=bool(record.get("skipped")),
         detail=str(record.get("detail") or ""),
         started_by=str(record.get("started_by") or ""),
+        made=made if isinstance(made := record.get("proposals"), int) else None,
     )
 
 

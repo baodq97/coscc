@@ -136,6 +136,8 @@ class EachKindComesFromItsRecord(unittest.TestCase):
             _end("done", **{**run, "proposals": 0}),
             _end("done", **{**run, "proposals": 3, "skipped": True}),
             _end("failed", **{**run, "skipped": True}),
+            _end("done", **{**run, "stage": "ask", "proposals": 2}),
+            _end("failed", **{**run, "parent_run": "r1"}),
         ):
             self.assertIsNone(notices.notice_of(1, record), record)
 

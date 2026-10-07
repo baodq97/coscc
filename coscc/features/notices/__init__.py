@@ -93,7 +93,10 @@ def _stop_text(record: dict[str, Any]) -> str:
 
 def _agent_end(record: dict[str, Any], outcome: str, where: str) -> tuple[str, str] | None:
     """A run of an agent no unit holds: what it proposed, or that it did not finish."""
+    # A follow-up question to a run (`ask`, `parent_run`) is no run of the agent's own.
     if record.get("skipped") or not record.get("agent"):
+        return None
+    if record.get("stage") == "ask" or record.get("parent_run"):
         return None
     who = str(record.get("name") or record.get("agent"))
     made = record.get("proposals")

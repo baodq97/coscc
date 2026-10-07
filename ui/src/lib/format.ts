@@ -17,6 +17,17 @@ export function ago(iso: string | null | undefined, now = Date.now()): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+/** When something comes: "due", "in 12 min", "in 5 h", "in 2 d". */
+export function until(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return "—";
+  const minutes = Math.round((Date.parse(iso) - now) / 60_000);
+  if (minutes < 1) return "due";
+  if (minutes < 60) return `in ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `in ${hours} h`;
+  return `in ${Math.round(hours / 24)} d`;
+}
+
 /** `claude-sonnet-5-5[1m]` reads "Sonnet 5.5". */
 export function modelName(model: string | null | undefined): string {
   if (!model) return "—";
