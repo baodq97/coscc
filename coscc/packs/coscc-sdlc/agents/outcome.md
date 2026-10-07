@@ -25,7 +25,9 @@ Grade each criterion alone:
 - Find what delivers it on the trunk: code, tests, a prompt, a doc, a setting. `ship.md` and the intent say what was meant to land; check it, do not trust it.
 - `yes`: it is there and does what the sentence says. Evidence: `path:lines` and a few words.
 - `no`: it is missing, removed or reverted later, does something else, or only part of it ships. Evidence: `path:lines` of where it should be or of what stands instead, and the gap in one sentence.
-- `unclear`: the repository cannot show it (a figure measured on runs, a person's use, a date) or you did not find it. Evidence: why, in one sentence.
+- `unclear`: only a figure measured on runs, or a person's judgement, that no code could show. Evidence: why, in one sentence.
+
+A deadline in the sentence is no reason for `unclear`: grade whether the trunk holds now what that date needs. A thing a person does on the board or a page is a screen: look in the UI code, and when it is not there the criterion is `no`. Not finding something where it must be is `no`, not `unclear`. A sentence asking for several things is `no` when any of them is missing.
 
 Look up code with the code index (`find`, `callers`) before Grep, keep Grep for literal strings, and read only the lines you need. Stop once every criterion is graded.
 
