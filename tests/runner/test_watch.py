@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from coscc.bus import Bus
@@ -141,6 +142,35 @@ class AStepCanBeWatched(unittest.TestCase):
     async def _drain(self):
         async for _ in self.core.steps.run_step(str(self.repo), self.unit, "spec"):
             pass
+
+    def test_an_agent_run_a_press_handed_out_is_running_before_its_start_is_written(self):
+        from coscc.runner import triggers
+
+        ws = str(self.repo)
+        key = self.core.ws.key(ws)
+        with mock.patch.dict(triggers._RUNNING, {(key, "scan"): ("r77", "2026-10-07T00:00:00Z")}):
+            page = self.core.watch.events_page(ws, "r77")
+            self.assertEqual(
+                (page["status"], page["stage"], page["events"]), ("running", "scan", [])
+            )
+
+            async def first():
+                async for item in self.core.watch.follow_events(ws, "r77"):
+                    return item
+
+            # Its recorder opens a moment later: the follower waits for it, then says it is over.
+            async def go():
+                task = asyncio.create_task(first())
+                await asyncio.sleep(0.25)
+                triggers._RUNNING.clear()
+                with self.assertRaises(Invalid):
+                    await task
+
+            asyncio.run(go())
+        other = str(self.root / "work" / "other")
+        with mock.patch.dict(triggers._RUNNING, {(other, "scan"): ("r78", "t")}):
+            with self.assertRaises(Invalid):
+                self.core.watch.events_page(ws, "r78")
 
     def test_a_run_nobody_knows_is_refused_and_a_step_the_gate_closes_leaves_no_recorder(self):
         with self.assertRaises(Invalid):

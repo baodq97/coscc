@@ -234,7 +234,9 @@ async def get_agents(request: Request) -> AgentPage:
     or off for `cwd`; what was wrong."""
     core, cwd = _core(request), _cwd(request)
     with pack.held():
-        return core.agents.agent_page(core.ws.key(cwd) if cwd else None, cwd=cwd)
+        return await asyncio.to_thread(
+            core.agents.agent_page, core.ws.key(cwd) if cwd else None, cwd=cwd
+        )
 
 
 @router.get("/api/agents/live")
@@ -314,7 +316,7 @@ async def run_agent(request: Request) -> Started:
     ceilings; its `start` and `end` are in the run log."""
     body = await kernel.body(request)
     key = str(body.get("key") or "")
-    run = triggers.start(
+    run = await triggers.begin(
         _core(request),
         key,
         str(body.get("cwd") or ""),

@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, NotRequired, TypedDict
 
 from coscc.runlog import events
+from coscc.runner import triggers
 from coscc.runner.run import LIVE
 from coscc.store.db import Data
 from coscc.store.db import Busy
@@ -110,6 +111,8 @@ class Watch:
             if row["workspace"] != key:
                 raise Invalid(f"run {run} is not a run of this workspace")
             return None, row, str(row["unit"] or "")
+        if self._held(key, run):
+            return None, None, ""
         journal = self.ws.journal()
         try:
             started = journal.records(key, kind="start") if journal is not None else []
@@ -119,6 +122,14 @@ class Watch:
             if r.get("run") == run:
                 return None, None, str(r.get("unit") or "")
         raise Invalid(f"no such run: {run}")
+
+    @staticmethod
+    def _held(key: str, run: str) -> dict[str, str] | None:
+        """The agent run `run` of workspace `key` that this process holds, before its `start` is
+        written (a press hands the id out first)."""
+        return next(
+            (h for h in triggers.running() if h["run"] == run and h["workspace"] == key), None
+        )
 
     def events_page(
         self,
@@ -181,6 +192,9 @@ class Watch:
                     found, out["has_older"] = data.step_events_page(run, before, limit)
             except Busy as e:
                 raise Invalid(str(e)) from e
+        elif held := self._held(self.ws.key(cwd), run):
+            out.update(stage=held["agent"], status="running")
+            found = []
         else:
             found = []
         out["events"] = found
@@ -232,7 +246,11 @@ class Watch:
 
         Subscribes before it reads what is there. `gather` > 0 holds each batch up to that many
         seconds; an empty batch comes every `IDLE_WAKE` seconds so a caller can notice it should stop."""
-        recorder, _, _ = self._run_of(cwd, run)
+        recorder, row, _ = self._run_of(cwd, run)
+        # A press hands the id out before the run has begun: wait for its first event.
+        while recorder is None and row is None and self._held(self.ws.key(cwd), run):
+            await asyncio.sleep(0.1)
+            recorder, row, _ = self._run_of(cwd, run)
         if recorder is None:
             yield ("status", self.events_page(cwd, run, limit=1))
             return

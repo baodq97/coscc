@@ -64,7 +64,7 @@ def running() -> list[dict[str, str]]:
     """The runs held now: `{workspace, agent, run, started}`."""
     return [
         {"workspace": ws, "agent": key, "run": run, "started": at}
-        for (ws, key), (run, at) in _RUNNING.items()
+        for (ws, key), (run, at) in list(_RUNNING.items())
     ]
 
 
@@ -165,15 +165,44 @@ def start(
     reason: str = "",
     text: str = "",
 ) -> str:
-    """`check`, then `run` in the background: what a press, Leif and the bus use. The run holds
-    its (workspace, agent) from here, so a second press is refused at once. Its run id, which the
-    caller may follow before the run has begun."""
-    loop = asyncio.get_running_loop()
+    """`check`, then `_hold`: what the bus and the schedule use, on the loop. A press and Leif
+    use `begin`, whose `check` runs off it."""
     ws = check(core, key, workspace, unit, by=by, reason=reason, text=text)
+    return _hold(core, key, workspace, ws, unit, by, reason, text)
+
+
+async def begin(
+    core: Core,
+    key: str,
+    workspace: str,
+    unit: str = "",
+    *,
+    by: str,
+    reason: str = "",
+    text: str = "",
+) -> str:
+    """`start` with `check`, which reads the run log and the spend, off the loop."""
+    with pack.held():
+        ws = await asyncio.to_thread(
+            check, core, key, workspace, unit, by=by, reason=reason, text=text
+        )
+    return _hold(core, key, workspace, ws, unit, by, reason, text)
+
+
+def _hold(
+    core: Core, key: str, cwd: str, ws: str, unit: str, by: str, reason: str, text: str
+) -> str:
+    """The run in the background, holding its (workspace, agent) from here, so a second press is
+    refused at once (`unit-busy`; asked again, since `check` may have run off the loop). Its run
+    id, which the caller may follow before the run has begun."""
+    if (ws, key) in _RUNNING:
+        raise Refused(f"a run of {key} in this workspace is already going", ("unit-busy",))
     run_id = uuid.uuid4().hex
     _RUNNING[ws, key] = (run_id, now())
     core.bus.publish("agent-run.started", {"workspace": ws, "agent": key, "run": run_id})
-    task = loop.create_task(_held(core, key, workspace, ws, unit, by, reason, text, run_id))
+    task = asyncio.get_running_loop().create_task(
+        _held(core, key, cwd, ws, unit, by, reason, text, run_id)
+    )
     _TASKS.add(task)
     task.add_done_callback(_done)
     return run_id
@@ -190,25 +219,6 @@ async def stop() -> None:
     for task in list(_TASKS):
         task.cancel()
     await asyncio.gather(*_TASKS, return_exceptions=True)
-
-
-async def run(
-    core: Core,
-    key: str,
-    workspace: str,
-    unit: str = "",
-    *,
-    by: str,
-    reason: str = "",
-    text: str = "",
-) -> str:
-    """One run of the row `key` in `workspace` (on `unit` for a row that reads one): its `run` id,
-    `""` when it was `skipped` (its input empty, no session, $0). `Invalid` from `check`."""
-    ws = check(core, key, workspace, unit, by=by, reason=reason, text=text)
-    run_id = uuid.uuid4().hex
-    _RUNNING[ws, key] = (run_id, now())
-    core.bus.publish("agent-run.started", {"workspace": ws, "agent": key, "run": run_id})
-    return await _held(core, key, workspace, ws, unit, by, reason, text, run_id)
 
 
 async def _held(
@@ -287,11 +297,10 @@ async def _run(
 
     async def finish(got: Run) -> Mapping[str, Any]:
         """What it handed back kept by kind, and how far it read, before its `end`."""
-        name = str(found_row.get("name") or key)
         if got.status != "done":
-            return {"name": name, **({"data_until": since} if since else {})}
+            return {"data_until": since} if since else {}
         until = taken[-1].at if taken else since
-        out: dict[str, Any] = {"name": name, **({"data_until": until} if until else {})}
+        out: dict[str, Any] = {"data_until": until} if until else {}
         if kind == "proposal":
             items = list((got.output or {}).get("proposals") or [])
             keep, rejected = proposals.kept(items, set(sources) if found else None)
@@ -657,7 +666,7 @@ async def leif_call(core: Core, cwd: str, args: Mapping[str, Any]) -> Reply:
     """One `run_agent` call: the run started in the background, or the refusal with its codes."""
     key = str(args.get("key") or "")
     try:
-        run_id = start(
+        run_id = await begin(
             core,
             key,
             cwd,

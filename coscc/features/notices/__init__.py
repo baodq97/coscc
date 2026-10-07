@@ -62,6 +62,9 @@ STOPS = {
 # run log. The reason says which; the sentence does not.
 WORKSPACE_F = "it could not look at the workspace"
 
+# Who may start a run that makes a notice (`triggers.BY`).
+TRIGGERS = ("event", "schedule", "manual", "leif")
+
 # How an `end` that is not `done` is said (`journal.OUTCOMES`).
 ENDED = {
     "failed": "failed",
@@ -92,13 +95,17 @@ def _stop_text(record: dict[str, Any]) -> str:
 
 
 def _agent_end(record: dict[str, Any], outcome: str, where: str) -> tuple[str, str] | None:
-    """A run of an agent no unit holds: what it proposed, or that it did not finish."""
-    # A follow-up question to a run (`ask`, `parent_run`) is no run of the agent's own.
-    if record.get("skipped") or not record.get("agent"):
+    """A run of an agent a trigger started (not a chat turn, an estimate or a follow-up): what it
+    proposed, or that it did not finish. A run the app cut short (`cancelled`: a restart) says
+    nothing."""
+    if record.get("started_by") not in TRIGGERS or not record.get("agent"):
         return None
+    if record.get("skipped") or outcome == "cancelled":
+        return None
+    # A follow-up question to a run (`ask`, `parent_run`) is no run of the agent's own.
     if record.get("stage") == "ask" or record.get("parent_run"):
         return None
-    who = str(record.get("name") or record.get("agent"))
+    who = str(record.get("agent_name") or record.get("agent"))
     made = record.get("proposals")
     if outcome == "done":
         if not isinstance(made, int) or made < 1:

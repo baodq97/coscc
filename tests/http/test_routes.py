@@ -4,6 +4,7 @@ None of these create a session — the guards are exactly the paths that must re
 *before* anything is spawned, so testing them costs nothing. What needs a
 real session is `scripts/verify_0001.py`, which is run on purpose."""
 
+from datetime import datetime, timezone
 import json
 import os
 import tempfile
@@ -335,7 +336,20 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.client.post("/api/agents/state", json=body)
         row = await scan()
         self.assertEqual((row["on_in"], row["running"]), (["ws"], None))
-        self.assertTrue(row["next_at"])
+        # Never run here: it is due now, not one period from now.
+        self.assertLessEqual(
+            row["next_at"], datetime.now(timezone.utc).isoformat(timespec="seconds")
+        )
+        self.assertEqual(row["off_reason"], "")
+        self.core.agents.spent = lambda _cwd: (119.5, 120.0)
+        self.assertIn("daily cap", (await scan())["off_reason"])
+        self.core.agents.spent = lambda _cwd: (1.0, 120.0)
+        from coscc.agent import pack
+        from coscc.store.db import Data
+
+        pack.set_packs(Data(self.root), key, "coscc-sdlc", on=False)
+        self.assertEqual((await scan())["off_reason"], "its pack is off here")
+        pack.set_packs(Data(self.root), key, "coscc-sdlc", on=True)
         with mock.patch.dict(triggers._RUNNING, {(key, "scan"): ("r9", "2026-10-07T01:00:00Z")}):
             self.assertEqual(
                 (await scan())["running"], {"run": "r9", "started": "2026-10-07T01:00:00Z"}
@@ -368,12 +382,12 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_run_now_starts_a_manual_run_and_refuses_a_row_it_does_not_start(self):
-        with mock.patch("coscc.http.routes.triggers.start", return_value="r1") as start:
+        with mock.patch("coscc.http.routes.triggers._hold", return_value="r1") as start:
             r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "scan"})
         self.assertEqual(
             (r.status_code, r.json()), (200, {"agent": "scan", "started": True, "run": "r1"})
         )
-        self.assertEqual(start.call_args.kwargs["by"], "manual")
+        self.assertEqual(start.call_args.args[5], "manual")
         r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "impl"})
         self.assertEqual((r.status_code, r.json()["code"]), (400, "not-triggered"))
 
