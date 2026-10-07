@@ -578,7 +578,8 @@ class Agents:
             )
             rows[-1]["problems"] = pack.problems(key, effects)
             rows[-1]["on"] = self._on(data, key, workspace)
-            self._live_fields(rows[-1], found, data, workspace, ends.get(key, []), by)
+            runs = [r for r in ends.get(key, []) if r.get("stage") != "ask"]
+            self._live_fields(rows[-1], found, data, workspace, runs, by)
         table = agents.table()
         return AgentPage(
             rows=rows,
@@ -687,8 +688,14 @@ class Agents:
         settings: dict[str, list[Setting]],
         since: str,
     ) -> AgentRow:
-        mine = ends.get(key, [])
+        # A question to one of its runs (`ask`) is no run of it: only its cost counts.
+        mine = [r for r in ends.get(key, []) if r.get("stage") != "ask"]
         recent = [r for r in mine if str(r.get("at") or "") >= since]
+        asked = [
+            r
+            for r in ends.get(key, [])
+            if r.get("stage") == "ask" and str(r.get("at") or "") >= since
+        ]
         last = _run_view(mine[-1]) if mine else None
         budget = config["ceilings"]["max_budget_usd"]
         if mine and mine[-1].get("label") == policy.NOVEL and novel is not None:
@@ -710,7 +717,7 @@ class Agents:
             novel=novel,
             last=last,
             runs_30d=len(recent),
-            cost_30d=round(sum(r["cost_usd"] or 0.0 for r in views), 6),
+            cost_30d=round(sum(r.get("cost_usd") or 0.0 for r in (*recent, *asked)), 6),
             chip=chip_of(last, budget, len(recent)),
             groups=groups_of(views, [s for s in settings.get(key, []) if s["at"] >= since]),
             on=None,

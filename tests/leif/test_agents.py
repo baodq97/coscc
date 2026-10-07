@@ -324,7 +324,7 @@ class ThePage(_WithAService):
         )
         self.assertEqual((by[_at(1)]["skipped"], by[_at(1)]["run"]), (False, ""))
 
-    def test_a_question_to_a_run_counts_to_the_asked_agent(self):
+    def test_a_question_to_a_run_counts_only_to_the_asked_agents_cost(self):
         self._seed(
             [
                 _end("scan", "done", 2, cost=0.1, unit="") | {"agent": "scan"},
@@ -332,7 +332,11 @@ class ThePage(_WithAService):
             ]
         )
         page = self.core.agents.agent_page(now=NOW)
-        self.assertEqual(self._row(page, "scan")["runs_30d"], 2)
+        scan = self._row(page, "scan")
+        # Its cost counts; it is not a run: not its last, not in its count, groups or chip.
+        self.assertEqual((scan["runs_30d"], scan["cost_30d"]), (1, 0.12))
+        self.assertEqual(scan["last"]["at"], _at(2))
+        self.assertEqual([r["at"] for g in scan["groups"] for r in g["runs"]], [_at(2)])
         self.assertNotIn("ask", [r["key"] for r in page["rows"]])
 
     def test_a_setting_since_the_last_run_heads_a_group_of_no_run(self):
