@@ -1053,6 +1053,10 @@ class ASecretIsOutOfEveryToolsReach(_Unit):
             "grep -rn token ~/.config",
             "rg token ~/.config",
             "tar czf x.tgz ~/.ss*",
+            "uv run rg token ~/.config",
+            "find . -exec grep -r token ~/.config ;",
+            "grep -d recurse token ~/.config",
+            "grep --directories=recurse token ~/.config",
             f"""python3 -c "import glob; print(glob.glob('{self.home}/.ss*/id_*'))\"""",
             f"""python3 -I -c "import glob; print(glob.glob('{self.home}/.ss*/id_*'))\"""",
         ):
@@ -1065,6 +1069,8 @@ class ASecretIsOutOfEveryToolsReach(_Unit):
             "ls ~/.config",
             "grep -r x .",
             "rg x src/",
+            "uv run rg x src/",
+            "grep -d skip x ~/.config",
             "cat ~/.config/other/x",
             """python3 -c "import glob; glob.glob('src/*.py')\"""",
         ):

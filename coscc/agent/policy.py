@@ -1825,19 +1825,27 @@ def _holds(real: str, secret: str) -> bool:
 
 def _recursive_secret(grant: Grant, words: list[str], cwds: list[str | None]) -> str:
     """The folder holding a secret that a recursive read (`_RECURSIVE`) is given, by its path or
-    a glob, or "". What a word names itself is `_word_secret`'s; a search's pattern is no path."""
-    k = _program_at(words)
-    if k is None or not grant.secrets:
+    a glob, or "", wherever a program starts (`uv run`, `find -exec`) and behind a wrapper. What a
+    word names itself is `_word_secret`'s; a search's pattern is no path."""
+    if not grant.secrets:
         return ""
-    name, rest = words[k].rsplit("/", 1)[-1], words[k + 1 :]
+    for k in {_unwrapped(words, k) for k in _launched(words) if k < len(words)} - {None}:
+        hit = _recursive_read(grant, words[k].rsplit("/", 1)[-1], words[k + 1 :], cwds)
+        if hit:
+            return hit
+    return ""
+
+
+def _recursive_read(grant: Grant, name: str, rest: list[str], cwds: list[str | None]) -> str:
+    """The folder holding a secret that the program `name` reads with `rest`, or ""."""
     flags = _RECURSIVE.get(name)
-    if flags is None or (
-        flags
-        and not any(
-            w in ("--recursive", "--archive")
-            or (w[:1] == "-" and w[1:2] != "-" and any(c in flags for c in w[1:]))
-            for w in rest
-        )
+    if flags is None:
+        return ""
+    if flags and not any(
+        w in ("--recursive", "--archive")
+        or (w[:1] == "-" and w[1:2] != "-" and any(c in flags for c in w[1:]))
+        or (name in _GREPS and (w == "--directories=recurse" or (w == "-d" and v == "recurse")))
+        for w, v in zip(rest, [*rest[1:], ""])
     ):
         return ""
     pattern = _patterns(rest) if name in _GREPS or name == "ag" else set()
@@ -2123,9 +2131,11 @@ def _program_at(words: list[str]) -> int | None:
     """Where the program of one command stands: past its assignments, and past wrappers that
     run it directly (`timeout 5`, `env X=1`, `nohup`) with their flags and durations."""
     launched = [k for k in _launched(words) if k < len(words)]
-    if not launched:
-        return None
-    k = launched[0]
+    return _unwrapped(words, launched[0]) if launched else None
+
+
+def _unwrapped(words: list[str], k: int) -> int | None:
+    """Where the program a wrapper standing at `k` runs stands; `k` when there is none."""
     while k < len(words) and words[k].rsplit("/", 1)[-1] in _WRAPPERS:
         k += 1
         while k < len(words) and (
