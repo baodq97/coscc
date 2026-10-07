@@ -18,7 +18,7 @@ from collections.abc import Callable
 from typing import Any, Literal, TypedDict
 
 from coscc import bus, vault
-from coscc.agent import agents, models, modeltrial, pack, policy
+from coscc.agent import agents, models, modeltrial, pack, policy, skills
 from coscc.config import Config
 from coscc.kernel import OWNER, Hooks, Invalid
 from coscc.leif import decide
@@ -1156,7 +1156,7 @@ class Models:
     ) -> run_mod.Agent:
         """The `run` agent of a session no stage runs: the estimate, a feature's session (whose own
         `model` and `effort` stand where the pack has no row) and Leif, on the row's own ceilings
-        and with its body as the system prompt."""
+        and with its body and its skills as the system prompt (`skills.system`)."""
         model, model_source, effort, effort_source = models.resolve(
             key, None, self.config.model, own={"id": model, "effort": effort}
         )
@@ -1172,7 +1172,7 @@ class Models:
                 "max_budget_source": models.DEFAULT if row.max_budget_usd else models.NONE,
             },
             name=str((pack.row(key) or {}).get("name") or ""),
-            system=str((pack.row(key) or {}).get(pack.BODY) or ""),
+            system=skills.system(key),
         )
 
     def config_for(self, name: str) -> tuple[str | None, str, str | None, str]:

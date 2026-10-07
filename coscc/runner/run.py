@@ -392,7 +392,8 @@ def _started(ctx: Ctx, agent: Agent, given: Input, stage: str, run: str, grant: 
             ),
             agent=agent.key,
             **({"agent_name": agent.name} if agent.name else {}),
-            **pack.stamp(agent.key),
+            # What the run says of itself (a follow-up's `skills: []`) wins over its row's stamp.
+            **{k: v for k, v in pack.stamp(agent.key).items() if k not in given.start},
             run=run,
             pid=os.getpid(),
             **({"scratch_as": given.scratch_as or run} if given.cache_hour else {}),

@@ -422,6 +422,11 @@ export type Meta = {
   "granted": boolean | null;
 };
 
+export type Named = {
+  "key": string;
+  "name": string;
+};
+
 export type NextStep = {
   "cwd": string;
   "unit": string;
@@ -755,11 +760,32 @@ export type Shown = {
   "summary"?: string;
 };
 
+export type Skill = {
+  "name": string;
+  "pack": string;
+  "builtin": boolean;
+  "description": string;
+  "own": boolean;
+  "edited": boolean;
+  "hash": string;
+  "chars": number;
+  "text": string;
+  "agents": Named[];
+  "uses_30d": number;
+  "last_used": string;
+};
+
 export type SkillText = {
   "name": string;
   "text": string;
   "builtin": string;
   "edited": boolean;
+};
+
+export type SkillsPage = {
+  "skills": Skill[];
+  "problems": string[];
+  "counted_since": string;
 };
 
 export type Source = {
@@ -995,6 +1021,7 @@ export type Get = {
   "/api/runs/{run}": EventsPage;
   "/api/runs/{run}/thread": Thread;
   "/api/settings/autopilot": AutopilotSettings;
+  "/api/skills": SkillsPage;
   "/api/units": Cards;
   "/api/units/next": NextStep;
   "/api/units/{name}": Detail;

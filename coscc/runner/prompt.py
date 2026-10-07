@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import agents, pack
+from coscc.agent import agents, pack, skills
 from coscc.units import contracts, states, submit
 from coscc.runner.review import finding_line
 from coscc.runner.reply import RunError
@@ -46,7 +46,7 @@ def skill_for(key: str) -> str:
     if not names:
         raise RunError(f"no rules for the {key} stage: its row names no skill")
     try:
-        return "\n\n".join(pack.skill(n) for n in names)
+        return skills.text(names)
     except LookupError as e:
         raise RunError(f"no rules for the {key} stage: {e}") from e
 

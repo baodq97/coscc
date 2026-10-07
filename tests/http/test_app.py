@@ -184,7 +184,10 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             )
 
             # A row naming no skill: the Board reads, every Run refuses.
-            pack.write("plan", "skills", [])
+            # A hand edit: the page refuses a stage left with no skill (`pack.write`).
+            row_file = pack.owner_dir() / "agents" / "plan.md"
+            row_file.parent.mkdir(parents=True, exist_ok=True)
+            row_file.write_text(pack.render({"skills": []}), encoding="utf-8")
 
             async def go():
                 async for _ in core.steps.run_step(str(workspace), "0009_a-test-unit", "plan"):

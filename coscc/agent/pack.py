@@ -914,15 +914,21 @@ def pack_version(name: str) -> str:
 
 
 def stamp(key: str, process_ref: str | None = None) -> dict[str, Any]:
-    """What a run of `key` records of its row: `pack`, `row_hash`, `edited`; with the unit's
-    process, `process` and `process_hash`."""
+    """What a run of `key` records of its row: `pack`, `row_hash`, `edited`, `skills` (each skill
+    it or a helper it names is given, as `name@<12 hex of its text>`); with the unit's process,
+    `process` and `process_hash`."""
     found = row(key)
     if found is None:
         return {}
+    named = [*(found.get("skills") or [])]
+    for helper in found.get("helpers") or []:
+        named += (row(helper) or {}).get("skills") or []
+    given = [(n, p) for n in dict.fromkeys(named) if (p := skill_path(n))]
     out = {
         "pack": pack_version(str(found["pack"])),
         "row_hash": hash_of(found),
         "edited": list(found["edited"]),
+        "skills": [f"{n}@{hashlib.sha256(p.read_bytes()).hexdigest()[:12]}" for n, p in given],
     }
     if process(process_ref) is not None:
         out.update(process=process_ref, process_hash=process_hash(process_ref))
@@ -1492,6 +1498,10 @@ def write(
     after = {**_fields(base), **fields, **({BODY: body.strip()} if body.strip() else {})}
     others = {k: _fields(r) for k, r in rows().items() if k != key}
     reasons = check(after, catalog, {**others, key: after})
+    # A stage's rules are its skills, or the body of a row no built-in ships (`prompt.skill_for`).
+    bare = found["pack"] == manifest()["name"] or not str(after.get(BODY) or "").strip()
+    if field in ("skills", BODY) and not after.get("skills") and bare and (used := naming(key)):
+        reasons.append(f"skills: {key} runs in {', '.join(used)}, so it needs a skill")
     if reasons:
         raise ValueError("; ".join(reasons))
     path = owner_dir() / "agents" / f"{key}.md"
