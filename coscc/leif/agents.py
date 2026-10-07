@@ -569,21 +569,12 @@ class Agents:
         if not row["on"]:
             row["off_reason"] = self._off_reason(row["key"], workspace)
             return
-        due = self._due(data, row["key"], workspace)
+        due = triggers.due(data, workspace, row["key"])
         hours = (found.get("trigger", {}).get("schedule") or {}).get("hours")
         if hours:
             last = datetime.fromisoformat(mine[-1]["at"]) if mine else now
             due = min(due or "~", (last + timedelta(hours=hours)).isoformat(timespec="seconds"))
         row["next_at"] = due
-
-    @staticmethod
-    def _due(data: Data, key: str, workspace: str) -> str | None:
-        with data.connect() as conn:
-            got = conn.execute(
-                "SELECT MIN(due_at) FROM trigger_due WHERE workspace = ? AND agent = ?",
-                (workspace, key),
-            ).fetchone()
-        return got[0] if got else None
 
     def _off_reason(self, key: str, workspace: str) -> str:
         """What the newest `agent-state` row that turned `key` off in `workspace` says."""

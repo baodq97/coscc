@@ -200,6 +200,20 @@ class APressRunsTheRow(_Core):
         self.assertEqual(heard, [("agent-run.started", run), ("agent-run.ended", run)])
         self.assertTrue(self.ends()[-1]["name"])
 
+    async def test_due_says_when_the_earliest_delayed_run_comes(self):
+        data = Data(self.core.config.data_dir)
+        self.assertIsNone(triggers.due(data, self.ws, "scan"))
+        with data.write() as conn:
+            conn.executemany(
+                "INSERT INTO trigger_due (workspace, agent, unit, due_at, event) VALUES (?, ?, ?, ?, ?)",
+                [
+                    (self.ws, "scan", "", "2026-10-09T00:00:00+00:00", "e"),
+                    (self.ws, "scan", "0001_a", "2026-10-08T00:00:00+00:00", "e"),
+                    (self.ws, "other", "", "2026-10-01T00:00:00+00:00", "e"),
+                ],
+            )
+        self.assertEqual(triggers.due(data, self.ws, "scan"), "2026-10-08T00:00:00+00:00")
+
     async def test_the_daily_cap_and_a_row_with_no_such_trigger_are_refused(self):
         self.found = found(1)
         self.core.autopilot.today = lambda cwd: (120.0, 120.0)

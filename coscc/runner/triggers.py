@@ -68,6 +68,15 @@ def running() -> list[dict[str, str]]:
     ]
 
 
+def due(data: Data, ws: str, key: str) -> str | None:
+    """When the earliest event-delayed run of `key` in `ws` is due, or `None`."""
+    with data.connect() as conn:
+        got = conn.execute(
+            "SELECT MIN(due_at) FROM trigger_due WHERE workspace = ? AND agent = ?", (ws, key)
+        ).fetchone()
+    return got[0] if got else None
+
+
 def _trigger(found: Mapping[str, Any] | None) -> dict[str, Any]:
     trigger = (found or {}).get("trigger")
     return trigger if isinstance(trigger, dict) else {}
