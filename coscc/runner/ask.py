@@ -347,8 +347,10 @@ def _numbered(core: Core, start: Mapping[str, Any]) -> str:
     made = [p for p in proposals.listed(data, str(start.get("workspace"))) if p["run"] == run]
     if not made:
         return ""
-    return "The app kept what you proposed as:\n" + "\n".join(
-        f"- #{p['id']} {p['title']}" for p in made
+    return (
+        "The person names what you proposed by the number the app kept it under; "
+        "#N means that proposal, so answer why you proposed it:\n"
+        + "\n".join(f"- #{p['id']} {p['title']}" for p in made)
     )
 
 
