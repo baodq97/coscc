@@ -318,6 +318,12 @@ def _check_tools(
             "an output the app writes from the reply holds only reading tools, "
             f"not {', '.join(beyond)}"
         )
+    writes = [t for t in held if t in ("Write", "Edit", "NotebookEdit")]
+    if writes and "Bash" not in held:
+        out.append(
+            f"a row holding {', '.join(writes)} holds Bash too, to commit its change: "
+            "open-pr pushes commits only"
+        )
     if kind == "helper" and AGENT_TOOL in held:
         out.append(f"a helper holds no {AGENT_TOOL}")
     return out
