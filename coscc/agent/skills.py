@@ -101,6 +101,12 @@ def _pack_of(path: Path) -> tuple[str, bool]:
     return root.name, False
 
 
+def _first(said: str) -> str:
+    """A skill with no frontmatter description: its first line of prose."""
+    lines = (line.strip().lstrip("#").strip() for line in said.splitlines())
+    return next((line for line in lines if line and line != "---"), "")
+
+
 def _names() -> list[str]:
     roots = [pack.BUILTIN, *pack.packs_dir().glob("*")]
     found = set()
@@ -132,7 +138,7 @@ def catalog(records: Iterable[Mapping[str, Any]] = (), now: datetime | None = No
                 name=name,
                 pack=owner,
                 builtin=owner == pack.manifest()["name"],
-                description=described.group(1).strip().strip("\"'") if described else "",
+                description=described.group(1).strip().strip("\"'") if described else _first(said),
                 own=own and base is None,
                 edited=own and base is not None,
                 hash=hash_of(said),

@@ -140,6 +140,7 @@ class Catalog(_Root):
         )
         self.assertEqual((idea["agents"], idea["uses_30d"]), (["idea"], 1))
         self.assertEqual(idea["text"], "my idea rules\n")
+        self.assertEqual(idea["description"], "my idea rules")
         self.assertEqual(found["write-intent"]["uses_30d"], 0)
 
 
