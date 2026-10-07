@@ -87,11 +87,10 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
     setStopping(true);
     try {
       await api.post("/api/runs/" + encodeURIComponent(run) + "/stop", { cwd });
-      // The run ends a moment after the press: its `end` is written once its session is closed.
+      // "Stopping…" stays until the run's `end` arrives (the log's `onEnd` reloads the page).
       setTimeout(head.reload, 1500);
     } catch (e) {
       setStopError((e as Error).message);
-    } finally {
       setStopping(false);
     }
   };
@@ -116,7 +115,7 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
               ) : (
                 `A run of the workspace, not of a unit${page.started_by ? `; started by ${startedBy(page.started_by)}` : ""}.`
               )}{" "}
-              {page.status === "running" ? <Chip tone="accent">running</Chip> : null}
+              {page.status === "running" ? <Chip tone="accent">{stopping ? "stopping…" : "running"}</Chip> : null}
             </>
           ) : undefined
         }

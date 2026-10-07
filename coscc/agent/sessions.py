@@ -305,6 +305,10 @@ class Live:
 # itself. Chosen, not measured.
 DISCONNECT_TIMEOUT = 5.0
 
+# How long a close waits for the CLI's own exit when a Stop cancelled the task closing it. A CLI in
+# the middle of a turn does not leave on stdin EOF, so the full wait would only delay the Stop.
+STOP_DISCONNECT_TIMEOUT = 0.5
+
 # How long `_shut` waits after its SIGTERM before SIGKILL. Chosen, not measured.
 KILL_AFTER = 3.0
 
@@ -320,7 +324,7 @@ def _begin(coro: Any) -> asyncio.Task:
     return task
 
 
-async def _shut(client: Any, transport: Any, reached: bool) -> None:
+async def _shut(client: Any, transport: Any, reached: bool, quick: bool = False) -> None:
     """Close a client, and see that the CLI it spawned is gone.
 
     The SDK's close waits 5s for the CLI to exit on stdin EOF before SIGTERM then SIGKILL, but
@@ -328,6 +332,8 @@ async def _shut(client: Any, transport: Any, reached: bool) -> None:
     close runs as its own shielded task. Past `DISCONNECT_TIMEOUT` the process is signalled
     from here. `_process` is the SDK transport's private name, read with `getattr` like
     `_transport` and `_query`; a stand-in without it is not signalled.
+
+    `quick` (a Stop) waits `STOP_DISCONNECT_TIMEOUT` for the exit instead of `DISCONNECT_TIMEOUT`.
 
     `reached` is whether `connect` got as far as the control protocol; without it the SDK's
     `disconnect` closes nothing and only drops the transport, so it is closed here.
@@ -347,7 +353,7 @@ async def _shut(client: Any, transport: Any, reached: bool) -> None:
 
     closing = _begin(sdk())
     try:
-        await asyncio.wait_for(asyncio.shield(closing), DISCONNECT_TIMEOUT)
+        await asyncio.wait_for(asyncio.shield(closing), STOP_DISCONNECT_TIMEOUT if quick else DISCONNECT_TIMEOUT)
     except TimeoutError:
         pass
     process = process or getattr(transport, "_process", None)
@@ -397,7 +403,9 @@ class StepHandle:
             return
         if self._closing is None:
             transport = getattr(self.client, "_transport", None)
-            self._closing = _begin(_shut(self.client, transport, reached=True))
+            task = asyncio.current_task()
+            stopped = task is not None and task.cancelling() > 0
+            self._closing = _begin(_shut(self.client, transport, reached=True, quick=stopped))
         await asyncio.shield(self._closing)
 
     def drop_scratch(self) -> None:
