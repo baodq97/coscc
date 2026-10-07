@@ -29,15 +29,23 @@ From the board the gate was asked (the prompt says so); at a terminal ask
    shared helpers. Run the tests of the files you change while working, and the plan's
    `## Verification` and `tests/test_*.py` (the repository's checks, ~25 s) at the end. The
    whole suite is CI's: a red CI sends the work back.
-2. Commit. Each claim in `impl.md` names a commit.
-3. A file `main` changed that contradicts the plan: stop before editing it, record it under
+2. For each rule you change, search again for every other path to the same outcome, plan or no
+   plan: other writers of the same field or state, the automatic paths and the ones a person
+   starts, every caller. Change one the plan missed to the new rule and note it under
+   `## Where the plan was departed from`. Put each search and the count it printed under
+   `## What was measured`. For a symbol moved, renamed or deleted, a search for the old name
+   finds 0 callers left.
+3. Commit. Each claim in `impl.md` names a commit.
+4. A file `main` changed that contradicts the plan: stop before editing it, record it under
    `## What is still open`, submit `not-ready`, leave `plan.md` alone. Otherwise note what you
    adjusted under `## Where the plan was departed from`.
-4. When a review or red CI sent the work back: fix what it named, commit and **push** in the
+5. When a review or red CI sent the work back: fix what it named, commit and **push** in the
    one form the prompt names, `git push origin <branch>` (`next` offers `impl` until a commit
-   outside `.cos/` reaches the PR head), and record which commit fixed which finding. A `low`
+   outside `.cos/` reaches the PR head), and record which commit fixed which finding. For each
+   open `high`/`medium` finding of the last round, read its location at the commit you push and
+   apply the same fix to the other paths to the same outcome, searched as in step 2. A `low`
    need not be fixed; never list one under `## Needs a person`.
-5. Write `impl.md`.
+6. Write `impl.md`.
 
 **A finding this stage cannot close** (needs real money, a command the grant lacks, a person's
 measurement): name its `F<k>` in `needs_person` of `submit`, and say why under
