@@ -171,6 +171,22 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.assertEqual(self._git("rev-parse", "main").strip(), local_before)
         self.assertEqual(self._tree_head(self._tree(unit)), ahead)
 
+    def test_the_pre_step_guards_are_asked_for_the_agent_the_state_binds(self):
+        unit = self._typed_unit()
+        seen = []
+
+        def deny(facts):
+            seen.append(facts.agent)
+            return "stop here"
+
+        with (
+            mock.patch("coscc.runner.steps._agent_key", return_value="rune"),
+            mock.patch.object(self.core.steps, "feature_refusal", side_effect=deny),
+            self.assertRaises(Refused),
+        ):
+            self._run_step(unit)
+        self.assertEqual(seen, ["rune"])
+
     def test_a_broken_origin_does_not_stop_the_step(self):
         unit = self._typed_unit()
         tree = self._tree(unit)
@@ -2758,9 +2774,8 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                 rec["head_before"],
                 rec["head_after"],
                 rec["started_by"],
-                rec["stage"],
             ),
-            ("taken", "a" * 40, "b" * 40, "person", "review"),
+            ("taken", "a" * 40, "b" * 40, "person"),
         )
         self.assertEqual(len(self.seen), 1)
         self.assertIn("# The screenshots, taken again", self.seen[0]["screens_note"])

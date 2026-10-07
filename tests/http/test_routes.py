@@ -1455,6 +1455,20 @@ class TheNextStageOverHttp(unittest.IsolatedAsyncioTestCase):
         # Asking wrote nothing: the unit still holds only what the fixture put there.
         self.assertFalse((self.dir / "spec.md").exists())
 
+    async def test_a_stage_the_gate_refuses_carries_what_the_gate_says(self):
+        from coscc.units import board as board_reader
+
+        offered = {"stage": "review", "action": "run it", "blocked": False}
+        shut = board_reader.Gate(False, "cannot read the required checks of #1", ("gate-closed",))
+        with (
+            mock.patch.object(board_reader, "next_step", mock.AsyncMock(return_value=offered)),
+            mock.patch.object(board_reader, "gate", mock.AsyncMock(return_value=shut)),
+        ):
+            got = await self.client.get(
+                "/api/units/next", params={"cwd": self.cwd, "unit": self.unit}
+            )
+        self.assertEqual(got.json()["gate"], "cannot read the required checks of #1")
+
     async def test_missing_or_unknown_arguments_are_a_400(self):
         for params in (
             {"unit": self.unit},

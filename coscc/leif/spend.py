@@ -18,7 +18,7 @@ from coscc.units import states
 # Chosen, not measured, except the 15 USD, `review` > 3 and `spec` > 2. Leif (CoS) decides a
 # change to any of them.
 BUDGET_USD = 15.0
-RERUN_LIMIT = {"review": 3}
+RERUN_REVIEW = 3
 RERUN_DEFAULT = 2
 TOKENS_PER_TURN_TIMES = 3
 TOKENS_PER_TURN_MIN_STEPS = 5
@@ -316,7 +316,7 @@ def _anomalies(
     ]
     reruns = []
     for (unit, stage), steps in per_pair.items():
-        limit = RERUN_LIMIT.get(stage, RERUN_DEFAULT)
+        limit = RERUN_REVIEW if states.is_review(stage) else RERUN_DEFAULT
         if len(steps) <= limit:
             continue
         acc = _zero()

@@ -234,7 +234,6 @@ def record(
         "kind": "screens",
         "workspace": workspace,
         "unit": unit,
-        "stage": "review",
         "head_before": str(old.get("head") or ""),
         "head_after": str(new.get("head") or "") if ok else "",
         "addresses": [str(a) for a in old.get("addresses") or []],

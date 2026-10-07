@@ -144,6 +144,13 @@ class CheckRefusesABadRowByName(unittest.TestCase):
     def test_an_unknown_key(self):
         self.assertIn("modle: no such key", self.reasons(_row(modle={"id": "x"})))
 
+    def test_a_session_writer_on_an_output_that_is_not_an_artifact(self):
+        out = dict(_row()["output"])
+        self.assertIn(
+            "output.by session",
+            self.reasons(_row(output={**out, "kind": "review", "by": "session"})),
+        )
+
     def test_an_unknown_tool(self):
         self.assertIn(
             "tools.Telepathy: no such tool in the catalog",

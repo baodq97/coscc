@@ -39,8 +39,8 @@ from typing import Any, Iterator
 # 13: idea 0006 M2 in one step, `_before_13` and `_after_13`; 14: `exhausted` ends are `failed`;
 # 15: the agent prefs move into the owner's layer of the agents' pack, `_to_15`; 16: a unit
 # records its process, `unit_meta.process`, and plan's `impl` is `variant`, `_to_16`; 17: the scan
-# feature's tables and prefs become `proposals` and `agents.state`, `_to_17`; 18: a review round
-# keeps its graded `criteria`, a finding its `criterion` for `rule`).
+# feature's tables and prefs become `proposals` and `agents.state`, `_to_17`;
+# 18: a review round keeps its graded `criteria`, a finding its `criterion` for `rule`, by `_COLUMNS`).
 SCHEMA_VERSION = 18
 
 DEFAULT_DIR = "~/.cos"

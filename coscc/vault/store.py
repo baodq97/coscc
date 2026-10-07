@@ -193,7 +193,7 @@ class Store:
     ) -> Secret:
         """A secret with no value yet. A name in use is refused, never overwritten."""
         name, column = self._row_key(name, workspace)
-        stages = _subset("stage", stages or default_agents(), vault_agents())
+        stages = _subset("stage", default_agents() if stages is None else stages, vault_agents())
         modes = ("ssh",) if broker else _subset("mode", modes, MODES)
         self._tables()
         try:

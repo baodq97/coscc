@@ -222,6 +222,10 @@ def check(
         out.append(f"output.kind must be one of {', '.join(OUTPUT_KINDS)}")
     if output.get("by") is not None and output["by"] not in WRITERS:
         out.append(f"output.by must be one of {', '.join(WRITERS)}")
+    if output.get("by") == "session" and kind not in ("artifact", "session"):
+        out.append(
+            "output.by session (the branch and the push) is for an artifact or session output"
+        )
     out += _check_tools(row, kind, output.get("by"), catalog)
     out += _check_links(row, rows)
     out += _check_trigger(row, kind, catalog)

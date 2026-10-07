@@ -167,8 +167,11 @@ def kind_of(process: str | None, name: str) -> str:
     return str((row_of(process, name).get("output") or {}).get("kind") or "")
 
 
-def states_where(*, action: str = "", by: str = "", kind: str = "") -> tuple[str, ...]:
-    """Every state of every process that is this action, writes this way or has this output kind."""
+def states_where(
+    *, action: str = "", by: str = "", kind: str = "", process: str | None = None
+) -> tuple[str, ...]:
+    """Every state of every process (or of `process` alone) that is this action, writes this way
+    or has this output kind."""
     return tuple(
         n
         for n in pack.state_names()
@@ -177,7 +180,7 @@ def states_where(*, action: str = "", by: str = "", kind: str = "") -> tuple[str
             and (not by or by_of(ref, n) == by)
             and (not kind or kind_of(ref, n) == kind)
             for ref in pack.processes()
-            if n in pack.processes()[ref]["states"]
+            if (process is None or ref == process) and n in pack.processes()[ref]["states"]
         )
     )
 
