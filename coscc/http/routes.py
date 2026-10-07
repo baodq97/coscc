@@ -30,7 +30,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, AsyncIterator, NotRequired, TypedDict
 
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from coscc import kernel
 from coscc.agent import pack
@@ -251,6 +251,27 @@ async def set_agent_field(request: Request) -> AgentPage:
     return _core(request).agents.set_agent_field(
         body.get("key"), body.get("field"), body.get("value"), cwd=str(body.get("cwd") or "")
     )
+
+
+@router.post("/api/agents/new")
+async def new_agent(request: Request) -> AgentPage:
+    """`{key, from?, name, cwd?}` writes a new agent into the owner's pack, `local/agents/<key>.md`:
+    a copy of row `from` (every key, the body, its skills by name) or, with no `from`, the
+    smallest row that runs (a manual reader on Sonnet low). A taken or bad key, or a row `pack.check`
+    refuses with the catalog, is a 400 naming every reason, and nothing is written. Logged as an
+    `agent-setting` record `by: owner`. Every later edit is `/api/agents/field`'s."""
+    body = await kernel.body(request)
+    return _core(request).agents.new_agent(
+        body.get("key"), body.get("from"), body.get("name"), cwd=str(body.get("cwd") or "")
+    )
+
+
+@router.post("/api/agents/delete")
+async def delete_agent(request: Request) -> AgentPage:
+    """`{key, cwd?}` removes a whole row of the owner's pack; refused `in-use` while a process
+    names it, and for any row that is no whole `local` row."""
+    body = await kernel.body(request)
+    return _core(request).agents.delete_agent(body.get("key"), cwd=str(body.get("cwd") or ""))
 
 
 @router.post("/api/agents/state")
@@ -831,13 +852,17 @@ async def get_packs(request: Request) -> list[PackShown]:
 @router.post("/api/packs")
 async def set_pack(request: Request) -> Any:
     """`{cwd, name, on?, process?}` switches a pack on or off for one workspace and/or chooses
-    the process its new units walk (`<pack>/<name>`). A pack, workspace or process not known is
+    the process its new units walk (`<pack>/<name>`). `{cwd, name, delete: true}` removes an
+    imported pack, refused `in-use` while a unit records one of its processes. A pack, workspace or process not known is
     a 400. It writes the prefs `packs.state` and `packs.process`, the owner's own settings, and
     no decision; off, a new unit or idea is refused `no-process` and running units still step.
     Whoever holds the password or a session can stop a workspace opening units."""
     body = await kernel.body(request)
     core = _core(request)
-    key = core.ws.key(core.ws.check(str(body.get("cwd") or "")))
+    cwd = str(body.get("cwd") or "")
+    key = core.ws.key(core.ws.check(cwd))
+    if body.get("delete") is True:
+        return core.agents.delete_pack(cwd, str(body.get("name") or ""))
     on, chosen = body.get("on"), body.get("process")
     if (on is not None and not isinstance(on, bool)) or (
         chosen is not None and not isinstance(chosen, str)
@@ -848,6 +873,43 @@ async def set_pack(request: Request) -> Any:
     except pack.PackError as e:
         raise Invalid(str(e)) from e
     return pack.packs_shown(Data(core.config.data_dir), key)
+
+
+@router.post("/api/packs/process")
+async def set_process(request: Request) -> list[PackShown]:
+    """`{cwd, name, process}` sets the owner's process `local/<name>` in `local/process.json`, or
+    with `process: null` removes it. It must pass `pack.check_process` against every row; a
+    removal a unit records is refused `in-use`. Logged as a `pack-setting` record `by: owner`."""
+    body = await kernel.body(request)
+    return _core(request).agents.set_process(
+        str(body.get("cwd") or ""), body.get("name"), body.get("process")
+    )
+
+
+@router.get("/api/packs/{name}/export")
+async def export_pack(name: str, request: Request) -> Response:
+    """Pack `name` as a zip of its plugin folder. `local` holds its own rows, skills and processes,
+    not its overrides of other packs' rows."""
+    blob = _core(request).agents.export_pack(name)
+    return Response(
+        blob,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'},
+    )
+
+
+@router.post("/api/packs/import")
+async def import_pack(request: Request) -> list[PackShown]:
+    """`?cwd=`, the body a zip of a pack (`pack.import_zip`'s rules: at most 1 MB and 200 entries,
+    only the plugin folder's files, no absolute path, `..` or link). Checked as a pack with the
+    catalog, then put in place off in every workspace; a refusal names every reason and leaves
+    nothing behind. Logged as a `pack-setting` record `by: owner`."""
+    blob = b""
+    async for chunk in request.stream():
+        blob += chunk
+        if len(blob) > pack.ZIP_MAX:
+            raise Invalid(f"the zip is over {pack.ZIP_MAX} bytes")
+    return _core(request).agents.import_pack(_cwd(request), blob)
 
 
 # -- updating the app ----------------------------------------------------

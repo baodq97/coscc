@@ -146,6 +146,10 @@ Group = Literal["stage", "engine", "helper", "triggered"]
 
 class AgentRow(TypedDict):
     key: str
+    # The pack the row comes from: `coscc-sdlc`, `local` or an imported pack's name.
+    pack: str
+    # A whole row of the owner's own pack (`local`): they may delete it.
+    own: bool
     # Opened on a unit's state, by the engine (Gebo, the estimate, Leif), as another's helper, or by
     # its own trigger (an event, a schedule, a press, Leif: `coscc/runner/triggers.py`).
     group: Group
@@ -433,6 +437,8 @@ class Agents:
         views = [_run_view(r) for r in recent]
         return AgentRow(
             key=key,
+            pack=str(found.get("pack") or ""),
+            own=bool(found.get("own")),
             group=group,
             row=_fields_of(found),
             builtin=_fields_of(found.get("builtin") or found),
@@ -558,6 +564,24 @@ class Agents:
             except (BadRecord, Busy) as e:
                 raise Invalid(f"the setting was saved but not logged: {e}") from e
         return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
+
+    def new_agent(self, key: object, from_: object, name: object, cwd: str = "") -> AgentPage:  # noqa: ARG002 - built in the next commit
+        raise Invalid("not built yet")
+
+    def delete_agent(self, key: object, cwd: str = "") -> AgentPage:  # noqa: ARG002 - built in the next commit
+        raise Invalid("not built yet")
+
+    def set_process(self, cwd: str, name: object, process: object) -> list[pack.PackShown]:  # noqa: ARG002 - built in the next commit
+        raise Invalid("not built yet")
+
+    def export_pack(self, name: str) -> bytes:  # noqa: ARG002 - built in the next commit
+        raise Invalid("not built yet")
+
+    def import_pack(self, cwd: str, blob: bytes) -> list[pack.PackShown]:  # noqa: ARG002 - built in the next commit
+        raise Invalid("not built yet")
+
+    def delete_pack(self, cwd: str, name: str) -> list[pack.PackShown]:  # noqa: ARG002 - built in the next commit
+        raise Invalid("not built yet")
 
 
 class Models:

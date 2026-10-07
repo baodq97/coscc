@@ -250,8 +250,18 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
             for route in self.app.routes
             if "POST" in getattr(route, "methods", ()) and "agents" in route.path
         ]
-        # The owner's on/off and *Run now*, beside the row; neither writes a grant or a row.
-        self.assertEqual(writes, ["/api/agents/field", "/api/agents/state", "/api/agents/run"])
+        # New and delete write a row of the owner's pack; the owner's on/off and *Run now* beside
+        # them write none; none writes a grant.
+        self.assertEqual(
+            writes,
+            [
+                "/api/agents/field",
+                "/api/agents/new",
+                "/api/agents/delete",
+                "/api/agents/state",
+                "/api/agents/run",
+            ],
+        )
 
 
 class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):

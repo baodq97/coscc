@@ -33,6 +33,9 @@ LOCAL = Path("packs") / "local"
 MANIFEST = Path(".claude-plugin") / "plugin.json"
 PROCESS_FILE = "process.json"
 SKILL_FILE = "SKILL.md"
+# An imported zip's bounds. Chosen, not measured: the built-in pack zips to about 60 KB.
+ZIP_MAX = 1_000_000
+ZIP_ENTRIES = 200
 
 # The data root the owner's layer lives under; `None` is `store.db.DEFAULT_DIR`. The app sets it.
 ROOT: str | None = None
@@ -913,6 +916,8 @@ def _pref(data: Any, name: str) -> dict[str, Any]:
 class ProcessShown(Process):
     ref: str
     name: str
+    # A process of the owner's own pack, `local`: they may change or remove it.
+    own: bool
 
 
 class PackShown(TypedDict):
@@ -922,6 +927,11 @@ class PackShown(TypedDict):
     on: bool
     process: str
     processes: list[ProcessShown]
+    # `local`, the owner's own pack; one they imported (which they may remove).
+    own: bool
+    imported: bool
+    # Why a row or a process of it does not load, in words; `[]` when all do.
+    problems: list[str]
 
 
 def pack_on(data: Any, name: str, key: str) -> bool:
@@ -951,9 +961,12 @@ def packs_shown(data: Any, key: str) -> list[PackShown]:
             "on": pack_on(data, name, key),
             "process": chosen_process(data, key),
             "processes": [
-                ProcessShown(ref=ref, name=ref.rpartition("/")[2], **p)
+                ProcessShown(ref=ref, name=ref.rpartition("/")[2], own=False, **p)
                 for ref, p in processes().items()
             ],
+            "own": False,
+            "imported": False,
+            "problems": [],
         }
     ]
 
