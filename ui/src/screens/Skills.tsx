@@ -170,7 +170,7 @@ function NewSkill({ agent, agentName, onClose, onSaved }: { agent: string; agent
           {agent ? `Save and give to ${agentName}` : "Save"}
         </Button>
         <Button size="sm" kind="ghost" onClick={onClose}>Cancel</Button>
-        <span className="faint" style={{ fontSize: 12 }}>{problem || "Saved in your own layer; nothing runs until an agent names it."}</span>
+        <span className="faint" style={{ fontSize: 12 }}>{problem || (agent ? `Saved in your own layer; every run of ${agentName} is given it.` : "Saved in your own layer; no run is given it until an agent names it.")}</span>
         {(name || text) && <Chip tone="plain">{new TextEncoder().encode(text).length.toLocaleString()} / 16,000 bytes</Chip>}
       </div>
     </Dialog>
