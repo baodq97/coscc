@@ -429,3 +429,20 @@ class TheGraderGradesWhatShipped(_Core):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnOffPackStartsNothing(_Core):
+    async def test_a_row_whose_pack_is_off_is_refused_pack_off_for_every_start(self):
+        pack.set_packs(self.data, self.ws, "coscc-sdlc", on=False)
+        with self.assertRaises(Invalid) as e:
+            await triggers.run(self.core, "scan", self.ws, by="manual")
+        self.assertEqual(e.exception.reasons, ("pack-off",))
+        self.assertEqual(self.given, [])
+
+    async def test_a_row_not_as_built_is_checked_with_the_catalog_before_spend(self):
+        self.core.steps.hooks = SimpleNamespace(catalog=lambda: {})
+        pack.new_row("look", "Look", "scan")
+        pack.write("look", "tools", {"Read": "allow"})
+        with self.assertRaises(Invalid) as e:
+            await triggers.run(self.core, "look", self.ws, by="manual")
+        self.assertEqual(e.exception.reasons, ("agent-invalid",))

@@ -50,10 +50,26 @@ class TheNovelVariant(unittest.TestCase):
         self.assertEqual(models.resolve("impl", "novel", None)[:2], ("n", "override"))
         self.assertEqual(models.resolve("impl", None, None)[:2], (SONNET, "default"))
 
-    def test_a_base_override_does_not_reach_the_novel_step(self):
+    def test_an_owner_model_wins_over_a_variant_they_left_alone(self):
+        # Live in M5: a unit with no plan runs `novel`, and review ran Opus high though the owner
+        # had saved Sonnet low.
+        pack.write("review", "model", {"id": SONNET, "effort": "low"})
+        self.assertEqual(
+            models.resolve("review", "novel", None), (SONNET, "override", "low", "override")
+        )
+        self.assertEqual(models.label_of("review", "coscc-sdlc/short", None)[1], policy.NOVEL)
+
+    def test_owner_ceilings_win_over_a_variant_they_left_alone(self):
+        pack.write("impl", "ceilings", {"turns": 50, "usd": 3.0})
+        found = models.ceilings("impl", policy.NOVEL)
+        self.assertEqual((found["max_turns"], found["max_turns_source"]), (50, "override"))
+        self.assertEqual(found["max_budget_usd"], 3.0)
+
+    def test_a_variant_the_owner_set_still_wins_on_a_novel_step(self):
         set_part("impl", "model.id", "b")
+        set_part("impl", "variants.novel.model.id", "n")
         self.assertEqual(models.resolve("impl", None, None)[:2], ("b", "override"))
-        self.assertEqual(models.resolve("impl", "novel", None)[:2], (OPUS, "default"))
+        self.assertEqual(models.resolve("impl", "novel", None)[:2], ("n", "override"))
 
 
 class TheTrialTier(unittest.TestCase):
@@ -129,8 +145,8 @@ class TheCeilingsResolveInOnePlace(unittest.TestCase):
         found = models.ceilings("impl", "novel")
         self.assertEqual((found["max_turns"], found["max_budget_usd"]), (250, 16.0))
         pack.write("impl", "ceilings", {"turns": 120, "usd": 12.0})
-        # The base row's raise is not the `novel` run's.
-        self.assertEqual(models.ceilings("impl", "novel")["max_turns"], 250)
+        # The owner's ceilings, with the variant's left as built, are the `novel` run's too.
+        self.assertEqual(models.ceilings("impl", "novel")["max_turns"], 120)
         self.assertEqual(models.ceilings("impl", None)["max_budget_usd"], 12.0)
         set_part("impl", "variants.novel.ceilings.turns", 300)
         set_part("impl", "variants.novel.ceilings.usd", 20.0)

@@ -14,7 +14,7 @@ def secret(**over) -> Secret:
         name="ws:db",
         workspace="/a",
         description="",
-        stages=("impl",),
+        agents=("impl",),
         modes=("env", "file"),
         broker=False,
         granted=(),
@@ -28,7 +28,7 @@ def secret(**over) -> Secret:
 class EveryRefusalHasItsOwnCode(unittest.TestCase):
     def test_a_use_that_breaks_no_rule_gets_no_code(self):
         self.assertEqual(policy(secret(), "/a", "impl", "env"), "")
-        self.assertEqual(policy(secret(stages=("impl", "spike")), "/a", "spike", "file"), "")
+        self.assertEqual(policy(secret(agents=("impl", "spike")), "/a", "spike", "file"), "")
 
     def test_a_secret_that_is_not_there_or_has_no_value_is_unknown(self):
         self.assertEqual(policy(None, "/a", "impl", "env"), "unknown-secret")

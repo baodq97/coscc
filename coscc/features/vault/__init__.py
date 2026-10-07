@@ -242,7 +242,9 @@ def _usable(get: Callable[[], vault.Store], facts: Facts) -> tuple[str, ...]:
     return tuple(
         s.name
         for s in get().visible(facts.workspace_key)
-        if s.has_value and facts.agent in s.stages
+        if s.has_value
+        and facts.agent in s.agents
+        and vault.may_use(get().data, facts.agent, facts.workspace_key)
     )
 
 
@@ -344,7 +346,7 @@ class Meta(TypedDict):
     tier: str
     description: str
     # Its agents: the ones that may use it.
-    stages: list[str]
+    agents: list[str]
     modes: list[str]
     broker: bool
     has_value: bool
@@ -356,10 +358,10 @@ class Secrets(TypedDict):
     # Whether `age` is installed, so a value can be saved.
     age: bool
     name_pattern: str
-    default_stages: list[str]
+    default_agents: list[str]
     # The agents that may use a secret (the agent keys whose row holds `vault`) and the ways to
     # pass one, for the page's checkboxes.
-    stages: list[str]
+    agents: list[str]
     modes: list[str]
     secrets: list[Meta]
     globals: list[Meta]
@@ -385,7 +387,7 @@ def _meta(s: vault.Secret, key: str) -> Meta:
         "name": s.name,
         "tier": s.tier,
         "description": s.description,
-        "stages": list(s.stages),
+        "agents": list(s.agents),
         "modes": list(s.modes),
         "broker": s.broker,
         "has_value": s.has_value,
@@ -395,7 +397,7 @@ def _meta(s: vault.Secret, key: str) -> Meta:
 
 def _texts(raw: Any) -> tuple[str, ...]:
     if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
-        raise Invalid("stages and modes are lists of names")
+        raise Invalid("agents and modes are lists of names")
     return tuple(raw)
 
 
@@ -475,7 +477,7 @@ class Door:
                 name,
                 ws,
                 description=_one(form, "description"),
-                stages=tuple(form.get("stage", [])),
+                agents=tuple(form.get("agent", [])),
                 modes=modes,
                 broker=broker,
                 actor=HUMAN,
@@ -494,12 +496,12 @@ class Door:
 
     def policy(self, key: str, sent: Mapping[str, object]) -> Meta:
         s = self.secret_of(sent, key)
-        stages, modes = _texts(sent.get("stages")), _texts(sent.get("modes"))
+        agents, modes = _texts(sent.get("agents")), _texts(sent.get("modes"))
         try:
-            done = self.get().set_policy(s.name, s.workspace, stages, modes)
+            done = self.get().set_policy(s.name, s.workspace, agents, modes)
         except vault.BadSecret as e:
             raise Invalid(str(e)) from e
-        self.keep("policy", done, key, stages=list(done.stages), modes=list(done.modes))
+        self.keep("policy", done, key, agents=list(done.agents), modes=list(done.modes))
         return _meta(done, key)
 
     def grant(self, key: str, sent: Mapping[str, object]) -> Meta:
@@ -537,8 +539,8 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
             "workspace": key,
             "age": door.get().can_encrypt(),
             "name_pattern": NAME_PATTERN,
-            "stages": list(vault.vault_agents()),
-            "default_stages": list(vault.default_agents()),
+            "agents": list(vault.vault_agents()),
+            "default_agents": list(vault.default_agents()),
             "modes": list(vault.MODES),
             "secrets": [_meta(s, key) for s in mine],
             "globals": [_meta(s, key) for s in others],

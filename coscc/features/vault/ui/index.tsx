@@ -139,7 +139,7 @@ function VaultPage({ workspace }: { workspace: Workspace }) {
                     {s.description && <div className="muted" style={{ fontSize: 12.5 }}>{s.description}</div>}
                   </td>
                   <td style={{ whiteSpace: "nowrap" }}>{s.tier === "global" ? "every workspace" : "this workspace"}</td>
-                  <td>{s.stages.join(", ") || "—"}</td>
+                  <td>{s.agents.join(", ") || "—"}</td>
                   <td>{s.broker ? "ssh" : s.modes.join(", ") || "—"}</td>
                   <td>{s.has_value ? "set" : <Chip tone="amber">not set</Chip>}</td>
                   <td className="r" style={{ whiteSpace: "nowrap" }}>
@@ -207,7 +207,7 @@ function VaultPage({ workspace }: { workspace: Workspace }) {
           </label>
           <fieldset>
             <legend>Access</legend>
-            <Checks label="Agents that may use it" name="stage" options={v.stages} on={v.default_stages} />
+            <Checks label="Agents that may use it" name="agent" options={v.agents} on={v.default_agents} />
             <Checks label="Passed as" name="mode" options={v.modes} on={["env", "file"]} />
             <label>
               <input type="checkbox" name="broker" value="1" /> Broker: passed as ssh only
@@ -226,13 +226,13 @@ function VaultPage({ workspace }: { workspace: Workspace }) {
           <Value label={`New value of ${open.s.name}`} />
         </ValueDialog>
       )}
-      {open?.kind === "access" && <Access s={open.s} stages={v.stages} modes={v.modes} busy={busy} onClose={close} onSave={(stages, modes) => act("policy", open.s, { stages, modes })} />}
+      {open?.kind === "access" && <Access s={open.s} agents={v.agents} modes={v.modes} busy={busy} onClose={close} onSave={(agents, modes) => act("policy", open.s, { agents, modes })} />}
     </>
   );
 }
 
-function Access({ s, stages, modes, busy, onClose, onSave }: { s: Meta; stages: string[]; modes: string[]; busy: boolean; onClose: () => void; onSave: (stages: string[], modes: string[]) => void }) {
-  const [stage, setStage] = useState(s.stages);
+function Access({ s, agents, modes, busy, onClose, onSave }: { s: Meta; agents: string[]; modes: string[]; busy: boolean; onClose: () => void; onSave: (agents: string[], modes: string[]) => void }) {
+  const [agent, setAgent] = useState(s.agents);
   const [mode, setMode] = useState(s.modes);
   const toggle = (list: string[], set: (l: string[]) => void, x: string) => set(list.includes(x) ? list.filter((y) => y !== x) : [...list, x]);
   const group = (label: string, options: string[], list: string[], set: (l: string[]) => void) => (
@@ -249,11 +249,11 @@ function Access({ s, stages, modes, busy, onClose, onSave }: { s: Meta; stages: 
   );
   return (
     <Dialog title={`Access of ${s.name}`} onClose={onClose}>
-      {group("Agents that may use it", stages, stage, setStage)}
+      {group("Agents that may use it", agents, agent, setAgent)}
       {s.broker ? <div className="muted">Passed as ssh only.</div> : group("Passed as", modes, mode, setMode)}
       <div className="dlg-f">
         <Button onClick={onClose}>Cancel</Button>
-        <Button kind="primary" disabled={busy} onClick={() => onSave(stage, s.broker ? [] : mode)}>
+        <Button kind="primary" disabled={busy} onClick={() => onSave(agent, s.broker ? [] : mode)}>
           Save access
         </Button>
       </div>
