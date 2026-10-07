@@ -118,13 +118,16 @@ export function useAgents() {
 export function WorkspaceSwitch({ list, workspace, to }: { list: Workspace[]; workspace?: Workspace; to: string }) {
   if (list.length < 2 || !workspace) return null;
   return (
-    <select className="input sm" aria-label="Project" value={workspace.name} onChange={(e) => navigate(`${to}?ws=${encodeURIComponent(e.target.value)}`)}>
-      {list.map((w) => (
-        <option key={w.path} value={w.name}>
-          {w.name}
-        </option>
-      ))}
-    </select>
+    <label className="row faint" style={{ gap: 6, fontSize: 12.5 }}>
+      Project
+      <select className="input sm" value={workspace.name} onChange={(e) => navigate(`${to}?ws=${encodeURIComponent(e.target.value)}`)}>
+        {list.map((w) => (
+          <option key={w.path} value={w.name}>
+            {w.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
