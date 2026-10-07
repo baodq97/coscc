@@ -206,6 +206,24 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
         self.assertIn("no-such-stage", str(caught.exception))
         self.assertIn("names no skill", str(caught.exception))
 
+    def test_a_row_with_no_skill_runs_on_its_body(self):
+        from unittest import mock
+
+        from coscc.agent import pack
+
+        rows = {"changelog": {"key": "changelog", "pack": "local", pack.BODY: "Write one entry.\n"}}
+        with mock.patch.object(pack, "row", rows.get):
+            self.assertEqual(skill_for("changelog"), "Write one entry.")
+        for row in (
+            {**rows["changelog"], pack.BODY: "  "},
+            {**rows["changelog"], "pack": "coscc-sdlc"},
+        ):
+            with (
+                mock.patch.object(pack, "row", {"changelog": row}.get),
+                self.assertRaises(RunError),
+            ):
+                skill_for("changelog")
+
     def test_the_prompt_always_carries_the_rules_section(self):
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="Status: accepted.\nINTENT")

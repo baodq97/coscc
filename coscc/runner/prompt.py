@@ -18,14 +18,23 @@ from coscc.runner.reply import RunError
 
 def skill_for(key: str) -> str:
     """The rules for a step: the text of each skill its agent's row `key` names (`pack.skill`, the
-    owner's copy first). None stops the step.
+    owner's copy first). A row the built-in pack does not ship (the owner's, an imported pack's)
+    that names none runs on its own body. Neither stops the step: a built-in stage's body only
+    describes it.
 
     A step run without its rules spends quota and records the same `included` as a full one,
     so absence is fatal. It refuses with `RunError`: the routes map this module's refusals with
     one `except RunError` into a 400 that names the problem; another exception type would surface
     as a 500.
     """
-    names = list((pack.row(key) or {}).get("skills") or [])
+    row = pack.row(key) or {}
+    names = list(row.get("skills") or [])
+    if (
+        not names
+        and row.get("pack") != pack.manifest()["name"]
+        and str(row.get(pack.BODY) or "").strip()
+    ):
+        return str(row[pack.BODY]).strip()
     if not names:
         raise RunError(f"no rules for the {key} stage: its row names no skill")
     try:
