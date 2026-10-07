@@ -976,7 +976,9 @@ def _check_state(
         and not st.get("optional")
         and "answers" not in (st.get("rerun") or [])
     ):
-        out.append(f"{where}.rerun names answers: its agent asks, and an answer goes on from it")
+        out.append(
+            f"{where}: tick 'go on after an answer' — its agent asks questions (rerun: answers)"
+        )
     for c in _conditions(st.get("when")):
         out += _check_condition(f"{where}.when", c, fields)
     for i, edge in enumerate(st.get("next") or []):
@@ -1440,10 +1442,10 @@ def _write_skill(found: Mapping[str, Any], name: str, value: Any) -> tuple[str, 
     return old, text
 
 
-# The smallest row that runs: a reader a person starts, handing back proposals.
+# The smallest row that runs: a reader a person starts, handing back proposals. It reads files.
 BLANK: dict[str, Any] = {
     "model": {"id": "claude-sonnet-5-5[1m]", "effort": "low"},
-    "tools": {},
+    "tools": {"Read": "allow", "Glob": "allow", "Grep": "allow"},
     "output": {
         "kind": "proposal",
         "version": 1,
@@ -1507,7 +1509,14 @@ def new_row(
         if found is None:
             reasons.append(f"no agent {start} to start from")
         else:
-            copied = {k: found[k] for k in KEYS if k in found and k != "variants"}
+            copied = {k: found[k] for k in KEYS if k in found and k not in ("variants", "glyph")}
+            copied["description"] = f"{name}, copied from {start}."
+            if isinstance(copied.get("trigger"), dict):
+                # A state or the engine runs its own agent: a copy runs where a process puts it.
+                kept = {k: v for k, v in copied["trigger"].items() if k not in ("state", "engine")}
+                copied = {k: v for k, v in copied.items() if k != "trigger"} | (
+                    {"trigger": kept} if kept else {}
+                )
             if isinstance(copied.get("model"), dict):
                 copied["model"] = {k: v for k, v in copied["model"].items() if k != "trial"}
             base = {**copied, BODY: found.get(BODY) or ""}
@@ -1517,6 +1526,8 @@ def new_row(
         else:
             base = {**given["fields"], BODY: given["body"]}
     fields = {k: v for k, v in {**base, "name": name}.items() if k != BODY}
+    if not start and given is None:
+        fields["description"] = f"{name}, an agent of your own."
     body = str(base.get(BODY) or "")
     made = {**fields, "key": key, BODY: body}
     reasons = reasons or new_row_problems(made, catalog)

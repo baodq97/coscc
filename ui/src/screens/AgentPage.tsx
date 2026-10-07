@@ -68,6 +68,36 @@ export function changes(draft: Draft, saved: Record<string, unknown>): string[] 
   return Object.keys(draft).filter((k) => !same(draft[k], saved[k]));
 }
 
+const LABELS: Record<string, string> = {
+  "model.id": "model",
+  "model.effort": "effort",
+  "model.trial": "trial arms",
+  "ceilings.turns": "turns",
+  "ceilings.usd": "spend",
+  "variants.novel.model.id": "new-ground model",
+  "variants.novel.model.effort": "new-ground effort",
+  "variants.novel.ceilings.turns": "new-ground turns",
+  "variants.novel.ceilings.usd": "new-ground spend",
+};
+
+function leaves(v: unknown, path: string[] = []): [string, unknown][] {
+  return v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length
+    ? Object.entries(v).flatMap(([k, x]) => leaves(x, [...path, k]))
+    : [[path.join("."), v]];
+}
+
+/** The parts of the draft that differ from what is saved, named as the page names them (`effort`, `spend`), not by their record's keys. */
+export function changedParts(draft: Draft, saved: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const k of changes(draft, saved)) {
+    const now = new Map(leaves(draft[k], [k]));
+    const was = new Map(leaves(saved[k], [k]));
+    const hit = [...new Set([...now.keys(), ...was.keys()])].filter((p) => !same(now.get(p), was.get(p)));
+    out.push(...hit.map((p) => LABELS[p] ?? (p.startsWith("skill:") ? `${p.slice(6)} skill` : p)));
+  }
+  return [...new Set(out)];
+}
+
 export function AgentPage({ name, tab = "configuration" }: { name: string; tab?: string }) {
   const { ws, list, workspace, cwd, agents } = useAgents();
   const [draft, setDraft] = useState<Draft>({});
@@ -79,6 +109,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
   const setFresh = (p: Page) => setFreshAt({ cwd, page: p });
   const [asking, setAsking] = useState(false);
   const [refused, setRefused] = useState<string[]>([]);
+  const [done, setDone] = useState(false);
   const page = fresh ?? agents.data;
   const a = page?.rows.find((r) => r.key === name);
   if (agents.state === "error" && !page) return <ErrorState error={agents.error} onRetry={agents.reload} />;
@@ -98,13 +129,16 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
   for (const s of a.skills) builtin[`skill:${s.name}`] = s.builtin;
   const pending = changes(draft, saved);
   const value = (k: string) => (k in draft ? draft[k] : saved[k]);
-  const edit = (k: string, v: unknown) => {
+  // `v` may be a function of the part as it then stands, so two quick edits both land.
+  const edit = (k: string, v: unknown | ((now: unknown) => unknown)) => {
     setError(null);
-    setDraft((d) => ({ ...d, [k]: v }));
+    setDone(false);
+    setDraft((d) => ({ ...d, [k]: typeof v === "function" ? v(k in d ? d[k] : saved[k]) : v }));
   };
   const save = async () => {
     setBusy(true);
     setError(null);
+    let failed = false;
     for (const field of pending) {
       try {
         const v = draft[field];
@@ -116,10 +150,12 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
         });
       } catch (e) {
         setError({ field, message: (e as Error).message });
+        failed = true;
         break;
       }
     }
     setBusy(false);
+    setDone(!failed);
   };
   const own = a.own;
   const remove = async () => {
@@ -160,7 +196,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
             {asking ? (
               <>
                 <span className="faint" style={{ fontSize: 12.5 }}>Delete {a.key} for good?</span>
-                <Button size="sm" kind="danger" disabled={busy} onClick={remove}>Yes, delete</Button>
+                <Button size="sm" kind="danger" disabled={busy} onClick={remove}>{busy ? "Deleting…" : "Yes, delete"}</Button>
                 <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>Keep it</Button>
               </>
             ) : (
@@ -202,12 +238,18 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
       {t === "prompt" && <Prompt {...ctx} />}
       {t === "runs" && <Runs a={a} page={page} names={Object.fromEntries((ws.data?.workspaces ?? []).map((w) => [w.path, w.name]))} />}
 
+      {done && pending.length === 0 && !error && (
+        <div className="savebar" role="status">
+          <span className="grow" style={{ fontSize: 13 }}>Saved. The next run uses it.</span>
+          <Button kind="ghost" size="sm" onClick={() => setDone(false)}>Close</Button>
+        </div>
+      )}
       {(pending.length > 0 || error) && (
         <div className="savebar">
           <span className="grow" style={{ fontSize: 13 }}>
-            {error ? <span className="savebar-err">Not saved: {error.message}</span> : `${pending.length} unsaved change${pending.length > 1 ? "s" : ""}: ${pending.join(", ")}`}
+            {error ? <span className="savebar-err">Not saved: {error.message}</span> : `${pending.length} unsaved change${pending.length > 1 ? "s" : ""}: ${changedParts(draft, saved).join(", ")}`}
           </span>
-          <Button kind="ghost" size="sm" disabled={busy} onClick={() => { setDraft({}); setError(null); }}>
+          <Button kind="ghost" size="sm" disabled={busy} onClick={() => { setDraft({}); setError(null); setDone(false); }}>
             Discard
           </Button>
           {pending.length > 0 && (
@@ -225,7 +267,7 @@ type Ctx = {
   a: AgentRow;
   page: Page;
   value: (k: string) => unknown;
-  edit: (k: string, v: unknown) => void;
+  edit: (k: string, v: unknown | ((now: unknown) => unknown)) => void;
   saved: Record<string, unknown>;
   builtin: Record<string, unknown>;
   editable: boolean;
@@ -246,9 +288,9 @@ function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; la
       <div>
         <div className="lab">{label}</div>
         <div className="hint">
-          {(!ctx.a.own || source === "unsaved") && <Chip square tone={source === "built-in" ? "plain" : source === "edited" ? "accent" : "amber"}>{source}</Chip>}
+          {(source === "unsaved" || (!ctx.a.own && source === "edited")) && <Chip square tone={source === "edited" ? "accent" : "amber"}>{source}</Chip>}
           {!ctx.a.own && source !== "built-in" && ctx.editable && (
-            <button className="linkish" onClick={() => ctx.edit(top, put(ctx.value(top), rest, base))}>
+            <button className="linkish" onClick={() => ctx.edit(top, (now: unknown) => put(now, rest, base))}>
               Reset to built-in
             </button>
           )}
@@ -274,7 +316,7 @@ function Text({ ctx, path, width = 260, placeholder }: { ctx: Ctx; path: string;
       placeholder={placeholder}
       disabled={!ctx.editable}
       list={path.endsWith("model.id") || path === "model.id" ? "models" : undefined}
-      onChange={(e) => ctx.edit(top, put(ctx.value(top), rest, e.target.value === "" ? undefined : e.target.value))}
+      onChange={(e) => ctx.edit(top, (now: unknown) => put(now, rest, e.target.value === "" ? undefined : e.target.value))}
     />
   );
 }
@@ -294,7 +336,7 @@ function NumberField({ ctx, path, prefix }: { ctx: Ctx; path: string; prefix?: s
         onChange={(e) => {
           const s = e.target.value.trim();
           const n = Number(s);
-          ctx.edit(top, put(ctx.value(top), rest, s === "" ? undefined : Number.isFinite(n) ? n : s));
+          ctx.edit(top, (now: unknown) => put(now, rest, s === "" ? undefined : Number.isFinite(n) ? n : s));
         }}
       />
     </span>
@@ -307,7 +349,7 @@ function Effort({ ctx, path }: { ctx: Ctx; path: string }) {
   return (
     <div className="seg">
       {EFFORTS.map((e) => (
-        <button key={e} className={v === e ? "on" : ""} disabled={!ctx.editable} onClick={() => ctx.edit(top, put(ctx.value(top), rest, e))}>
+        <button key={e} className={v === e ? "on" : ""} disabled={!ctx.editable} onClick={() => ctx.edit(top, (now: unknown) => put(now, rest, e))}>
           {e}
         </button>
       ))}
@@ -319,6 +361,9 @@ function Configuration(ctx: Ctx) {
   const { a, page } = ctx;
   const has = (k: string) => ctx.saved[k] !== undefined || ctx.builtin[k] !== undefined;
   const trial = get(ctx.value("model"), ["trial"]) as string[] | undefined;
+  const modelId = get(ctx.value("model"), ["id"]) as string | undefined;
+  // The row's own model or ceilings, edited with its new-ground variant left alone, rule a new-ground step too.
+  const shadowed = ["model", "ceilings"].filter((k) => a.edited.includes(k) && !a.edited.includes("variants"));
   const ran = (c: AgentRow["config"]) =>
     `Runs on ${modelName(c.model)}${c.model_source === "COS_MODEL" ? " (COS_MODEL)" : ""}${c.effort ? `, ${c.effort} effort` : ""}, at most ${c.ceilings.max_turns ?? "—"} turn${c.ceilings.max_turns === 1 ? "" : "s"} and ${c.ceilings.max_budget_usd != null ? money(c.ceilings.max_budget_usd) : "no $ ceiling"}.`;
   return (
@@ -341,7 +386,7 @@ function Configuration(ctx: Ctx) {
         How it runs <span className="faint">{ran(a.config)}</span>
       </div>
       <div className="card card-b">
-        <Part ctx={ctx} path="model.id" label="Model" hint={page.cos_model ? `Empty: ${modelName(page.cos_model)}, from COS_MODEL.` : "Empty: the CLI's default."}>
+        <Part ctx={ctx} path="model.id" label="Model" hint={`${modelId ? `${modelName(modelId)}. ` : ""}${page.cos_model ? `Empty: ${modelName(page.cos_model)}, from COS_MODEL.` : "Empty: the CLI's default."}`}>
           <Text ctx={ctx} path="model.id" placeholder="model id" />
         </Part>
         <Part ctx={ctx} path="model.effort" label="Effort">
@@ -360,15 +405,18 @@ function Configuration(ctx: Ctx) {
         {trial && (
           <Part ctx={ctx} path="model.trial" label="Trial arms" hint="A routine step runs on one of the two, by unit.">
             {[0, 1].map((i) => (
-              <input
-                key={i}
-                className="input sm"
-                style={{ maxWidth: 220 }}
-                list="models"
-                value={trial[i] ?? ""}
-                disabled={!ctx.editable}
-                onChange={(e) => ctx.edit("model", put(ctx.value("model"), ["trial"], trial.map((m, j) => (j === i ? e.target.value : m))))}
-              />
+              <span key={i} className="col" style={{ gap: 2 }}>
+                <input
+                  className="input sm"
+                  style={{ width: 260, maxWidth: "100%" }}
+                  list="models"
+                  aria-label={`Trial arm ${i + 1}`}
+                  value={trial[i] ?? ""}
+                  disabled={!ctx.editable}
+                  onChange={(e) => ctx.edit("model", (now: unknown) => put(now, ["trial"], trial.map((m, j) => (j === i ? e.target.value : m))))}
+                />
+                <span className="faint" style={{ fontSize: 12 }}>{modelName(trial[i])}</span>
+              </span>
             ))}
           </Part>
         )}
@@ -383,6 +431,7 @@ function Configuration(ctx: Ctx) {
         <>
           <div className="sec-h">
             On new ground <span className="faint">a step its plan marks novel. {ran(a.novel)}</span>
+            {shadowed.length > 0 && <div className="faint" style={{ fontSize: 12.5, fontWeight: 400 }}>Your edit of {shadowed.join(" and ")} above rules these steps too, until you set them here.</div>}
           </div>
           <div className="card card-b">
             <Part ctx={ctx} path="variants.novel.model.id" label="Model">
@@ -577,8 +626,10 @@ function Trigger(ctx: Ctx) {
                 ? `A unit that reaches that state, in a process that has it, runs this agent when you, or the autopilot, press Run.`
                 : t.engine
                   ? "The app opens it itself; no unit state starts it."
-                  : "Another agent starts it inside its own run."}{" "}
-              Which agent a state runs is fixed for now.
+                  : a.group === "helper"
+                  ? "Another agent starts it inside its own run."
+                  : "Nothing runs it yet: put it in a step of a process (What Leif may do, New process)."}{" "}
+              {a.group === "helper" ? "" : "Which agent a built-in state runs is fixed for now."}
             </div>
           </div>
         </div>

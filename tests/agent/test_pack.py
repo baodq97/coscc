@@ -270,7 +270,7 @@ class AProcessIsCheckedAtLoad(unittest.TestCase):
 
     def test_a_state_whose_agent_asks_goes_on_from_answers(self):
         bad = _process(intent={"agent": "intent", "next": [{"to": "impl"}]})
-        self.assertEqual("p.intent.rerun names answers", self.reasons(bad).split(":")[0])
+        self.assertIn("p.intent: tick 'go on after an answer'", self.reasons(bad))
 
     def test_no_path_to_the_end(self):
         bad = _process(ship={"action": "merge", "next": [{"to": "review"}]})
@@ -774,6 +774,11 @@ class ManyPacks(unittest.TestCase):
         self.assertEqual(tidy[pack.BODY], pack.row("impl")[pack.BODY])
         self.assertEqual(pack.problems("look", CATALOG), [])
         self.assertEqual(look["trigger"], {"manual": True})
+        self.assertEqual(look["tools"], {"Read": "allow", "Glob": "allow", "Grep": "allow"})
+        self.assertNotIn("glyph", tidy)
+        self.assertNotEqual(tidy["description"], pack.row("impl")["description"])
+        self.assertIn("Tidy", tidy["description"])
+        self.assertNotIn("state", tidy.get("trigger", {}))
         self.assertEqual(list(pack.rows())[-2:], ["look", "tidy"])
         self.assertEqual(
             json.loads((pack.owner_dir() / pack.MANIFEST).read_text())["name"], "local"

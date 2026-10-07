@@ -13,10 +13,10 @@ import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
 import { attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
-import { changes, get, put } from "../screens/AgentPage";
+import { changedParts, changes, get, put } from "../screens/AgentPage";
 import type { AgentRow } from "../api.gen";
 import { afterAgentSaved, draftOf, draftParts, draftTools, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
-import { addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
+import { asks, rerunFor, addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -471,5 +471,47 @@ describe("Dagaz's draft fills the forms", () => {
     expect(liveLine([{ kind: "tool_use", name: "mcp__cos__submit" }])).toMatch(/checks/);
     expect(liveLine([{ kind: "tool_result", is_error: true }])).toMatch(/refused/);
     expect(liveLine([{ kind: "end" }])).toBe("Finished.");
+  });
+});
+
+describe("screens", () => {
+  it("call every hook on every render: none after a ?, : or && on its line", () => {
+    const sources = import.meta.glob<string>(["../screens/*.tsx", "../components/*.tsx", "../shell/*.tsx"], { query: "?raw", import: "default", eager: true });
+    for (const [file, text] of Object.entries(sources)) {
+      const bad = text.split("\n").filter((l) => /(\?|&&|\|\||[^:]:)\s*use[A-Z]\w*\(/.test(l.replace(/\/\/.*/, "")));
+      expect(bad, file).toEqual([]);
+    }
+  });
+
+  it("names a changed part as the page does, not by its record's key", () => {
+    const saved = { model: { id: "a", effort: "low" }, ceilings: { turns: 5, usd: 1 } };
+    expect(changedParts({ model: { id: "a", effort: "high" } }, saved)).toEqual(["effort"]);
+    expect(changedParts({ ceilings: { turns: 9, usd: 2 }, model: { id: "b", effort: "low" } }, saved)).toEqual(["turns", "spend", "model"]);
+    expect(changedParts({ "skill:impl": "x" }, { "skill:impl": "y" })).toEqual(["impl skill"]);
+  });
+});
+
+describe("process steps that ask", () => {
+  const agent = (key: string, fields: Record<string, unknown>) => ({ key, row: { output: { fields } } }) as unknown as AgentRow;
+  const rows = [agent("intent", { questions: {}, "judgement?": {} }), agent("review", { verdict: {} })];
+  const packs = [{ processes: [{ states: { impl: { agent: "impl", rerun: ["answers"] }, spec: { agent: "spec", rerun: ["fresh", "answers"] } } }] }] as unknown as Parameters<typeof rerunFor>[2];
+
+  it("starts an asking agent's step on answers, and a built-in's own ways when the packs have them", () => {
+    expect(asks(rows[0])).toBe(true);
+    expect(rerunFor("intent", rows, [])).toEqual(["answers"]);
+    expect(rerunFor("review", rows, [])).toEqual([]);
+    expect(rerunFor("spec", rows, packs)).toEqual(["fresh", "answers"]);
+  });
+
+  it("keeps the ways a rerun may go through a copy of a process", () => {
+    const d = addStep(blankDraft("x"), { agent: "intent" }, rerunFor("intent", rows, []));
+    const p = toProcess(d);
+    expect(p.states.intent.rerun).toEqual(["answers"]);
+    expect(toProcess(fromProcess("y", p)).states.intent.rerun).toEqual(["answers"]);
+    expect(toProcess(addStep(blankDraft("x"), { agent: "review" })).states.review.rerun).toBeUndefined();
+  });
+
+  it("says nowhere yet for an agent no state or trigger runs", () => {
+    expect(triggerWords({ key: "mine", group: "engine", row: {} } as unknown as AgentRow)).toBe("nowhere yet");
   });
 });
