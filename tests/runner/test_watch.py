@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
-from unittest import mock
 
 from coscc.bus import Bus
 from coscc.runlog import events as events_mod

@@ -489,7 +489,8 @@ class Agents:
         dict[tuple[str, str], dict[str, Any]],
         list[str],
     ]:
-        """Every `end` by agent, oldest first, each with the `label` and `row_hash` of the `start`
+        """Every `end` by its `agent` (a chat turn is Leif's, a question to a run is the asked
+        agent's), else by its stage, oldest first, each with the `label` and `row_hash` of the `start`
         it closes (a run is measured against its own ceiling, grouped by its own definition); every
         `agent-setting` by agent, oldest first; the newest `agent-state` of each (workspace, agent).
         One read of the run log."""
@@ -528,7 +529,7 @@ class Agents:
                 starts[step] = record
             else:
                 start = starts.pop(step, {})
-                ends.setdefault(step[2], []).append(
+                ends.setdefault(str(record.get("agent") or step[2]), []).append(
                     {
                         "started_by": start.get("started_by"),
                         **record,

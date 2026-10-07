@@ -324,6 +324,17 @@ class ThePage(_WithAService):
         )
         self.assertEqual((by[_at(1)]["skipped"], by[_at(1)]["run"]), (False, ""))
 
+    def test_a_question_to_a_run_counts_to_the_asked_agent(self):
+        self._seed(
+            [
+                _end("scan", "done", 2, cost=0.1, unit="") | {"agent": "scan"},
+                _end("ask", "done", 1, cost=0.02, unit="") | {"agent": "scan", "parent_run": "r"},
+            ]
+        )
+        page = self.core.agents.agent_page(now=NOW)
+        self.assertEqual(self._row(page, "scan")["runs_30d"], 2)
+        self.assertNotIn("ask", [r["key"] for r in page["rows"]])
+
     def test_a_setting_since_the_last_run_heads_a_group_of_no_run(self):
         self.core.agents.set_agent_field("spec", "body", "New.")
         [group] = self._row(self.core.agents.agent_page(), "spec")["groups"]

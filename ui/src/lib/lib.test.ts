@@ -710,6 +710,9 @@ describe("matches with something left out", () => {
     expect(matches(run, [""], "", ["agent-run."])).toBe(false);
     expect(matches({ subject: "step.ended", workspace: "w", unit: "u", going_down: false }, [""], "", ["agent-run."])).toBe(true);
     expect(matches({ subject: "", workspace: "" }, [""], "", ["agent-run.", "chat-turn."])).toBe(true);
+  });
+});
+
 describe("an agent's markdown and tool names", () => {
   it("reads emphasis, code and only safe links", () => {
     const line = "**#31** uses `step_events`, see [run](/run/proj/a) or [x](javascript:alert(1))";

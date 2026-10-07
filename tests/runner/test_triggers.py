@@ -252,7 +252,8 @@ class APressRunsTheRow(_Core):
             return "abc123"
 
         with mock.patch.object(triggers, "tree_head", head):
-            await triggers.run(self.core, "scan", self.ws, by="manual", text="Look at reruns.")
+            triggers.start(self.core, "scan", self.ws, by="manual", text="Look at reruns.")
+            await self.settle()
         (given,) = self.given
         self.assertIn("# The person's words\n\nLook at reruns.", given.prompt)
         self.assertEqual(given.start["head"], "abc123")
