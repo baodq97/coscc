@@ -46,12 +46,14 @@ class TheStreamForwardsTheBus(unittest.IsolatedAsyncioTestCase):
         )
         body = (await api.stream(request)).body_iterator
         await anext(body)
-        for name in ("agent-run.started", "agent-run.ended"):
-            bus.publish(name, {"workspace": "/w/coscc", "agent": "scan", "run": "r1"})
+        run = {"workspace": "/w/coscc", "agent": "scan", "run": "r1"}
+        for name, said in (
+            ("agent-run.started", run),
+            ("agent-run.ended", {**run, "outcome": "done"}),
+        ):
+            bus.publish(name, said)
             got = json.loads((await anext(body))[6:])
-            self.assertEqual(
-                got, {"subject": name, "workspace": "/w/coscc", "agent": "scan", "run": "r1"}
-            )
+            self.assertEqual(got, {"subject": name, **said})
         await body.aclose()
 
     async def test_a_quiet_stream_says_it_is_alive(self):

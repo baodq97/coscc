@@ -17,7 +17,7 @@ import { kinds } from "../../../coscc/features/release/ui/index";
 import { onWords } from "../screens/AgentActivity";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
-import { builtinOf, changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
+import { builtinOf, chainTo, changedParts, changes, errorIsHere, get, modelOptions, plainReasons, put, savedApart } from "../screens/AgentPage";
 import { runRow, resultWords, shallowWords } from "../screens/AgentActivity";
 import { fieldLabel, isEmpty, itemLine } from "../screens/UnitPage";
 import { inboxView } from "../screens/Inbox";
@@ -225,6 +225,22 @@ describe("agents", () => {
 
   it("sends only the parts the draft changed", () => {
     expect(changes({ model: { id: "a" }, body: "same" }, { model: { id: "b" }, body: "same" })).toEqual(["model"]);
+    // A trigger and its default are one write; the rest one write each.
+    expect(savedApart(["default", "model", "trigger"])).toEqual(["model", "trigger"]);
+    expect(savedApart(["default", "model"])).toEqual(["default", "model"]);
+    const chained = chainTo({ schedule: { hours: 24 }, manual: true }, "telemetry-audit");
+    expect(chained.trigger).toEqual({ schedule: { hours: 24 }, manual: true, event: { name: "agent-run.ended", from: "telemetry-audit" } });
+    expect(chained.default).toBe("off");
+    expect(chainTo(chained.trigger, "", "on")).toEqual({ trigger: { schedule: { hours: 24 }, manual: true }, default: "on" });
+    // A refusal naming one part of the trigger shows under that part alone.
+    const circle = "trigger.event.from: Laguz runs after Echo runs after Laguz";
+    expect(errorIsHere(circle, "trigger", "trigger.event.from")).toBe(true);
+    expect(errorIsHere(circle, "trigger", "trigger.schedule.hours")).toBe(false);
+    expect(errorIsHere("default: a row another agent starts is off", "default", "default")).toBe(true);
+    expect(plainReasons(`${circle}: agents cannot start each other in a circle; default: off until you turn it on`)).toBe(
+      "Laguz runs after Echo runs after Laguz: agents cannot start each other in a circle; off until you turn it on",
+    );
+    expect(plainReasons("tools.Write: no such tool in the catalog")).toBe("tools.Write: no such tool in the catalog");
   });
 
   it("says when an agent runs, and what needs a look first", () => {
@@ -235,6 +251,11 @@ describe("agents", () => {
     expect(triggerWords(row({ row: { trigger: { engine: "chat" } } }))).toBe("when you talk to Leif");
     expect(triggerWords(row({ group: "triggered", row: { trigger: { schedule: { hours: 24 }, manual: true, leif: true } } }))).toBe("daily, when you or Leif ask");
     expect(triggerWords(row({ group: "triggered", row: { trigger: { event: { name: "unit.shipped", after_hours: 168 }, manual: true } } }))).toBe("7 days after a ship, when you or Leif ask");
+    const laguz = row({ key: "telemetry-audit", group: "triggered", row: { name: "Laguz", trigger: { schedule: { hours: 24 } } } });
+    const after = (event: object) => row({ group: "triggered", row: { trigger: { event: { name: "agent-run.ended", ...event }, manual: true } } });
+    expect(triggerWords(after({ from: "telemetry-audit" }), [laguz])).toBe("after Laguz, when you or Leif ask");
+    expect(triggerWords(after({ from: "telemetry-audit", after_hours: 2 }), [laguz])).toBe("2 h after Laguz ends, when you or Leif ask");
+    expect(triggerWords(after({ from: "gone" }), [laguz])).toBe("after gone, when you or Leif ask");
     expect(attention(row({ problems: ["bad"], chip: "failed" }))?.label).toBe("Cannot run");
     expect(attention(row({ chip: "costly" }))?.tone).toBe("amber");
     expect(attention(row({}))).toBeNull();

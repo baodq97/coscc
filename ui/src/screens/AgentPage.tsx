@@ -3,7 +3,7 @@
 // as it would then stand before writing anything. The next run uses what was saved.
 
 import { useState, type ReactNode } from "react";
-import type { AgentPage as Page, AgentRow, CatalogTool } from "../api.gen";
+import type { AgentPage as Page, AgentRow, CatalogTool, TriggerFields } from "../api.gen";
 import { api, ApiError } from "../lib/api";
 import { refreshPacks } from "../lib/pack";
 import { sandboxed, sandboxLine, sandboxOf } from "../lib/build";
@@ -71,6 +71,11 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stri
 /** The draft's parts that differ from what is saved: what the save bar sends. */
 export function changes(draft: Draft, saved: Record<string, unknown>): string[] {
   return Object.keys(draft).filter((k) => !same(draft[k], saved[k]));
+}
+
+/** The writes a save makes, one per part, `default` riding with a changed `trigger`. */
+export function savedApart(pending: string[]): string[] {
+  return pending.includes("trigger") ? pending.filter((k) => k !== "default") : pending;
 }
 
 const LABELS: Record<string, string> = {
@@ -153,13 +158,16 @@ export function AgentPage({ name, tab = "activity" }: { name: string; tab?: stri
     setBusy(true);
     setError(null);
     let failed = false;
-    for (const field of pending) {
+    const sent = (f: string) => (draft[f] === undefined || (!a.own && same(draft[f], builtin[f])) ? null : draft[f]);
+    for (const field of savedApart(pending)) {
       try {
-        const v = draft[field];
-        const next = await api.post<Page>("/api/agents/field", { key: a.key, field, value: v === undefined || (!a.own && same(v, builtin[field])) ? null : v, cwd });
+        // A trigger and its default are checked as one: a chain needs both or neither.
+        const also = field === "trigger" && pending.includes("default") ? { default: sent("default") } : undefined;
+        const next = await api.post<Page>("/api/agents/field", { key: a.key, field, value: sent(field), cwd, ...(also ? { also } : {}) });
         setFresh(next);
         setDraft((d) => {
           const { [field]: _, ...rest } = d;
+          if (also) delete rest.default;
           return rest;
         });
       } catch (e) {
@@ -266,7 +274,7 @@ export function AgentPage({ name, tab = "activity" }: { name: string; tab?: stri
       {(pending.length > 0 || error) && (
         <div className="savebar">
           <span className="grow" style={{ fontSize: 13 }}>
-            {error ? <span className="savebar-err">Not saved: {error.message}</span> : `${pending.length} unsaved change${pending.length > 1 ? "s" : ""}: ${changedParts(draft, saved).join(", ")}`}
+            {error ? <span className="savebar-err">Not saved: {plainReasons(error.message)}</span> : `${pending.length} unsaved change${pending.length > 1 ? "s" : ""}: ${changedParts(draft, saved).join(", ")}`}
           </span>
           <Button kind="ghost" size="sm" disabled={busy} onClick={() => { setDraft({}); setError(null); setDone(false); }}>
             Discard
@@ -296,6 +304,26 @@ type Ctx = {
   setPage: (p: Page) => void;
 };
 
+// The Trigger tab's parts, each shown under its own label: a refusal naming one needs no key.
+const LABELLED = ["trigger.event.from", "trigger.event.after_hours", "trigger.schedule.hours", "default"];
+
+/** A refusal's reasons as a person reads them: those naming a labelled part without its key. */
+export function plainReasons(message: string): string {
+  return message
+    .split("; ")
+    .map((r) => {
+      const at = LABELLED.find((p) => r.startsWith(`${p}: `));
+      return at ? r.slice(at.length + 2) : r;
+    })
+    .join("; ");
+}
+
+/** Whether a refusal of `top` belongs under the part at `path`: one naming a part of `top`
+ * (`trigger.event.from: …`) is shown only under that part, any other under every part of `top`. */
+export function errorIsHere(message: string, top: string, path: string): boolean {
+  return !message.startsWith(`${top}.`) || message.startsWith(path);
+}
+
 /** One part of a row: its label, where it comes from (built in, edited, unsaved) and a reset. */
 function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; label: string; hint?: string; children: ReactNode }) {
   const [top, ...rest] = path.split(".");
@@ -319,7 +347,7 @@ function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; la
       </div>
       <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
         {children}
-        {ctx.error?.field === top && <div className="field-err">{ctx.error.message}</div>}
+        {ctx.error?.field === top && errorIsHere(ctx.error.message, top, path) && <div className="field-err">{plainReasons(ctx.error.message)}</div>}
       </div>
     </div>
   );
@@ -797,6 +825,7 @@ function Trigger(ctx: Ctx) {
           <span className="muted" style={{ alignSelf: "center" }}>hours</span>
         </Part>
       )}
+      <StartsAfter {...ctx} />
       {t.event?.after_hours !== undefined && (
         <Part ctx={ctx} path="trigger.event.after_hours" label="Wait" hint="Hours after the event before it runs.">
           <NumberField ctx={ctx} path="trigger.event.after_hours" />
@@ -804,6 +833,43 @@ function Trigger(ctx: Ctx) {
         </Part>
       )}
     </div>
+  );
+}
+
+/** A chain to the agent `from`: its trigger waits on that agent's finished run, whose result its
+ * prompt then holds, and it stays off until turned on. `""` undoes it, `default` back to `back`. */
+export function chainTo(trigger: TriggerFields, from: string, back?: unknown): { trigger: TriggerFields; default?: unknown } {
+  const { event: _, ...rest } = trigger;
+  if (!from) return { trigger: rest, default: back };
+  return { trigger: { ...rest, event: { name: "agent-run.ended", from } }, default: "off" };
+}
+
+/** Which agent's finished run starts this one: none, or another agent that runs by itself. */
+function StartsAfter(ctx: Ctx) {
+  const { a, page } = ctx;
+  const trigger = (ctx.value("trigger") ?? {}) as TriggerFields;
+  const from = trigger.event?.from ?? "";
+  // Another event starts it: that is not a chain to change here.
+  if (trigger.event && !from) return null;
+  const choices = page.rows.filter((r) => r.group === "triggered" && r.key !== a.key);
+  const pick = (to: string) => {
+    // Undone, `default` goes back to what it was before this page chained it, else the pack's.
+    const back = same(ctx.value("default"), ctx.saved.default) ? (ctx.builtin.default ?? ctx.saved.default) : ctx.saved.default;
+    const next = chainTo(trigger, to, back);
+    ctx.edit("default", next.default);
+    ctx.edit("trigger", next.trigger);
+  };
+  return (
+    <Part ctx={ctx} path="trigger.event.from" label="Starts after" hint="When that agent finishes a run, this one runs with what it found. It stays off here until you turn it on.">
+      <select className="input sm" style={{ width: 260, maxWidth: "100%" }} value={from} disabled={!ctx.editable} onChange={(e) => pick(e.target.value)}>
+        <option value="">No other agent</option>
+        {choices.map((r) => (
+          <option key={r.key} value={r.key}>
+            {r.row.name ?? r.key}
+          </option>
+        ))}
+      </select>
+    </Part>
   );
 }
 

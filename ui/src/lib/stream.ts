@@ -12,7 +12,8 @@ export type Change = { subject: string } & (
   | (OfUnit & { sha: string; at: string }) // `unit.shipped`
   | OfUnit // `answer.written`, `hold.moved`, `mode.set`, `retake.ended`, `integration.escalated`
   | { workspace: string } // `shortlist.saved`
-  | { workspace: string; agent: string; run: string } // `agent-run.started`, `agent-run.ended`
+  | { workspace: string; agent: string; run: string } // `agent-run.started`
+  | { workspace: string; agent: string; run: string; outcome: string } // `agent-run.ended`
   | { session: string } // `chat-turn.ended`
 );
 

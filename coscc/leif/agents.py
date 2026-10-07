@@ -127,9 +127,10 @@ class Schedule(TypedDict):
     hours: int
 
 
-class TriggerEvent(TypedDict, total=False):
-    name: str
-    after_hours: int
+# `from` is a keyword: the agent whose done run starts the row (`pack.after_of`).
+TriggerEvent = TypedDict(
+    "TriggerEvent", {"name": str, "after_hours": int, "from": str}, total=False
+)
 
 
 class TriggerFields(TypedDict, total=False):
@@ -499,6 +500,12 @@ class Agents:
                 "hosts (127.0.0.1, localhost or [::1], each with its port)."
             ),
             "events": events,
+            "chain": (
+                'A row runs after another agent with {"event": {"name": "agent-run.ended", '
+                '"from": "<that agent\'s key>"}} and "default": "off": that agent\'s done run '
+                f"starts it, its result in the prompt; at most {pack.CHAIN_MAX} agents after the "
+                "first, never in a circle. agent-run.started starts nothing."
+            ),
             "guards": list(pack.PROCESS_GUARDS),
             "actions": list(pack.ACTIONS),
             "bounds": {
@@ -506,6 +513,7 @@ class Agents:
                 "turns": [pack.TURNS_MIN, pack.TURNS_MAX],
                 "usd": [pack.BUDGET_MIN, pack.BUDGET_MAX],
                 "name_max": pack.NAME_MAX,
+                "names_reserved": sorted(pack.RESERVED_NAMES),
                 "key_max": pack.KEY_MAX,
             },
             "skills": sorted({s for r in rows.values() for s in r.get("skills") or []}),
@@ -927,10 +935,11 @@ class Agents:
         )
 
     def set_agent_field(
-        self, key: object, field: object, value: object = None, cwd: str = ""
+        self, key: object, field: object, value: object = None, cwd: str = "", also: object = None
     ) -> AgentPage:
         """Save one field of one row into the owner's layer (`pack.write`), or put the built-in's
-        back when `value` is `None` (or `""`), then log it and return `agent_page`.
+        back when `value` is `None` (or `""`), then log it and return `agent_page`. `also` holds
+        frontmatter keys saved with it in the same checked write, each logged.
 
         `field` is a frontmatter key (`pack.KEYS`), `body`, or `skill:<name>`, its value the whole
         key as the row file holds it. The row as it would then stand must pass `pack.check` with
@@ -947,7 +956,12 @@ class Agents:
         if not isinstance(key, str) or pack.row(key) is None:
             raise Invalid(f"no such agent: {key} (use one of {', '.join(pack.rows())})")
         field = str(field)
-        if field == "trigger" and not pack.triggered((pack.row(key) or {}).get("builtin")):
+        if also is not None and (not isinstance(also, dict) or set(also) - set(pack.ALSO)):
+            raise Invalid(f"also is {{field: value}}, its fields only {', '.join(pack.ALSO)}")
+        parts: dict[str, Any] = {k: (None if v == "" else v) for k, v in (also or {}).items()}
+        if "trigger" in (field, *parts) and not pack.triggered(
+            (pack.row(key) or {}).get("builtin")
+        ):
             raise Invalid("trigger is read-only: the process or the engine says when it runs")
         if value == "":
             value = None
@@ -960,7 +974,8 @@ class Agents:
                 and value.get("kind") in contracts.KINDS
             ):
                 contracts.check(key, value)
-            old, new = pack.write(key, field, value, self._effects())
+            before = {f: (pack.row(key) or {}).get(f) for f in parts}
+            old, new = pack.write(key, field, value, self._effects(), parts)
         except (ValueError, contracts.ContractError) as e:
             raise Invalid(str(e)) from e
         except OSError as e:
@@ -969,20 +984,23 @@ class Agents:
             ) from e
         journal = self.ws.journal()
         if journal is not None:
+            after = pack.row(key) or {}
+            logged = [(field, old, new), *((f, before[f], after.get(f)) for f in parts)]
             try:
-                journal.append(
-                    {
-                        "kind": SETTING_KIND,
-                        "workspace": "",
-                        "unit": "",
-                        "stage": "",
-                        "agent": key,
-                        "field": field,
-                        "old": old,
-                        "new": new,
-                        "by": OWNER,
-                    }
-                )
+                for f, was, now in logged:
+                    journal.append(
+                        {
+                            "kind": SETTING_KIND,
+                            "workspace": "",
+                            "unit": "",
+                            "stage": "",
+                            "agent": key,
+                            "field": f,
+                            "old": was,
+                            "new": now,
+                            "by": OWNER,
+                        }
+                    )
             except (BadRecord, Busy) as e:
                 raise Invalid(f"the setting was saved but not logged: {e}") from e
         return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd, agent=str(key))

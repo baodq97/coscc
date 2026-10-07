@@ -619,6 +619,7 @@ body:has(.phone-stage) .toast { min-width: 0; width: 340px; }
   .agent-line { grid-template-columns: 20px minmax(0, 1fr) auto; }
   .agent-line .what, .agent-line .cost { grid-column: 2; }
   .agent-line .marks { grid-column: 3; grid-row: 1; }
+  .agent-line .when { white-space: normal; }
   .tool-line { grid-template-columns: minmax(0, 1fr); }
   .agent-spend { display: none; }
 }

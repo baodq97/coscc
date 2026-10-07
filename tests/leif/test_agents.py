@@ -115,6 +115,27 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
         self.assertEqual(pack.owner_fields("spec"), ({}, ""))
         self.assertEqual(self._settings(), [])
 
+    def test_a_chain_saves_its_default_with_it_and_logs_both(self):
+        chain = {"event": {"name": "agent-run.ended", "from": "outcome"}, "manual": True}
+        self.core.agents.set_agent_field("scan", "default", "on")
+        with self.assertRaises(Invalid):
+            self.core.agents.set_agent_field(
+                "scan",
+                "trigger",
+                {**chain, "event": {"name": "agent-run.ended", "from": "scan"}},
+                also={"default": "off"},
+            )
+        self.assertEqual(pack.row("scan")["default"], "on")
+        self.core.agents.set_agent_field("scan", "trigger", chain, also={"default": "off"})
+        self.assertEqual(
+            [(f, new) for _, f, _, new, _ in self._settings()][-2:],
+            [("trigger", chain), ("default", "off")],
+        )
+        for wrong in (["default"], {"output": {"kind": "x"}}, {"input": {"data": []}}):
+            with self.assertRaises(Invalid, msg=wrong):
+                self.core.agents.set_agent_field("scan", "trigger", None, also=wrong)
+        self.assertEqual(pack.after_of(pack.row("scan")), "outcome")
+
     def test_an_empty_value_puts_the_builtin_back(self):
         self.core.agents.set_agent_field("spec", "body", "Another role.")
         self.core.agents.set_agent_field("spec", "body", "")

@@ -45,9 +45,8 @@ WINDOW = timedelta(minutes=55)
 TURNS = 3
 USD = 0.50
 TEXT_MAX = 4_000
-# Characters of the run's transcript a fresh follow-up reads, and of its last words.
+# Characters of the run's transcript a fresh follow-up reads.
 EXCERPT = 6_000
-LAST_WORDS = 2_000
 # Characters of an answer the thread shows; its log holds all of it.
 ANSWER = 20_000
 
@@ -322,7 +321,7 @@ async def state(core: Core, cwd: str, run: str) -> Thread:
                 why=str(s.get("fresh_why") or ""),
                 cache_read_tokens=int((e or {}).get("cache_read_tokens") or 0),
                 cache_creation_tokens=int((e or {}).get("cache_creation_tokens") or 0),
-                answer=last_words(data, str(s.get("run") or ""), ANSWER) if e else "",
+                answer=triggers.last_words(data, str(s.get("run") or ""), ANSWER) if e else "",
             )
         )
     try:
@@ -338,16 +337,6 @@ async def state(core: Core, cwd: str, run: str) -> Thread:
         followups=shown,
         ask=AskState(may=True, resume=bool(plan.session), why=plan.why),
     )
-
-
-def last_words(data: Data, run: str, limit: int = LAST_WORDS) -> str:
-    """The last thing `run`'s agent said, as its events kept it, cut at `limit` characters."""
-    try:
-        events, _ = data.step_events_page(run, None, 40)
-    except Busy:
-        return ""
-    said = [e for e in events if e.get("kind") == "text" and e.get("role") != "user"]
-    return str(said[-1].get("text") or "")[:limit] if said else ""
 
 
 def _numbered(core: Core, start: Mapping[str, Any]) -> str:
@@ -368,22 +357,7 @@ def _summary(core: Core, start: Mapping[str, Any], end: Mapping[str, Any], tree:
     """What a fresh follow-up is told of the run: who, how it ended, what it made, its last
     words, and the end of its transcript."""
     data = Data(core.config.data_dir)
-    run = str(start.get("run") or "")
-    cost = end.get("cost_usd")
-    lines = [
-        f"Agent: {start.get('agent_name') or start.get('agent') or start.get('stage')}.",
-        f"Unit: {start.get('unit')}." if start.get("unit") else "No unit: a run of the workspace.",
-        f"Started {start.get('at')} by {start.get('started_by')}; ended {end.get('outcome')}"
-        + (f", ${float(cost):.2f}" if cost is not None else "")
-        + (f": {end.get('detail')}" if end.get("detail") else "."),
-    ]
-    made = [p for p in proposals.listed(data, str(start.get("workspace"))) if p["run"] == run]
-    if made:
-        lines.append("It proposed:")
-        lines += [f"- #{p['id']} {p['title']}: {p['problem'][:300]}" for p in made]
-    parts = ["# The run you are asked about\n\n" + "\n".join(lines)]
-    if said := last_words(data, run):
-        parts.append(f"# Its last words\n\n{said}")
+    parts = ["# The run you are asked about\n\n" + triggers.result_of(data, start, end)]
     session = str(end.get("session_id") or "")
     if session:
         try:
