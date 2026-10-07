@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AgentPage, CatalogTool, ProposalRow, Started, StepEvent } from "../api.gen";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, useResource } from "../lib/api";
 import { afterAgentSaved, agentNameProblem, answeredTask, draftOf, draftParts, draftTools, GAP_PART, keepDraft, keptDraft, runsByItself, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type DraftGap, type Drafted, type NewAgentField } from "../lib/build";
 import { Rune } from "../lib/icons";
 import { refreshPacks } from "../lib/pack";
@@ -290,6 +290,10 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
  */
 export function Gaps({ cwd, run, gaps }: { cwd: string; run: string; gaps: DraftGap[] }) {
   const [made, setMade] = useState<Record<number, ProposalRow | string>>({});
+  const ws = useResource("/api/workspaces").data?.workspaces.find((w) => w.path === cwd)?.name ?? "";
+  // A gap proposed on an earlier visit shows as proposed: its proposal rests on this run and names the gap.
+  const before = useResource("/api/proposals", { cwd }).data?.proposals.filter((p) => p.run === run) ?? [];
+  const earlier = (g: DraftGap) => before.find((p) => p.problem.includes(`lacks a ${g.part}: ${g.need.split(/\s+/).join(" ")}.`));
   const propose = async (i: number) => {
     try {
       const p = await api.post<ProposalRow>("/api/proposals", { cwd, run, gap: i });
@@ -302,7 +306,7 @@ export function Gaps({ cwd, run, gaps }: { cwd: string; run: string; gaps: Draft
     <div className="gaps" id="draft-gaps">
       <b>What the catalog lacks for this task</b>
       {gaps.map((g, i) => {
-        const m = made[i];
+        const m = made[i] ?? earlier(g);
         return (
           <div key={i} className="gap-row">
             <Chip square tone="amber">{GAP_PART[g.part] ?? g.part}</Chip>
@@ -313,7 +317,7 @@ export function Gaps({ cwd, run, gaps }: { cwd: string; run: string; gaps: Draft
             </div>
             {m && typeof m !== "string" ? (
               <span className="nowrap" style={{ fontSize: 12.5 }}>
-                <Link to={`/up-next#proposal-${m.id}`}>Proposed #{m.id}</Link>
+                <Link to={`/up-next?ws=${encodeURIComponent(ws)}#proposal-${m.id}`}>Proposed #{m.id}, on Up next</Link>
               </span>
             ) : (
               <Button size="sm" onClick={() => void propose(i)}>Propose this capability</Button>

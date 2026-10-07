@@ -161,6 +161,8 @@ class AGapBecomesAProposal(unittest.TestCase):
         self.assertEqual((item["type"], item["sources"]), ("feat", ["r9"]))
         self.assertEqual(item["slug"], "trigger-a-time-of-day-as-every-morning-at-7")
         self.assertIn("every 24 h", item["problem"])
+        # The page tells a gap proposed before by these words (`NewAgent.tsx` `Gaps`).
+        self.assertIn("lacks a trigger: a time of day, as every morning at 7.", item["problem"])
         self.assertTrue(proposals.SLUG.match(item["slug"]))
 
     def test_a_long_need_keeps_a_slug_and_title_within_bounds(self):

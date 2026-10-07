@@ -248,7 +248,7 @@ def of_gap(why: str, gap: Mapping[str, Any], run: str) -> Item:
     part = str(gap.get("part") or "")
     if not need or not part:
         raise Invalid("a gap names its part and what is needed")
-    title = f"Agents can have a {part}: {need}"
+    title = f"New {part} for agents: {need}"
     words = re.sub(r"[^a-z0-9]+", "-", f"{part} {need}".lower()).strip("-")
     slug = words[:SLUG_MAX].rsplit("-", 1)[0] if len(words) > SLUG_MAX else words
     problem = (

@@ -74,7 +74,7 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
             )}
           </div>
         )}
-        {d?.brief && <Brief text={d.brief} />}
+        {d?.brief && <Brief text={d.origin && d.brief.startsWith(d.origin.title) ? d.brief.slice(d.origin.title.length).trim() : d.brief} />}
         {placed.paused && <PausedBanner unit={placed} paused={placed.paused} onDone={() => detail.reload()} />}
         {open.length > 0 && (
           <div className="callout amber" style={{ marginTop: 18 }}>
