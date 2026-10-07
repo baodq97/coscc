@@ -4,7 +4,7 @@ import { match } from "./router";
 import { findUnit, needsYou, failedLink, proposalLink, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
 import { matches } from "./stream";
-import { fill, readLines } from "./api";
+import { api, fill, readLines } from "./api";
 import { FEATURE_UIS } from "./feature";
 import { slugOf } from "../screens/NewWork";
 import { inUnit, merged, runFacts, toolLines, toolSummary } from "../screens/RunLog";
@@ -837,5 +837,18 @@ describe("failureWords", () => {
   });
   it("leaves a detail with no exit code as it is", () => {
     expect(failureWords("the ceiling was reached")).toEqual({ plain: "the ceiling was reached", raw: "" });
+  });
+});
+
+describe("api.get", () => {
+  it("shares one request between two reads of the same address in flight", async () => {
+    const fetched = vi.fn(async () => new Response(JSON.stringify({ units: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetched);
+    const [a, b] = await Promise.all([api.get("/api/units", { cwd: "/w" }), api.get("/api/units", { cwd: "/w" })]);
+    expect(fetched).toHaveBeenCalledTimes(1);
+    expect(a).toBe(b);
+    await api.get("/api/units", { cwd: "/w" });
+    expect(fetched).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
   });
 });
