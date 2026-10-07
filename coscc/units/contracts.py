@@ -2,8 +2,7 @@
 generated from it.
 
 A declaration is `{kind, version, fields}` (and `purpose`, what `submit` says it is for): an agent
-row's `output` (`coscc/agent/pack.py`) of a kind `submit` takes, a feature session's
-`kernel.Session.output` (`add`). Field
+row's `output` (`coscc/agent/pack.py`) of a kind `submit` takes. Field
 types: `text`, `number` (an integer), `{"enum": [...]}`, `{"list": <type>}`, an object
 `{name: type}`, and any other string as a pattern, anchored. A name ending in `?` may be left
 out. `READS` names every field the engine decides on, with the reader and the type it expects:
@@ -41,8 +40,9 @@ BranchType = Literal[
 SOURCE = "[^\\s:]+(:[0-9]+-[0-9]+)?"
 
 # `artifact`: a stage's judgement of its file, one `outputs` row; `review`: a round, kept in
-# its own rows; `session`: the object handed to the code that opened the session.
-Kind = Literal["artifact", "review", "session"]
+# its own rows; `session`: the object handed to the code that opened the session; `proposal`:
+# work proposed for the Backlog (`coscc/units/proposals.py`).
+Kind = Literal["artifact", "review", "session", "proposal"]
 KINDS: tuple[Kind, ...] = get_args(Kind)
 
 # The field the engine adds to an artifact's object: who sent it.
@@ -135,6 +135,20 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
                 }
             },
         ),
+    },
+    "proposal": {
+        "proposals": (
+            "proposals.kept",
+            {
+                "list": {
+                    "type": "text",
+                    "slug": "text",
+                    "title": "text",
+                    "problem": "text",
+                    "sources": {"list": "text"},
+                }
+            },
+        )
     },
     "integrate": {
         "needs_person": ("outcome_of_session", {"list": {"commit": "text", "why": "text"}})
@@ -339,27 +353,44 @@ def _check_process_reads(declared: Mapping[str, Output]) -> None:
 
 class Input(TypedDict):
     """What a stage is handed, and nothing else: earlier artifacts whole (`name?` when it may be
-    absent), earlier stages' records, the unit's answers and open findings, the app's data."""
+    absent), earlier stages' records, the unit's answers and open findings, the app's data. A
+    triggered row may say `skip_when_empty` (no interventions, no session: the run is `skipped`
+    at $0) and `given` (a person's words, from a press or Leif, handed whole)."""
 
     artifacts: list[str]
     outputs: list[str]
     answers: bool
     findings: bool
     data: list[str]
+    skip_when_empty: NotRequired[bool]
+    given: NotRequired[bool]
 
 
 # The app's data a stage may declare: the shared idea, the sibling checkouts, the units this one
 # names, the plan's files as they stand, the files `main` changed since the plan, the last
-# integration and the screenshots taken again.
-DATA = ("idea", "siblings", "mentions", "plan-map", "drift", "integration", "screens")
+# integration and the screenshots taken again; and, for a triggered row
+# (`coscc/runner/triggers.py`), what people stepped in for since its last run and the proposals
+# already made.
+DATA = (
+    "idea",
+    "siblings",
+    "mentions",
+    "plan-map",
+    "drift",
+    "integration",
+    "screens",
+    "interventions",
+    "proposals",
+)
+_OPTIONAL_INPUT = ("skip_when_empty", "given")
 
 
 def check_input(agent: str, raw: object, agents: Iterable[str]) -> Input:
     """`raw` as `agent`'s input declaration, or a `ContractError` naming what is wrong. An
     artifact names a state of the pack's processes, an output an agent of `agents`, either with
     `?` when it may be missing."""
-    keys = set(Input.__annotations__)
-    if not isinstance(raw, dict) or set(raw) != keys:
+    keys = set(Input.__annotations__) - set(_OPTIONAL_INPUT)
+    if not isinstance(raw, dict) or not keys <= set(raw) <= keys | set(_OPTIONAL_INPUT):
         raise _bad(f"{agent}.input", f"an input is {{{', '.join(sorted(keys))}}}")
     for part, known in (("artifacts", set(pack.state_names())), ("outputs", set(agents))):
         names = raw[part]
@@ -367,7 +398,7 @@ def check_input(agent: str, raw: object, agents: Iterable[str]) -> Input:
             isinstance(n, str) and n.rstrip("?") in known for n in names
         ):
             raise _bad(f"{agent}.input.{part}", f"{names!r} names none of {sorted(known)}")
-    for part in ("answers", "findings"):
+    for part in ("answers", "findings", *(k for k in _OPTIONAL_INPUT if k in raw)):
         if not isinstance(raw[part], bool):
             raise _bad(f"{agent}.input.{part}", "true or false")
     if not isinstance(raw["data"], list) or not set(raw["data"]) <= set(DATA):
@@ -378,6 +409,7 @@ def check_input(agent: str, raw: object, agents: Iterable[str]) -> Input:
         answers=raw["answers"],
         findings=raw["findings"],
         data=raw["data"],
+        **{k: raw[k] for k in _OPTIONAL_INPUT if k in raw},
     )
 
 
@@ -434,22 +466,9 @@ def missing(agent: str, directory: Path, unit_meta: Mapping[str, Any] | None) ->
     return out + [f"{n}'s record" for n in outputs if record(unit_meta, n) is None]
 
 
-# A feature's sessions, added when the app is built.
-ADDED: dict[str, Output] = {}
-
-
 def declarations() -> dict[str, Output]:
-    """Every declaration this process knows: the rows' and the features'."""
-    return {**_read()[0], **ADDED}
-
-
-def add(kind: str, output: object) -> None:
-    """A feature's session (`kernel.Session`); adding the same one again changes nothing, and
-    taking a name another declaration holds is a `ValueError`."""
-    checked = check(kind, output)
-    if declarations().get(kind, checked) != checked:
-        raise ValueError(f"the output {kind!r} is taken")
-    ADDED[kind] = checked
+    """Every row's declaration."""
+    return _read()[0]
 
 
 def output(agent: str) -> Output:

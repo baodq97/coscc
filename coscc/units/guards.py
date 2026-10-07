@@ -84,6 +84,10 @@ REASONS = (
     "nothing-to-integrate",
     # A feature refused the step; the words name the feature, and its reason follows.
     "feature-refused",
+    # A triggered row's run refused before spend (`coscc/runner/triggers.py`): no such trigger on
+    # the row, or Leif asked for a row it may not start.
+    "not-triggered",
+    "not-leif",
 )
 
 # Who may skip a stage. `agent` and `code` never may.

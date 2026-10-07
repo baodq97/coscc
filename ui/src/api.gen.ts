@@ -10,7 +10,7 @@ export type AgentPage = {
 
 export type AgentRow = {
   "key": string;
-  "group": "stage" | "engine" | "helper" | "feature";
+  "group": "stage" | "engine" | "helper" | "triggered";
   "row": RowFields;
   "builtin": RowFields;
   "edited": string[];
@@ -25,6 +25,7 @@ export type AgentRow = {
   "cost_30d": number;
   "chip": string;
   "groups": RunGroup[];
+  "on": boolean | null;
 };
 
 export type AgentRun = {
@@ -377,29 +378,50 @@ export type ProcessShown = {
 
 export type Proposal = {
   "id": number;
-  "run": number;
+  "agent": string;
+  "unit": string;
+  "run": string;
   "type": string;
   "slug": string;
   "title": string;
   "problem": string;
   "sources": Source[];
   "state": string;
-  "unit": string;
+  "made": string;
   "by": string;
   "at": string;
   "decided": string;
   "reason": string;
 };
 
-export type Proposals = {
-  "on": boolean;
-  "proposals": Proposal[];
-  "runs": Run[];
-  "scanning": boolean;
-  "schedule": number;
-  "note": string;
-  "consequence": string;
-  "warning": string;
+export type ProposalRow = {
+  "id": number;
+  "agent": string;
+  "unit": string;
+  "run": string;
+  "type": string;
+  "slug": string;
+  "title": string;
+  "problem": string;
+  "sources": Source[];
+  "state": string;
+  "made": string;
+  "by": string;
+  "at": string;
+  "decided": string;
+  "reason": string;
+  "agent_name": string;
+};
+
+export type ProposalsView = {
+  "proposals": ProposalRow[];
+  "agents": ProposingAgent[];
+};
+
+export type ProposingAgent = {
+  "key": string;
+  "name": string;
+  "on": boolean | null;
 };
 
 export type PullRequest = {
@@ -475,24 +497,12 @@ export type RowFields = {
   "helpers"?: string[];
   "input"?: Record<string, unknown>;
   "output"?: Record<string, unknown>;
-  "trigger"?: Record<string, string>;
+  "trigger"?: TriggerFields;
+  "default"?: string;
   "ceilings"?: Record<string, unknown>;
   "warning"?: string;
   "consequence"?: string;
   "body"?: string;
-};
-
-export type Run = {
-  "id": number;
-  "at": string;
-  "by": string;
-  "outcome": string;
-  "cost_usd": number;
-  "taken": number;
-  "cut": number;
-  "rejected": string[];
-  "stopped": boolean;
-  "detail": string;
 };
 
 export type RunGroup = {
@@ -530,6 +540,10 @@ export type Running = {
 export type Saved = {
   "saved": string;
   "short": boolean;
+};
+
+export type Schedule = {
+  "hours": number;
 };
 
 export type Secrets = {
@@ -581,8 +595,6 @@ export type Shown = {
   "pilot": boolean;
   "sentence": string;
   "locked": boolean;
-  "schedule"?: number | null;
-  "hours"?: number[];
   "summary"?: string;
 };
 
@@ -606,6 +618,11 @@ export type StageView = {
   "status": string;
   "optional": boolean;
   "last_run": LastRun | null;
+};
+
+export type Started = {
+  "agent": string;
+  "started": boolean;
 };
 
 export type State = {
@@ -666,6 +683,20 @@ export type Target = {
   "value": number | null;
   "target": number;
   "over": string[];
+};
+
+export type TriggerEvent = {
+  "name"?: string;
+  "after_hours"?: number;
+};
+
+export type TriggerFields = {
+  "state"?: string;
+  "engine"?: string;
+  "event"?: TriggerEvent;
+  "schedule"?: Schedule;
+  "manual"?: boolean;
+  "leif"?: boolean;
 };
 
 export type UnitRun = {
@@ -773,9 +804,9 @@ export type Get = {
   "/api/features/shown": Shown[];
   "/api/insights": Insights;
   "/api/packs": PackShown[];
+  "/api/proposals": ProposalsView;
   "/api/release": ReleaseView | null;
   "/api/runs/{run}": EventsPage;
-  "/api/scan/proposals": Proposals;
   "/api/settings/autopilot": AutopilotSettings;
   "/api/units": Cards;
   "/api/units/next": NextStep;

@@ -84,7 +84,9 @@ class Input:
     the `start` record and of the owner a `suspend` row keeps. `branch` is the branch its grant may
     push and `lease` the head each push must carry (Gebo's), "" for none; `channel` the `submit` it hands its object
     back through (`None`: its output is its reply). `session_id` continues a session (chat);
-    `keep` keeps its client for the next turn (chat). `resume` is a `suspend` row to go on from."""
+    `keep` keeps its client for the next turn (chat). `resume` is a `suspend` row to go on from.
+    `servers` are the engine's own MCP servers beside `submit`'s, and `mcp` the full names of
+    their tools the grant holds (Leif's `run_agent`)."""
 
     cwd: str
     prompt: str
@@ -101,6 +103,8 @@ class Input:
     session_id: str | None = None
     keep: bool = False
     resume: Mapping[str, Any] | None = None
+    servers: Mapping[str, Any] = field(default_factory=dict)
+    mcp: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -412,7 +416,14 @@ async def run(
     stage = given.stage or agent.key
     recorder = recorder_for(ctx, given.workspace, given.unit, stage)
     out = Run("failed", run=recorder.run if recorder is not None else "")
-    grant = issue(agent.row, ctx.sessions, cwd=given.cwd, branch=given.branch, lease=given.lease)
+    grant = issue(
+        agent.row,
+        ctx.sessions,
+        cwd=given.cwd,
+        branch=given.branch,
+        lease=given.lease,
+        mcp=given.mcp,
+    )
     text, turns, budget, used_up, start_at = _begin(ctx, agent, given, stage, out, grant)
     owner = _owner(agent, given, stage, start_at, out.run)
     denials = Denials()
@@ -528,7 +539,13 @@ def _stream(
         workspace=given.workspace_dir,
         owner=owner,
         **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
-        **({"mcp_servers": {submit_mod.SERVER: channel.server()}} if channel is not None else {}),
+        **(
+            {"mcp_servers": {**given.servers, submit_mod.SERVER: channel.server()}}
+            if channel is not None
+            else {"mcp_servers": dict(given.servers)}
+            if given.servers
+            else {}
+        ),
         # A kept client is the session layer's (chat); any other is closed when it ends.
         **({"recorder": recorder} if given.keep else {"step": StepHandle(recorder=recorder)}),
     )

@@ -78,6 +78,8 @@ TASK_TOOL = "Task"
 SEND_MESSAGE = "SendMessage"
 # The kernel's own tool listing the helpers of the run, on `submit`'s server.
 PEERS_TOOL = "mcp__cos__peers"
+# The kernel's own tool Leif's chat starts a triggered row with (`coscc/runner/triggers.py`).
+RUN_AGENT_TOOL = "mcp__cos__run_agent"
 # Lists every Claude session on the machine, not only this run's helpers.
 LIST_AGENTS = "ListAgents"
 # What a helper calls to hand its result back to the leading session.
@@ -94,27 +96,11 @@ _GIT_CONFIG_ROAD = re.compile(
 )
 
 # The `output.kind`s whose run hands back an object through `submit`.
-SUBMIT_KINDS = ("artifact", "review", "session")
+SUBMIT_KINDS = ("artifact", "review", "session", "proposal")
 # The fewest turns such a step gets: a call to `submit` ends a turn, and a refused object is
 # submitted again after one more turn, so four holds a call, a refusal, a second call and the
 # reply. Chosen, not measured.
 SUBMIT_TURNS = 4
-# A feature's session rows (`kernel.Session.row`), added when the app is built: no pack row yet.
-ADDED: dict[str, Row] = {}
-# The sessions whose own `max_turns` holds below `SUBMIT_TURNS`, because one more turn could
-# pass their budget: a refused object is not submitted again.
-OWN_TURNS: set[str] = set()
-
-
-def add_session(kind: str, row: Row, own_turns: bool) -> None:
-    """A feature's session (`kernel.Session`), added when the app is built; adding the same
-    one again changes nothing, and taking a name another row holds is a `ValueError`."""
-    row = replace(row, submits=True)
-    if pack.row(kind) is not None or ADDED.get(kind, row) != row:
-        raise ValueError(f"the row {kind!r} is taken")
-    ADDED[kind] = row
-    if own_turns:
-        OWN_TURNS.add(kind)
 
 
 def part_of(found: Mapping[str, Any], top: str, label: str | None) -> dict[str, Any]:
@@ -131,8 +117,6 @@ def _obj(value: Any) -> dict[str, Any]:
 
 
 def _row(key: str, label: str | None) -> Row:
-    if key in ADDED:
-        return ADDED[key]
     found = pack.row(key)
     if found is None:
         return Row()
@@ -153,15 +137,15 @@ def _row(key: str, label: str | None) -> Row:
 
 def row_for(key: str) -> Row:
     """The row of one agent. A key no row names is locked, not open. A row that submits gets
-    at least `SUBMIT_TURNS` turns, unless it is one of `OWN_TURNS`."""
+    at least `SUBMIT_TURNS` turns."""
     row = _row(key, None)
     return replace(row, max_turns=turns_floor(key, row.max_turns)) if row.submits else row
 
 
 def turns_floor(stage: str, turns: int) -> int:
-    """`turns`, raised to `SUBMIT_TURNS` for a row that submits, unless it is one of `OWN_TURNS`.
-    A person's ceiling gets the same floor."""
-    if stage in OWN_TURNS or not _row(stage, None).submits:
+    """`turns`, raised to `SUBMIT_TURNS` for a row that submits. A person's ceiling gets the same
+    floor."""
+    if not _row(stage, None).submits:
         return turns
     return max(turns, SUBMIT_TURNS)
 
@@ -1204,7 +1188,9 @@ class Grant:
     def __post_init__(self) -> None:
         for name in self.mcp:
             m = MCP_NAME.fullmatch(name)
-            if m is None or (m.group(1) == "cos" and name not in (SUBMIT_TOOL, PEERS_TOOL)):
+            if m is None or (
+                m.group(1) == "cos" and name not in (SUBMIT_TOOL, PEERS_TOOL, RUN_AGENT_TOOL)
+            ):
                 raise ValueError(f"not an MCP tool name a grant may hold: {name!r}")
 
 

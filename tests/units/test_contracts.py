@@ -91,8 +91,8 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
                 )
                 cases += 1
         # judgement and questions for six artifacts, three review fields, one field each for
-        # integrate and estimate; then the nine read by name.
-        self.assertEqual(cases, 6 * 2 + 3 + 2 + 9)
+        # integrate, estimate and the scan's proposals; then the nine read by name.
+        self.assertEqual(cases, 6 * 2 + 3 + 3 + 9)
 
     def test_the_intents_type_names_branch_for(self):
         raw = _shipped()
@@ -186,7 +186,7 @@ class AWrongTypeRefusesTheLoad(unittest.TestCase):
         raw["agents"]["plan"]["output"]["version"] = 0
         self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.version: "))
         with self.assertRaises(ContractError) as e:
-            contracts.check("plan", {"kind": "proposal", "version": 1, "fields": {}})
+            contracts.check("plan", {"kind": "helper", "version": 1, "fields": {}})
         self.assertTrue(str(e.exception).startswith("contract-bad-type: plan.kind: "))
 
     def test_an_artifact_does_not_declare_who_sent_it(self):
@@ -243,6 +243,7 @@ PINNED = {
     "review": (1, "c88ced722098"),
     "integrate": (1, "9e29819d42c2"),
     "estimate": (1, "cd5fc053a8e3"),
+    "scan": (1, "b4482adace0e"),
 }
 
 
@@ -364,21 +365,6 @@ class TheSchemasAreGenerated(unittest.TestCase):
         )
         self.assertEqual(contracts.reads("plan", {**obj, "verdicts": [1]})["judgement"], "ready")
         self.assertNotIn("verdicts", contracts.reads("plan", obj))
-
-    def test_a_feature_session_is_added_once_and_its_name_is_not_taken_twice(self):
-        out = {"kind": "session", "version": 1, "fields": {"items": {"list": "text"}}}
-        try:
-            contracts.add("planted-contract", out)
-            contracts.add("planted-contract", out)
-            self.assertEqual(contracts.schema("planted-contract")["required"], ["items"])
-            with self.assertRaises(ValueError):
-                contracts.add("planted-contract", {**out, "version": 2})
-            with self.assertRaises(ContractError):
-                contracts.add(
-                    "planted-bad", {"kind": "session", "version": 1, "fields": {"a": "str"}}
-                )
-        finally:
-            contracts.ADDED.pop("planted-contract", None)
 
 
 def _schema_literals(source: str) -> list[int]:

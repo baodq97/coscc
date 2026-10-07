@@ -1,13 +1,14 @@
-// The Proposals panel of Up next: what the scan found in the run log, to accept as a unit or
-// dismiss with a reason, and the button that scans now.
+// Up next's Proposals: work the agents that propose found worth doing, each naming its agent, to
+// accept as a unit or dismiss with a reason. Who proposes, and whether it runs on its own here,
+// is one line above; its page runs it now or turns it on.
 
 import { useEffect, useState } from "react";
-import type { Proposal, Run } from "@studio/api.gen";
-import { api, useResource } from "@studio/lib/api";
-import { ago } from "@studio/lib/format";
-import type { FeatureUI } from "@studio/lib/feature";
-import type { Workspace } from "@studio/lib/model";
-import { Button, Chip, ErrorState } from "@studio/components/ui";
+import type { ProposalRow } from "../api.gen";
+import { api, useResource } from "../lib/api";
+import { ago } from "../lib/format";
+import type { Workspace } from "../lib/model";
+import { Link } from "../lib/router";
+import { Button, Chip, ErrorState } from "./ui";
 
 const TONE = { pending: "amber", accepted: "green", dismissed: "plain" } as const;
 const KIND: Record<string, string> = {
@@ -21,18 +22,9 @@ const KIND: Record<string, string> = {
 const FILTERS = ["pending", "accepted", "dismissed", "all"] as const;
 type Filter = (typeof FILTERS)[number];
 
-function lastScan(runs: Run[]): string {
-  const r = runs[0];
-  if (!r) return "No scan yet.";
-  const cost = `$${r.cost_usd.toFixed(2)}`;
-  if (r.outcome === "skipped") return `Last scan ${ago(r.at)}: nothing new, $0.00.`;
-  if (r.outcome === "failed") return `Last scan ${ago(r.at)} failed, ${cost}.`;
-  return `Last scan ${ago(r.at)}: ${r.taken} interventions read, ${cost}.`;
-}
-
-function Proposals({ workspace }: { workspace: Workspace }) {
+export function Proposals({ workspace }: { workspace: Workspace }) {
   const cwd = workspace.path;
-  const got = useResource("/api/scan/proposals", { cwd }, { on: [""] });
+  const got = useResource("/api/proposals", { cwd }, { on: [""] });
   const linked = location.hash.match(/^#proposal-(\d+)$/);
   const [filter, setFilter] = useState<Filter>(linked ? "all" : "pending");
   const [open, setOpen] = useState<number | null>(linked ? Number(linked[1]) : null);
@@ -57,25 +49,22 @@ function Proposals({ workspace }: { workspace: Workspace }) {
 
   if (got.state === "error" && !got.data) return <ErrorState error={got.error} onRetry={got.reload} />;
   const v = got.data;
-  if (!v || !v.on) return null;
+  if (!v || (!v.proposals.length && !v.agents.length)) return null;
   const count = (f: Filter) => v.proposals.filter((p) => f === "all" || p.state === f).length;
   const shown = v.proposals.filter((p) => filter === "all" || p.state === filter);
-  const scanning = busy || v.scanning;
 
   return (
-    <section id="scan-proposals">
+    <section id="proposals">
       <div className="sec-h">
-        Proposals <span className="faint">{v.proposals.length || ""}</span>
-        <span className="r">
-          <Button size="sm" icon="refresh" disabled={scanning} title={scanning ? "A scan is running" : v.consequence} onClick={() => act(() => api.post(`/api/scan?cwd=${encodeURIComponent(cwd)}`, {}))}>
-            {scanning ? "Scanning" : "Scan now"}
-          </Button>
-        </span>
+        Proposals <span className="faint">{count("pending") ? `${count("pending")} to decide` : ""}</span>
       </div>
-      <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
-        {v.consequence} {lastScan(v.runs)}
+      <div className="row muted" style={{ gap: 12, fontSize: 12.5, marginBottom: 10, flexWrap: "wrap" }}>
+        {v.agents.map((a) => (
+          <Link key={a.key} to={`/agents/${a.key}/trigger`}>
+            {a.name}: {a.on === null ? "on request" : a.on ? "runs on its own here" : "off here, runs when you press Run now"}
+          </Link>
+        ))}
       </div>
-      {v.note && <div style={{ color: "var(--amber)", fontSize: 12.5, marginBottom: 10 }}>{v.note}</div>}
       {error && <div style={{ color: "var(--red)", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
       <div className="seg" role="group" aria-label="Filter proposals by state" style={{ marginBottom: 10 }}>
         {FILTERS.map((f) => (
@@ -86,26 +75,26 @@ function Proposals({ workspace }: { workspace: Workspace }) {
       </div>
       <div className="card">
         {shown.map((p) => (
-          <Row key={p.id} p={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} busy={busy} act={(run) => act(run)} cwd={cwd} />
+          <Row key={p.id} p={p} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} busy={busy} act={act} cwd={cwd} />
         ))}
-        {!shown.length && <div className="card-b faint">{v.proposals.length ? "No proposal in this state." : "No proposal yet: a scan makes them from the run log."}</div>}
+        {!shown.length && <div className="card-b faint">{v.proposals.length ? "No proposal in this state." : "No proposal yet: an agent that proposes adds them here."}</div>}
       </div>
     </section>
   );
 }
 
-function Row({ p, open, onToggle, busy, act, cwd }: { p: Proposal; open: boolean; onToggle: () => void; busy: boolean; act: (run: () => Promise<unknown>) => void; cwd: string }) {
+function Row({ p, open, onToggle, busy, act, cwd }: { p: ProposalRow; open: boolean; onToggle: () => void; busy: boolean; act: (run: () => Promise<unknown>) => void; cwd: string }) {
   const [slug, setSlug] = useState(p.slug);
   const [why, setWhy] = useState("");
-  const decide = (body: Record<string, string>) => act(() => api.post(`/api/scan/proposals/${p.id}`, { cwd, ...body }));
+  const decide = (body: Record<string, string>) => act(() => api.post(`/api/proposals/${p.id}`, { cwd, ...body }));
   return (
     <div id={`proposal-${p.id}`} style={{ borderBottom: "1px solid var(--line)" }}>
       <div className="lrow" style={{ cursor: "pointer", height: 44 }} onClick={onToggle} role="button" aria-expanded={open}>
         <Chip tone={TONE[p.state as keyof typeof TONE] ?? "plain"}>{p.state}</Chip>
         <span className="t">{p.title}</span>
         <span className="meta">
-          <span>{p.type}</span>
-          <span>{p.sources.length} {p.sources.length === 1 ? "source" : "sources"}</span>
+          <span>{p.agent_name}</span>
+          <span className="wide">{p.type}</span>
           <span>{ago(p.at)}</span>
         </span>
       </div>
@@ -115,7 +104,7 @@ function Row({ p, open, onToggle, busy, act, cwd }: { p: Proposal; open: boolean
           <table className="t">
             <thead>
               <tr>
-                <th>Kind</th>
+                <th>Source</th>
                 <th>Unit</th>
                 <th>When</th>
               </tr>
@@ -123,9 +112,9 @@ function Row({ p, open, onToggle, busy, act, cwd }: { p: Proposal; open: boolean
             <tbody>
               {p.sources.map((s) => (
                 <tr key={s.id}>
-                  <td>{KIND[s.kind] ?? s.kind}</td>
+                  <td>{KIND[s.kind] ?? (s.kind || s.id)}</td>
                   <td>{s.unit || "—"}</td>
-                  <td>{ago(s.at)}</td>
+                  <td>{s.at ? ago(s.at) : "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -147,12 +136,10 @@ function Row({ p, open, onToggle, busy, act, cwd }: { p: Proposal; open: boolean
               {!why.trim() && <div className="faint" style={{ fontSize: 12 }}>Dismiss needs a reason.</div>}
             </div>
           )}
-          {p.state === "accepted" && <div className="muted" style={{ marginTop: 10 }}>Accepted as {p.unit}, {ago(p.decided)}.</div>}
+          {p.state === "accepted" && <div className="muted" style={{ marginTop: 10 }}>Accepted as {p.made}, {ago(p.decided)}.</div>}
           {p.state === "dismissed" && <div className="muted" style={{ marginTop: 10 }}>Dismissed {ago(p.decided)}: {p.reason}</div>}
         </div>
       )}
     </div>
   );
 }
-
-export const ui: FeatureUI = { backlog: Proposals };

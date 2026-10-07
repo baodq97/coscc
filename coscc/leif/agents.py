@@ -20,10 +20,11 @@ from coscc.config import Config
 from coscc.kernel import OWNER, Hooks, Invalid
 from coscc.leif import decide
 from coscc.runner import run as run_mod
-from coscc.store.db import Busy, Unusable
+from coscc.runner import triggers
+from coscc.store.db import Busy, Data, Unusable
 from coscc.store.journal import BadRecord, Journal
 from coscc.units import board as board_reader
-from coscc.units import contracts, states
+from coscc.units import contracts, proposals, states
 from coscc.units.contracts import Plan
 from coscc.units.workspaces import Workspaces
 
@@ -98,6 +99,26 @@ class SkillText(TypedDict):
     edited: bool
 
 
+class Schedule(TypedDict):
+    hours: int
+
+
+class TriggerEvent(TypedDict, total=False):
+    name: str
+    after_hours: int
+
+
+class TriggerFields(TypedDict, total=False):
+    """A row's `trigger` (`pack.TRIGGERS`), or `state` for a row a process state runs."""
+
+    state: str
+    engine: str
+    event: TriggerEvent
+    schedule: Schedule
+    manual: bool
+    leif: bool
+
+
 class RowFields(TypedDict, total=False):
     """A row's frontmatter and body (`pack.KEYS`, `pack.BODY`); a value of the wrong type (a
     hand-edited file) is left out, and the row's `problems` say why."""
@@ -112,20 +133,21 @@ class RowFields(TypedDict, total=False):
     helpers: list[str]
     input: dict[str, Any]
     output: dict[str, Any]
-    trigger: dict[str, str]
+    trigger: TriggerFields
+    default: str
     ceilings: dict[str, Any]
     warning: str
     consequence: str
     body: str
 
 
-Group = Literal["stage", "engine", "helper", "feature"]
+Group = Literal["stage", "engine", "helper", "triggered"]
 
 
 class AgentRow(TypedDict):
     key: str
     # Opened on a unit's state, by the engine (Gebo, the estimate, Leif), as another's helper, or by
-    # a feature (its own session, shown and not edited here).
+    # its own trigger (an event, a schedule, a press, Leif: `coscc/runner/triggers.py`).
     group: Group
     row: RowFields
     builtin: RowFields
@@ -146,6 +168,27 @@ class AgentRow(TypedDict):
     chip: str
     # The last `WINDOW_DAYS`, newest first.
     groups: list[RunGroup]
+    # Whether its event or schedule runs it in the workspace asked about; `None` for a row with
+    # neither, or no workspace.
+    on: bool | None
+
+
+class ProposingAgent(TypedDict):
+    key: str
+    name: str
+    on: bool | None
+
+
+class ProposalRow(proposals.Proposal):
+    # The name of the agent that proposed it.
+    agent_name: str
+
+
+class ProposalsView(TypedDict):
+    """Up next's Proposals: every agent's, newest first, and the agents that propose."""
+
+    proposals: list[ProposalRow]
+    agents: list[ProposingAgent]
 
 
 class AgentPage(TypedDict):
@@ -238,7 +281,9 @@ def _group_of(found: dict[str, Any]) -> Group:
     base = found.get("builtin") or found
     if (base.get("output") or {}).get("kind") == "helper":
         return "helper"
-    return "stage" if pack.states_of(str(found.get("key") or "")) else "engine"
+    if pack.states_of(str(found.get("key") or "")):
+        return "stage"
+    return "triggered" if pack.triggered(base) else "engine"
 
 
 def _skills(found: dict[str, Any]) -> list[SkillText]:
@@ -336,8 +381,7 @@ class Agents:
     ) -> AgentPage:
         """Everything the Agents page shows, in one call: the run log is read once.
 
-        `rows`, one per agent in the pack's order, then the features' own sessions: its row as it
-        stands and as built in, the keys the owner set, its problems, its skills' texts, its hash,
+        `rows`, one per agent in the pack's order: its row as it stands and as built in, the keys the owner set, its problems, its skills' texts, its hash,
         what a run gets (resolved), the last run, the cost and count of the last `WINDOW_DAYS`, the
         chip and the runs of that window grouped by definition. `catalog`: every tool a row may
         name, its feature on or off for `cwd`. `problems`: every row or record that cannot be used.
@@ -348,6 +392,7 @@ class Agents:
         since = (now - timedelta(days=WINDOW_DAYS)).isoformat(timespec="seconds")
         ends, settings, bad_runs = self._records(workspace)
         effects = self._effects()
+        data = Data(self.config.data_dir)
         rows: list[AgentRow] = []
         for key, found in pack.rows().items():
             config = models.config_row(key, self.config.model)
@@ -358,14 +403,7 @@ class Agents:
                 self._row(key, found, _group_of(found), config, novel, ends, settings, since)
             )
             rows[-1]["problems"] = pack.problems(key, effects)
-        for key, added in policy.ADDED.items():
-            found = {
-                "name": key,
-                "tools": {t: "allow" for t in added.tools},
-                "ceilings": {"turns": added.max_turns, "usd": added.max_budget_usd},
-            }
-            config = models.config_row(key, self.config.model)
-            rows.append(self._row(key, found, "feature", config, None, ends, settings, since))
+            rows[-1]["on"] = self._on(data, key, workspace)
         table = agents.table()
         return AgentPage(
             rows=rows,
@@ -393,7 +431,6 @@ class Agents:
         if mine and mine[-1].get("label") == policy.NOVEL and novel is not None:
             budget = novel["ceilings"]["max_budget_usd"] or budget
         views = [_run_view(r) for r in recent]
-        pack_row = group != "feature"
         return AgentRow(
             key=key,
             group=group,
@@ -401,9 +438,9 @@ class Agents:
             builtin=_fields_of(found.get("builtin") or found),
             edited=list(found.get("edited") or []),
             problems=[],
-            editable=pack_row,
-            skills=_skills(found) if pack_row else [],
-            row_hash=pack.hash_of(found) if pack_row else "",
+            editable=True,
+            skills=_skills(found),
+            row_hash=pack.hash_of(found),
             config=config,
             novel=novel,
             last=last,
@@ -411,6 +448,54 @@ class Agents:
             cost_30d=round(sum(r["cost_usd"] or 0.0 for r in views), 6),
             chip=chip_of(last, budget, len(recent)),
             groups=groups_of(views, [s for s in settings.get(key, []) if s["at"] >= since]),
+            on=None,
+        )
+
+    @staticmethod
+    def _on(data: Data, key: str, workspace: str | None) -> bool | None:
+        found = pack.row(key)
+        timed = pack.triggered(found, "event") or pack.triggered(found, "schedule")
+        return pack.agent_on(data, key, workspace) if timed and workspace else None
+
+    def set_state(self, cwd: str, key: object, on: object) -> AgentPage:
+        """Turn `key`'s event or schedule on or off in the workspace `cwd`: the pref
+        `agents.state`, logged as an `agent-state` row `by: owner`. A press and Leif run it
+        either way. **Behind the password**: whoever holds it can make a read-only row run on its
+        own there, under its ceilings and the daily cap."""
+        ws = self.ws.key(self.ws.check(cwd))
+        if not isinstance(key, str) or not isinstance(on, bool):
+            raise Invalid("send {cwd, key, on}: on is true or false")
+        try:
+            pack.set_agent_on(Data(self.config.data_dir), key, ws, on)
+        except pack.PackError as e:
+            raise Invalid(str(e)) from e
+        journal = self.ws.journal()
+        if journal is not None:
+            try:
+                journal.append(dict(triggers.state_record(ws, key, on, OWNER)))
+            except (BadRecord, Busy) as e:
+                raise Invalid(f"the setting was saved but not logged: {e}") from e
+        return self.agent_page(ws, cwd=cwd)
+
+    def proposals_view(self, cwd: str) -> ProposalsView:
+        """Every agent's proposals in the workspace `cwd`, newest first, each naming its agent, and
+        the rows that propose, on or off there."""
+        ws = self.ws.key(self.ws.check(cwd))
+        data = Data(self.config.data_dir)
+        rows = pack.rows()
+
+        def name(key: str) -> str:
+            return str((rows.get(key) or {}).get("name") or key)
+
+        return ProposalsView(
+            proposals=[
+                ProposalRow(**p, agent_name=name(p["agent"])) for p in proposals.listed(data, ws)
+            ],
+            agents=[
+                ProposingAgent(key=k, name=name(k), on=self._on(data, k, ws))
+                for k, r in rows.items()
+                if (r.get("output") or {}).get("kind") == "proposal"
+            ],
         )
 
     def set_agent_field(
@@ -422,7 +507,9 @@ class Agents:
         `field` is a frontmatter key (`pack.KEYS`), `body`, or `skill:<name>`, its value the whole
         key as the row file holds it. The row as it would then stand must pass `pack.check` with
         the app's catalog, its `input` and `output` `contracts`; else a 400 naming every reason and
-        nothing is written. `trigger` is shown and not saved: the process names the state's agent.
+        nothing is written. `trigger` is saved only on a row its own trigger starts (an event, a
+        schedule, a press, Leif), and only within `pack.check`: a row an event, a schedule or Leif
+        starts holds only reading tools. Any other row's is shown, not saved.
 
         **Behind the password like every route here**: whoever holds it or a live session can give
         any agent another model, larger ceilings, another prompt or more of the catalog's tools,
@@ -432,8 +519,8 @@ class Agents:
         if not isinstance(key, str) or pack.row(key) is None:
             raise Invalid(f"no such agent: {key} (use one of {', '.join(pack.rows())})")
         field = str(field)
-        if field == "trigger":
-            raise Invalid("trigger is read-only: the process names which agent a state runs")
+        if field == "trigger" and not pack.triggered((pack.row(key) or {}).get("builtin")):
+            raise Invalid("trigger is read-only: the process or the engine says when it runs")
         if value == "":
             value = None
         try:

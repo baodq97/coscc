@@ -6,10 +6,10 @@ import { useState, type ReactNode } from "react";
 import type { EstimateBrief, Paused } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
-import { FeatureSlots } from "../lib/feature";
 import { pausedAt, unitCode, unitTitle } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { Link } from "../lib/router";
+import { Proposals } from "../components/Proposals";
 import { Button, Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 const number = (unit: string) => Number(unit.slice(0, 4));
@@ -133,7 +133,7 @@ function Project({ workspace }: { workspace: Workspace }) {
         {!v.order.length && <div className="card-b faint">Nothing estimated waits outside the shortlist.</div>}
       </div>
 
-      <FeatureSlots at="backlog" workspace={workspace} />
+      <Proposals workspace={workspace} />
       {v.unestimated.length > 0 && (
         <>
           <div className="sec-h">

@@ -42,19 +42,16 @@ Copy `notices`. A need no extension point serves is a kernel change, planned fir
 
 - Extension points: `routes`, `tables`, `agent` giving `Parts` of `Tool`, `Guard`
   (`check(Facts)` returns words to deny, or `None`; asked before every step and integration) and `Block` (`render(Facts)` adds prompt
-  text); `sessions=(Session(kind,
-  grant, output, purpose),)`, a paid session it runs through `ctx.agents.session(cwd, kind, prompt)`;
-  `output` is its declaration `{kind: session, version, fields}` (`coscc/units/contracts.py`).
-  The core never writes a feature's name (`CoreNamesNoFeature` in `tests/test_boundaries.py`).
+  text). A paid session of its own is no feature's: it is a row of the pack with a `trigger`
+  (`coscc/runner/triggers.py`). The core never writes a feature's name (`CoreNamesNoFeature` in `tests/test_boundaries.py`).
 - `Ctx` is built for this feature alone: `units` (`key`, `create_unit`, `main_tree`, `units`,
-  `open_prs`, `own_tree`), `runs` (`journal`, `interventions`), `agents` (`session`), `store` (the
-  database; only your own tables), `bus`, `settings` (`state`, `enabled`, `arm`, `schedule`,
-  `set_schedule`), `refuse_updating`, `asks` (slow reads held and asked again), `required_checks`.
+  `open_prs`, `own_tree`), `runs` (`journal`), `store` (the database; only your own tables),
+  `bus`, `settings` (`state`, `enabled`, `arm`), `refuse_updating`, `asks` (slow reads held and asked again), `required_checks`.
   Writing git is the release feature's alone (`OnlyReleaseWritesGit`). A test builds
   the `Ctx` it needs with `tests/features/ctx.py` `ctx_for`; a handle it names not raises when touched.
 - Building blocks: `kernel.body/line/ndjson`.
 - UI: an optional `coscc/features/<name>/ui/index.tsx` exporting `ui: FeatureUI`
-  (`ui/src/lib/feature.tsx`): `topbar`, `unit` and `backlog` components the studio draws in its
+  (`ui/src/lib/feature.tsx`): `topbar`, `unit` and `project` components the studio draws in its
   slots while the feature is not off for the workspace, and `page`, a sidebar entry and the
   screen at `/feature/<name>`. The studio finds it with `import.meta.glob` at build time. Import
   its parts as `@studio/...` (`lib/api` `api`, `useResource`, `useFollow`; `components/ui`;

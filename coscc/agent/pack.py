@@ -26,6 +26,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
+from coscc import bus
+
 BUILTIN = Path(__file__).resolve().parent.parent / "packs" / "coscc-sdlc"
 LOCAL = Path("packs") / "local"
 MANIFEST = Path(".claude-plugin") / "plugin.json"
@@ -47,6 +49,7 @@ KEYS = (
     "input",
     "output",
     "trigger",
+    "default",
     "ceilings",
     "warning",
     "consequence",
@@ -69,14 +72,24 @@ _NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
 
 POLICIES = ("allow", "ask", "off")
 # Issued by the engine with the grant, never named by a row.
-ENGINE_TOOLS = ("submit", "peers")
-# What a row's `output.kind` may be: the three `submit` kinds, a reply read as it is, a helper.
-OUTPUT_KINDS = ("artifact", "review", "session", "reply", "helper")
+ENGINE_TOOLS = ("submit", "peers", "run_agent")
+# What a row's `output.kind` may be: the `submit` kinds, a reply read as it is, a helper.
+# `proposal` hands back work for the Backlog (`coscc/units/proposals.py`); `verdict` grades criteria.
+OUTPUT_KINDS = ("artifact", "review", "session", "proposal", "verdict", "reply", "helper")
 # Who writes a stage's artifact: the app from the reply of a row that only reads (`app`), the app
 # from the reply of a row that runs code in a throwaway directory (`scratch`), the session.
 WRITERS = ("app", "scratch", "session")
 VARIANTS = ("novel",)
 ENGINES = ("integrate", "estimate", "chat")
+# What may start a row that no state runs: the engine alone, or any of the rest
+# (`coscc/runner/triggers.py`): a bus event, a schedule, a press, Leif's `run_agent`.
+TRIGGERS = ("engine", "event", "schedule", "manual", "leif")
+# Whether a triggered row runs on its event or schedule in a workspace nobody chose for.
+DEFAULTS = ("on", "off")
+# A schedule's hours and an event's delay. Chosen: a year.
+HOURS_MAX = 8760
+# Claude Code's own tools that do more than read, for a row checked with no catalog.
+NOT_READ = ("Write", "Edit", "NotebookEdit", "Bash", "Agent", "Task")
 # What a process state may do in place of running an agent: the engine opens the pull request, or
 # merges it.
 ACTIONS = ("open-pr", "merge")
@@ -209,7 +222,7 @@ def check(
         )
     out += _check_tools(row, kind, output.get("by"), catalog)
     out += _check_links(row, rows)
-    out += _check_trigger(row, kind)
+    out += _check_trigger(row, kind, catalog)
     if "input" in row and not isinstance(row["input"], dict):
         out.append("input is {artifacts, outputs, answers, findings, data}")
     if BODY in row and not isinstance(row[BODY], str):
@@ -305,18 +318,96 @@ def _check_links(row: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]] |
     return out
 
 
-def _check_trigger(row: Mapping[str, Any], kind: Any) -> list[str]:
-    """A helper has none; an engine row names its engine; a state's agent has none, the process
-    names it (`agent_for`)."""
-    trigger = row.get("trigger")
+def _check_trigger(
+    row: Mapping[str, Any], kind: Any, catalog: Mapping[str, str] | None
+) -> list[str]:
+    """A helper has none; an engine row names its engine and nothing else; a state's agent has
+    none, the process names it (`agent_for`). Any other trigger is `TRIGGERS`' shapes, and a row an
+    event, a schedule or Leif starts holds only reading tools: no person watches it start."""
+    trigger, default = row.get("trigger"), row.get("default")
     if trigger is None:
-        return []
+        return [] if default is None else ["default: only a row with a trigger has one"]
     if kind == "helper":
         return ["a helper has no trigger"]
-    if not isinstance(trigger, dict) or set(trigger) != {"engine"}:
-        return ['trigger is {"engine": <engine>}']
-    what = trigger["engine"]
-    return [] if what in ENGINES else [f"trigger.engine must be one of {', '.join(ENGINES)}"]
+    if not isinstance(trigger, dict) or not trigger:
+        return [f"trigger is {{{', '.join(TRIGGERS)}}}"]
+    out = [
+        f"trigger.{k}: no such trigger (use one of {', '.join(TRIGGERS)})"
+        for k in trigger
+        if k not in TRIGGERS
+    ]
+    if "engine" in trigger:
+        if len(trigger) > 1:
+            out.append("trigger.engine: an engine row has no other trigger")
+        if trigger["engine"] not in ENGINES:
+            out.append(f"trigger.engine must be one of {', '.join(ENGINES)}")
+        if default is not None:
+            out.append("default: an engine row runs when the engine says, not on or off")
+        return out
+    if default is not None and default not in DEFAULTS:
+        out.append(f"default must be one of {', '.join(DEFAULTS)}")
+    if ("event" in trigger or "schedule" in trigger) and default is None:
+        out.append("default: a row with an event or a schedule says whether it is on or off")
+    for k in ("manual", "leif"):
+        if k in trigger and trigger[k] is not True:
+            out.append(f"trigger.{k} is true")
+    if "schedule" in trigger:
+        out += _check_hours("trigger.schedule", trigger["schedule"], "hours", required=True)
+    if "event" in trigger:
+        out += _check_event(row, trigger["event"])
+    if any(k in trigger for k in ("event", "schedule", "leif")):
+        held = [t for t, p in (row.get("tools") or {}).items() if p != "off"]
+        beyond = [
+            t
+            for t in held
+            if (catalog or {}).get(t, "write" if t in NOT_READ else "read") != "read"
+        ]
+        if beyond:
+            out.append(
+                "a row an event, a schedule or Leif starts holds only reading tools, "
+                f"not {', '.join(beyond)}"
+            )
+    return out
+
+
+def _check_hours(where: str, given: Any, key: str, required: bool) -> list[str]:
+    if not isinstance(given, dict):
+        return [f"{where} is an object"]
+    if key not in given:
+        return [f"{where}.{key} is required"] if required else []
+    n = given[key]
+    if (
+        isinstance(n, bool)
+        or not isinstance(n, int)
+        or not (1 if required else 0) <= n <= HOURS_MAX
+    ):
+        return [f"{where}.{key} must be a whole number from {1 if required else 0} to {HOURS_MAX}"]
+    return []
+
+
+def _check_event(row: Mapping[str, Any], event: Any) -> list[str]:
+    """`{name, after_hours?}`: a bus fact whose payload names the workspace, and the unit when the
+    row reads one."""
+    if not isinstance(event, dict) or not set(event) <= {"name", "after_hours"}:
+        return ["trigger.event is {name, after_hours}"]
+    name = event.get("name")
+    if name not in bus.NAMES:
+        return [f"trigger.event.name: no bus event {name!r}"]
+    fields = bus.fields_of(str(name))
+    out = [] if "workspace" in fields else [f"trigger.event.name: {name} names no workspace"]
+    raw = row.get("input")
+    given: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    if (given.get("artifacts") or given.get("outputs")) and "unit" not in fields:
+        out.append(f"trigger.event.name: {name} names no unit, and the row reads one")
+    return out + _check_hours("trigger.event", event, "after_hours", required=False)
+
+
+def triggered(found: Mapping[str, Any] | None, how: str = "") -> bool:
+    """Whether a row has a trigger other than the engine's; with `how`, that one."""
+    trigger = (found or {}).get("trigger")
+    if not isinstance(trigger, dict) or not trigger or "engine" in trigger:
+        return False
+    return not how or bool(trigger.get(how))
 
 
 # --- loading ------------------------------------------------------------------
@@ -874,6 +965,29 @@ def set_packs(
     if chosen is not None:
         refs = _pref(data, PROCESS_PREF)
         data.set_pref(PROCESS_PREF, {**refs, key: chosen})
+
+
+# The pref `agents.state` `{agent: {workspace key: "on" | "off"}}`: whether a triggered row runs on
+# its event or schedule there; else its `default`. A press and Leif run it either way.
+AGENT_STATE_PREF = "agents.state"
+
+
+def agent_on(data: Any, key: str, workspace: str) -> bool:
+    chosen = _pref(data, AGENT_STATE_PREF).get(key)
+    said = chosen.get(workspace) if isinstance(chosen, dict) else None
+    if said in DEFAULTS:
+        return said == "on"
+    return (row(key) or {}).get("default") == "on"
+
+
+def set_agent_on(data: Any, key: str, workspace: str, on: bool) -> None:
+    """`PackError` for a row with no event or schedule to be on for."""
+    if not (triggered(row(key), "event") or triggered(row(key), "schedule")):
+        raise PackError(f"{key} has no event or schedule to turn on or off")
+    state = _pref(data, AGENT_STATE_PREF)
+    mine = state.get(key)
+    state[key] = {**(mine if isinstance(mine, dict) else {}), workspace: "on" if on else "off"}
+    data.set_pref(AGENT_STATE_PREF, state)
 
 
 # --- the owner's layer --------------------------------------------------------

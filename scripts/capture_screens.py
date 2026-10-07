@@ -898,20 +898,14 @@ SCAN_PROPOSALS = (
 
 
 def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
-    """The `scan` feature on for `proj` with its schedule off, so nothing pays, and the four
-    proposals of one scan: two pending, one accepted as `0006_frontend-calls-api`, one dismissed.
-    Written through the feature's own tables, which the app made when it started."""
+    """The scan row left off for `proj`, so nothing pays, and the four proposals of one run: two
+    pending, one accepted as `0006_frontend-calls-api`, one dismissed. Written through the core's
+    `proposals` table, which the app made when it started."""
     from datetime import datetime, timedelta, timezone
 
     from coscc.store.db import Data
-    from coscc.features import scan
-    from tests.features.ctx import ctx_for
-    from coscc.store.journal import Intervention
+    from coscc.units import proposals as table
 
-    for body in ({"state": "on"}, {"schedule": 0}):
-        r = api.post("/api/features", json={"cwd": str(proj), "name": "scan", **body})
-        if r.status_code != 200:
-            raise RuntimeError(f"could not set up the scan feature: {r.text}")
     # Release is off until a workspace turns it on; proj shows its panel.
     r = api.post("/api/features", json={"cwd": str(proj), "name": "release", "state": "on"})
     if r.status_code != 200:
@@ -921,31 +915,29 @@ def make_scan_fixture(api: httpx.Client, data_dir: Path, proj: Path) -> None:
     kinds = ("impl-draft", "ci-red", "integrate", "rerun", "review-round", "refused")
     units = ("0008_draft-impl", "0002_open-question", "0004_finished", "0009_refused-impl")
     taken = [
-        Intervention(
-            f"{kinds[n % 6]}:runs:{n}",
-            kinds[n % 6],
-            (now - timedelta(hours=30 - n)).isoformat(timespec="seconds"),
-            units[n % 4],
-            "impl",
-            "",
+        table.Source(
+            id=f"{kinds[n % 6]}:runs:{n}",
+            kind=kinds[n % 6],
+            unit=units[n % 4],
+            at=(now - timedelta(hours=30 - n)).isoformat(timespec="seconds"),
         )
         for n in range(12)
     ]
-    tables = scan.Tables(ctx_for(store=Data(data_dir)))
-    proposals = [
+    items = [
         {
             "type": t,
             "slug": s,
             "title": title,
             "problem": problem,
-            "sources": [i.id for i in taken[n * 3 : n * 3 + 3]],
+            "sources": [i["id"] for i in taken[n * 3 : n * 3 + 3]],
         }
         for n, (t, s, title, problem) in enumerate(SCAN_PROPOSALS)
     ]
-    tables.record(key, "owner", "done", cost=0.32, session="s", taken=taken, proposals=proposals)
-    tables.claim(key, 3, "accepted")
-    tables.set_unit(key, 3, "0006_frontend-calls-api")
-    tables.claim(key, 4, "dismissed", "Already answered by the questions on each unit.")
+    data = Data(data_dir)
+    ids = table.add(data, key, "scan", "", items, run="r", sources={i["id"]: i for i in taken})
+    table.claim(data, key, ids[2], "accepted")
+    table.set_made(data, key, ids[2], "0006_frontend-calls-api")
+    table.claim(data, key, ids[3], "dismissed", "Already answered by the questions on each unit.")
 
 
 def seed_pilot(data_dir: Path, proj: Path) -> None:

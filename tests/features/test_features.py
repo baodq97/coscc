@@ -15,16 +15,8 @@ from starlette.routing import Route
 
 from coscc.store.db import Data
 from coscc import features
-from coscc.kernel import Block, Feature, Guard, Parts, Schedule, Tool
-from coscc.http.plugin import (
-    SCHEDULE_PREF,
-    create_tables,
-    hooks_of,
-    set_schedule_of,
-    set_state,
-    shown,
-    tick,
-)
+from coscc.kernel import Block, Feature, Guard, Parts, Tool
+from coscc.http.plugin import create_tables, hooks_of
 from coscc.http.app import build
 from tests.features.ctx import ctx_for, rows_without_feature_tools
 from coscc.config import PROTECTED_DB_VAR, Config
@@ -159,14 +151,14 @@ class TurningAFeatureOffForAWorkspace(Setup):
             got = await client.get("/api/features", params={"cwd": str(self.ws), "detail": "1"})
         rows = got.json()
         self.assertEqual(set(rows), {f.name for f in features.FEATURES})
-        self.assertEqual(len(rows), 7)
+        self.assertEqual(len(rows), 6)
         for name, row in rows.items():
             with self.subTest(feature=name):
                 self.assertTrue(row["summary"])
                 self.assertLessEqual(len(row["summary"]), 100)
                 self.assertEqual(
                     set(row),
-                    {"state", "pilot", "sentence", "locked", "schedule", "hours", "summary"},
+                    {"state", "pilot", "sentence", "locked", "summary"},
                 )
         self.assertEqual(rows["notices"]["state"], "on")
 
@@ -257,60 +249,6 @@ def _named(feature: str, name: str) -> Feature:
     )
 
 
-class AScheduledFeatureRunsOnItsOwn(Setup):
-    """The pref `features.schedule`, its door, and the core's tick."""
-
-    def scheduled(self, ticked: list) -> Feature:
-        async def tick(_ctx, cwd: str, hours: int) -> None:
-            ticked.append((cwd, hours))
-
-        return Feature("timed", lambda _ctx: [], schedule=Schedule((0, 12, 24), 24, tick))
-
-    async def test_the_door_writes_the_pref_and_settings_reads_it_back(self):
-        timed = self.scheduled([])
-        with mock.patch("coscc.features.FEATURES", (*features.FEATURES, timed)):
-            async with self.client() as client:
-                api = client._transport.app
-                listed = {f.name: f for f in shown(api.state.ctxs, api.state.plugins, str(self.ws))}
-                self.assertEqual(
-                    (listed["timed"].schedule, listed["timed"].hours), (24, (0, 12, 24))
-                )
-                self.assertIsNone(listed["notices"].schedule)
-                good = {"cwd": str(self.ws), "name": "timed", "schedule": 12}
-                r = await client.post("/api/features", json=good)
-                self.assertEqual(
-                    (r.status_code, r.json()), (200, {"name": "timed", "schedule": 12})
-                )
-                self.assertEqual(api.state.ctxs["timed"].settings.schedule(str(self.ws)), 12)
-                stored = Data(self.config.data_dir).pref(SCHEDULE_PREF, {})
-                self.assertEqual(stored, {"timed": {str(self.ws.resolve()): 12}})
-                for bad in (
-                    {**good, "schedule": 6},
-                    {**good, "schedule": True},
-                    {**good, "name": "notices"},
-                    {**good, "cwd": "/etc"},
-                ):
-                    r = await client.post("/api/features", json=bad)
-                    self.assertEqual(r.status_code, 400, bad)
-                self.assertEqual(api.state.ctxs["timed"].settings.schedule(str(self.ws)), 12)
-
-    async def test_a_tick_asks_only_where_it_is_on_and_scheduled(self):
-        ticked: list = []
-        timed = self.scheduled(ticked)
-        with mock.patch("coscc.features.FEATURES", (timed,)), rows_without_feature_tools():
-            api = build(self.config)
-        ctx, core = api.state.ctxs, api.state.core
-        await tick(core, ctx, (timed,))
-        self.assertEqual(ticked, [(str(self.ws), 24)])
-        set_schedule_of(core, (timed,), "timed", str(self.ws), 0)
-        await tick(core, ctx, (timed,))
-        self.assertEqual(len(ticked), 1)
-        set_schedule_of(core, (timed,), "timed", str(self.ws), 12)
-        set_state(core, ctx, (timed,), "timed", str(self.ws), "off")
-        await tick(core, ctx, (timed,))
-        self.assertEqual(len(ticked), 1)
-
-
 def _names(source: str) -> set[str]:
     """Every name and attribute the code uses or imports; docstrings and comments are not code."""
     found: set[str] = set()
@@ -362,7 +300,6 @@ class OnlyReleaseWritesGit(unittest.TestCase):
         for feature in features.FEATURES:
             if feature.name in writing:
                 self.assertIsNone(feature.agent, feature.name)
-                self.assertEqual(feature.sessions, (), feature.name)
 
     def test_a_writer_named_only_in_words_is_not_a_use(self):
         self.assertEqual(_names('"""`gh` merges."""\n# create_branch\n') & self.WRITERS, set())

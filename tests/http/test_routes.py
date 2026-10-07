@@ -250,7 +250,76 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
             for route in self.app.routes
             if "POST" in getattr(route, "methods", ()) and "agents" in route.path
         ]
-        self.assertEqual(writes, ["/api/agents/field"])
+        # The owner's on/off and *Run now*, beside the row; neither writes a grant or a row.
+        self.assertEqual(writes, ["/api/agents/field", "/api/agents/state", "/api/agents/run"])
+
+
+class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`/api/agents/state`, `/api/agents/run` and `/api/proposals`: the owner's presses."""
+
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.ws = self.root / "ws"
+        self.ws.mkdir()
+        self.app = build(
+            Config(workspaces=(str(self.ws),), working_dir=str(self.root), data_dir=str(self.root))
+        )
+        self.core = self.app.state.core
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        self.addAsyncCleanup(self.client.aclose)
+
+    async def test_on_or_off_is_the_owners_setting_and_is_logged(self):
+        body = {"cwd": str(self.ws), "key": "scan", "on": True}
+        r = await self.client.post("/api/agents/state", json=body)
+        self.assertEqual(r.status_code, 200)
+        scan = next(x for x in r.json()["rows"] if x["key"] == "scan")
+        self.assertEqual((scan["group"], scan["on"]), ("triggered", True))
+        (said,) = self.core.ws.journal().records(kinds=("agent-state",))
+        self.assertEqual((said["agent"], said["on"], said["by"]), ("scan", True, "owner"))
+        for bad in ({**body, "key": "estimate"}, {**body, "on": "yes"}, {**body, "cwd": "/etc"}):
+            r = await self.client.post("/api/agents/state", json=bad)
+            self.assertEqual(r.status_code, 400, bad)
+
+    async def test_run_now_starts_a_manual_run_and_refuses_a_row_it_does_not_start(self):
+        with mock.patch("coscc.http.routes.triggers.start") as start:
+            r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "scan"})
+        self.assertEqual((r.status_code, r.json()), (200, {"agent": "scan", "started": True}))
+        self.assertEqual(start.call_args.kwargs["by"], "manual")
+        r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "impl"})
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "not-triggered"))
+
+    async def test_proposals_name_their_agent_and_the_owner_decides(self):
+        from coscc.store.db import Data
+        from coscc.units import proposals
+
+        item = {
+            "type": "fix",
+            "slug": "steps-stop",
+            "title": "Steps stop",
+            "problem": "p" * 250,
+            "sources": ["x"],
+        }
+        (pid,) = proposals.add(Data(self.root), str(self.ws.resolve()), "scan", "", [item])
+        r = await self.client.get("/api/proposals", params={"cwd": str(self.ws)})
+        self.assertEqual(r.status_code, 200)
+        got = r.json()
+        self.assertEqual(got["proposals"][0]["agent_name"], "Sowilo")
+        self.assertEqual(got["agents"], [{"key": "scan", "name": "Sowilo", "on": False}])
+        r = await self.client.post(
+            f"/api/proposals/{pid}", json={"cwd": str(self.ws), "action": "accept", "slug": "No"}
+        )
+        self.assertEqual(r.status_code, 400)
+        r = await self.client.post(
+            f"/api/proposals/{pid}",
+            json={"cwd": str(self.ws), "action": "dismiss", "reason": "done in 0150"},
+        )
+        self.assertEqual(
+            (r.status_code, r.json()["state"], r.json()["by"]), (200, "dismissed", "owner")
+        )
 
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):

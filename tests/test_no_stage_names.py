@@ -43,11 +43,18 @@ ALLOWED = {
     ("store/db.py", "_after_13", "*"): "an old migration's data rewrite names the stored values",
     ("store/db.py", "_to_15", "*"): "an old migration's data rewrite names the stored values",
     ("store/db.py", "_to_16", "*"): "an old migration's data rewrite names the stored values",
+    ("store/db.py", "_to_17", "*"): "an old migration's data rewrite names the stored values",
+    # The vault's own leak scan, which shares the scan row's word and nothing else.
+    ("vault/__init__.py", "", "scan"): "the vault's `scan` function, named in `__all__`",
+    ("features/vault/__init__.py", "_leaks", "scan"): "the id of one leak scan, a vault field",
+    ("features/vault/__init__.py", "leaks", "scan"): "the same leak-scan id, read back",
 }
 
 
 def keys() -> set[str]:
-    out: set[str] = set()
+    """Every state, every agent a state binds, and every row its own trigger starts (the scan): a
+    periodic agent is data, with no Python of its own."""
+    out: set[str] = {k for k, r in pack.rows().items() if pack.triggered(r)}
     for ref in pack.processes():
         for state, found in pack.process(ref)["states"].items():
             out.add(state)

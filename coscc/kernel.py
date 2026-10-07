@@ -2,7 +2,7 @@
 module it imports.
 
 A feature ends in one `FEATURE`, a `Feature`. The core hands it a `Ctx` and asks it for its
-routes, tables, schedule and agent parts. One catalog names every tool an agent may hold
+routes, tables and agent parts. One catalog names every tool an agent may hold
 (`BUILTINS`, and each feature's `Tool`); an agent's row names catalog entries, and a run gets
 only what its grant holds. For each run, the kernel builds one `Facts` (its agent and grant) and
 asks each part what it makes of it. A feature never writes a granted tool name: `granted`
@@ -58,11 +58,9 @@ from coscc.store.db import Data
 from coscc.store.db import now as now
 from coscc.store.journal import BELL as BELL
 from coscc.store.journal import BadRecord as BadRecord
-from coscc.store.journal import Intervention
 from coscc.store.journal import Journal as Journal
 from coscc.units import Invalid as Invalid
 from coscc.units import cos_dir as cos_dir
-from coscc.units.contracts import Output as Output
 from coscc.units.contracts import Plan as Plan
 from coscc.units.contracts import PlanStep as PlanStep
 from coscc.store.journal import is_step as is_step
@@ -179,9 +177,9 @@ class Tool:
                 raise ValueError(f"an MCP tool name is [a-z][a-z0-9_]* without '__': {name!r}")
 
 
-# The catalog's built-in entries: Claude Code's own tools and the kernel's `submit` and `peers`,
-# which the engine issues with the grant (`submit` to every agent with an output, `peers` with
-# helpers) and no row names.
+# The catalog's built-in entries: Claude Code's own tools and the kernel's `submit`, `peers` and
+# `run_agent`, which the engine issues with the grant (`submit` to every agent with an output,
+# `peers` with helpers, `run_agent` to Leif's chat) and no row names.
 BUILTINS: tuple[Tool, ...] = (
     *(Tool(t, "read", "low") for t in policy.READ_TOOLS),
     *(Tool(t, "write-worktree", "medium") for t in policy.WRITE_TOOLS),
@@ -190,6 +188,8 @@ BUILTINS: tuple[Tool, ...] = (
     Tool(policy.SEND_MESSAGE, "read", "low"),
     Tool("submit", "write-app", "low"),
     Tool("peers", "read", "low"),
+    # Leif's: starts a triggered row's run, paid and read-only (`coscc/runner/triggers.py`).
+    Tool("run_agent", "write-app", "medium"),
 )
 
 
@@ -357,18 +357,6 @@ class Runs:
     """The run log."""
 
     journal: Callable[[], Journal | None]
-    # `(workspace path, after, limit)`: every time a person stepped in there past the time
-    # `after` (`""`: from the first), oldest first (`coscc/runner/interventions.py`). Blocking.
-    interventions: Callable[[str, str, int], list[Intervention]]
-
-
-@dataclass(frozen=True)
-class Agents:
-    # `(workspace path, kind, prompt)`: one run of the feature's `Session` `kind`
-    # (`coscc/runner/run.py`), which hands its object back through `submit`, as `Run.output`.
-    # `Invalid` while another such session of the workspace runs or an update is under way. One an
-    # update paused is `cancelled`, with no cost: the run log's `end` holds it.
-    session: Callable[[str, str, str], Awaitable[Run]]
 
 
 @dataclass(frozen=True)
@@ -382,10 +370,6 @@ class Settings:
     enabled: Callable[[str], bool]
     # `(workspace path, unit)`: `arm_of` the state now.
     arm: Callable[[str, str], Arm | None]
-    # The hours of its `schedule` there, `0` for off.
-    schedule: Callable[[str], int]
-    # `(workspace path, hours)`: set them, one of its `schedule.hours`.
-    set_schedule: Callable[[str, int], None]
 
 
 @dataclass(frozen=True)
@@ -394,7 +378,6 @@ class Ctx:
 
     units: Units
     runs: Runs
-    agents: Agents
     store: Data
     bus: Bus
     settings: Settings
@@ -406,41 +389,6 @@ class Ctx:
     # `(tree, pull request)`: its required checks as `gh pr checks --required` says, or `gh`'s
     # error as a string.
     required_checks: Callable[[str, int], Awaitable[list[dict[str, Any]] | str]]
-
-
-@dataclass(frozen=True)
-class Schedule:
-    """How often the core asks a feature to run on its own in a workspace where it is not `off`."""
-
-    # What Settings offers, in hours, `0` being off. Each workspace's choice is the pref
-    # `features.schedule`, `{feature: {workspace key: hours}}`.
-    hours: tuple[int, ...]
-    # The choice of a workspace nobody chose one for.
-    default: int
-    # `(ctx, workspace path, hours)`: asked every `TICK_SECONDS` while the choice is not `0`;
-    # the feature decides whether that many hours passed since its last run.
-    tick: Callable[[Ctx, str, int], Awaitable[None]]
-
-
-@dataclass(frozen=True)
-class Session:
-    """A paid session a feature runs through `Ctx.agents.session`: no stage, and it hands one object
-    back through `submit`. `kind` names its row, its attempts and their bus events
-    (`<kind>.queued`, `.running`, `.ended`, `.refused`)."""
-
-    kind: str
-    row: Row
-    # The declaration of the object it hands back, `kind: session` (`coscc/units/contracts.py`).
-    output: Output
-    # What the `submit` tool tells the session it is for.
-    purpose: str
-    # Its own row: the model and effort it runs on unless the Agents page overrides them under
-    # `kind`; `None` is the app's default.
-    model: str | None = None
-    effort: str | None = None
-    # Whether `row.max_turns` holds below the floor a session that submits gets, because one
-    # more turn could pass its budget; a refused object is then not submitted again.
-    own_turns: bool = False
 
 
 @dataclass(frozen=True)
@@ -461,8 +409,6 @@ class Feature:
     # `(ctx, workspace path, state)`: told once a person set a state. Quick: it schedules long
     # work and returns.
     on_set: Callable[[Ctx, str, State], None] | None = None
-    schedule: Schedule | None = None
-    sessions: tuple[Session, ...] = ()
     # One fixed sentence, 100 characters at most: what the feature does, shown under its name.
     summary: str = ""
 

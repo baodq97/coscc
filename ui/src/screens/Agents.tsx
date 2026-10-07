@@ -13,7 +13,7 @@ export const GROUPS: { key: AgentRow["group"]; title: string; lede: string }[] =
   { key: "stage", title: "Stage agents", lede: "Each opens when a unit reaches its state." },
   { key: "engine", title: "Engine agents", lede: "The app opens these itself, or on your press." },
   { key: "helper", title: "Helpers", lede: "Started by another agent inside its run." },
-  { key: "feature", title: "From features", lede: "A feature's own session: its feature sets it." },
+  { key: "triggered", title: "Periodic and on request", lede: "A schedule, an event, your press or Leif starts these; they only read." },
 ];
 
 const ENGINE_WORDS: Record<string, string> = {
@@ -22,16 +22,32 @@ const ENGINE_WORDS: Record<string, string> = {
   chat: "when you talk to Leif",
 };
 
+const EVENT_WORDS: Record<string, string> = { "unit.shipped": "a ship" };
+
+/** `168` is "7 days", `24` "1 day", `6` "6 h". */
+export function hoursWords(h: number): string {
+  if (h % 24) return `${h} h`;
+  return h === 24 ? "1 day" : `${h / 24} days`;
+}
+
 /** When an agent runs, in words: its trigger, or who starts a helper. */
 export function triggerWords(a: AgentRow, rows: AgentRow[] = []): string {
   const t = a.row.trigger ?? {};
   if (t.state) return `on state ${t.state}`;
   if (t.engine) return ENGINE_WORDS[t.engine] ?? `by the engine (${t.engine})`;
+  const said: string[] = [];
+  if (t.schedule) said.push(`every ${t.schedule.hours} h`);
+  if (t.event) {
+    const what = EVENT_WORDS[t.event.name ?? ""] ?? t.event.name;
+    said.push(t.event.after_hours ? `${hoursWords(t.event.after_hours)} after ${what}` : `on ${what}`);
+  }
+  if (t.manual || t.leif) said.push("on request");
+  if (said.length) return said.join(", ");
   if (a.group === "helper") {
     const by = rows.filter((r) => (r.row.helpers ?? []).includes(a.key)).map((r) => r.row.name ?? r.key);
     return by.length ? `started by ${by.join(", ")}` : "started by no agent";
   }
-  return a.group === "feature" ? "on its feature's schedule" : "—";
+  return "—";
 }
 
 /** What needs a look on a line, worst first: a problem stops its runs, then the last run's chip. */

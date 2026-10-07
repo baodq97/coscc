@@ -188,11 +188,10 @@ describe("release", () => {
 
 describe("features", () => {
   it("finds the UI of each feature that has one, by its folder", () => {
-    expect(Object.keys(FEATURE_UIS).sort()).toEqual(["notices", "release", "scan", "vault"]);
+    expect(Object.keys(FEATURE_UIS).sort()).toEqual(["notices", "release", "vault"]);
     expect(FEATURE_UIS.release.project).toBeTypeOf("function");
     expect(FEATURE_UIS.vault.page?.label).toBe("Vault");
     expect(FEATURE_UIS.vault.unit).toBeTypeOf("function");
-    expect(FEATURE_UIS.scan.backlog).toBeTypeOf("function");
     expect(FEATURE_UIS.notices.topbar).toBeTypeOf("function");
   });
 });
@@ -219,6 +218,8 @@ describe("agents", () => {
     expect(triggerWords(impl)).toBe("on state impl");
     expect(triggerWords(helper, [impl, helper])).toBe("started by Uruz");
     expect(triggerWords(row({ row: { trigger: { engine: "chat" } } }))).toBe("when you talk to Leif");
+    expect(triggerWords(row({ group: "triggered", row: { trigger: { schedule: { hours: 24 }, manual: true, leif: true } } }))).toBe("every 24 h, on request");
+    expect(triggerWords(row({ group: "triggered", row: { trigger: { event: { name: "unit.shipped", after_hours: 168 }, manual: true } } }))).toBe("7 days after a ship, on request");
     expect(attention(row({ problems: ["bad"], chip: "failed" }))?.label).toBe("Cannot run");
     expect(attention(row({ chip: "costly" }))?.tone).toBe("amber");
     expect(attention(row({}))).toBeNull();

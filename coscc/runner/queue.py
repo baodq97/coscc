@@ -71,14 +71,6 @@ MACHINES: dict[str, dict[str, set[str]]] = {
 }
 
 
-def add_session(kind: str) -> None:
-    """A feature's paid session (`kernel.Session`, run through `kernel.Ctx.agents.session`): a short
-    hold named by its grant, added when the app is built."""
-    if MACHINES.get(kind, _SHORT) is not _SHORT:
-        raise ValueError(f"the machine {kind!r} is taken")
-    MACHINES[kind] = _SHORT
-
-
 ENDS = ("ended", "refused")
 # The kind of slot each machine waits for, and where the scheduler sends one that gets it.
 SLOTS = {"step": "agent", "integration": "heavy"}

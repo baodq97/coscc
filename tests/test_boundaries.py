@@ -60,6 +60,8 @@ OWNERS: dict[str, str] = {
     "unit_questions": "coscc.units.meta",
     "unit_unknowns": "coscc.units.meta",
     "workspaces": "coscc.store.workspaces",
+    "proposals": "coscc.units.proposals",
+    "trigger_due": "coscc.runner.triggers",
 }
 
 FOREIGN_SQL: set[tuple[str, str]] = {
@@ -68,6 +70,8 @@ FOREIGN_SQL: set[tuple[str, str]] = {
     ("coscc.run", "unit_meta"),
     # The step to 13 rewrites records, links, unknowns, a stored `done` and answers.
     ("coscc.store.db", "outputs"),
+    # `_to_17` copies the scan feature's proposals in.
+    ("coscc.store.db", "proposals"),
     ("coscc.store.db", "unit_meta"),
     ("coscc.store.db", "unit_links"),
     ("coscc.store.db", "transitions"),

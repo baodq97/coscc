@@ -66,8 +66,6 @@ class Setup(unittest.IsolatedAsyncioTestCase):
                 lambda w: self.state,
                 lambda w: self.state != "off",
                 lambda w, unit: arm_of(self.state, unit),
-                None,
-                None,
             ),
         )
         create_tables(data, codegraph.FEATURE.tables)
