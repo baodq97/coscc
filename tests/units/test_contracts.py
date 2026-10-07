@@ -218,6 +218,58 @@ class AnUnknownWordRefusesTheLoad(unittest.TestCase):
         self.assertTrue(_refusal(raw).startswith("contract-bad-type: plan.Note: "))
 
 
+class AProposalsChangeIsReadWhenDeclared(unittest.TestCase):
+    """A proposal's `change`, `signal`, `measure` and `usd` are read when present: the scan
+    declares them, another proposing row may leave them out, and none may declare another type."""
+
+    def item(self, raw):
+        return _output(raw, "scan")["fields"]["proposals"]["list"]
+
+    def test_the_scan_declares_all_four(self):
+        self.assertLessEqual({"change", "signal", "measure", "usd"}, set(self.item(_shipped())))
+        self.assertEqual(contracts.output("scan")["version"], 2)
+
+    def test_a_proposing_row_without_them_loads(self):
+        raw = _shipped()
+        for field in ("change", "signal", "measure", "usd"):
+            del self.item(raw)[field]
+        self.assertEqual(_load(raw)["scan"]["kind"], "proposal")
+        raw = _shipped()
+        item = self.item(raw)
+        item["change?"] = item.pop("change")
+        _load(raw)
+
+    def test_one_of_another_type_is_refused(self):
+        for field, bad in (
+            ("change", "text"),
+            ("change", {"kind": "text", "path": "text", "text": "text"}),
+            ("signal", {"kind": {"enum": ["rerun"]}, "now": "number", "target": "number"}),
+            ("usd", "number"),
+        ):
+            raw = _shipped()
+            self.item(raw)[field] = bad
+            self.assertTrue(
+                _refusal(raw).startswith(f"contract-bad-type: scan.proposals.{field}"), field
+            )
+        raw = _shipped()
+        self.item(raw)["change?"] = "text"
+        del self.item(raw)["change"]
+        self.assertTrue(_refusal(raw).startswith("contract-bad-type: scan.proposals.change"))
+
+    def test_the_signal_kinds_are_the_interventions(self):
+        from coscc.runner import interventions
+
+        self.assertEqual(get_args(contracts.SignalKind), interventions.KINDS)
+
+    def test_the_schema_takes_a_cost_of_two_decimals_at_most(self):
+        usd = contracts.schema("scan")["properties"]["proposals"]["items"]["properties"]["usd"]
+        for good in ("3", "3.5", "0.75"):
+            jsonschema.validate(good, usd)
+        for bad in ("3.555", "$3", "-1", 3.5):
+            with self.assertRaises(jsonschema.ValidationError, msg=bad):
+                jsonschema.validate(bad, usd)
+
+
 class AnOptionalFieldIsNotRequired(unittest.TestCase):
     def test_a_trailing_question_mark_leaves_the_field_out_of_required(self):
         out = contracts.check(
@@ -244,7 +296,7 @@ PINNED = {
     "review": (2, "86f63317e692"),
     "integrate": (1, "9e29819d42c2"),
     "estimate": (1, "cd5fc053a8e3"),
-    "scan": (1, "b4482adace0e"),
+    "scan": (2, "de0fdf5bc251"),
     "outcome": (1, "5a28b9ca8b0f"),
     "dagaz": (2, "c2164bfa60dd"),
 }

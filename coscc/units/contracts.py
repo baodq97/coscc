@@ -40,6 +40,12 @@ GapPart = Literal["tool", "data", "trigger", "output", "event"]
 BranchType = Literal[
     "feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci", "revert"
 ]
+# What one proposed change is to the harness, and the intervention kinds its signal counts
+# (`coscc/runner/interventions.py`'s `KINDS`, which this layer may not import; a test pins it).
+ChangeKind = Literal["skill", "check", "guard", "tool"]
+SignalKind = Literal["refused", "ci-red", "rerun", "review-round", "impl-draft", "integrate"]
+# A proposal's estimated cost in dollars, at most two decimals: `number` is a whole number.
+USD = "[0-9]+(\\.[0-9]{1,2})?"
 # `fix.expected.source`: a path, and the lines cited when there are some. What it may name (no
 # absolute path, no `..`, not `.cos`) is the loop's rule, not the schema's.
 SOURCE = "[^\\s:]+(:[0-9]+-[0-9]+)?"
@@ -180,6 +186,11 @@ READS: dict[str, dict[str, tuple[str, FieldType]]] = {
                     "title": "text",
                     "problem": "text",
                     "sources": {"list": "text"},
+                    # One change, the signal it lowers and its cost: a row may leave them out.
+                    "change?": {"kind": _enum(ChangeKind), "path": "text", "text": "text"},
+                    "signal?": {"kind": _enum(SignalKind), "now": "number", "target": "number"},
+                    "measure?": "text",
+                    "usd?": USD,
                 }
             },
         )
@@ -309,11 +320,18 @@ def _shape(t: FieldType) -> str:
 
 def _covers(where: str, reader: str, got: FieldType, want: FieldType) -> None:
     """`got`, declared, gives what `want`, read, expects: an object at least the fields read,
-    each required; anything else the very same type."""
+    each required, and a field read as `x?` of the same type when declared at all; anything
+    else the very same type."""
     shape = _shape(want)
     if isinstance(got, dict) and isinstance(want, dict) and shape == _shape(got) == "object":
         have = _required(got)
         for name, sub in want.items():
+            if name.endswith("?"):
+                bare = name.rstrip("?")
+                declared = got.get(bare, got.get(name))
+                if declared is not None:
+                    _covers(f"{where}.{bare}", reader, declared, sub)
+                continue
             if name not in have:
                 raise ContractError("contract-field-missing", f"{where}.{name} (read by {reader})")
             _covers(f"{where}.{name}", reader, have[name], sub)

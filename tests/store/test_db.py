@@ -63,7 +63,8 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertIn(str(data.db_path), message)
 
     def test_a_database_below_12_or_between_is_refused_by_name(self):
-        """Only 12, the last release's, takes the one step; the steps before and after it are gone."""
+        """Only 12, the last release's, takes the one step, and 19 its own; the steps before and
+        between are gone."""
         for found in (11, 18):
             with tempfile.TemporaryDirectory() as d, self.subTest(found=found):
                 data = Data(d)
@@ -823,6 +824,42 @@ class AV12DatabaseTakesOneStep(unittest.TestCase):
             [('["impl"]', None), (None, None)],
         )
         self.assertEqual(self._all("SELECT agents FROM vault_secrets"), [('["impl"]',)])
+
+
+class AV19DatabaseGainsAProposalsChange(unittest.TestCase):
+    """19 to 20: the four columns of a proposal's change, empty on the rows it holds."""
+
+    MEASURED = ("change", "signal", "measure", "usd")
+
+    def test_a_19_with_a_proposal_opens_at_20_with_its_fields_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            fresh = Data(Path(d) / "fresh")
+            fresh.version()
+            with fresh.connect() as conn:
+                want = _shape(conn)
+            data = Data(Path(d) / "old")
+            data.version()
+            with sqlite3.connect(data.db_path) as conn:
+                for column in self.MEASURED:
+                    conn.execute(f"ALTER TABLE proposals DROP COLUMN {column}")
+                conn.execute(
+                    "INSERT INTO proposals (workspace, agent, type, slug, title, problem, sources, "
+                    "at) VALUES ('/w', 'scan', 'fix', 's', 't', 'p', '[]', 'a')"
+                )
+                conn.execute("PRAGMA user_version=19")
+            conn.close()
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                self.assertEqual(_shape(conn), want)
+                row = conn.execute("SELECT change, signal, measure, usd FROM proposals").fetchone()
+            self.assertEqual(tuple(row), ("", "", "", None))
+
+    def test_a_fresh_database_has_the_four(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.connect() as conn:
+                columns = {r[1] for r in conn.execute("PRAGMA table_info(proposals)")}
+        self.assertLessEqual(set(self.MEASURED), columns)
 
 
 if __name__ == "__main__":
