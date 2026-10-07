@@ -13,10 +13,21 @@ import { Button, Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../comp
 
 const FOLDED = new Set(["Shipped", "Dropped"]);
 
+/** The units whose title or code holds every word typed (any case); no words keep them all. */
+export function filterUnits<T extends { workspace: { name: string }; number: number; name: string }>(units: T[], words: string): T[] {
+  const need = words.toLowerCase().split(/\s+/).filter(Boolean);
+  return units.filter((u) => {
+    const hay = `${unitCode(u.workspace.name, u.number)} ${unitTitle(u.name)}`.toLowerCase();
+    return need.every((w) => hay.includes(w));
+  });
+}
+
 export function Work({ workspace }: { workspace?: string }) {
   const { boards, loading } = useBoards();
   const shown = workspace ? boards.filter((b) => b.workspace.name === workspace) : boards;
-  const units = allUnits(shown);
+  const [words, setWords] = useState("");
+  const all = allUnits(shown);
+  const units = filterUnits(all, words);
   const failed = shown.find((b) => b.error);
 
   return (
@@ -27,8 +38,17 @@ export function Work({ workspace }: { workspace?: string }) {
         {!workspace && !loading && <AddProject />}
       </div>
       {failed?.error && <ErrorState error={failed.error} />}
+      {all.length > 0 && (
+        <div style={{ padding: "0 20px 12px" }}>
+          <input className="input sm" style={{ width: 280, maxWidth: "100%" }} type="search" aria-label="Filter work" placeholder="Filter by title or code" value={words} onChange={(e) => setWords(e.target.value)} />
+        </div>
+      )}
       {loading ? (
         <SkeletonRows rows={10} />
+      ) : all.length > 0 && units.length === 0 ? (
+        <Empty icon="search" title="No match">
+          No unit has all of "{words.trim()}" in its title or code.
+        </Empty>
       ) : units.length === 0 ? (
         <Empty icon="board" title="No work yet" actions={<Button kind="primary" icon="plus" onClick={() => navigate("/new")}>New work</Button>}>
           Hand over the first piece of work (key <kbd>C</kbd>).

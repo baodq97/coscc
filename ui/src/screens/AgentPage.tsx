@@ -305,6 +305,34 @@ function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; la
   );
 }
 
+/** The model choices for a field holding `current`: the known ids, the current one if it is
+ * another, each named as a person reads it; the empty choice runs the default. */
+export function modelOptions(current: string | undefined, empty: string): { value: string; label: string }[] {
+  const ids = current && !MODELS.includes(current) ? [...MODELS, current] : MODELS;
+  return [{ value: "", label: empty }, ...ids.map((m) => ({ value: m, label: modelName(m) }))];
+}
+
+function ModelSelect({ ctx, path, empty }: { ctx: Ctx; path: string; empty: string }) {
+  const [top, ...rest] = path.split(".");
+  const v = get(ctx.value(top), rest);
+  const current = v == null || v === "" ? undefined : String(v);
+  return (
+    <select
+      className="input sm"
+      style={{ width: 260, maxWidth: "100%" }}
+      value={current ?? ""}
+      disabled={!ctx.editable}
+      onChange={(e) => ctx.edit(top, (now: unknown) => put(now, rest, e.target.value === "" ? undefined : e.target.value))}
+    >
+      {modelOptions(current, empty).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function Text({ ctx, path, width = 260, placeholder }: { ctx: Ctx; path: string; width?: number; placeholder?: string }) {
   const [top, ...rest] = path.split(".");
   const v = get(ctx.value(top), rest);
@@ -386,8 +414,8 @@ function Configuration(ctx: Ctx) {
         How it runs <span className="faint">{ran(a.config)}</span>
       </div>
       <div className="card card-b">
-        <Part ctx={ctx} path="model.id" label="Model" hint={`${modelId ? `${modelName(modelId)}. ` : ""}${page.cos_model ? `Empty: ${modelName(page.cos_model)}, from COS_MODEL.` : "Empty: the CLI's default."}`}>
-          <Text ctx={ctx} path="model.id" placeholder="model id" />
+        <Part ctx={ctx} path="model.id" label="Model" hint={`${modelId ? `Id ${modelId}. ` : ""}${page.cos_model ? `Empty: ${modelName(page.cos_model)}, from COS_MODEL.` : "Empty: the CLI's default."}`}>
+          <ModelSelect ctx={ctx} path="model.id" empty="Default" />
         </Part>
         <Part ctx={ctx} path="model.effort" label="Effort">
           <Effort ctx={ctx} path="model.effort" />
@@ -434,8 +462,8 @@ function Configuration(ctx: Ctx) {
             {shadowed.length > 0 && <div className="faint" style={{ fontSize: 12.5, fontWeight: 400 }}>Your edit of {shadowed.join(" and ")} above rules these steps too, until you set them here.</div>}
           </div>
           <div className="card card-b">
-            <Part ctx={ctx} path="variants.novel.model.id" label="Model">
-              <Text ctx={ctx} path="variants.novel.model.id" placeholder="as above" />
+            <Part ctx={ctx} path="variants.novel.model.id" label="Model" hint={get(ctx.value("variants"), ["novel", "model", "id"]) ? `Id ${get(ctx.value("variants"), ["novel", "model", "id"])}` : undefined}>
+              <ModelSelect ctx={ctx} path="variants.novel.model.id" empty="As above" />
             </Part>
             <Part ctx={ctx} path="variants.novel.model.effort" label="Effort">
               <Effort ctx={ctx} path="variants.novel.model.effort" />

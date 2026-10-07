@@ -160,11 +160,11 @@ function Row({ workspace, unit, rank, estimate, paused, children }: { workspace:
     <div className="ny">
       <span className="faint" style={{ width: 22, textAlign: "right", paddingTop: 1 }}>{rank}</span>
       <div className="grow" style={{ minWidth: 0 }}>
-        <div className="row" style={{ gap: 6 }}>
+        <div className="row ny-name" style={{ gap: 6 }}>
           <Link to={`/unit/${workspace}/${number(unit)}`} className="faint nowrap">
             {unitCode(workspace, number(unit))}
           </Link>
-          <span className="ellipsis" style={{ fontWeight: 500 }}>{unitTitle(unit)}</span>
+          <span className="ellipsis ny-title" style={{ fontWeight: 500 }}>{unitTitle(unit)}</span>
           {paused && (
             <span title="It stopped at its ceiling and kept its session. Raise it on the unit's page.">
               <Chip square tone="amber">{pausedAt(paused)}</Chip>
@@ -185,7 +185,7 @@ function Row({ workspace, unit, rank, estimate, paused, children }: { workspace:
 /** Buttons at the end of a row, beside the title. */
 function Slot({ children }: { children: ReactNode }) {
   return (
-    <div className="row" style={{ gap: 2, position: "absolute", right: 12, top: 10 }}>
+    <div className="row ny-slot" style={{ gap: 2 }}>
       {children}
     </div>
   );

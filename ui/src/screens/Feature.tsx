@@ -8,6 +8,13 @@ import { FEATURE_UIS } from "../lib/feature";
 import { Link, navigate } from "../lib/router";
 import { Empty, PageHead, SkeletonRows } from "../components/ui";
 
+/** What a feature page shows: "wait" only while the answer can still come; an unknown name, or a
+ * project list that failed to load, is "none". */
+export function featureView(hasPage: boolean, loading: boolean, shownState: string, exists: boolean): "wait" | "none" | "page" {
+  if (hasPage) return "page";
+  return exists || loading || shownState === "loading" ? "wait" : "none";
+}
+
 export function Feature({ name }: { name: string }) {
   const { boards, loading } = useBoards();
   const [project, setProject] = useState("");
@@ -20,7 +27,8 @@ export function Feature({ name }: { name: string }) {
     if (!page && exists) navigate(`/may-do?feature=${encodeURIComponent(name)}`);
   }, [page, exists, name]);
 
-  if (!page && (loading || (workspace && !shown.data) || exists))
+  const view = featureView(Boolean(page), loading, workspace ? shown.state : "ready", Boolean(exists));
+  if (view === "wait")
     return (
       <div className="page">
         <SkeletonRows rows={4} />
