@@ -36,6 +36,8 @@ _DESCRIPTION = re.compile(r"\A---\n(?:.*\n)*?description:[ \t]*(.+)\n(?:.*\n)*?-
 class Skill(TypedDict):
     name: str
     pack: str
+    # Shipped with the app (its pack is the built-in one).
+    builtin: bool
     description: str
     own: bool
     edited: bool
@@ -129,6 +131,7 @@ def catalog(records: Iterable[Mapping[str, Any]] = (), now: datetime | None = No
             Skill(
                 name=name,
                 pack=owner,
+                builtin=owner == pack.manifest()["name"],
                 description=described.group(1).strip().strip("\"'") if described else "",
                 own=own and base is None,
                 edited=own and base is not None,

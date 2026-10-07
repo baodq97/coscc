@@ -21,13 +21,21 @@ export function skillProblem(name: string, text: string): string {
   return "";
 }
 
-function whose(s: Skill): string {
+/** Where a skill comes from, in words: yours, built in, or an imported pack's; and whether you edited it. */
+export function whose(s: Pick<Skill, "own" | "builtin" | "edited" | "pack">): string {
   if (s.own) return "Yours";
-  return s.edited ? `${s.pack}, edited by you` : s.pack;
+  const from = s.builtin ? "Built in" : s.pack;
+  return s.edited ? `${from}, edited by you` : from;
+}
+
+/** How often runs were given it, in words. */
+export function usesWords(s: Pick<Skill, "uses_30d" | "last_used">): string {
+  if (!s.uses_30d) return "Not used in 30 days";
+  return `${s.uses_30d} ${s.uses_30d === 1 ? "use" : "uses"} in 30 days, last ${ago(s.last_used)}`;
 }
 
 export function Skills() {
-  const res = useResource("/api/skills", {}, { on: ["agent-run."] });
+  const res = useResource("/api/skills", {}, { on: ["agent-run.", "step."] });
   const open = useQuery("skill");
   const adding = useQuery("new") === "1";
   const agent = useQuery("agent");
@@ -59,16 +67,15 @@ export function Skills() {
           ))}
           <div className="card" style={{ marginTop: 20 }}>
             {skills.map((s) => (
-              <button key={s.name} className="agent-line skill-line" onClick={() => setQuery("skill", s.name)}>
-                <span />
+              <button key={s.name} className="skill-line" onClick={() => setQuery("skill", s.name)}>
                 <span className="who">
                   <b>{s.name}</b>
                   <span className="when">{s.description || "No description."}</span>
                 </span>
-                <span className="what">{whose(s)}</span>
-                <span className="what">{s.agents.length ? s.agents.join(", ") : "No agent"}</span>
-                <span className="cost">
-                  {s.uses_30d ? `${s.uses_30d} ${s.uses_30d === 1 ? "use" : "uses"} · ${ago(s.last_used)}` : "Not used in 30 days"}
+                <span className="ms">
+                  <span className="m">{whose(s)}</span>
+                  <span className="m">{s.agents.length ? `Given to ${s.agents.join(", ")}` : "Given to no agent"}</span>
+                  <span className="m">{usesWords(s)}</span>
                 </span>
               </button>
             ))}
@@ -106,12 +113,13 @@ function SkillText({ s, onClose }: { s: Skill; onClose: () => void }) {
           {s.agents.length ? s.agents.map((a) => <Link key={a} to={`/agents/${a}/prompt`}>{a}</Link>) : <span className="faint">No agent names it yet: add it on an agent's Prompt & skills tab.</span>}
         </span>
         <span className="k">Used</span>
-        <span>{s.uses_30d ? `${s.uses_30d} runs in 30 days, last ${ago(s.last_used)}` : "No run in 30 days"}</span>
-        <span className="k">Version</span>
-        <span className="mono faint">{s.hash}</span>
+        <span>{usesWords(s)}</span>
       </div>
       <pre className="skill-text">{s.text}</pre>
-      <div className="faint" style={{ fontSize: 12 }}>Edit its text on the Prompt & skills tab of an agent that names it.</div>
+      <div className="row" style={{ gap: 10, alignItems: "center" }}>
+        <span className="faint grow" style={{ fontSize: 12 }}>Edit its text on the Prompt & skills tab of an agent that names it.</span>
+        <Button size="sm" onClick={onClose}>Close</Button>
+      </div>
     </Dialog>
   );
 }
@@ -151,6 +159,7 @@ function NewSkill({ agent, onClose, onSaved }: { agent: string; onClose: () => v
         <Button kind="primary" size="sm" disabled={busy || Boolean(problem)} onClick={save}>
           {agent ? `Save and give to ${agent}` : "Save"}
         </Button>
+        <Button size="sm" kind="ghost" onClick={onClose}>Cancel</Button>
         <span className="faint" style={{ fontSize: 12 }}>{problem || "Saved in your own layer; nothing runs until an agent names it."}</span>
         {(name || text) && <Chip tone="plain">{new TextEncoder().encode(text).length.toLocaleString()} / 16,000 bytes</Chip>}
       </div>

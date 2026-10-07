@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { skillProblem } from "./Skills";
+import { skillProblem, usesWords, whose } from "./Skills";
 import { toggleSkill } from "../components/SkillPicker";
 
 describe("a new skill", () => {
@@ -17,5 +17,18 @@ describe("the skill picker", () => {
     expect(toggleSkill(["a"], "b")).toEqual(["a", "b"]);
     expect(toggleSkill(["a", "b"], "a")).toEqual(["b"]);
     expect(toggleSkill(toggleSkill([], "a"), "a")).toEqual([]);
+  });
+});
+
+describe("a skill's line", () => {
+  it("says where it comes from in words", () => {
+    expect(whose({ own: true, builtin: false, edited: false, pack: "local" })).toBe("Yours");
+    expect(whose({ own: false, builtin: true, edited: false, pack: "coscc-sdlc" })).toBe("Built in");
+    expect(whose({ own: false, builtin: true, edited: true, pack: "coscc-sdlc" })).toBe("Built in, edited by you");
+    expect(whose({ own: false, builtin: false, edited: false, pack: "audits" })).toBe("audits");
+  });
+  it("counts its uses", () => {
+    expect(usesWords({ uses_30d: 0, last_used: "" })).toBe("Not used in 30 days");
+    expect(usesWords({ uses_30d: 1, last_used: new Date().toISOString() })).toMatch(/^1 use in 30 days, last /);
   });
 });

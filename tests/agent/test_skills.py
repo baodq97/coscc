@@ -133,6 +133,7 @@ class Catalog(_Root):
         self.assertEqual((mine["pack"], mine["own"], mine["edited"]), ("local", True, False))
         self.assertEqual((mine["uses_30d"], mine["last_used"]), (2, "2026-10-07T00:00:00+00:00"))
         self.assertEqual(mine["description"], "Take notes.")
+        self.assertEqual((mine["builtin"], idea["builtin"]), (False, True))
         self.assertEqual(mine["agents"], [])
         self.assertEqual(
             (idea["pack"], idea["own"], idea["edited"]), (pack.manifest()["name"], False, True)

@@ -758,6 +758,7 @@ export type Shown = {
 export type Skill = {
   "name": string;
   "pack": string;
+  "builtin": boolean;
   "description": string;
   "own": boolean;
   "edited": boolean;
