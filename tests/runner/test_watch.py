@@ -240,6 +240,28 @@ class ARunsEndIsOnItsFirstPage(unittest.TestCase):
         self.assertEqual((page["outcome"], page["draft"]), ("done", draft))
         self.assertNotIn("draft", core.watch.events_page(str(repo), "r9", before=5))
 
+    def test_what_it_made_and_how_far_it_looked_come_with_its_end(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        repo = root / "work" / "proj"
+        repo.mkdir(parents=True)
+        config = Config(
+            workspaces=(str(repo),), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
+        core = Core(config, Sessions(config))
+        ws = core.ws.key(str(repo))
+        with Data(config.data_dir).write() as conn:
+            conn.execute(
+                "INSERT INTO step_events (run, seq, at, kind, event, bytes) "
+                "VALUES ('r8', 1, 0, 'denied', '{}', 2), ('r8', 2, 0, 'worker_start', '{}', 2)"
+            )
+        core.ws.journal().finished(ws, "", "scan", "done", run="r8", proposals=2, verdict="met")
+        page = core.watch.events_page(str(repo), "r8")
+        self.assertEqual(
+            (page["made"], page["verdict"], page["refused"], page["helpers"]), (2, "met", 1, 1)
+        )
+
 
 class ASkippedRunHasAPage(unittest.TestCase):
     def test_a_run_with_only_an_end_opens_a_page_not_no_such_run(self):

@@ -5,7 +5,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Asked, EventsPage, Followup, StepEvent } from "../api.gen";
 import { api, useResource } from "../lib/api";
-import { stageLabel } from "../lib/pack";
+import { agentFace, stageLabel } from "../lib/pack";
+import { resultWords, shallowWords } from "./AgentActivity";
 import { modelName, startedBy, money, toolName, unitCode, unitTitle } from "../lib/format";
 import { Link, useQuery } from "../lib/router";
 import { Button, Chip, ErrorState, Markdown, PageHead, SkeletonRows } from "../components/ui";
@@ -97,7 +98,7 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
   return (
     <div className="page mid">
       <PageHead
-        title={page ? (page.stage === "ask" ? "A question asked of a run" : `${stageLabel(page.stage)} run`) : "Run"}
+        title={page ? (page.stage === "ask" ? "A question asked of a run" : `${page.unit ? stageLabel(page.stage) : agentFace(page.stage).name} run`) : "Run"}
         actions={
           stoppable ? (
             <Button size="sm" kind="danger" icon="x" disabled={stopping} onClick={stop}>
@@ -120,9 +121,30 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
           ) : undefined
         }
       />
+      {page && !page.unit && page.stage !== "ask" && page.stage !== "chat" && (
+        <div className="crumb-line faint">
+          <Link to={`/agents?ws=${encodeURIComponent(workspace)}`}>Agents</Link> / <Link to={`/agents/${page.stage}?ws=${encodeURIComponent(workspace)}`}>{agentFace(page.stage).name}</Link>
+        </div>
+      )}
+      {page && page.outcome && page.outcome !== "paused-budget" && <RunResult page={page} />}
       {stopError && <div className="rl-bad" style={{ fontSize: 12.5 }}>{stopError}</div>}
       <div style={{ marginTop: 16 }}>{cwd ? <RunLog cwd={cwd} run={run} live={false} whole onEnd={head.reload} /> : <SkeletonRows rows={3} />}</div>
       {cwd && page && page.status !== "running" && page.stage !== "chat" && <AskRun cwd={cwd} run={run} workspace={workspace} />}
+    </div>
+  );
+}
+
+/** What an ended run came to, in one line: how it ended, what it made, and whether it was only partly checked. */
+function RunResult({ page }: { page: EventsPage }) {
+  const made = resultWords({ made: page.made ?? null, verdict: page.verdict ?? "" });
+  const thin = shallowWords({ refused: page.refused, verdict: page.verdict });
+  return (
+    <div className="row run-result" style={{ gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+      <Chip square tone={page.outcome === "done" ? "plain" : page.outcome === "failed" ? "red" : "amber"}>{page.outcome === "done" ? "done" : page.outcome}</Chip>
+      {made && <Chip square tone="accent">{made}</Chip>}
+      {thin && <Chip square tone="amber">partly checked: {thin}</Chip>}
+      {page.helpers ? <span className="faint">{page.helpers} helper{page.helpers === 1 ? "" : "s"}</span> : null}
+      {page.detail && <span className="faint">{page.detail}</span>}
     </div>
   );
 }

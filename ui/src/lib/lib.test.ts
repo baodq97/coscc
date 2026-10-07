@@ -16,7 +16,8 @@ import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
-import { runRow, changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
+import { changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
+import { runRow, resultWords, shallowWords } from "../screens/AgentActivity";
 import { fieldLabel, isEmpty, itemLine } from "../screens/UnitPage";
 import { inboxView } from "../screens/Inbox";
 import { featureView } from "../screens/Feature";
@@ -644,6 +645,22 @@ describe("runRow", () => {
   });
   it("sends a unit's run without a log to its unit", () => {
     expect(runRow({ ...run, unit: "0007_a-thing" }, "ws").to).toBe("/unit/ws/7");
+  });
+});
+
+describe("what a run made", () => {
+  const run = { made: null, verdict: "", refused: null, shallow: false } as unknown as Parameters<typeof resultWords>[0];
+  it("says proposed N, a verdict, or nothing", () => {
+    expect(resultWords({ ...run, made: 2 })).toBe("proposed 2");
+    expect(resultWords({ ...run, made: 0 })).toBe("proposed nothing");
+    expect(resultWords({ ...run, verdict: "not-met" })).toBe("verdict: not met");
+    expect(resultWords(run)).toBe("");
+  });
+  it("flags a run that was refused calls or left a criterion unclear", () => {
+    expect(shallowWords({ ...run, refused: 1 })).toBe("1 call was refused");
+    expect(shallowWords({ ...run, refused: 3 })).toBe("3 calls were refused");
+    expect(shallowWords({ ...run, verdict: "unclear" })).toBe("left a criterion unclear");
+    expect(shallowWords(run)).toBe("");
   });
 });
 

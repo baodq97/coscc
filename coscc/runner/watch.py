@@ -75,6 +75,12 @@ class EventsPage(TypedDict):
     outcome: NotRequired[str]
     detail: NotRequired[str]
     draft: NotRequired[dict[str, Any]]
+    # What the run made and how thoroughly it looked (on the same page): the proposals it kept, a
+    # verdict's judgement, the tool calls it was refused and the helpers it started.
+    made: NotRequired[int]
+    verdict: NotRequired[str]
+    refused: NotRequired[int]
+    helpers: NotRequired[int]
 
 
 class Watch:
@@ -231,6 +237,13 @@ class Watch:
         out = {"outcome": str(end.get("outcome") or ""), "detail": str(end.get("detail") or "")}
         if isinstance(end.get("draft"), dict):
             out["draft"] = end["draft"]
+        if isinstance(end.get("proposals"), int):
+            out["made"] = end["proposals"]
+        if end.get("verdict"):
+            out["verdict"] = str(end["verdict"])
+        kept = Data(self.config.data_dir).step_event_counts([run], ("denied", "worker_start"))
+        out["refused"] = kept.get(run, {}).get("denied", 0)
+        out["helpers"] = kept.get(run, {}).get("worker_start", 0)
         return out
 
     async def follow_events(

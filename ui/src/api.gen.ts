@@ -315,6 +315,10 @@ export type EventsPage = {
   "outcome"?: string;
   "detail"?: string;
   "draft"?: Record<string, unknown>;
+  "made"?: number;
+  "verdict"?: string;
+  "refused"?: number;
+  "helpers"?: number;
 };
 
 export type Followup = {
@@ -490,6 +494,11 @@ export type ProcessShown = {
   "ref": string;
   "name": string;
   "own": boolean;
+};
+
+export type PromptPreview = {
+  "system": string;
+  "task": string;
 };
 
 export type Proposal = {
@@ -962,6 +971,7 @@ export type coscc__units__read__Running = {
 export type Get = {
   "/api/agents": AgentPage;
   "/api/agents/live": Live;
+  "/api/agents/{key}/prompt": PromptPreview;
   "/api/backlog": UpNext;
   "/api/chat/history": ChatHistory;
   "/api/chat/sessions": ChatSessions;
