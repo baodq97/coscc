@@ -641,7 +641,7 @@ describe("runRow", () => {
     expect(runRow({ ...run, skipped: true, detail: "nothing new" }, "ws")).toMatchObject({ to: "", title: "Skipped — nothing new", muted: true });
   });
   it("says a run with no kept log has none", () => {
-    expect(runRow(run, "ws")).toMatchObject({ to: "", title: "Run — no log kept", muted: true });
+    expect(runRow(run, "ws")).toMatchObject({ to: "", title: "An earlier run — no log kept", muted: true });
   });
   it("sends a unit's run without a log to its unit", () => {
     expect(runRow({ ...run, unit: "0007_a-thing" }, "ws").to).toBe("/unit/ws/7");

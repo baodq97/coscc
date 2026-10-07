@@ -74,7 +74,7 @@ export function Briefing() {
                 {failed.map((f) => (
                   <Link key={f.workspace + f.agent} to={failedLink(f)} className="lrow stack">
                     <span className="id">{f.name}</span>
-                    <span className="t">{f.detail || "The last run failed."}</span>
+                    <span className="t">{(f.detail || "The last run failed.").split("\n")[0]}</span>
                     <span className="meta">{f.workspace} · {ago(f.at)}</span>
                   </Link>
                 ))}

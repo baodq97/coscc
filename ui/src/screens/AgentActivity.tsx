@@ -33,7 +33,8 @@ export function runRow(r: RunView, ws: string): { to: string; code: string; titl
   const title = r.unit ? unitTitle(r.unit) : r.started_by ? `Run by ${startedBy(r.started_by)}` : "Run";
   if (r.run) return { to: `/run/${ws}/${r.run}`, code, title, muted: false };
   if (r.unit) return { to: `/unit/${ws}/${n}`, code, title, muted: false };
-  return { to: "", code, title: `${title} — no log kept`, muted: true };
+  // Before runs kept a log (or recorded who started them), who started it is not told.
+  return { to: "", code, title: r.unit ? `${title} — no log kept` : "An earlier run — no log kept", muted: true };
 }
 
 /** What the agent made over the window: counts of its proposals by what became of them. */

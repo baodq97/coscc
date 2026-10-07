@@ -107,7 +107,7 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
                 <span className="ny-t ellipsis" style={{ fontSize: 13 }}>{f.name} failed on {f.workspace}</span>
                 <span className="faint nowrap" style={{ fontSize: 12, marginLeft: "auto" }}>{ago(f.at)}</span>
               </div>
-              <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{f.detail || "Open the run to see why."}</div>
+              <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{(f.detail || "Open the run to see why.").split("\n")[0]}</div>
             </div>
           </Link>
         ))}
