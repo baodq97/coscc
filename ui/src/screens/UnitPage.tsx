@@ -27,8 +27,9 @@ export function UnitPage({ workspace, number }: { workspace: string; number: str
   const query: Record<string, string> = placed ? { cwd: placed.workspace.path, name: placed.name } : {};
   const detail = useResource(placed ? "/api/units/{name}" : null, query, { on: [""] });
   const next = useResource(placed ? "/api/units/next" : null, placed ? { cwd: placed.workspace.path, unit: placed.name } : {}, { on: [""] });
+  // What a press runs on (model, ceilings), for the actions; it is read beside the unit, never before.
   const agents = useResource(placed ? "/api/agents" : null, placed ? { cwd: placed.workspace.path } : {});
-  const names = Object.fromEntries((agents.data?.rows ?? []).map((a) => [a.key, a.row.name ?? a.key]));
+  const names = Object.fromEntries(Object.entries(useIndex().faces).map(([k, f]) => [k, f.name]));
   const running = boards.flatMap((b) => b.board?.running ?? []).find((r) => r.unit === placed?.name);
 
   if (loading) return <div className="page"><SkeletonRows rows={5} /></div>;

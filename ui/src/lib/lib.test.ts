@@ -550,6 +550,12 @@ describe("screens", () => {
     }
   });
 
+  it("waits on no read that counts runs before any screen shows: agents' names come with the packs", () => {
+    const sources = import.meta.glob<string>(["./pack.tsx", "../shell/*.tsx"], { query: "?raw", import: "default", eager: true });
+    expect(Object.keys(sources).length).toBeGreaterThan(1);
+    for (const [file, text] of Object.entries(sources)) expect(text.includes('"/api/agents"'), file).toBe(false);
+  });
+
   it("names a changed part as the page does, not by its record's key", () => {
     const saved = { model: { id: "a", effort: "low" }, ceilings: { turns: 5, usd: 1 } };
     expect(changedParts({ model: { id: "a", effort: "high" } }, saved)).toEqual(["effort"]);

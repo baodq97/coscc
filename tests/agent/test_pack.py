@@ -1026,6 +1026,17 @@ class ManyPacks(unittest.TestCase):
         pack.remove_pack("mine")
         self.assertIsNone(pack.row("mine-row"))
 
+    def test_each_pack_shows_its_own_agents_faces(self):
+        pack.import_zip(zipped(a_pack()), CATALOG)
+        shown = {p["name"]: p for p in pack.packs_shown(Data(self.d.name), "/ws")}
+        mine = pack.row("mine-row")["name"]
+        self.assertEqual(
+            shown["mine"]["agents"], [{"key": "mine-row", "name": mine, "glyph": mine[0]}]
+        )
+        impl = next(a for a in shown["coscc-sdlc"]["agents"] if a["key"] == "impl")
+        self.assertEqual(impl["name"], pack.row("impl")["name"])
+        self.assertNotIn("mine-row", [a["key"] for a in shown["coscc-sdlc"]["agents"]])
+
     def test_an_off_packs_scheduled_row_does_not_run_on_its_schedule(self):
         data = Data(self.d.name)
         timed = ROW.replace('{"manual": true}', '{"schedule": {"hours": 24}}\ndefault: "on"')
