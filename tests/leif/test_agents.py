@@ -13,6 +13,7 @@ from coscc import kernel
 from coscc.config import Config
 from coscc.agent import models, pack, policy
 from coscc.runner import run as run_mod
+from coscc.runner import triggers
 from coscc.units import contracts
 from coscc.store.db import Data
 from coscc.http.app import Core
@@ -465,7 +466,25 @@ class ThePage(_WithAService):
         pack.set_agent_on(self.data, "scan", "w", True)
         self.assertEqual(len(self.core.agents.live()["failed"]), 1)
         pack.set_agent_on(self.data, "scan", "w", False)
+        self.assertEqual(len(self.core.agents.live()["failed"]), 1)
+        self._seed(
+            [dict(triggers.state_record("w", "scan", False, "owner"), at=now.isoformat())]
+        )
         self.assertEqual(self.core.agents.live()["failed"], [])
+
+    def test_a_failure_of_an_agent_off_here_stays_listed_unless_it_was_turned_off_after(self):
+        now = datetime.now(timezone.utc)
+        failed = _end("scan", "failed", 1, unit="") | {
+            "run": "r1",
+            "agent": "scan",
+            "at": (now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        }
+        self._seed([failed])
+        listed = {"workspaces": [{"name": "proj", "path": "w", "missing": False}], "paths": ["w"]}
+        self.enterContext(mock.patch.object(self.core.ws, "all", return_value=listed))
+        self.enterContext(mock.patch.object(self.core.ws, "key", side_effect=lambda p: p))
+        pack.set_agent_on(self.data, "scan", "w", False)
+        self.assertEqual(len(self.core.agents.live()["failed"]), 1)
 
     def test_an_off_reason_comes_from_the_runs_outcome_not_from_logged_words(self):
         from coscc.leif.agents import _off_reason
