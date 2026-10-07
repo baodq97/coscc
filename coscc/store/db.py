@@ -807,10 +807,8 @@ class Data:
             )
         if found < SCHEMA_VERSION:
             self._retry(lambda: self._create(conn), wait)
-        # Equal is the whole common path: one pragma read. A lower number re-runs `_create`,
-        # which is the whole migration mechanism: every `_SCHEMA` statement is `IF NOT EXISTS`
-        # and `_COLUMNS` adds the columns. This works for *adding*; changing or dropping a
-        # column needs a real migration.
+        # Equal is the whole common path: one pragma read. A lower number runs `_create`: an
+        # empty database gets `_SCHEMA`, one at `FROM` the one step `_from_12`.
 
     @staticmethod
     def _user_version(conn: sqlite3.Connection) -> int:
