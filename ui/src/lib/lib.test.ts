@@ -15,7 +15,7 @@ import { attention, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
 import { changes, get, put } from "../screens/AgentPage";
 import type { AgentRow } from "../api.gen";
-import { draftOf, draftParts, draftTools, liveLine } from "./build";
+import { afterAgentSaved, draftOf, draftParts, draftTools, liveLine, runsByItself } from "./build";
 import { addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
 
 describe("format", () => {
@@ -394,6 +394,30 @@ describe("Dagaz's draft fills the forms", () => {
       { name: "Read", policy: "allow", effect: "read", tier: "low" },
       { name: "Bash", policy: "ask", effect: "not in the catalog", tier: "" },
     ]);
+  });
+
+  it("every remaining part of a drafted row is shown", () => {
+    const parts = Object.fromEntries(
+      draftParts({ ...agent.fields, default: "on", cwd: "trunk", helpers: ["scout"], skills: ["write-intent"], variants: { novel: { model: { id: "claude-opus-5-5" } } }, warning: "Paid.", output: { kind: "artifact", by: "app" } }).map((p) => [p.label, p.value]),
+    );
+    expect(parts.Default).toMatch(/^on: runs by itself/);
+    expect(parts["Works in"]).toMatch(/trunk/);
+    expect(parts.Helpers).toBe("scout");
+    expect(parts.Skills).toBe("write-intent");
+    expect(parts.Variants).toMatch(/^novel: /);
+    expect(parts.Warning).toBe("Paid.");
+    expect(parts["Written by"]).toBe("the app, from its reply");
+  });
+
+  it("a row with its own schedule says so, louder when it starts on", () => {
+    expect(runsByItself(agent.fields)).toBe("");
+    expect(runsByItself({ trigger: { schedule: { hours: 24 } }, default: "on" })).toMatch(/^Runs by itself every 24 h, paid/);
+    expect(runsByItself({ trigger: { event: { name: "unit.shipped" } }, default: "off" })).toMatch(/starts off/);
+  });
+
+  it("saving an agent drafted beside a process goes back to the process", () => {
+    expect(afterAgentSaved({ why: "w", agent, process }, "tidy", "r1")).toBe("/may-do?draft=r1");
+    expect(afterAgentSaved({ why: "w", agent }, "tidy", "r1")).toBe("/agents/tidy");
   });
 
   it("the live line says what the run is doing", () => {

@@ -2,8 +2,8 @@
 // (glyph and name) or the engine's action, and every other way on as a labelled arrow. Plain SVG.
 
 import { useEffect, useId, useState } from "react";
-import type { AgentPage, Condition, PackShown, ProcessShown, State } from "../api.gen";
-import { api, ApiError } from "../lib/api";
+import type { Condition, PackShown, ProcessShown, State } from "../api.gen";
+import { api, ApiError, useResource } from "../lib/api";
 import {
   ACTION_WORDS,
   GUARDS,
@@ -29,9 +29,9 @@ import {
   type Way,
 } from "../lib/build";
 import { Rune } from "../lib/icons";
-import { agentFace, refreshPacks, stageLabel } from "../lib/pack";
+import { agentFace, stageLabel } from "../lib/pack";
 import { Link } from "../lib/router";
-import { DescribeTask } from "./NewAgent";
+import { DescribeTask, DraftedRow } from "./NewAgent";
 import { Button } from "./ui";
 
 const NODE_W = 176;
@@ -214,32 +214,21 @@ export function ProcessEditor({
   const [reasons, setReasons] = useState<string[]>([]);
   const [asking, setAsking] = useState(false);
   const [drafted, setDrafted] = useState<{ d: Drafted; run: string } | null>(null);
-  const [agentSaved, setAgentSaved] = useState<"" | "saving" | "saved">("");
   const keys = draft.steps.map((s) => s.key);
   const { byStep, rest } = reasonsByStep(reasons, keys);
   const problem = editing ? null : nameProblem(draft.name, taken);
   const agents = stateAgents(rows);
   // An agent Dagaz drafted beside the process, not saved yet: a step may name it.
   const fresh = drafted?.d.agent && !rows.some((r) => r.key === drafted.d.agent?.key) ? drafted.d.agent : undefined;
+  // The catalog, to show the drafted agent's tools with what each does.
+  const page = useResource(fresh ? "/api/agents" : null, { cwd });
   const edit = (f: (d: Draft) => Draft) => (setReasons([]), setDraft(f));
   const take = (d: Drafted, id: string) => {
     setDrafted({ d, run: id });
     setReasons([]);
-    setAgentSaved("");
     if (d.process) setDraft(fromProcess(d.process.name, d.process.process));
   };
-  const saveAgent = async () => {
-    if (!fresh) return;
-    setAgentSaved("saving");
-    try {
-      await api.post<AgentPage>("/api/agents/new", { cwd, key: fresh.key, name: String(fresh.fields.name ?? fresh.key), row: { fields: fresh.fields, body: fresh.body } });
-      setAgentSaved("saved");
-      refreshPacks();
-    } catch (e) {
-      setAgentSaved("");
-      setReasons(e instanceof ApiError && e.reasons.length ? e.reasons : [(e as Error).message]);
-    }
-  };
+
 
   const send = async (process: unknown) => {
     setBusy(true);
@@ -278,13 +267,13 @@ export function ProcessEditor({
           </div>
         )}
         {fresh && drafted?.d.process && (
-          <div className="callout amber">
-            <span className="grow">
-              {agentSaved === "saved" ? `${String(fresh.fields.name ?? fresh.key)} is saved; save the process next.` : `It runs a new agent, ${String(fresh.fields.name ?? fresh.key)}: save that first.`}
-            </span>
-            {agentSaved !== "saved" && (
-              <Button size="sm" disabled={agentSaved === "saving"} onClick={saveAgent}>{agentSaved === "saving" ? "Saving…" : `Save ${String(fresh.fields.name ?? fresh.key)}`}</Button>
-            )}
+          <div className="drafted-first" id="draft-agent-first">
+            <div className="callout amber">
+              <span>
+                It runs a new agent Dagaz drafted with it, <b>{String(fresh.fields.name ?? fresh.key)}</b> <span className="mono">{fresh.key}</span>. Read its parts, then <Link to={`/agents?draft=${drafted.run}`}>save it in New agent</Link>; this process opens again after.
+              </span>
+            </div>
+            <DraftedRow fields={fresh.fields} body={fresh.body} catalog={page.data?.catalog ?? []} />
           </div>
         )}
         <label className="f">

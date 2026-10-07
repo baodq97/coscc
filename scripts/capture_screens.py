@@ -67,7 +67,8 @@ visible text as `<address slug>-<W>x<H>.txt`.
 
 Three Dagaz runs ended (`seed_drafts`): `/agents?draft=capture-draft-agent` opens New agent filled
 with a drafted reader, `/may-do?draft=capture-draft-process` the process editor with a drafted
-`docs` process, and `/agents?draft=capture-draft-refused` the dialog on a run that left no draft.
+`docs` process and the agent drafted beside it, and `/agents?draft=capture-draft-refused` the
+dialog on a run that left no draft.
 
 `intent` is edited on the Agents page (Haiku, low effort, `Grep` off, `Glob` on ask, a line
 added to its role) and `spike` has a hand-written owner file its checks refuse (`seed_agents`).
@@ -787,6 +788,24 @@ DRAFT_PROCESS = {
 }
 
 
+def _with_agent() -> dict[str, Any]:
+    """`DRAFT_PROCESS` whose intent state runs `docs-intent`, an agent drafted beside it: a copy
+    of the built-in intent row, so the editor shows the agent to save first."""
+    from coscc.agent import pack
+
+    base = pack.builtin_rows()["intent"]
+    fields = {k: base[k] for k in pack.KEYS if k in base}
+    fields.update(
+        name="Docs-intent",
+        glyph="ᛞ",
+        description="States what a docs change is for, and nothing of its design.",
+    )
+    draft = json.loads(json.dumps(DRAFT_PROCESS))
+    draft["process"]["process"]["states"]["intent"]["agent"] = "docs-intent"
+    draft["agent"] = {"key": "docs-intent", "fields": fields, "body": base.get(pack.BODY) or ""}
+    return draft
+
+
 def seed_drafts(journal: Any, key: str) -> None:
     for run, outcome, extra in (
         (
@@ -799,7 +818,7 @@ def seed_drafts(journal: Any, key: str) -> None:
             },
         ),
         ("capture-draft-agent", "done", {"draft": DRAFT_AGENT, "cost_usd": 0.41}),
-        ("capture-draft-process", "done", {"draft": DRAFT_PROCESS, "cost_usd": 0.38}),
+        ("capture-draft-process", "done", {"draft": _with_agent(), "cost_usd": 0.38}),
     ):
         journal.started(key, "", "dagaz", "manual", run=run, started_by="manual")
         journal.finished(key, "", "dagaz", outcome, run=run, agent="dagaz", **extra)

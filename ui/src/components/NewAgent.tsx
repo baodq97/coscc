@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AgentPage, CatalogTool, Started, StepEvent } from "../api.gen";
 import { api, ApiError } from "../lib/api";
-import { agentNameProblem, draftOf, draftParts, draftTools, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type Drafted, type NewAgentField } from "../lib/build";
+import { afterAgentSaved, agentNameProblem, draftOf, draftParts, draftTools, runsByItself, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type Drafted, type NewAgentField } from "../lib/build";
 import { Rune } from "../lib/icons";
 import { refreshPacks } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
@@ -115,7 +115,7 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
       ) : (
         <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <Button size="sm" kind="primary" disabled={!words.trim()} onClick={start}>Draft it</Button>
-          <span className="faint" style={{ fontSize: 12 }}>{words.trim() ? "One paid run of about $0.50 that saves nothing; you save the draft." : "Write the task first. A draft is one paid run of about $0.50 that saves nothing."}</span>
+          <span className="faint" style={{ fontSize: 12 }}>{words.trim() ? "One paid run of at most $1.50 that saves nothing; you save the draft." : "Write the task first. A draft is one paid run of at most $1.50 that saves nothing."}</span>
         </div>
       )}
       {phase.at === "failed" && (
@@ -162,7 +162,7 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
       await api.post<AgentPage>("/api/agents/new", { cwd, key: shownKey, name: name.trim(), ...row });
       if (!agent && glyph.trim()) await api.post<AgentPage>("/api/agents/field", { cwd, key: shownKey, field: "glyph", value: glyph.trim() });
       refreshPacks();
-      navigate(`/agents/${shownKey}`);
+      navigate(afterAgentSaved(drafted?.d ?? null, shownKey, drafted?.run ?? ""));
       onClose();
     } catch (e) {
       setSaid(sortReasons(e instanceof ApiError && e.reasons.length ? e.reasons : [(e as Error).message]));
@@ -229,7 +229,7 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
         </div>
       )}
       <div className={`dlg-f${agent ? " sticky" : ""}`}>
-        {agent && <span className="faint grow" style={{ fontSize: 12 }}>Saved as your own agent; change any part on its page.</span>}
+        {agent && <span className="faint grow" style={{ fontSize: 12 }}>{drafted?.d.process ? "Saved as your own agent; its process opens next." : "Saved as your own agent; change any part on its page."}</span>}
         <Button kind="ghost" onClick={onClose}>Cancel</Button>
         <Button kind="primary" disabled={busy || !ready} onClick={save}>{busy ? "Saving…" : agent ? "Save agent" : "Create agent"}</Button>
       </div>
@@ -239,10 +239,16 @@ export function NewAgent({ rows, catalog = [], cwd, run, onClose }: { rows: Buil
 }
 
 /** A drafted row's parts, as a person checks them before saving: what it does, when, on what, its tools and its instructions. */
-function DraftedRow({ fields, body, catalog }: { fields: Record<string, unknown>; body: string; catalog: CatalogTool[] }) {
+export function DraftedRow({ fields, body, catalog }: { fields: Record<string, unknown>; body: string; catalog: CatalogTool[] }) {
   const tools = draftTools(fields, catalog);
+  const alone = runsByItself(fields);
   return (
     <div className="drafted">
+      {alone && (
+        <div className={`callout ${fields.default === "on" ? "red" : "amber"}`} role="note">
+          <span>{alone}</span>
+        </div>
+      )}
       {typeof fields.description === "string" && <div>{fields.description}</div>}
       <div className="kv">
         {draftParts(fields).map((p) => (

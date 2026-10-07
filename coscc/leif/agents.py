@@ -401,7 +401,7 @@ class Agents:
         """Each catalog tool's effect, for `pack.check`; `None` for a core built with no feature
         (a test's), whose catalog lacks the tools the built-in rows name."""
         hooks = self.hooks()
-        return {n: t.effect for n, t in hooks.catalog().items()} if hooks.parts else None
+        return triggers.effects(hooks) if hooks.parts else None
 
     def _records(
         self, workspace: str | None

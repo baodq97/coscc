@@ -1,12 +1,12 @@
 ---
 # Makes agents: turns a task in words into a draft row or process, checked at `submit` against the
 # same load checks a save runs. Holds no tool and writes nothing; a person reads the draft and saves
-# it. Sonnet low: a draft is checked by code before a person reads it, so a cheap model that
-# corrects a refused draft is enough. Ceilings chosen, not measured.
+# it. Opus medium: composing a new agent is the novel job the model rule gives Opus. Ceilings
+# chosen, not measured: 8 turns leave room to correct a refused draft, $1.50 caps a run.
 name: "Dagaz"
 glyph: "ᛞ"
 description: "Drafts a new agent or process from a task in words, for you to read and save."
-model: {"id": "claude-sonnet-5-5[1m]", "effort": "low"}
+model: {"id": "claude-opus-5-5[1m]", "effort": "medium"}
 tools: {}
 input: {"artifacts": [], "outputs": [], "answers": false, "findings": false, "data": ["catalog"], "given": true}
 output: {"kind": "draft", "version": 1, "purpose": "Hand the app your draft: why it serves the task, and the agent row, the process or both, each whole.", "fields": {"why": "text", "agent?": {"key": "text", "fields": "json", "body": "text"}, "process?": {"name": "text", "process": "json"}}}

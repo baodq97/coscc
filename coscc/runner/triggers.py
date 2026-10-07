@@ -94,8 +94,7 @@ def check(
         raise Refused(f"{key}'s pack {found.get('pack')} is off in this workspace", ("pack-off",))
     hooks = getattr(core.steps, "hooks", None)
     if hooks is not None and pack.needs_catalog(found):
-        effects = {n: t.effect for n, t in hooks.catalog().items()}
-        if bad := pack.problems(key, effects):
+        if bad := pack.problems(key, effects(hooks)):
             raise Refused(f"{key}'s row cannot run: {'; '.join(bad)}", ("agent-invalid",))
     if by == "leif" and not 0 < len(reason.strip()) <= REASON_MAX:
         raise Invalid(f"Leif gives a reason of 1 to {REASON_MAX} characters")
@@ -112,8 +111,7 @@ def check(
         raise Invalid(f"the words are at most {TEXT_MAX} characters")
     ws = core.ws.key(workspace)
     core.steps.refuse_updating()
-    effects = {n: t.effect for n, t in core.steps.hooks.catalog().items()}
-    bad = pack.problems(key, effects)
+    bad = pack.problems(key, effects(core.steps.hooks))
     if bad:
         raise Refused(
             f"agent-invalid: {key}'s row cannot run: {'; '.join(bad)}", ("agent-invalid",)
@@ -301,7 +299,9 @@ async def _run(
             started_by=by,
             start={"trigger": by, **({"reason": reason.strip()} if reason.strip() else {})},
             channel=(
-                submit.Collector(key, _effects(core)) if key in contracts.declarations() else None
+                submit.Collector(key, effects(core.steps.hooks))
+                if key in contracts.declarations()
+                else None
             ),
             servers={t.server: t.make(f) for t, f in tools if t.make is not None},
             mcp=kernel.granted(tuple(t for t, _ in tools)),
@@ -382,10 +382,10 @@ def _ended(journal: Any, ws: str, unit: str, key: str, by: str, outcome: str, wh
         log.exception("the end of %s was not recorded", key)
 
 
-def _effects(core: Core) -> dict[str, str] | None:
-    """Each catalog tool's effect, what a draft is checked with; `None` with no features built."""
-    hooks = getattr(core.steps, "hooks", None)
-    return {n: t.effect for n, t in hooks.catalog().items()} if hooks is not None else None
+def effects(hooks: kernel.Hooks) -> dict[str, str]:
+    """Each catalog tool's effect: what `pack.check` and a draft's `submit` are asked with. The
+    one reading of the catalog for a row's checks (`Agents` asks it too)."""
+    return {n: t.effect for n, t in hooks.catalog().items()}
 
 
 # Claude Code's own tools: what a row names beyond them is a feature's.

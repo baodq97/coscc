@@ -711,6 +711,8 @@ _KIND_SAYS = {
 def _describe(t: contracts.FieldType) -> str:
     """A declared type in words: what `submit` takes for it."""
     if isinstance(t, str):
+        if t == "json":
+            return "an object"
         return t if t == "text" else "a whole number" if t == "number" else f"text matching `{t}`"
     if isinstance(t, list):
         return "one of " + ", ".join(f"`{w}`" for w in t)

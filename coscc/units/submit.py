@@ -103,9 +103,15 @@ def draft_problem(obj: Mapping[str, Any], catalog: Mapping[str, str] | None) -> 
     rows = pack.plain_rows()
     out: list[str] = []
     if agent is not None:
-        made = {**agent["fields"], "key": agent["key"], pack.BODY: agent["body"]}
-        out += [f"agent: {r}" for r in pack.new_row_problems(made, catalog)]
-        rows[agent["key"]] = made
+        key, fields, body = agent.get("key"), agent.get("fields"), agent.get("body")
+        if not isinstance(key, str) or not isinstance(fields, dict) or not isinstance(body, str):
+            return "agent is {key, fields, body}: key and body text, fields an object."
+        made = {**fields, "key": key, pack.BODY: body}
+        try:
+            out += [f"agent: {r}" for r in pack.new_row_problems(made, catalog)]
+        except (TypeError, AttributeError, ValueError, KeyError) as e:
+            out.append(f"agent: {type(e).__name__}: {e}")
+        rows[key] = made
     if process is not None:
         name = process["name"]
         if why := pack.key_problem(name, "a process name"):

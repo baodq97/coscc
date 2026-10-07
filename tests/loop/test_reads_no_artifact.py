@@ -13,6 +13,8 @@ import ast
 import subprocess
 import sys
 
+import pytest
+
 from tests.loop.conftest import CONTRADICT, GOLDEN, REPO, env
 
 REPO_FILE = "not an artifact"
@@ -67,6 +69,8 @@ def test_the_functions_that_read_text_are_the_listed_ones():
     assert set(STILL_READ.values()) == {REPO_FILE}
 
 
+# A nested run of the whole golden suite: under xdist it takes longer than the 60 s default.
+@pytest.mark.timeout(600)
 def test_the_golden_suite_decides_the_same_when_every_header_contradicts_the_rows(tmp_path):
     files = [str(REPO / "tests" / "loop" / f"{g.stem}.py") for g in sorted(GOLDEN.glob("*.json"))]
     r = subprocess.run(

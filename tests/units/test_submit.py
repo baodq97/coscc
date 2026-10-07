@@ -492,6 +492,13 @@ class ADraftPassesTheLoadChecks(unittest.TestCase):
         self.assertIn("an `agent`, a `process` or both", said["content"][0]["text"])
         self.assertIsNone(collector.object())
 
+    def test_a_malformed_agent_is_a_named_refusal_not_a_crash(self):
+        said, _ = self._said(agent={"key": 3, "fields": [], "body": None})
+        self.assertIn("agent is {key, fields, body}", said["content"][0]["text"])
+        said, _ = self._said(agent=_draft_agent(input="all of it"))
+        self.assertTrue(said["is_error"])
+        self.assertIn("input", said["content"][0]["text"])
+
     def test_a_tool_off_the_catalog_is_refused(self):
         said, _ = self._said(agent=_draft_agent(tools={"send_email": "allow"}))
         self.assertIn("tools.send_email: no such tool in the catalog", said["content"][0]["text"])

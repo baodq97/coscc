@@ -297,9 +297,41 @@ export function draftParts(fields: Record<string, unknown>): DraftPart[] {
   out.push({ label: "Reads", value: reads || "nothing but its instructions" });
   const output = isObj(fields.output) ? fields.output : {};
   if (typeof output.kind === "string") out.push({ label: "Hands back", value: KIND_WORDS[output.kind] ?? output.kind });
+  if (typeof output.by === "string") out.push({ label: "Written by", value: BY_WORDS[output.by] ?? output.by });
+  if (fields.default !== undefined) out.push({ label: "Default", value: fields.default === "on" ? "on: runs by itself in every project where its pack is on" : "off: you turn it on per project" });
+  if (fields.cwd === "trunk") out.push({ label: "Works in", value: "the trunk as fetched, not a unit's branch" });
+  if (words(fields.helpers)) out.push({ label: "Helpers", value: words(fields.helpers) });
+  if (words(fields.skills)) out.push({ label: "Skills", value: words(fields.skills) });
+  if (isObj(fields.variants))
+    out.push({
+      label: "Variants",
+      value: Object.entries(fields.variants)
+        .map(([k, v]) => `${k}${isObj(v) && isObj(v.model) ? `: ${modelName(String(v.model.id ?? ""))}` : ""}`)
+        .join(", "),
+    });
   const c = isObj(fields.ceilings) ? fields.ceilings : {};
   if (c.usd !== undefined || c.turns !== undefined) out.push({ label: "Ceilings", value: [c.usd !== undefined ? `$${Number(c.usd).toFixed(2)} a run` : "", c.turns !== undefined ? `${c.turns} turns` : ""].filter(Boolean).join(", ") });
+  if (typeof fields.warning === "string") out.push({ label: "Warning", value: fields.warning });
   return out;
+}
+
+const BY_WORDS: Record<string, string> = {
+  app: "the app, from its reply",
+  scratch: "the app, from a reply made in a throwaway folder",
+  session: "the session itself, on the unit's branch",
+};
+
+/** A drafted row's own schedule or event, in words, when it would run paid with nobody pressing; "" when only a press or Leif starts it. */
+export function runsByItself(fields: Record<string, unknown>): string {
+  const t = isObj(fields.trigger) ? fields.trigger : {};
+  const when = [isObj(t.schedule) ? `every ${t.schedule.hours} h` : "", isObj(t.event) ? `on ${t.event.name}` : ""].filter(Boolean).join(" and ");
+  if (!when) return "";
+  return fields.default === "on" ? `Runs by itself ${when}, paid, in every project where its pack is on.` : `Runs ${when} once you turn it on in a project; it starts off.`;
+}
+
+/** Where saving a drafted agent leads: back to its process when Dagaz drafted one beside it, else the agent's page. */
+export function afterAgentSaved(d: Drafted | null, key: string, run: string): string {
+  return d?.process && run ? `/may-do?draft=${encodeURIComponent(run)}` : `/agents/${key}`;
 }
 
 const KIND_WORDS: Record<string, string> = {
