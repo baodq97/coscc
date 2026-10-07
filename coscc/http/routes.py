@@ -232,11 +232,14 @@ async def remove_workspace(name: str, request: Request) -> Any:
 async def get_agents(request: Request) -> AgentPage:
     """Every agent, every part of its row as it stands and as built in, which keys the owner set,
     its problems, skills, hash and runs grouped by definition; the tool catalog, each feature on
-    or off for `cwd`; what was wrong."""
+    or off for `cwd`; what was wrong. `agent` names the one agent whose runs come with it."""
     core, cwd = _core(request), _cwd(request)
     with pack.held():
         return await asyncio.to_thread(
-            core.agents.agent_page, core.ws.key(cwd) if cwd else None, cwd=cwd
+            core.agents.agent_page,
+            core.ws.key(cwd) if cwd else None,
+            cwd=cwd,
+            agent=request.query_params.get("agent", ""),
         )
 
 

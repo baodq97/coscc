@@ -3,7 +3,7 @@
 # 20 cut a plan mid-read at the ceiling.
 name: "Raidho"
 glyph: "ᚱ"
-description: "journey: the right road in the right order"
+description: "Plans the steps and files of the change and how it will be proven."
 model: {"id": "claude-opus-5-5[1m]", "effort": "medium"}
 skills: ["write-plan"]
 tools: {"Read": "allow", "Glob": "allow", "Grep": "allow"}

@@ -27,6 +27,11 @@ export type AgentRow = {
   "cost_30d": number;
   "chip": string;
   "groups": RunGroup[];
+  "accepted_30d": number;
+  "dismissed_30d": number;
+  "pending": number;
+  "skips_30d": number;
+  "reads_only": boolean;
   "on": boolean | null;
   "running": coscc__leif__agents__Running | null;
   "next_at": string | null;
@@ -653,6 +658,10 @@ export type RunView = {
   "started_by": string;
   "made": number | null;
   "session": boolean;
+  "verdict": string;
+  "refused": number | null;
+  "helpers": number | null;
+  "shallow": boolean;
 };
 
 export type Saved = {

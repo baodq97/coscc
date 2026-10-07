@@ -424,8 +424,14 @@ def _check_trigger(
         out += _check_hours("trigger.schedule", trigger["schedule"], "hours", required=True)
     if "event" in trigger:
         out += _check_event(row, trigger["event"])
-    if any(k in trigger for k in TRIGGERS if k != "engine"):
+    if reads_only(row):
         held = [t for t, p in (row.get("tools") or {}).items() if p != "off"]
+        asked = [t for t, p in (row.get("tools") or {}).items() if p == "ask"]
+        if asked:
+            out.append(
+                f"tools: a row a trigger starts has no one to ask, so {', '.join(asked)} is "
+                "allow or off"
+            )
         if catalog is None:
             # No catalog at load: a feature's tool (lower case) waits for the run's check, which
             # has the catalog and refuses one that does more than read; Claude Code's own must be
@@ -473,6 +479,13 @@ def _check_event(row: Mapping[str, Any], event: Any) -> list[str]:
     if (given.get("artifacts") or given.get("outputs")) and "unit" not in fields:
         out.append(f"trigger.event.name: {name} names no unit, and the row reads one")
     return out + _check_hours("trigger.event", event, "after_hours", required=False)
+
+
+def reads_only(found: Mapping[str, Any] | None) -> bool:
+    """Whether a row holds only reading tools, with no one to ask: a trigger other than the
+    engine's starts it (`_check_trigger`'s rule, and what the page hides from its Tools tab)."""
+    trigger = (found or {}).get("trigger")
+    return isinstance(trigger, dict) and any(k in trigger for k in TRIGGERS if k != "engine")
 
 
 def triggered(found: Mapping[str, Any] | None, how: str = "") -> bool:

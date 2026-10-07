@@ -2,7 +2,7 @@
 # Reads, and only reads: it checks the idea against the code. spec's ceilings, not measured.
 name: "Nauthiz"
 glyph: "ᚾ"
-description: "need"
+description: "States the problem a unit solves and how success is judged."
 model: {"id": "claude-opus-5-5[1m]", "effort": "medium"}
 skills: ["write-intent"]
 tools: {"Read": "allow", "Glob": "allow", "Grep": "allow"}

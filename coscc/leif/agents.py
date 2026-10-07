@@ -51,7 +51,11 @@ class RunView(TypedDict):
     workspace's resolved path; `row_hash` the definition its `start` ran (`""` before rows had
     one). `run` is the run-log id its events were kept under (`""` when none); `skipped` and
     `detail` say a run that spent nothing and why; `started_by` is who started it; `made` how many
-    proposals it kept (`None` when it makes none); `session` whether it kept a session to ask."""
+    proposals it kept (`None` when it makes none); `session` whether it kept a session to ask;
+    `verdict` what a grading run came to (`""` otherwise); `refused` the tool calls it was
+    refused and `helpers` the helpers it started (`None` unless the page asked for this agent's
+    runs); `shallow` that it was only partly checked: calls refused, or a verdict with an
+    unclear criterion."""
 
     workspace: str
     unit: str
@@ -66,6 +70,10 @@ class RunView(TypedDict):
     started_by: str
     made: int | None
     session: bool
+    verdict: str
+    refused: int | None
+    helpers: int | None
+    shallow: bool
 
 
 class Setting(TypedDict):
@@ -104,7 +112,8 @@ class CatalogTool(TypedDict):
 
 
 class SkillText(TypedDict):
-    """A skill a row names: the text a run is given, the built-in's, whether the owner's differs."""
+    """A skill a row names: the text a run is given, the built-in's (`""` unless the owner's
+    differs), whether it does."""
 
     name: str
     text: str
@@ -210,6 +219,8 @@ class AgentRow(TypedDict):
     # its own trigger (an event, a schedule, a press, Leif: `coscc/runner/triggers.py`).
     group: Group
     row: RowFields
+    # The built-in's value of each part in `edited` and no other: any other part of `row` is
+    # still the built-in's.
     builtin: RowFields
     # The keys the owner's layer sets (`skill:<name>` for a skill's text).
     edited: list[str]
@@ -226,8 +237,16 @@ class AgentRow(TypedDict):
     runs_30d: int
     cost_30d: float
     chip: str
-    # The last `WINDOW_DAYS`, newest first.
+    # The last `WINDOW_DAYS`, newest first; empty unless the page asked for this agent's runs.
     groups: list[RunGroup]
+    # Proposals the agent made in the window by what became of them, and the runs it skipped
+    # (listed in `groups`, in neither `runs_30d` nor `cost_30d`).
+    accepted_30d: int
+    dismissed_30d: int
+    pending: int
+    skips_30d: int
+    # Holds only reading tools and no `ask`: a trigger starts it (`pack.reads_only`).
+    reads_only: bool
     # Whether its event or schedule runs it in the workspace asked about; `None` for a row with
     # neither, or no workspace.
     on: bool | None
@@ -281,9 +300,12 @@ def chip_of(last: RunView | None, budget: float | None, runs_in_window: int) -> 
     return "ok"
 
 
-def _run_view(record: dict[str, Any]) -> RunView:
+def _run_view(record: dict[str, Any], counts: dict[str, tuple[int, int]] | None = None) -> RunView:
     cost = record.get("cost_usd")
     turns = record.get("turns")
+    run = str(record.get("run") or "")
+    refused, helpers = counts.get(run, (0, 0)) if counts is not None else (None, None)
+    verdict = str(record.get("verdict") or "")
     return RunView(
         workspace=str(record.get("workspace") or ""),
         unit=str(record.get("unit") or ""),
@@ -298,6 +320,10 @@ def _run_view(record: dict[str, Any]) -> RunView:
         started_by=str(record.get("started_by") or ""),
         made=made if isinstance(made := record.get("proposals"), int) else None,
         session=bool(record.get("session_id")),
+        verdict=verdict,
+        refused=refused,
+        helpers=helpers,
+        shallow=bool(refused) or verdict == "unclear",
     )
 
 
@@ -368,7 +394,8 @@ def _skills(found: dict[str, Any]) -> list[SkillText]:
             text = pack.skill(name)
         except LookupError:
             text = ""
-        out.append(SkillText(name=name, text=text, builtin=base, edited=text != base))
+        edited = text != base
+        out.append(SkillText(name=name, text=text, builtin=base if edited else "", edited=edited))
     return out
 
 
@@ -541,8 +568,42 @@ class Agents:
                 )
         return ends, settings, onoff, []
 
+    def _made(self, data: Data, workspace: str | None, since: str) -> dict[str, dict[str, int]]:
+        """Each agent's proposals of the window by their state, in `workspace` or in all."""
+        sql = "SELECT agent, decision, COUNT(*) FROM proposals WHERE at >= ?"
+        args: list[str] = [since]
+        if workspace is not None:
+            sql += " AND workspace = ?"
+            args.append(workspace)
+        out: dict[str, dict[str, int]] = {}
+        with data.connect() as conn:
+            for agent, state, n in conn.execute(sql + " GROUP BY agent, decision", args):
+                out.setdefault(agent, {})[state] = n
+        return out
+
+    @staticmethod
+    def _counts(data: Data, runs: list[str]) -> dict[str, tuple[int, int]]:
+        """For each run: the tool calls it was refused and the helpers it started."""
+        out: dict[str, tuple[int, int]] = {}
+        with data.connect() as conn:
+            for i in range(0, len(runs), 500):
+                part = runs[i : i + 500]
+                marks = ",".join("?" * len(part))
+                for run, kind, n in conn.execute(
+                    f"SELECT run, kind, COUNT(*) FROM step_events WHERE kind IN "
+                    f"('denied', 'worker_start') AND run IN ({marks}) GROUP BY run, kind",
+                    part,
+                ):
+                    refused, helpers = out.get(run, (0, 0))
+                    out[run] = (refused + n, helpers) if kind == "denied" else (refused, n)
+        return out
+
     def agent_page(
-        self, workspace: str | None = None, now: datetime | None = None, cwd: str = ""
+        self,
+        workspace: str | None = None,
+        now: datetime | None = None,
+        cwd: str = "",
+        agent: str = "",
     ) -> AgentPage:
         """Everything the Agents page shows, in one call: the run log is read once.
 
@@ -552,6 +613,8 @@ class Agents:
         name, its feature on or off for `cwd`. `problems`: every row or record that cannot be used.
 
         `workspace` is a run-log key; `None` adds up every workspace of the working folder.
+        Only `agent`'s row holds its runs (`groups`, with what each was refused and which helpers
+        it started); the rest hold the counts, so the page stays small.
         """
         now = now or datetime.now(timezone.utc)
         since = (now - timedelta(days=WINDOW_DAYS)).isoformat(timespec="seconds")
@@ -559,6 +622,7 @@ class Agents:
         effects = self._effects()
         data = Data(self.config.data_dir)
         rows: list[AgentRow] = []
+        made = self._made(data, workspace, since)
         by = _Now(
             running=triggers.running(),
             names={
@@ -575,8 +639,23 @@ class Agents:
             variants = found.get("variants")
             has_novel = isinstance(variants, dict) and policy.NOVEL in variants
             novel = models.config_row(key, self.config.model, policy.NOVEL) if has_novel else None
+            counts = None
+            if key == agent:
+                ids = [str(r["run"]) for r in ends.get(key, []) if r.get("run")]
+                counts = self._counts(data, ids)
             rows.append(
-                self._row(key, found, _group_of(found), config, novel, ends, settings, since)
+                self._row(
+                    key,
+                    found,
+                    _group_of(found),
+                    config,
+                    novel,
+                    ends,
+                    settings,
+                    since,
+                    made.get(key, {}),
+                    counts,
+                )
             )
             rows[-1]["problems"] = pack.problems(key, effects)
             rows[-1]["on"] = self._on(data, key, workspace)
@@ -689,10 +768,14 @@ class Agents:
         ends: dict[str, list[dict[str, Any]]],
         settings: dict[str, list[Setting]],
         since: str,
+        made: dict[str, int],
+        counts: dict[str, tuple[int, int]] | None,
     ) -> AgentRow:
         # A question to one of its runs (`ask`) is no run of it: only its cost counts.
         mine = [r for r in ends.get(key, []) if r.get("stage") != "ask"]
+        edited = list(found.get("edited") or [])
         recent = [r for r in mine if str(r.get("at") or "") >= since]
+        ran = [r for r in recent if not r.get("skipped")]
         asked = [
             r
             for r in ends.get(key, [])
@@ -702,15 +785,21 @@ class Agents:
         budget = config["ceilings"]["max_budget_usd"]
         if mine and mine[-1].get("label") == policy.NOVEL and novel is not None:
             budget = novel["ceilings"]["max_budget_usd"] or budget
-        views = [_run_view(r) for r in recent]
+        views = [_run_view(r, counts) for r in recent]
         return AgentRow(
             key=key,
             pack=str(found.get("pack") or ""),
             own=bool(found.get("own")),
             group=group,
             row=_fields_of(found),
-            builtin=_fields_of(found.get("builtin") or found),
-            edited=list(found.get("edited") or []),
+            builtin=RowFields(
+                **{
+                    k: v
+                    for k, v in _fields_of(found.get("builtin") or found).items()
+                    if k in edited
+                }
+            ),
+            edited=edited,
             problems=[],
             editable=True,
             skills=_skills(found),
@@ -718,10 +807,19 @@ class Agents:
             config=config,
             novel=novel,
             last=last,
-            runs_30d=len(recent),
-            cost_30d=round(sum(r.get("cost_usd") or 0.0 for r in (*recent, *asked)), 6),
+            runs_30d=len(ran),
+            cost_30d=round(sum(r.get("cost_usd") or 0.0 for r in (*ran, *asked)), 6),
             chip=chip_of(last, budget, len(recent)),
-            groups=groups_of(views, [s for s in settings.get(key, []) if s["at"] >= since]),
+            groups=(
+                groups_of(views, [s for s in settings.get(key, []) if s["at"] >= since])
+                if counts is not None
+                else []
+            ),
+            accepted_30d=made.get("accepted", 0),
+            dismissed_30d=made.get("dismissed", 0),
+            pending=made.get("pending", 0),
+            skips_30d=len(recent) - len(ran),
+            reads_only=pack.reads_only(found),
             on=None,
             running=None,
             next_at=None,
@@ -753,7 +851,7 @@ class Agents:
                 journal.append(dict(triggers.state_record(ws, key, on, OWNER)))
             except (BadRecord, Busy) as e:
                 raise Invalid(f"the setting was saved but not logged: {e}") from e
-        return self.agent_page(ws, cwd=cwd)
+        return self.agent_page(ws, cwd=cwd, agent=str(key))
 
     def proposals_view(self, cwd: str) -> ProposalsView:
         """Every agent's proposals in the workspace `cwd`, newest first, each naming its agent, and
@@ -835,7 +933,7 @@ class Agents:
                 )
             except (BadRecord, Busy) as e:
                 raise Invalid(f"the setting was saved but not logged: {e}") from e
-        return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
+        return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd, agent=str(key))
 
     def _vault(self) -> vault.Store:
         return vault.Store(Data(self.config.data_dir))
@@ -880,7 +978,7 @@ class Agents:
                 "new": start or ("draft" if given is not None else ""),
             }
         )
-        return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd)
+        return self.agent_page(self.ws.key(cwd) if cwd else None, cwd=cwd, agent=str(key))
 
     def delete_agent(self, key: object, cwd: str = "") -> AgentPage:
         """Remove a whole row of the owner's pack, refused `in-use` while a process names it."""
