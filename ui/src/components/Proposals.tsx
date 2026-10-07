@@ -50,6 +50,8 @@ export function Proposals({ workspace }: { workspace: Workspace }) {
   if (got.state === "error" && !got.data) return <ErrorState error={got.error} onRetry={got.reload} />;
   const v = got.data;
   if (!v || (!v.proposals.length && !v.agents.length)) return null;
+  // An agent whose proposals are listed but which proposes only on your press (Dagaz's gaps).
+  const others = [...new Map(v.proposals.filter((p) => !v.agents.some((a) => a.key === p.agent)).map((p) => [p.agent, p])).values()];
   const count = (f: Filter) => v.proposals.filter((p) => f === "all" || p.state === f).length;
   const shown = v.proposals.filter((p) => filter === "all" || p.state === filter);
 
@@ -63,6 +65,9 @@ export function Proposals({ workspace }: { workspace: Workspace }) {
           <Link key={a.key} to={`/agents/${a.key}/trigger?ws=${encodeURIComponent(workspace.name)}`}>
             {a.name}: {a.on === null ? "on request" : a.on ? "runs on its own here" : "off here, runs when you press Run now"}
           </Link>
+        ))}
+        {others.map((p) => (
+          <span key={p.agent}>{p.agent_name}: when you propose a capability its draft lacks</span>
         ))}
       </div>
       {error && <div style={{ color: "var(--red)", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
