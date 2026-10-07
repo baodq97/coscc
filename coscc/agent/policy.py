@@ -267,6 +267,8 @@ class _Simple:
     redirects: tuple[_Redirect, ...]
     # Per word: `(start, end)` of its text in the line read, quotes included.
     spans: tuple[tuple[int, int], ...] = ()
+    # Its stdin is the output of the command before it (`|`, `|&`).
+    piped: bool = False
 
 
 @dataclass(frozen=True)
@@ -360,6 +362,7 @@ class _Reader:
         pending: tuple[str, str, int] | None = None
         heredocs: list[tuple[str, bool, bool, int]] = []
         depth = 0
+        piped = False
 
         def end_word(end: int | None = None) -> None:
             nonlocal word, pending
@@ -382,7 +385,7 @@ class _Reader:
             word = None
 
         def end_command(j: int) -> None:
-            nonlocal start, words, flags, spans, redirects
+            nonlocal start, words, flags, spans, redirects, piped
             end_word()
             if pending is not None:
                 raise _Stop(f"a redirect ({pending[0]}) with no target", self.at(pending[2]))
@@ -394,9 +397,10 @@ class _Reader:
                         tuple(flags),
                         tuple(redirects),
                         tuple(spans),
+                        piped,
                     )
                 )
-            words, flags, spans, redirects = [], [], [], []
+            words, flags, spans, redirects, piped = [], [], [], [], False
             start = j + 1
 
         def at_command_start() -> bool:
@@ -444,6 +448,7 @@ class _Reader:
             elif c == "|":
                 j = self.skip(self.i + 1)
                 end_command(self.i)
+                piped = self.char(j) != "|"
                 self.i = j + 1 if self.char(j) in ("|", "&") else self.i + 1
             elif c in "<>":
                 j = self.skip(self.i + 1)
@@ -1176,8 +1181,7 @@ def _helper_git(parsed: _Parsed, agent_id: str | None) -> str:
         f"a helper runs git only to read ({', '.join(HELPER_GIT)}): "
         "only the leading session commits"
     )
-    docs = dict(parsed.heredocs)
-    for simple in parsed.commands:
+    for simple, inline in zip(parsed.commands, _inlines(parsed)):
         words = list(simple.words)
         launched = [k for k in _launched(words) if k < len(words)]
         reader = bool(launched) and words[launched[0]].rsplit("/", 1)[-1] in _READ_ONLY
@@ -1191,7 +1195,7 @@ def _helper_git(parsed: _Parsed, agent_id: str | None) -> str:
             sub = _words("git", words[k + 1 :])[1:2]
             if (first and not sub) or (sub and sub[0] not in HELPER_GIT):
                 return refused
-        if any(_GIT_WORD.search(text) for text in _inline(simple, docs)):
+        if any(_GIT_WORD.search(text) for text in inline):
             return refused
     return ""
 
@@ -1203,10 +1207,20 @@ _FIND_EXEC = ("-exec", "-execdir", "-ok", "-okdir")
 _PYTHON = re.compile(r"python[0-9.]*")
 
 
-def _inline(simple: _Simple, docs: Mapping[int, str]) -> list[str]:
+def _inlines(parsed: _Parsed) -> list[list[str]]:
+    """`_inline` of each simple command of a line, in order."""
+    docs, commands = dict(parsed.heredocs), parsed.commands
+    return [
+        _inline(simple, docs, commands[i - 1] if i and simple.piped else None)
+        for i, simple in enumerate(commands)
+    ]
+
+
+def _inline(simple: _Simple, docs: Mapping[int, str], fed: _Simple | None = None) -> list[str]:
     """The programs an interpreter in one simple command is given as text: its code flag's value
-    (`python -c`, `perl -e`, `node -e`, `_INLINE`), or, given no script or `-`, the here-document
-    (`docs`, by where its delimiter stands) or here-string it reads from stdin.
+    (`python -c`, `perl -e`, `node -e`, `_INLINE`), or, given no script or `-`, what it reads
+    from stdin: a here-document (`docs`, by where its delimiter stands), a here-string, or the
+    words of an `echo` or `printf` piped into it (`fed`).
 
     An interpreter counts where `_helper_git` counts `git`: where a program starts (`uv run`,
     `find -exec`), and as a name or a path anywhere else (`timeout 9 .venv/bin/python`), except
@@ -1231,6 +1245,9 @@ def _inline(simple: _Simple, docs: Mapping[int, str]) -> list[str]:
                     out.append(r.target)
                 elif r.fd in ("", "0") and r.op in ("<<", "<<-") and r.at in docs:
                     out.append(docs[r.at])
+            at = None if fed is None else _program_at(list(fed.words))
+            if at is not None and fed.words[at].rsplit("/", 1)[-1] in ("echo", "printf"):
+                out.append(" ".join(fed.words[at + 1 :]))
     return out
 
 
@@ -1689,9 +1706,8 @@ def _line_refused(
         return f"{HELPERS}: {reason}"
     cwds = list(cwds)
     moved = not top
-    docs = dict(parsed.heredocs)
-    for simple in parsed.commands:
-        reason = _simple_refused(grant, simple, agent_id, cwds, command, known, docs, moved, code)
+    for simple, inline in zip(parsed.commands, _inlines(parsed)):
+        reason = _simple_refused(grant, simple, agent_id, cwds, command, known, inline, moved, code)
         if reason:
             return reason
         moved = moved or _moves_head(simple)
@@ -1705,19 +1721,19 @@ def _simple_refused(
     cwds: list[str | None],
     line: str,
     known: dict,
-    docs: Mapping[int, str],
+    inline: list[str],
     moved: bool = True,
     code: bool = False,
 ) -> str:
     """Why one simple command is critical, or ""; a `cd` or `pushd` moves `cwds` on. `moved`
-    unless the line is known to stand on the branch it started on: no push of HEAD then. `docs`
-    the line's here-documents, by where each delimiter stands."""
+    unless the line is known to stand on the branch it started on: no push of HEAD then. `inline`
+    the programs an interpreter in it is given as text (`_inline`)."""
     words, unknown = list(simple.words), list(simple.expanded)
     message = _messages(words)
     for word in (
         *(w for k, w in enumerate(words) if k not in message),
         *(r.target for r in simple.redirects),
-        *(p for text in _inline(simple, docs) for p in _PIECE.split(text)),
+        *(p for text in inline for p in _PIECE.split(text)),
     ):
         hit = _word_secret(grant, word, cwds)
         if hit:

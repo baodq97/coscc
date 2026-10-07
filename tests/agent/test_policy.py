@@ -1059,6 +1059,7 @@ class ASecretIsOutOfEveryToolsReach(_Unit):
             "grep --directories=recurse token ~/.config",
             f"""python3 -c "import glob; print(glob.glob('{self.home}/.ss*/id_*'))\"""",
             f"""python3 -I -c "import glob; print(glob.glob('{self.home}/.ss*/id_*'))\"""",
+            f"""echo "import glob; print(glob.glob('{self.home}/.ss*/id_*'))" | python3""",
         ):
             with self.subTest(line=line):
                 self.assertIn(policy.SECRETS, self.bash(line))
@@ -1782,6 +1783,8 @@ class TheHelperRulesHold(_Unit):
         """node -pe "require('child_process').execSync('git push')\"""",
         """python3 -Wignore::DeprecationWarning <<< "import os; os.system('git commit')\"""",
         """timeout 60 .venv/bin/python -c "import os; os.system('git commit -m x')\"""",
+        """echo "import os; os.system('git commit -m x')" | python3""",
+        """printf '%s' "import subprocess; subprocess.run(['git','push'])" | python3 -""",
     )
 
     def test_a_helpers_inline_program_naming_git_is_refused(self):
@@ -1808,6 +1811,9 @@ class TheHelperRulesHold(_Unit):
             "python3 -W ignore script.py",
             "timeout 60 .venv/bin/python -m pytest tests/x.py",
             "ls tools/python -c git",
+            "cat x.py | python3",
+            "echo git | python3 -c 'print(1)'",
+            "echo git || python3",
             "grep -n git x.py",
             "git diff",
             "git status --porcelain",
