@@ -697,3 +697,5 @@ a.btn { text-decoration: none; }
 .drafted-first .callout { margin-bottom: 0; }
 .pd-ways { margin: 10px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-2); }
 .pd-ways li { margin: 2px 0; }
+.rl-more { font-size: 11.5px; }
+.rl-full { margin: 4px 0 2px; padding: 6px 8px; background: var(--surface-2, rgba(127,127,127,.1)); border-radius: 4px; font: inherit; white-space: pre-wrap; word-break: break-word; }

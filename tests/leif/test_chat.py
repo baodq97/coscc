@@ -18,6 +18,7 @@ from coscc.kernel import Invalid
 from coscc.leif import chat
 from coscc.runner import run as run_mod
 from coscc.runner import triggers
+from coscc.store.db import Data
 from tests.http.test_app import seed_unit
 
 
@@ -127,6 +128,32 @@ class EachReadAnswersFromTheAppsOwnState(_App):
         self.assertIn("≤10 turns, $1.00", leif)
         self.assertRegex(said.splitlines()[0], r"^\d+ agents:")
 
+    async def test_proposals_lists_pending_first_and_decided_only_when_asked(self):
+        from coscc.units import proposals
+
+        data = Data(str(self.root / "data"))
+        key = self.core.ws.key(self.cwd)
+        first, second = proposals.add(
+            data,
+            key,
+            "telemetry-audit",
+            "",
+            [
+                {"type": "fix", "slug": "a-one", "title": "First", "problem": "p" * 900},
+                {"type": "feat", "slug": "b-two", "title": "Second", "problem": "short"},
+            ],
+        )
+        await proposals.dismiss(data, key, first, "not now")
+        said = await chat.read_proposals(self.core, self.cwd, {})
+        lines = said.splitlines()
+        self.assertEqual(lines[0], "workspace proj: 1 pending proposals, newest first")
+        self.assertEqual(len(lines), 2)
+        self.assertIn(f"#{second} · telemetry-audit · feat · Second", lines[1])
+        full = await chat.read_proposals(self.core, self.cwd, {"include_decided": True})
+        last = full.splitlines()[-1]
+        self.assertIn("dismissed by owner: not now", last)
+        self.assertNotIn("p" * 401, last)
+
     async def test_a_named_workspace_is_read_and_a_long_list_is_cut_with_a_count(self):
         self.assertIn(
             "workspace other: 0 units",
@@ -139,7 +166,7 @@ class EachReadAnswersFromTheAppsOwnState(_App):
 
 class AFolderThatIsNoWorkspaceIsRefused(_App):
     async def test_every_read_that_takes_one_refuses_it(self):
-        for name in ("board", "spend", "agents"):
+        for name in ("board", "spend", "agents", "proposals"):
             got = await self.call(name, workspace=str(self.root))
             self.assertTrue(got.get("is_error"), name)
             self.assertIn("not a configured workspace", got["content"][0]["text"])
@@ -175,6 +202,7 @@ class NoReadWritesAnything(_App):
             ("needs_you", {}),
             ("spend", {}),
             ("agents", {}),
+            ("proposals", {"include_decided": True}),
         ):
             got = await self.call(name, **args)
             self.assertFalse(got.get("is_error"), got)
@@ -200,5 +228,5 @@ class TheChatIsGrantedTheReads(_App):
         )
         self.assertEqual(
             [g for g in policy.granted(grant) if g in ("run_agent", *policy.LEIF_READS)],
-            ["run_agent", "board", "unit", "needs_you", "spend", "agents"],
+            ["run_agent", "board", "unit", "needs_you", "spend", "agents", "proposals"],
         )

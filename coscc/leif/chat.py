@@ -185,6 +185,8 @@ SPEND_DAYS_SHOWN = 7
 # Runs `unit` lists, the latest; and characters of its brief.
 UNIT_RUNS = 15
 BRIEF_CHARS = 800
+PROBLEM_CHARS = 400
+SOURCE_CHARS = 200
 
 _WORKSPACE = {"workspace": {"type": "string"}}
 
@@ -407,6 +409,36 @@ async def read_agents(core: Core, cwd: str, args: Mapping[str, Any]) -> str:
     return _fit([f"{len(lines)} agents:"], lines)
 
 
+def _source(s: Mapping[str, Any]) -> str:
+    return f"{s.get('kind') or ''} {s.get('id') or ''}".strip() + (
+        f" ({s['unit']})" if s.get("unit") else ""
+    )
+
+
+async def read_proposals(core: Core, cwd: str, args: Mapping[str, Any]) -> str:
+    name, here = where(core, cwd, args.get("workspace"))
+    got = await asyncio.to_thread(core.agents.proposals_view, here)
+    made = got["proposals"]
+    pending = [p for p in made if p["state"] == "pending"]
+    decided = [p for p in made if p["state"] != "pending"] if args.get("include_decided") else []
+    lines = []
+    for p in pending + decided:
+        sources = "; ".join(_source(s) for s in p["sources"])
+        line = (
+            f"#{p['id']} · {p['agent']} · {p['type']} · {p['title']} · {p['at'][:16]} · "
+            f"problem: {p['problem'][:PROBLEM_CHARS]} · sources: {sources[:SOURCE_CHARS]}"
+        )
+        if p["state"] != "pending":
+            line += f" · {p['state']} by {p['by'] or '-'}: {p['reason'][:200]}"
+        lines.append(line)
+    head = [
+        f"workspace {name}: {len(pending)} pending proposals"
+        + (f", {len(decided)} decided shown" if decided else "")
+        + ", newest first"
+    ]
+    return _fit(head, lines)
+
+
 READS: dict[str, tuple[Callable[..., Any], str, dict[str, Any]]] = {
     "board": (
         read_board,
@@ -448,6 +480,17 @@ READS: dict[str, tuple[Callable[..., Any], str, dict[str, Any]]] = {
         "model, effort, turn and $ ceilings, trigger, on or off in the workspace, and its "
         "last 30 days of runs and cost.",
         {"type": "object", "properties": _WORKSPACE, "additionalProperties": False},
+    ),
+    "proposals": (
+        read_proposals,
+        "Use instead of guessing when asked what agents proposed for the Backlog: pending "
+        "proposals first, by agent, with their problem and sources. `include_decided` adds the "
+        "accepted and dismissed ones with their reason.",
+        {
+            "type": "object",
+            "properties": {**_WORKSPACE, "include_decided": {"type": "boolean"}},
+            "additionalProperties": False,
+        },
     ),
 }
 
