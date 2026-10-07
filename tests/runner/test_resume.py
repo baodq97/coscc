@@ -407,7 +407,9 @@ class TakingUpAfterAnUpdate(_Base):
         [said] = self.up()
         self.assertEqual(said["result"], "resumed")
         [call] = streamed
-        self.assertEqual((call["session_id"], call["resume_at"], call["max_turns"]), (SID, "u2", 6))
+        self.assertEqual(
+            (call["session_id"], call["resume_at"], call["max_turns"]), (SID, "u2", 10)
+        )
 
     def test_a_chat_turn_with_its_turns_used_opens_nothing_and_ends_at_its_ceiling(self):
         streamed: list[dict] = []
@@ -418,7 +420,7 @@ class TakingUpAfterAnUpdate(_Base):
             yield ("done", {"session_id": SID})
 
         self.core.sessions.stream = stream  # type: ignore[method-assign]
-        self.paused("chat", api_calls=6)
+        self.paused("chat", api_calls=10)
 
         async def go():
             said = await self.core.resume.resume_after_update()
