@@ -7,7 +7,7 @@ import { matches } from "./stream";
 import { fill, readLines } from "./api";
 import { FEATURE_UIS } from "./feature";
 import { slugOf } from "../screens/NewWork";
-import { inUnit, merged, runFacts, toolSummary } from "../screens/RunLog";
+import { inUnit, merged, runFacts, toolLines, toolSummary } from "../screens/RunLog";
 import { shortcut } from "../shell/Shell";
 import { filterDecided } from "../screens/Decided";
 import { noRuns } from "../screens/Insights";
@@ -143,6 +143,8 @@ describe("run log", () => {
   it("reads a tool call as its command or file", () => {
     expect(toolSummary({ command: "npm test\nmore", description: "x" })).toBe("npm test");
     expect(toolSummary({ file_path: "a.py", old_string: "x" })).toBe("a.py");
+    expect(toolLines({ command: "P=http://x\ncurl $P\njq .\n\n" })).toEqual({ first: "P=http://x", more: 2, full: "P=http://x\ncurl $P\njq ." });
+    expect(toolLines({ command: "ls" }).more).toBe(0);
   });
   it("reads a path into the unit's worktree from that worktree", () => {
     const unit = "0162_stale";

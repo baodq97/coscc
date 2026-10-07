@@ -12,14 +12,26 @@ import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/
 
 const PAGE = "200";
 
-/** The one line a tool call reads as: its command, file, pattern or description. */
-export function toolSummary(input: unknown): string {
+/** What a tool call reads as: its command, file, pattern or description, whole. */
+function toolText(input: unknown): string {
   if (!input || typeof input !== "object") return String(input ?? "");
   const i = input as Record<string, unknown>;
   for (const key of ["command", "file_path", "path", "pattern", "url", "query", "description", "prompt"]) {
-    if (typeof i[key] === "string" && i[key]) return (i[key] as string).split("\n")[0];
+    if (typeof i[key] === "string" && i[key]) return i[key] as string;
   }
   return JSON.stringify(input).slice(0, 160);
+}
+
+/** The one line a tool call reads as. */
+export function toolSummary(input: unknown): string {
+  return toolText(input).split("\n")[0];
+}
+
+/** The first line of a tool call, and how many lines follow it (0 for a one-line call). */
+export function toolLines(input: unknown): { first: string; more: number; full: string } {
+  const full = toolText(input).replace(/\s+$/, "");
+  const lines = full.split("\n");
+  return { first: lines[0], more: lines.length - 1, full };
 }
 
 /** `text` with every path into the unit's own worktree read from that worktree: `…/0001_x/a.py` is `a.py`. */
@@ -205,6 +217,28 @@ export function RunLog({ cwd, run, live, whole = false }: { cwd: string; run: st
   );
 }
 
+/** A tool call: its first line, and when more follow, a "+N lines" button that shows the whole of it. */
+function ToolUse({ event: e, unit, who }: { event: StepEvent; unit: string; who: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const { first, more, full } = toolLines(e.input);
+  return (
+    <div className="rl-l mono">
+      {who}
+      <span className="rl-tool">{e.name?.replace(/^mcp__\w+?__/, "")}</span>{" "}
+      {open ? null : inUnit(first, unit)}
+      {more > 0 && (
+        <>
+          {" "}
+          <button className="link-btn rl-more" aria-expanded={open} onClick={() => setOpen(!open)}>
+            {open ? "show less" : `+${more} line${more > 1 ? "s" : ""}`}
+          </button>
+        </>
+      )}
+      {open && <pre className="rl-full">{inUnit(full, unit)}</pre>}
+    </div>
+  );
+}
+
 function Line({ event: e, unit }: { event: StepEvent; unit: string }) {
   // A helper's call reads as the helper's.
   const who = e.agent_id ? <span className="faint">helper · </span> : null;
@@ -224,12 +258,7 @@ function Line({ event: e, unit }: { event: StepEvent; unit: string }) {
         </div>
       );
     case "tool_use":
-      return (
-        <div className="rl-l mono">
-          {who}
-          <span className="rl-tool">{e.name?.replace(/^mcp__\w+?__/, "")}</span> {inUnit(toolSummary(e.input), unit)}
-        </div>
-      );
+      return <ToolUse event={e} unit={unit} who={who} />;
     case "tool_result":
       return e.is_error ? <div className="rl-l mono rl-bad">failed: {inUnit(firstLine(e.content), unit)}</div> : null;
     case "denied":
