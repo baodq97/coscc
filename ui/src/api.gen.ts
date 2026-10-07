@@ -288,6 +288,9 @@ export type EventsPage = {
   "last_at": number | null;
   "events_lost": number;
   "purged_at": string | null;
+  "outcome"?: string;
+  "detail"?: string;
+  "draft"?: Record<string, unknown>;
 };
 
 export type HoldView = {
@@ -674,6 +677,7 @@ export type StageView = {
 export type Started = {
   "agent": string;
   "started": boolean;
+  "run": string;
 };
 
 export type State = {

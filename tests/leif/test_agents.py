@@ -374,3 +374,21 @@ class ThePage(_WithAService):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCatalogBlockIsWhatARowIsComposedFrom(_WithAService):
+    def test_it_holds_the_tools_kinds_triggers_guards_rows_and_processes(self):
+        said = json.loads(self.core.agents.catalog_block())
+        self.assertIn("catalog", said["data"])
+        self.assertEqual(
+            said["outputs"]["proposal"]["proposals"], contracts.READS["proposal"]["proposals"][1]
+        )
+        self.assertNotIn("draft", said["outputs"])
+        self.assertNotIn("engine", said["triggers"])
+        self.assertEqual(said["guards"], list(pack.PROCESS_GUARDS))
+        self.assertIn("unit.shipped", said["events"])
+        scan = next(r for r in said["rows"] if r["key"] == "scan")
+        self.assertEqual(scan["output"]["kind"], "proposal")
+        self.assertNotIn("body", scan)
+        self.assertIn(pack.DEFAULT_PROCESS, said["processes"])
+        self.assertIn("write-intent", said["skills"])

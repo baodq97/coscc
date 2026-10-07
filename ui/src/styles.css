@@ -659,3 +659,26 @@ a.btn { text-decoration: none; }
 
 .pe-key { width: 92px !important; flex: none !important; height: 28px; font-size: 12px; }
 @media (max-width: 860px) { .pe-head { flex-wrap: wrap; } .pe-head .pe-key { order: 5; width: calc(100% - 26px) !important; margin-left: 26px; } }
+/* Describe the task: Dagaz's draft box on the New agent dialog and the process editor. */
+.dlg.wide { width: min(680px, calc(100vw - 32px)); }
+.describe { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r3); background: var(--bg); }
+.describe .lab { display: inline-flex; align-items: center; gap: 6px; }
+.describe .ta { padding: 8px 10px; font-size: 13.5px; }
+.describe.done { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12.5px; color: var(--text-2); }
+.describe-live { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+.describe .pe-refused { margin: 0; }
+.or-line { font-size: 12px; text-align: center; }
+.callout.why { font-size: 13px; line-height: 1.5; }
+.na-stack { display: grid; gap: 14px; }
+.na-grid { display: grid; grid-template-columns: 1fr 1fr 96px; gap: 12px; align-items: start; }
+.na-grid .input.sm { width: 100%; }
+@media (max-width: 560px) { .na-grid { grid-template-columns: 1fr; } .na-grid .input.sm { width: 96px; } }
+.drafted { display: grid; gap: 10px; font-size: 13px; }
+.drafted .kv { grid-template-columns: 96px 1fr; }
+.drafted-tool { display: inline-flex; align-items: center; gap: 4px; margin: 0 10px 4px 0; flex-wrap: wrap; }
+.drafted-body { white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow: auto; background: var(--bg); padding: 8px 10px; border-radius: var(--r2); margin: 6px 0 0; }
+.drafted summary, .describe summary { cursor: pointer; font-size: 12.5px; color: var(--text-2); }
+.pe .describe, .pe .callout { margin-bottom: 10px; }
+.dlg-f.sticky { position: sticky; bottom: -16px; background: var(--panel); padding: 10px 0 12px; margin-bottom: -16px; border-top: 1px solid var(--line); }
+.drafted-first { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r3); margin-bottom: 10px; }
+.drafted-first .callout { margin-bottom: 0; }

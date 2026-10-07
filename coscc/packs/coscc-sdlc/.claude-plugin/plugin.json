@@ -15,6 +15,7 @@
     "./agents/leif.md",
     "./agents/scan.md",
     "./agents/outcome.md",
+    "./agents/dagaz.md",
     "./agents/scout.md",
     "./agents/worker.md"
   ]

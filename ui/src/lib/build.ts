@@ -1,7 +1,8 @@
 // What a person builds on the page, as plain data: a new agent's form, and a process as an ordered
 // list of steps that becomes the `{start, end, states}` the app checks. No screen code here.
 
-import type { AgentRow, Condition, PackShown, ProcessShown, State } from "../api.gen";
+import type { AgentRow, CatalogTool, Condition, EventsPage, PackShown, ProcessShown, State, StepEvent } from "../api.gen";
+import { modelName } from "./format";
 
 export type BuildPack = PackShown;
 export type BuildAgent = AgentRow;
@@ -240,4 +241,113 @@ export const missingInput = (reason: string): string | null => /input (\S+) is n
 /** An agent's name: 1 to 24 ASCII letters, digits or dashes, starting with a letter. */
 export function agentNameProblem(name: string): string | null {
   return /^[A-Za-z][A-Za-z0-9-]{0,23}$/.test(name) ? null : "Use 1 to 24 letters, digits or dashes, starting with a letter.";
+}
+
+// --- Dagaz's drafts -------------------------------------------------------------------------
+
+/** What Dagaz hands back: why, and a whole new agent row, a process, or both, each as the save routes take it. */
+export type Drafted = {
+  why: string;
+  agent?: { key: string; fields: Record<string, unknown>; body: string };
+  process?: { name: string; process: Pick<ProcessShown, "start" | "end" | "states"> };
+};
+
+const isObj = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
+
+/** The draft a run's end kept, or null when it kept none (or one of another shape). */
+export function draftOf(page: Pick<EventsPage, "draft">): Drafted | null {
+  const d = page.draft;
+  if (!isObj(d) || typeof d.why !== "string") return null;
+  const a = d.agent;
+  const p = d.process;
+  const agent = isObj(a) && typeof a.key === "string" && isObj(a.fields) && typeof a.body === "string" ? { key: a.key, fields: a.fields, body: a.body } : undefined;
+  const process = isObj(p) && typeof p.name === "string" && isObj(p.process) && isObj(p.process.states) ? { name: p.name, process: p.process as NonNullable<Drafted["process"]>["process"] } : undefined;
+  if (!agent && !process) return null;
+  return { why: d.why, ...(agent ? { agent } : {}), ...(process ? { process } : {}) };
+}
+
+/** What a running draft is doing, in a few words, from its last event. */
+export function liveLine(events: Pick<StepEvent, "kind" | "name" | "is_error">[]): string {
+  const last = events[events.length - 1];
+  if (!last) return "Starting…";
+  if (last.kind === "end") return "Finished.";
+  if (last.kind === "tool_result" && last.is_error) return "The app refused the draft; Dagaz is correcting it…";
+  if (last.kind === "tool_use" && (last.name ?? "").endsWith("submit")) return "Handing the draft to the app for its checks…";
+  return "Reading the catalog and designing…";
+}
+
+export type DraftPart = { label: string; value: string };
+
+const words = (x: unknown): string => (Array.isArray(x) ? x.join(", ") : typeof x === "string" ? x : "");
+
+/** A drafted row as the parts a person checks before saving: when it runs, on what, what it reads and hands back, its ceilings. */
+export function draftParts(fields: Record<string, unknown>): DraftPart[] {
+  const out: DraftPart[] = [];
+  const t = isObj(fields.trigger) ? fields.trigger : {};
+  const when = [
+    isObj(t.schedule) ? `every ${t.schedule.hours} h` : "",
+    isObj(t.event) ? `on ${t.event.name}` : "",
+    t.manual ? "when you press Run" : "",
+    t.leif ? "when Leif asks" : "",
+  ].filter(Boolean);
+  out.push({ label: "Runs", value: when.length ? when.join(", ") : "in a process step" });
+  if (isObj(fields.model)) out.push({ label: "Model", value: [modelName(String(fields.model.id ?? "")), fields.model.effort].filter(Boolean).join(" · ") });
+  const input = isObj(fields.input) ? fields.input : {};
+  const reads = [words(input.data), words(input.artifacts), input.given ? "your words" : ""].filter(Boolean).join(", ");
+  out.push({ label: "Reads", value: reads || "nothing but its instructions" });
+  const output = isObj(fields.output) ? fields.output : {};
+  if (typeof output.kind === "string") out.push({ label: "Hands back", value: KIND_WORDS[output.kind] ?? output.kind });
+  if (typeof output.by === "string") out.push({ label: "Written by", value: BY_WORDS[output.by] ?? output.by });
+  if (fields.default !== undefined) out.push({ label: "Default", value: fields.default === "on" ? "on: runs by itself in every project where its pack is on" : "off: you turn it on per project" });
+  if (fields.cwd === "trunk") out.push({ label: "Works in", value: "the trunk as fetched, not a unit's branch" });
+  if (words(fields.helpers)) out.push({ label: "Helpers", value: words(fields.helpers) });
+  if (words(fields.skills)) out.push({ label: "Skills", value: words(fields.skills) });
+  if (isObj(fields.variants))
+    out.push({
+      label: "Variants",
+      value: Object.entries(fields.variants)
+        .map(([k, v]) => `${k}${isObj(v) && isObj(v.model) ? `: ${modelName(String(v.model.id ?? ""))}` : ""}`)
+        .join(", "),
+    });
+  const c = isObj(fields.ceilings) ? fields.ceilings : {};
+  if (c.usd !== undefined || c.turns !== undefined) out.push({ label: "Ceilings", value: [c.usd !== undefined ? `$${Number(c.usd).toFixed(2)} a run` : "", c.turns !== undefined ? `${c.turns} turns` : ""].filter(Boolean).join(", ") });
+  if (typeof fields.warning === "string") out.push({ label: "Warning", value: fields.warning });
+  return out;
+}
+
+const BY_WORDS: Record<string, string> = {
+  app: "the app, from its reply",
+  scratch: "the app, from a reply made in a throwaway folder",
+  session: "the session itself, on the unit's branch",
+};
+
+/** A drafted row's own schedule or event, in words, when it would run paid with nobody pressing; "" when only a press or Leif starts it. */
+export function runsByItself(fields: Record<string, unknown>): string {
+  const t = isObj(fields.trigger) ? fields.trigger : {};
+  const when = [isObj(t.schedule) ? `every ${t.schedule.hours} h` : "", isObj(t.event) ? `on ${t.event.name}` : ""].filter(Boolean).join(" and ");
+  if (!when) return "";
+  return fields.default === "on" ? `Runs by itself ${when}, paid, in every project where its pack is on.` : `Runs ${when} once you turn it on in a project; it starts off.`;
+}
+
+/** Where saving a drafted agent leads: back to its process when Dagaz drafted one beside it, else the agent's page. */
+export function afterAgentSaved(d: Drafted | null, key: string, run: string): string {
+  return d?.process && run ? `/may-do?draft=${encodeURIComponent(run)}` : `/agents/${key}`;
+}
+
+const KIND_WORDS: Record<string, string> = {
+  proposal: "proposals for Up next",
+  verdict: "a graded verdict on a unit",
+  artifact: "its step's document",
+  review: "a review round",
+  session: "an object for the app",
+  reply: "a reply",
+};
+
+/** A drafted row's tools, each with what it does and how much a wrong call costs, from the catalog. */
+export function draftTools(fields: Record<string, unknown>, catalog: CatalogTool[]): { name: string; policy: string; effect: string; tier: string }[] {
+  const tools = isObj(fields.tools) ? fields.tools : {};
+  return Object.entries(tools).map(([name, policy]) => {
+    const c = catalog.find((t) => t.name === name);
+    return { name, policy: String(policy), effect: c?.effect ?? "not in the catalog", tier: c?.tier ?? "" };
+  });
 }

@@ -3,7 +3,7 @@
 
 import { useEffect, useId, useState } from "react";
 import type { Condition, PackShown, ProcessShown, State } from "../api.gen";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, useResource } from "../lib/api";
 import {
   ACTION_WORDS,
   GUARDS,
@@ -24,11 +24,14 @@ import {
   toProcess,
   type BuildAgent,
   type Draft,
+  type Drafted,
   type Step,
   type Way,
 } from "../lib/build";
 import { Rune } from "../lib/icons";
 import { agentFace, stageLabel } from "../lib/pack";
+import { Link } from "../lib/router";
+import { DescribeTask, DraftedRow } from "./NewAgent";
 import { Button } from "./ui";
 
 const NODE_W = 176;
@@ -192,6 +195,7 @@ export function ProcessEditor({
   cwd,
   taken,
   initial,
+  run,
   onClose,
   onSaved,
 }: {
@@ -199,6 +203,8 @@ export function ProcessEditor({
   cwd: string;
   taken: string[];
   initial?: { name: string; process: Pick<ProcessShown, "start" | "states"> };
+  /** Dagaz's run to fill a new process from (`?draft=<run>`). */
+  run?: string;
   onClose: () => void;
   onSaved: (packs: PackShown[]) => void;
 }) {
@@ -207,11 +213,24 @@ export function ProcessEditor({
   const [busy, setBusy] = useState(false);
   const [reasons, setReasons] = useState<string[]>([]);
   const [asking, setAsking] = useState(false);
+  const [drafted, setDrafted] = useState<{ d: Drafted; run: string } | null>(null);
   const keys = draft.steps.map((s) => s.key);
   const { byStep, rest } = reasonsByStep(reasons, keys);
   const problem = editing ? null : nameProblem(draft.name, taken);
   const agents = stateAgents(rows);
+  // An agent Dagaz drafted beside the process, not saved yet: a step may name it.
+  const fresh = drafted?.d.agent && !rows.some((r) => r.key === drafted.d.agent?.key) ? drafted.d.agent : undefined;
+  // A way on may read the drafted agent's output fields like any row's.
+  const withFresh = fresh ? [...rows, { key: fresh.key, row: fresh.fields } as unknown as BuildAgent] : rows;
+  // The catalog, to show the drafted agent's tools with what each does.
+  const page = useResource(fresh ? "/api/agents" : null, { cwd });
   const edit = (f: (d: Draft) => Draft) => (setReasons([]), setDraft(f));
+  const take = (d: Drafted, id: string) => {
+    setDrafted({ d, run: id });
+    setReasons([]);
+    if (d.process) setDraft(fromProcess(d.process.name, d.process.process));
+  };
+
 
   const send = async (process: unknown) => {
     setBusy(true);
@@ -232,6 +251,34 @@ export function ProcessEditor({
   return (
     <div className="pe">
       <div className="pe-form">
+        {!editing && <DescribeTask cwd={cwd} want="process" run={run} onDraft={take} />}
+        {drafted && !drafted.d.process && (
+          <div className="callout amber">
+            <span>
+              Dagaz drafted an agent, not a process. <Link to={`/agents?draft=${drafted.run}`}>Open it in New agent</Link>.
+            </span>
+          </div>
+        )}
+        {drafted?.d.process && (
+          <div className="callout accent why" id="draft-why">
+            <span>
+              <b>Why this process</b>
+              <br />
+              {drafted.d.why}
+            </span>
+          </div>
+        )}
+        {fresh && drafted?.d.process && (
+          <div className="drafted-first" id="draft-agent-first">
+            <div className="callout amber" style={{ flexDirection: "column", alignItems: "flex-start" }}>
+              <span className="grow">
+                It runs a new agent Dagaz drafted with it, <b>{String(fresh.fields.name ?? fresh.key)}</b> <span className="mono">{fresh.key}</span>. Read its parts below, save it first, and this process opens again after.
+              </span>
+              <Link to={`/agents?draft=${drafted.run}`} className="btn sm">Save {String(fresh.fields.name ?? fresh.key)} first</Link>
+            </div>
+            <DraftedRow fields={fresh.fields} body={fresh.body} catalog={page.data?.catalog ?? []} />
+          </div>
+        )}
         <label className="f">
           <span className="lab">Process name</span>
           <input className="input mono" value={draft.name} disabled={editing} placeholder="tiny" onChange={(e) => edit((d) => ({ ...d, name: e.target.value }))} />
@@ -255,7 +302,7 @@ export function ProcessEditor({
                     edit((d) => (kind === "agent" ? (s.agent ? setAgent(d, s.key, v) : setStep(d, s.key, { agent: v, action: "", ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) })) : setStep(d, s.key, { agent: "", action: v, ways: s.ways.map((w) => ({ ...w, cond: null, rest: [] })) })));
                   }}
                 >
-                  <StepOptions agents={agents} />
+                  <StepOptions agents={agents} fresh={fresh} />
                 </select>
                 <StepName value={s.key} onCommit={(to) => edit((d) => renameStep(d, s.key, to))} />
                 <button className="icon-btn" aria-label="Move up" disabled={i === 0} onClick={() => edit((d) => moveStep(d, s.key, -1))}>↑</button>
@@ -270,7 +317,7 @@ export function ProcessEditor({
                 </div>
               ))}
               {s.ways.map((w, wi) => (
-                <WayRow key={wi} way={w} step={s} keys={keys} rows={rows} onChange={(nw) => edit((d) => setStep(d, s.key, { ways: s.ways.map((x, n) => (n === wi ? nw : x)) }))} onRemove={() => edit((d) => setStep(d, s.key, { ways: s.ways.filter((_, n) => n !== wi) }))} />
+                <WayRow key={wi} way={w} step={s} keys={keys} rows={withFresh} onChange={(nw) => edit((d) => setStep(d, s.key, { ways: s.ways.map((x, n) => (n === wi ? nw : x)) }))} onRemove={() => edit((d) => setStep(d, s.key, { ways: s.ways.filter((_, n) => n !== wi) }))} />
               ))}
               <div className="pe-foot">
                 {i < draft.steps.length - 1 && (
@@ -297,7 +344,7 @@ export function ProcessEditor({
           }}
         >
           <option value="">+ Add a step…</option>
-          <StepOptions agents={agents} />
+          <StepOptions agents={agents} fresh={fresh} />
         </select>
 
         {rest.length > 0 && (
@@ -343,13 +390,14 @@ function StepName({ value, onCommit }: { value: string; onCommit: (to: string) =
   );
 }
 
-function StepOptions({ agents }: { agents: BuildAgent[] }) {
+function StepOptions({ agents, fresh }: { agents: BuildAgent[]; fresh?: Drafted["agent"] }) {
   return (
     <>
       <optgroup label="An agent runs it">
         {agents.map((a) => (
           <option key={a.key} value={`agent:${a.key}`}>{a.row.name && a.row.name.toLowerCase() !== a.key ? `${a.row.name} (${a.key})` : a.key}</option>
         ))}
+        {fresh && <option value={`agent:${fresh.key}`}>{String(fresh.fields.name ?? fresh.key)} (new, drafted)</option>}
       </optgroup>
       <optgroup label="The app does it">
         <option value="action:open-pr">Opens the PR</option>

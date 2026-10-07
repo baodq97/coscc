@@ -15,6 +15,7 @@ import { attention, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
 import { changes, get, put } from "../screens/AgentPage";
 import type { AgentRow } from "../api.gen";
+import { afterAgentSaved, draftOf, draftParts, draftTools, liveLine, runsByItself } from "./build";
 import { addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
 
 describe("format", () => {
@@ -335,5 +336,94 @@ describe("build: a process", () => {
     expect(renameStep(d, "tidy", "Bad Name")).toBe(d);
     expect(missingInput("tiny.review: its input impl is not produced on every path to it")).toBe("impl");
     expect(missingInput("tiny: no path reaches the end")).toBeNull();
+  });
+});
+
+describe("Dagaz's draft fills the forms", () => {
+  const agent = {
+    key: "tidy",
+    body: "Read the interventions.",
+    fields: {
+      name: "Tidy",
+      model: { id: "claude-sonnet-5-5[1m]", effort: "low" },
+      tools: { Read: "allow", Bash: "ask" },
+      input: { artifacts: [], outputs: [], answers: false, findings: false, data: ["interventions"] },
+      output: { kind: "proposal", version: 1, fields: {} },
+      trigger: { manual: true, leif: true },
+      ceilings: { turns: 4, usd: 0.3 },
+    },
+  };
+  const process = {
+    name: "docs",
+    process: {
+      start: "intent",
+      end: "shipped",
+      states: {
+        intent: { agent: "intent", next: [{ to: "impl" }] },
+        impl: { agent: "impl", next: [{ to: "pr", when: { field: "judgement", is: "ready" } }] },
+        pr: { action: "open-pr", next: [{ to: "review" }] },
+        review: { agent: "review", next: [{ to: "impl", when: { field: "verdict", is: "changes-requested" } }, { to: "ship" }] },
+        ship: { action: "merge", when: { guard: "ship-ready" } },
+      },
+    },
+  };
+
+  it("reads a draft from the run's end, and nothing from an end without one", () => {
+    expect(draftOf({ draft: { why: "w", agent } })?.agent?.key).toBe("tidy");
+    expect(draftOf({ draft: { why: "w" } })).toBeNull();
+    expect(draftOf({})).toBeNull();
+    expect(draftOf({ draft: { why: "w", agent: { key: "x" } } })).toBeNull();
+  });
+
+  it("a drafted process becomes the editor's steps in walk order", () => {
+    const d = draftOf({ draft: { why: "w", process } });
+    const steps = fromProcess(d!.process!.name, d!.process!.process);
+    expect(steps.name).toBe("docs");
+    expect(steps.steps.map((s) => s.key)).toEqual(["intent", "impl", "pr", "review", "ship"]);
+    expect(toProcess(steps).states.ship).toEqual(process.process.states.ship);
+  });
+
+  it("a drafted row reads as the parts a person checks", () => {
+    const parts = Object.fromEntries(draftParts(agent.fields).map((p) => [p.label, p.value]));
+    expect(parts.Runs).toBe("when you press Run, when Leif asks");
+    expect(parts.Reads).toBe("interventions");
+    expect(parts["Hands back"]).toBe("proposals for Up next");
+    expect(parts.Ceilings).toBe("$0.30 a run, 4 turns");
+    const tools = draftTools(agent.fields, [{ name: "Read", effect: "read", tier: "low", server: "", feature: "", on: true }]);
+    expect(tools).toEqual([
+      { name: "Read", policy: "allow", effect: "read", tier: "low" },
+      { name: "Bash", policy: "ask", effect: "not in the catalog", tier: "" },
+    ]);
+  });
+
+  it("every remaining part of a drafted row is shown", () => {
+    const parts = Object.fromEntries(
+      draftParts({ ...agent.fields, default: "on", cwd: "trunk", helpers: ["scout"], skills: ["write-intent"], variants: { novel: { model: { id: "claude-opus-5-5" } } }, warning: "Paid.", output: { kind: "artifact", by: "app" } }).map((p) => [p.label, p.value]),
+    );
+    expect(parts.Default).toMatch(/^on: runs by itself/);
+    expect(parts["Works in"]).toMatch(/trunk/);
+    expect(parts.Helpers).toBe("scout");
+    expect(parts.Skills).toBe("write-intent");
+    expect(parts.Variants).toMatch(/^novel: /);
+    expect(parts.Warning).toBe("Paid.");
+    expect(parts["Written by"]).toBe("the app, from its reply");
+  });
+
+  it("a row with its own schedule says so, louder when it starts on", () => {
+    expect(runsByItself(agent.fields)).toBe("");
+    expect(runsByItself({ trigger: { schedule: { hours: 24 } }, default: "on" })).toMatch(/^Runs by itself every 24 h, paid/);
+    expect(runsByItself({ trigger: { event: { name: "unit.shipped" } }, default: "off" })).toMatch(/starts off/);
+  });
+
+  it("saving an agent drafted beside a process goes back to the process", () => {
+    expect(afterAgentSaved({ why: "w", agent, process }, "tidy", "r1")).toBe("/may-do?draft=r1");
+    expect(afterAgentSaved({ why: "w", agent }, "tidy", "r1")).toBe("/agents/tidy");
+  });
+
+  it("the live line says what the run is doing", () => {
+    expect(liveLine([])).toBe("Starting…");
+    expect(liveLine([{ kind: "tool_use", name: "mcp__cos__submit" }])).toMatch(/checks/);
+    expect(liveLine([{ kind: "tool_result", is_error: true }])).toMatch(/refused/);
+    expect(liveLine([{ kind: "end" }])).toBe("Finished.");
   });
 });

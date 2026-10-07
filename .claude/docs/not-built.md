@@ -28,7 +28,9 @@ Read this before adding a route, a button or a grant.
   background command, a nested helper, a merge or a release. No agent holds a tool that writes
   a row.
 - **Whoever holds the password can add agents, processes and packs.** `POST /api/agents/new`
-  and `/api/agents/delete` write a whole row of the owner's pack `local`; `POST /api/packs/process`
+  (a copy, a blank reader, or a whole `row`: Dagaz's draft, which holds no tool and writes
+  nothing; its `end` keeps the draft and a person saves it) and `/api/agents/delete` write a whole
+  row of the owner's pack `local`; `POST /api/packs/process`
   sets or removes a process `local/<name>`; `POST /api/packs/import` puts a third party's pack in
   `<data root>/packs/<name>/`, off in every workspace, and `POST /api/packs {delete: true}` removes
   one; `GET /api/packs/{name}/export` hands a pack out as a zip. Each writes packs only (the

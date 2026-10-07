@@ -270,6 +270,44 @@ class LeifRunsARowThatSaysLeif(_Core):
         self.assertIn("not-leif", said["content"][0]["text"])
 
 
+class DagazDraftsFromWords(_Core):
+    """Dagaz reads the catalog and the person's words; its draft is kept on its `end` alone."""
+
+    DRAFT = {"why": "a reader you start", "process": {"name": "docs", "process": {}}}
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.core.agents = SimpleNamespace(catalog_block=lambda cwd: '{"tools": []}')
+        self.reply = Run("done", self.DRAFT)
+
+    async def test_a_press_hands_the_words_and_the_catalog_and_keeps_the_draft_on_its_end(self):
+        run = triggers.start(self.core, "dagaz", self.ws, by="manual", text="Docs changes")
+        await self.settle()
+        (given,) = self.given
+        self.assertEqual(given.run, run)
+        self.assertIn('# The catalog\n\n```json\n{"tools": []}', given.prompt)
+        self.assertIn("# The person's words\n\nDocs changes", given.prompt)
+        (end,) = [
+            r for r in self.journal.records(self.ws, kinds=("end",)) if r.get("stage") == "dagaz"
+        ]
+        self.assertEqual(end["draft"], self.DRAFT)
+        self.assertFalse(proposals.listed(self.data, self.ws))
+        self.assertFalse((self.data.root / "packs" / "local").exists())
+
+    async def test_no_words_is_refused_before_spend(self):
+        with self.assertRaises(Invalid):
+            triggers.start(self.core, "dagaz", self.ws, by="manual")
+        self.assertEqual(self.given, [])
+
+    async def test_leif_hands_the_words_and_the_owner_the_run(self):
+        said = await triggers.leif_call(
+            self.core, self.ws, {"key": "dagaz", "reason": "asked", "text": "Docs changes"}
+        )
+        await self.settle()
+        self.assertIn("/agents?draft=", said["content"][0]["text"])
+        self.assertIn("Docs changes", self.given[0].prompt)
+
+
 class TheScheduleRunsItWhereItIsOn(_Core):
     async def test_off_runs_nothing_on_it_runs_once_until_the_hours_pass(self):
         self.found = found(1)

@@ -35,13 +35,13 @@ const DATA: Record<string, string> = {
   interventions: "what people stepped in for since its last run",
   proposals: "the proposals already made",
 };
-const EFFECT: Record<string, string> = {
+export const EFFECT: Record<string, string> = {
   read: "Reads",
   "write-worktree": "Writes the worktree",
   "write-app": "Writes the app's records",
   external: "Runs commands",
 };
-const TIER: Record<string, "plain" | "amber" | "red"> = { low: "plain", medium: "amber", high: "red" };
+export const TIER: Record<string, "plain" | "amber" | "red"> = { low: "plain", medium: "amber", high: "red" };
 
 type Draft = Record<string, unknown>;
 

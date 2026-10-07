@@ -87,7 +87,8 @@ class Input:
     `keep` keeps its client for the next turn (chat). `resume` is a `suspend` row to go on from.
     `servers` are the engine's own MCP servers beside `submit`'s, and `mcp` the full names of
     their tools the grant holds (Leif's `run_agent`, a feature's catalog tool); `features` the
-    row's tool names that are a feature's, not Claude Code's."""
+    row's tool names that are a feature's, not Claude Code's. `run` is the run's id when the
+    caller named it before the run began (a press that follows it), else a new one."""
 
     cwd: str
     prompt: str
@@ -107,6 +108,7 @@ class Input:
     servers: Mapping[str, Any] = field(default_factory=dict)
     mcp: tuple[str, ...] = ()
     features: tuple[str, ...] = ()
+    run: str = ""
 
 
 @dataclass(frozen=True)
@@ -250,12 +252,13 @@ def ended(
     )
 
 
-def recorder_for(ctx: Ctx, workspace: str, unit: str, stage: str) -> Recorder | None:
-    """A new run's recorder, in `LIVE` until the run ends; `None` with no data root or run log."""
+def recorder_for(ctx: Ctx, workspace: str, unit: str, stage: str, run: str = "") -> Recorder | None:
+    """A new run's recorder (`run`, or a new id), in `LIVE` until the run ends; `None` with no
+    data root or run log."""
     if ctx.data_dir is None or ctx.journal is None:
         return None
     recorder = Recorder(
-        uuid.uuid4().hex,
+        run or uuid.uuid4().hex,
         Data(ctx.data_dir),
         str(ctx.journal.working_dir),
         workspace,
@@ -416,7 +419,7 @@ async def run(
     two ceilings, writing no second `start`. A cancel writes a `cancelled` `end` and goes on.
     """
     stage = given.stage or agent.key
-    recorder = recorder_for(ctx, given.workspace, given.unit, stage)
+    recorder = recorder_for(ctx, given.workspace, given.unit, stage, given.run)
     out = Run("failed", run=recorder.run if recorder is not None else "")
     grant = issue(
         agent.row,

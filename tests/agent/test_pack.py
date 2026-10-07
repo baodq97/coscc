@@ -86,15 +86,15 @@ def _today(key: str) -> dict:
 
 
 class TheBuiltInPackIsTheTablesItReplaced(unittest.TestCase):
-    def test_the_rows_are_the_twelve_agents_the_scan_and_the_grader(self):
-        # The scan and the outcome grader (M6) replaced no table: they have no fixture.
+    def test_the_rows_are_the_twelve_agents_the_scan_the_grader_and_dagaz(self):
+        # The scan, the outcome grader and Dagaz replaced no table: they have no fixture.
         self.assertEqual(
             sorted(p.stem for p in (pack.BUILTIN / "agents").glob("*.md")),
-            sorted([*FIXTURE, "scan", "outcome"]),
+            sorted([*FIXTURE, "scan", "outcome", "dagaz"]),
         )
         self.assertEqual(
             list(pack.rows()),
-            "idea intent spec spike plan impl review integrate estimate leif scan outcome scout worker".split(),
+            "idea intent spec spike plan impl review integrate estimate leif scan outcome dagaz scout worker".split(),
         )
 
     def test_every_row_resolves_to_the_fixture(self):

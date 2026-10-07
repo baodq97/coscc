@@ -298,9 +298,11 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(r.status_code, 400, bad)
 
     async def test_run_now_starts_a_manual_run_and_refuses_a_row_it_does_not_start(self):
-        with mock.patch("coscc.http.routes.triggers.start") as start:
+        with mock.patch("coscc.http.routes.triggers.start", return_value="r1") as start:
             r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "scan"})
-        self.assertEqual((r.status_code, r.json()), (200, {"agent": "scan", "started": True}))
+        self.assertEqual(
+            (r.status_code, r.json()), (200, {"agent": "scan", "started": True, "run": "r1"})
+        )
         self.assertEqual(start.call_args.kwargs["by"], "manual")
         r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "impl"})
         self.assertEqual((r.status_code, r.json()["code"]), (400, "not-triggered"))
@@ -2287,6 +2289,21 @@ class OwnAgentsAndPacksOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pack.row("tidy")["ceilings"], {"turns": 9})
         logged = self.app.state.core.ws.journal().records(None, kinds=("agent-setting",))
         self.assertEqual([(x["field"], x["by"]) for x in logged][:2], [("new", "owner")] * 2)
+
+    async def test_a_drafted_row_is_saved_whole_and_checked_as_any_new_row(self):
+        fields = {k: v for k, v in pack.BLANK.items()}
+        row = {"fields": {**fields, "description": "Reads and proposes."}, "body": "Read."}
+        r = await self.post("/api/agents/new", key="tidy", name="Tidy", row=row)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(pack.row("tidy")["description"], "Reads and proposes.")
+        self.assertEqual(pack.row("tidy")["body"], "Read.")
+        loud = {**row["fields"], "trigger": {"leif": True}, "tools": {"Bash": "allow"}}
+        r = await self.post("/api/agents/new", key="loud", name="Loud", row={**row, "fields": loud})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("holds only reading tools, not Bash", " ".join(r.json()["reasons"]))
+        self.assertIsNone(pack.row("loud"))
+        r = await self.post("/api/agents/new", key="two", name="Two", row=row, **{"from": "impl"})
+        self.assertIn("from and row: give one", r.json()["reasons"])
 
     async def test_a_process_set_chosen_walked_from_the_snapshot_and_removal_in_use(self):
         await self.post("/api/agents/new", key="tidy", name="Tidy", **{"from": "impl"})

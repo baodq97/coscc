@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.agent import policy
-from coscc.runner.prompt import compose_prompt, _LANGUAGE
+from coscc.runner.prompt import compose_prompt, submit_block, _LANGUAGE
 from coscc.units import contracts
 from tests.runner.test_step import (
     SESSION_STAGES,
@@ -649,3 +649,14 @@ class EveryStagesPromptIsTheOneBeforeTheAgentsBecameRows(unittest.TestCase):
                         "- `impl`: one of", "- `variant`: one of"
                     )
                 self.assertEqual(got, text)
+
+
+class AJsonFieldReadsAsAnObject(unittest.TestCase):
+    def test_a_json_field_is_described_in_words(self):
+        out = {"kind": "artifact", "version": 1, "fields": {"shape": "json"}}
+        with (
+            mock.patch.object(contracts, "declarations", return_value={"intent": out}),
+            mock.patch.object(contracts, "output", return_value=out),
+        ):
+            said = submit_block("intent", "intent.md", False)
+        self.assertIn("- `shape`: an object.", said)
