@@ -24,7 +24,7 @@ import { featureView } from "../screens/Feature";
 import { filterUnits } from "../screens/Work";
 import type { NextStep } from "../api.gen";
 import type { AgentRow } from "../api.gen";
-import { afterAgentSaved, answeredTask, draftOf, draftParts, draftTools, keepDraft, keptDraft, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
+import { afterAgentSaved, answersText, draftOf, draftParts, draftTools, keepDraft, keptDraft, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
 import { asks, rerunFor, addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
 import { sandboxed, sandboxLine, sandboxOf } from "./build";
 
@@ -444,13 +444,12 @@ describe("Dagaz's draft fills the forms", () => {
     expect(draftOf({ draft: { why: "w", questions: [] } })).toBeNull();
   });
 
-  it("answers go back with the task, an empty answer as the recommendation", () => {
+  it("answers go back under their questions, an empty answer as the recommendation", () => {
     const qs = [
       { n: 1, text: "Which code?", recommendation: "All of it" },
       { n: 2, text: "When?", recommendation: "Weekly" },
     ];
-    const text = answeredTask("code quality", qs, ["Only coscc/", " "]);
-    expect(text).toBe("code quality\n\nYour questions, answered:\n1. Which code?\n   Only coscc/\n2. When?\n   Weekly");
+    expect(answersText(qs, ["Only coscc/", " "])).toBe("1. Which code?\n   Only coscc/\n2. When?\n   Weekly");
   });
 
   it("a kept draft is per project until it is set aside", () => {

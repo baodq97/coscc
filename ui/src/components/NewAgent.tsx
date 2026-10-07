@@ -5,9 +5,9 @@
 // `DescribeTask` is the "Describe the task" box the process editor shares.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { AgentPage, CatalogTool, ProposalRow, Started, StepEvent } from "../api.gen";
+import type { AgentPage, Asked, CatalogTool, ProposalRow, Started, StepEvent } from "../api.gen";
 import { api, ApiError, useResource } from "../lib/api";
-import { afterAgentSaved, agentNameProblem, answeredTask, draftOf, draftParts, draftTools, GAP_PART, keepDraft, keptDraft, runsByItself, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type DraftGap, type Drafted, type NewAgentField } from "../lib/build";
+import { afterAgentSaved, agentNameProblem, answersText, draftOf, draftParts, draftTools, GAP_PART, keepDraft, keptDraft, runsByItself, keyProblem, liveLine, packTitle, slugKey, sortReasons, type BuildAgent, type DraftGap, type Drafted, type NewAgentField } from "../lib/build";
 import { Rune } from "../lib/icons";
 import { refreshPacks } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
@@ -85,17 +85,19 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
     return () => source.current?.close();
   }, [follows, cwd]);
 
-  const draft = async (text: string) => {
+  const task = `${words.trim()}\n\nWanted: ${want === "agent" ? "an agent" : "a process"}.`;
+  // A first draft is a run of Dagaz; answers to its questions go on in that run's session.
+  const draft = async (ask: () => Promise<{ run: string }>) => {
     setPhase({ at: "running", run: "", line: "Starting…" });
     try {
-      const said = await api.post<Started>("/api/agents/run", { cwd, key: "dagaz", text });
+      const said = await ask();
       if (keeps) keepDraft(want, cwd, { run: said.run, words: words.trim() });
       follow(said.run);
     } catch (e) {
       setPhase({ at: "failed", why: e instanceof ApiError && e.reasons.length ? e.reasons.join(" ") : (e as Error).message });
     }
   };
-  const start = () => draft(`${words.trim()}\n\nWanted: ${want === "agent" ? "an agent" : "a process"}.`);
+  const start = () => draft(() => api.post<Started>("/api/agents/run", { cwd, key: "dagaz", text: task }));
   const again = () => {
     if (keeps) keepDraft(want, cwd, null);
     setPhase({ at: "idle" });
@@ -129,7 +131,7 @@ export function DescribeTask({ cwd, want, run, onDraft }: { cwd: string; want: "
         ))}
         {phase.d.gaps && <Gaps cwd={cwd} run={phase.run} gaps={phase.d.gaps} />}
         <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <Button size="sm" kind="primary" disabled={answers.some((a) => !a.trim())} onClick={() => draft(answeredTask(`${words.trim()}\n\nWanted: ${want === "agent" ? "an agent" : "a process"}.`, qs, answers))}>
+          <Button size="sm" kind="primary" disabled={answers.some((a) => !a.trim())} onClick={() => draft(() => api.post<Asked>(`/api/runs/${encodeURIComponent(phase.run)}/answer`, { cwd, task, text: answersText(qs, answers) }))}>
             Answer and draft
           </Button>
           <button className="linkish" onClick={again}>Describe again</button>

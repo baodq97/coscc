@@ -508,6 +508,17 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(proposals.listed(Data(self.root), key)), 1)
 
+    async def test_answers_go_only_to_a_draft_and_are_refused_before_spend(self):
+        key = str(self.ws.resolve())
+        journal = self.core.ws.journal()
+        journal.started(key, "", "scan", "manual", run="r-scan", trigger="manual", agent="scan")
+        journal.finished(key, "", "scan", "done", run="r-scan", agent="scan", session_id="s")
+        body = {"cwd": str(self.ws), "task": "code quality", "text": "1. All of it"}
+        for run, extra in (("nope", {}), ("r-scan", {}), ("r-scan", {"text": ""})):
+            r = await self.client.post(f"/api/runs/{run}/answer", json={**body, **extra})
+            self.assertEqual(r.status_code, 400, (run, r.text))
+        self.assertEqual(journal.records(key, kinds=("start",))[-1]["run"], "r-scan")
+
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
     """Without a store: the write routes say why rather than crashing."""

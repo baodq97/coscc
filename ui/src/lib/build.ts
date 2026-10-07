@@ -298,10 +298,9 @@ export function draftOf(page: Pick<EventsPage, "draft">): Drafted | null {
   return { why: d.why, ...(agent ? { agent } : {}), ...(process ? { process } : {}), ...(questions.length ? { questions } : {}), ...(gaps.length ? { gaps } : {}) };
 }
 
-/** Dagaz's next words after its questions: the task as first said, then each question with the person's answer. */
-export function answeredTask(task: string, questions: DraftQuestion[], answers: string[]): string {
-  const lines = questions.map((q, i) => `${q.n}. ${q.text}\n   ${(answers[i] ?? "").trim() || q.recommendation}`);
-  return `${task.trim()}\n\nYour questions, answered:\n${lines.join("\n")}`;
+/** The person's answers as Dagaz reads them: each question with its answer, an empty one as the recommendation. */
+export function answersText(questions: DraftQuestion[], answers: string[]): string {
+  return questions.map((q, i) => `${q.n}. ${q.text}\n   ${(answers[i] ?? "").trim() || q.recommendation}`).join("\n");
 }
 
 /** What each gap's part is called on the page. */

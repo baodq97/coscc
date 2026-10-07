@@ -776,6 +776,23 @@ async def ask_run(run: str, request: Request) -> ask.Asked:
     )
 
 
+@router.post("/api/runs/{run}/answer")
+async def answer_draft(run: str, request: Request) -> ask.Asked:
+    """`{cwd, task, text}`: the person's answers (`text`) to the questions a draft of `run`
+    asked. **Opens one paid session**: the drafting row goes on in its warm session (as a question
+    about a run resumes) with its own grant and ceilings, `submit` kept, and the new draft lands
+    on that run's `end`; else a new run of the row starts from `task` and the answers. Refused
+    before spend as `/ask` is, and for a run that drafted nothing."""
+    body = await kernel.body(request)
+    return await ask.continue_draft(
+        _core(request),
+        str(body.get("cwd") or ""),
+        run,
+        str(body.get("task") or ""),
+        str(body.get("text") or ""),
+    )
+
+
 @router.post("/api/runs/{run}/stop")
 async def stop_run(run: str, request: Request) -> Started:
     """`{cwd}` stops one agent run or follow-up this process runs in that workspace; it ends
