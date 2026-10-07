@@ -717,7 +717,7 @@ function OutputForm({ ctx }: { ctx: Ctx }) {
       )}
       {ctx.a.own && (
         <div style={{ marginTop: 8 }}>
-          <Button size="sm" kind="ghost" onClick={() => setRaw(!raw)}>{raw ? "Hide the row's JSON" : "Edit as JSON"}</Button>
+          <Button size="sm" kind="ghost" onClick={() => setRaw(!raw)}>{raw ? "Hide the text" : "Edit the fields as text"}</Button>
           {raw && <JsonPart ctx={ctx} field="output" label="Output" hint="Its kind, version and fields." />}
         </div>
       )}

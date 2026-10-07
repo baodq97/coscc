@@ -165,7 +165,7 @@ export function WorkspaceSwitch({ list, workspace, to }: { list: Workspace[]; wo
   return (
     <label className="row faint" style={{ gap: 6, fontSize: 12.5 }}>
       Project
-      <select className="input sm" value={workspace.name} onChange={(e) => navigate(`${to}?ws=${encodeURIComponent(e.target.value)}`)}>
+      <select className="input sm" style={{ width: "auto", maxWidth: 240 }} value={workspace.name} onChange={(e) => navigate(`${to}?ws=${encodeURIComponent(e.target.value)}`)}>
         {list.map((w) => (
           <option key={w.path} value={w.name}>
             {w.name}
