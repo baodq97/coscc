@@ -105,9 +105,12 @@ SUBMIT_TURNS = 4
 
 def part_of(found: Mapping[str, Any], top: str, label: str | None) -> dict[str, Any]:
     """The row's `top` (`model`, `ceilings`), its `novel` variant's laid over it for a `novel`
-    step. A part of the wrong shape (a hand-edited owner file, its runs refused) reads as none."""
+    step, unless the owner set `top` and left the variants as the pack has them: an owner's edit
+    is not undone by a variant they never saw. A part of the wrong shape (a hand-edited owner
+    file, its runs refused) reads as none."""
     own = _obj(found.get(top))
-    if label == NOVEL:
+    edited = found.get("edited") or ()
+    if label == NOVEL and not (top in edited and "variants" not in edited):
         own.update(_obj(_obj(_obj(found.get("variants")).get(NOVEL)).get(top)))
     return own
 

@@ -99,8 +99,8 @@ class Bed(unittest.IsolatedAsyncioTestCase):
         self.store.grant("global:tok", self.key)
         self.make("global:other", OTHER, "", "not for proj", ("impl",))
 
-    def make(self, name, value, workspace, description, stages=("impl",)):
-        self.store.create(name, workspace, description, stages=stages)
+    def make(self, name, value, workspace, description, agents=("impl",)):
+        self.store.create(name, workspace, description, agents=agents)
         self.store.put(name, workspace, value)
 
     def values(self) -> dict[str, bytes]:
@@ -556,3 +556,15 @@ class ThePromptBlock(Bed):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheVaultListsEveryPacksAgents(unittest.TestCase):
+    def test_an_owners_agent_that_holds_the_vault_is_listed(self):
+        from coscc.agent import pack
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(pack, "ROOT", d):
+            self.assertNotIn("keeper", vault.vault_agents())
+            pack.new_row("keeper", "Keeper", "impl")
+            self.assertIn("keeper", vault.vault_agents())
+            pack.new_row("looker", "Looker", None)
+            self.assertNotIn("looker", vault.vault_agents())

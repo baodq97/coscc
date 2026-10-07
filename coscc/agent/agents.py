@@ -52,10 +52,7 @@ def shown(key: str) -> bool:
 def table() -> dict[str, Any]:
     """Every agent the page lists, in the pack's order, and every problem found."""
     rows = [agent_for(k) for k in pack.rows() if shown(k)]
-    problems = [f"{k}: {p}" for k, r in pack.rows().items() for p in r["problems"]] + [
-        f"{pack.owner_dir() / 'agents' / k}.md: no agent called {k!r}, ignored"
-        for k in pack.stray()
-    ]
+    problems = [f"{k}: {p}" for k, r in pack.rows().items() for p in r["problems"]]
     return {"rows": rows, "problems": problems}
 
 

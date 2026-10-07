@@ -1,17 +1,19 @@
 """Every agent is one row of a pack: `agents/<key>.md`, its frontmatter the agent's data and its
 body the agent's system prompt, with the skills it names beside it in `skills/<name>/SKILL.md`.
 
-The built-in pack (`coscc/packs/coscc-sdlc/`) ships with the package and is never written. The
-owner's layer, `<data root>/packs/local/`, holds only what differs: a frontmatter key there
-replaces the built-in's, a non-empty body replaces its body, a skill file replaces that skill.
-Reset is deleting the key. Both are read again when a file under them changes (mtime), so the
-next run sees an edit without a restart.
+The built-in pack (`coscc/packs/coscc-sdlc/`) ships with the package and is never written. Every
+other pack is a plugin folder under `<data root>/packs/`: each one imported (`import_zip`), and
+the owner's own, `local`. A file of `local` whose key another pack has holds only what differs: a
+frontmatter key there replaces that row's, a non-empty body replaces its body, a skill file
+replaces that skill; reset is deleting the key. Any other file of `local` is a whole row of the
+owner's. All are read again when a file under them changes (mtime), so the next run sees an edit
+without a restart.
 
 A frontmatter line is `key: <one line of JSON>` (JSON is YAML, so a plugin reader sees valid
 YAML); `#` lines are comments. The keys are Managed Agents' (`name`, `description`, `model`,
 `skills`, `tools`) and coscc's (`KEYS`). `check` holds every row to the same rules at load and at
-save; a bad built-in row stops the load, a bad owner file leaves its agent with `problems` and
-its runs refused (`agent-invalid`).
+save; a bad built-in row stops the load, a bad imported pack loads none of its rows, a bad owner
+file leaves its agent with `problems` and its runs refused (`agent-invalid`).
 """
 
 from __future__ import annotations
@@ -22,14 +24,13 @@ import math
 import os
 import re
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
 from coscc import bus
 
 BUILTIN = Path(__file__).resolve().parent.parent / "packs" / "coscc-sdlc"
-LOCAL = Path("packs") / "local"
 MANIFEST = Path(".claude-plugin") / "plugin.json"
 PROCESS_FILE = "process.json"
 SKILL_FILE = "SKILL.md"
@@ -113,7 +114,13 @@ AGENT_TOOL = "Agent"
 
 
 class PackError(ValueError):
-    """The built-in pack cannot be used: every reason, one per line."""
+    """A pack cannot be used or written: every reason (`reasons`), and a `code` for a caller to
+    branch on."""
+
+    def __init__(self, reasons: str | list[str], code: str = "pack-refused"):
+        self.reasons = [reasons] if isinstance(reasons, str) else list(reasons)
+        self.code = code
+        super().__init__("\n".join(self.reasons))
 
 
 def parse(text: str) -> tuple[dict[str, Any], str]:
@@ -202,13 +209,15 @@ def check(
     row: Mapping[str, Any],
     catalog: Mapping[str, str] | None = None,
     rows: Mapping[str, Mapping[str, Any]] | None = None,
+    skills: Collection[str] = (),
 ) -> list[str]:
     """Why `row` (its frontmatter, `key` and `body`) cannot run, `[]` when it can.
 
     `catalog` maps each tool a row may name to its effect (`kernel.Hooks.catalog`); without it the
     tool names and the read-only rule are not asked. `rows` are the other rows, for the rules
-    between rows (a unique name, helpers that are helper rows). The output's
-    fields are `contracts`' to check.
+    between rows (a unique name, helpers that are helper rows). `skills` are the skills a pack
+    being imported brings, beside those already in place. The output's fields are `contracts`' to
+    check.
     """
     key = str(row.get("key") or "")
     raw = row.get("output")
@@ -230,7 +239,7 @@ def check(
             "output.by session (the branch and the push) is for an artifact or session output"
         )
     out += _check_tools(row, kind, output.get("by"), catalog)
-    out += _check_links(row, rows)
+    out += _check_links(row, rows, skills)
     out += _check_trigger(row, kind, catalog)
     if output.get("then") is not None and (output["then"] not in THENS or kind != "verdict"):
         out.append(f"output.then: a verdict may have {', '.join(THENS)}")
@@ -313,7 +322,9 @@ def _check_tools(
     return out
 
 
-def _check_links(row: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]] | None) -> list[str]:
+def _check_links(
+    row: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]] | None, skills: Collection[str]
+) -> list[str]:
     """The helpers it names are helper rows; the skills it names exist."""
     out: list[str] = []
     helpers = row.get("helpers", [])
@@ -323,11 +334,11 @@ def _check_links(row: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]] |
         for h in helpers:
             if ((rows.get(h) or {}).get("output") or {}).get("kind") != "helper":
                 out.append(f"helpers: {h} is no helper row")
-    skills = row.get("skills", [])
-    if not isinstance(skills, list) or not all(isinstance(s, str) for s in skills):
+    named = row.get("skills", [])
+    if not isinstance(named, list) or not all(isinstance(s, str) for s in named):
         out.append("skills is a list of skill names")
     else:
-        out += [f"skills: no skill {s}" for s in skills if not skill_path(s)]
+        out += [f"skills: no skill {s}" for s in named if s not in skills and not skill_path(s)]
     return out
 
 
@@ -424,18 +435,57 @@ def triggered(found: Mapping[str, Any] | None, how: str = "") -> bool:
 
 
 # --- loading ------------------------------------------------------------------
+#
+# Many packs, one key space: the built-in, then each imported pack under `<data>/packs/<name>/`
+# (in name order), then the owner's own, `local`. A row key is one pack's; only `local` lays a file
+# over another pack's row. A `local/agents/<key>.md` whose key no other pack has is a whole row of
+# the owner's own. An imported pack with a problem loads none of its rows; only a bad built-in
+# stops the app.
+
+LOCAL_NAME = "local"
+# An import is unpacked here, under `packs/`, then renamed into place.
+IMPORTING = ".import-"
+# A pack's, an agent's or a process's name.
+_KEY = re.compile(r"[a-z][a-z0-9-]*")
+KEY_MAX = 24
 
 
-def owner_dir() -> Path:
+def key_problem(key: Any, what: str = "a key") -> str:
+    """Why `key` cannot name a pack, an agent or a process, `""` when it can."""
+    if isinstance(key, str) and len(key) <= KEY_MAX and _KEY.fullmatch(key):
+        return ""
+    return f"{what} is 1 to {KEY_MAX} lowercase letters, digits or hyphens, starting with a letter"
+
+
+def packs_dir() -> Path:
     # Imported here: the loop child reads the rows' modules and never the database.
     from coscc.store import db
 
-    return Path(ROOT or db.DEFAULT_DIR).expanduser().resolve() / LOCAL
+    return Path(ROOT or db.DEFAULT_DIR).expanduser().resolve() / "packs"
+
+
+def owner_dir() -> Path:
+    return packs_dir() / LOCAL_NAME
+
+
+def _imported_dirs() -> list[Path]:
+    """Every imported pack's folder: a real directory under `packs/` but `local` and in-flight
+    imports."""
+    root = packs_dir()
+    if not root.is_dir():
+        return []
+    return sorted(
+        p
+        for p in root.iterdir()
+        if p.is_dir() and not p.is_symlink() and p.name != LOCAL_NAME and not p.name.startswith(".")
+    )
 
 
 def _stamp(directory: Path) -> tuple[tuple[str, int, int], ...]:
     found = []
-    for path in sorted(directory.glob("**/*.md")) if directory.is_dir() else ():
+    for path in sorted(directory.glob("**/*")) if directory.is_dir() else ():
+        if path.suffix not in (".md", ".json"):
+            continue
         try:
             st = path.stat()
         except OSError:
@@ -448,11 +498,13 @@ def _skill_name(name: Any) -> bool:
     return isinstance(name, str) and re.fullmatch(r"[a-z][a-z0-9-]*", name) is not None
 
 
-def skill_path(name: str) -> Path | None:
-    """Where `name`'s text is read from: the owner's copy first, then the built-in."""
+def skill_path(name: str, owner: bool = True) -> Path | None:
+    """Where `name`'s text is read from: the owner's copy first (unless `owner` is false), then
+    the built-in's, then each imported pack's (whose skill names are no other pack's)."""
     if not _skill_name(name):
         return None
-    for root in (owner_dir(), BUILTIN):
+    roots = [*([owner_dir()] if owner else []), BUILTIN, *_imported_dirs()]
+    for root in roots:
         path = root / "skills" / name / SKILL_FILE
         if path.is_file():
             return path
@@ -463,10 +515,14 @@ def skill(name: str) -> str:
     """The text of skill `name`; `LookupError` naming where it was looked for."""
     path = skill_path(name)
     if path is None:
-        raise LookupError(
-            f"no skill {name}; looked under {owner_dir() / 'skills'} and {BUILTIN / 'skills'}"
-        )
+        raise LookupError(f"no skill {name}; looked under {packs_dir()} and {BUILTIN / 'skills'}")
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def skill_base(name: str) -> str:
+    """The text of skill `name` without the owner's copy: what a reset puts back."""
+    path = skill_path(name, owner=False)
+    return path.read_text(encoding="utf-8", errors="replace") if path else ""
 
 
 def manifest() -> dict[str, Any]:
@@ -474,7 +530,7 @@ def manifest() -> dict[str, Any]:
 
 
 def version() -> str:
-    """`<name>@<version>` of the built-in pack, as a run's `start` records it."""
+    """`<name>@<version>` of the built-in pack."""
     found = manifest()
     return f"{found['name']}@{found['version']}"
 
@@ -499,36 +555,128 @@ def _builtin() -> dict[str, dict[str, Any]]:
     return rows
 
 
+def _read_processes(directory: Path) -> tuple[dict[str, Any], list[str]]:
+    """The `processes` of `directory`'s `process.json` (`{}` with none) and why it cannot be read."""
+    path = directory / PROCESS_FILE
+    if not path.is_file():
+        return {}, []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {}, [f"{PROCESS_FILE}: {e}"]
+    found = raw.get("processes") if isinstance(raw, dict) else None
+    if not isinstance(found, dict):
+        return {}, [f"{PROCESS_FILE} is {{version, processes: {{<name>: process}}}}"]
+    bad = [f"{PROCESS_FILE}: {n}: {why}" for n in found if (why := key_problem(n, "a name"))]
+    return ({n: p for n, p in found.items() if not key_problem(n)}, bad)
+
+
+def _read_pack(
+    directory: Path, taken: Mapping[str, Mapping[str, Any]], catalog: Mapping[str, str] | None
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]], dict[str, Any], list[str]]:
+    """`(manifest, rows, processes, problems)` of the pack folder `directory` read as an imported
+    pack beside the rows `taken`: its manifest names it, its keys are no other pack's, each row
+    passes `check` (with `catalog` when given). Its processes are checked once every row is in."""
+    problems: list[str] = []
+    try:
+        found = json.loads((directory / MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        found, problems = {}, [f"{MANIFEST}: {e}"]
+    if not isinstance(found, dict):
+        found, problems = {}, [f"{MANIFEST} is {{name, version, description}}"]
+    name = found.get("name")
+    if why := key_problem(name, f"{MANIFEST}: name"):
+        problems.append(why)
+    elif name in (manifest()["name"], LOCAL_NAME):
+        problems.append(f"{MANIFEST}: name {name} is the app's own pack")
+    rows: dict[str, dict[str, Any]] = {}
+    for path in sorted((directory / "agents").glob("*.md")):
+        key = path.stem
+        try:
+            fields, body = parse(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            problems.append(f"agents/{path.name}: {e}")
+            continue
+        if why := key_problem(key):
+            problems.append(f"agents/{path.name}: {why}")
+        elif key in taken:
+            problems.append(f"agents/{path.name}: {key} is another pack's agent")
+        else:
+            rows[key] = {**fields, "key": key, BODY: body}
+    skills = {p.parent.name for p in (directory / "skills").glob(f"*/{SKILL_FILE}")}
+    for s in sorted(skills):
+        other = skill_path(s, owner=False)
+        if other is not None and directory not in other.parents:
+            problems.append(f"skills/{s}: {s} is another pack's skill")
+    every = {**taken, **rows}
+    for key, r in rows.items():
+        problems += [f"{key}: {why}" for why in _safely(r, every, catalog, skills)]
+    procs, bad = _read_processes(directory)
+    return found, rows, procs, problems + bad
+
+
 _CACHE: dict[str, Any] = {}
 
 
+def _entry(base: dict[str, Any], pack_name: str, own: bool = False) -> dict[str, Any]:
+    return {**base, "edited": [], "problems": [], "builtin": base, "pack": pack_name, "own": own}
+
+
 def _loaded() -> dict[str, dict[str, Any]]:
-    """Every row, the owner's layer laid over the built-in, each with `edited` (the keys the owner
-    set) and `problems`; read again only when a file under either changed."""
-    owner = owner_dir()
+    """Every row of every pack, the owner's files laid over them, each with `edited` (the keys the
+    owner set), `problems`, `pack` and `own`; read again only when a file under `packs/` changed."""
+    root = packs_dir()
     # The built-in pack is never written while the app runs: its path is enough.
-    stamp = (str(BUILTIN), str(owner), _stamp(owner))
+    stamp = (str(BUILTIN), str(root), _stamp(root))
     if _CACHE.get("stamp") == stamp:
         return _CACHE["rows"]
-    builtin = _builtin()
-    rows: dict[str, dict[str, Any]] = {}
-    for key, base in builtin.items():
-        row = {**base, "edited": [], "problems": [], "builtin": base}
-        _lay_over(row, base, owner / "agents" / f"{key}.md")
-        rows[key] = row
+    builtin_name = manifest()["name"]
+    rows = {k: _entry(base, builtin_name) for k, base in _builtin().items()}
+    packs: dict[str, dict[str, Any]] = {}
+    for directory in _imported_dirs():
+        taken = {k: _fields(r) for k, r in rows.items()}
+        found, mine, procs, problems = _read_pack(directory, taken, None)
+        if found.get("name") != directory.name:
+            problems.append(f"{MANIFEST}: name {found.get('name')!r} is not its folder's")
+        packs[directory.name] = {"manifest": found, "processes": procs, "problems": problems}
+        if not problems:
+            rows.update({k: _entry(r, directory.name) for k, r in mine.items()})
+    owner = owner_dir()
+    for path in sorted((owner / "agents").glob("*.md")):
+        if path.stem in rows:
+            _lay_over(rows[path.stem], rows[path.stem]["builtin"], path)
+        else:
+            rows[path.stem] = _own(path)
     owned_skills = {p.parent.name for p in (owner / "skills").glob(f"*/{SKILL_FILE}")}
     for key, row in rows.items():
-        row["edited"] += [f"skill:{s}" for s in row.get("skills", []) if s in owned_skills]
+        if not row["own"]:
+            row["edited"] += [f"skill:{s}" for s in row.get("skills", []) if s in owned_skills]
         if not row["problems"]:
             others = {k: _fields(r) for k, r in rows.items()}
             row["problems"] = _safely(_fields(row), others)
-    stray = sorted(p.stem for p in (owner / "agents").glob("*.md") if p.stem not in rows)
-    _CACHE.update(stamp=stamp, rows=rows, stray=stray)
+    procs, problems = _read_processes(owner)
+    packs[LOCAL_NAME] = {"manifest": _local_manifest(), "processes": procs, "problems": problems}
+    _CACHE.update(stamp=stamp, rows=rows, packs=packs, processes=_every_process(rows, packs))
     return rows
 
 
+def _own(path: Path) -> dict[str, Any]:
+    """A whole row of the owner's own, checked as a whole row."""
+    key = path.stem
+    try:
+        fields, body = parse(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        row = _entry({"key": key, BODY: ""}, LOCAL_NAME, own=True)
+        row["problems"] = [f"{path}: {e}"]
+        return row
+    row = _entry({**fields, "key": key, BODY: body}, LOCAL_NAME, own=True)
+    bad = [why] if (why := key_problem(key)) else []
+    row["problems"] = [f"{path}: {r}" for r in bad + _safely(_fields(row))]
+    return row
+
+
 def _lay_over(row: dict[str, Any], base: Mapping[str, Any], path: Path) -> None:
-    """The owner's file `path`, if any, laid over `row`; its problems, with the built-in's values
+    """The owner's file `path`, if any, laid over `row`; its problems, with the pack's values
     kept, when it cannot be read or is no row."""
     if not path.is_file():
         return
@@ -539,7 +687,7 @@ def _lay_over(row: dict[str, Any], base: Mapping[str, Any], path: Path) -> None:
         return
     bad = _safely({**base, **fields, **({BODY: body} if body else {})})
     if bad:
-        # The owner's values stay out: the row is the built-in's, its runs refused.
+        # The owner's values stay out: the row is the pack's, its runs refused.
         row["problems"] = [f"{path}: {r}" for r in bad]
         return
     row.update(fields)
@@ -549,32 +697,33 @@ def _lay_over(row: dict[str, Any], base: Mapping[str, Any], path: Path) -> None:
 
 
 def _safely(
-    row: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]] | None = None
+    row: Mapping[str, Any],
+    rows: Mapping[str, Mapping[str, Any]] | None = None,
+    catalog: Mapping[str, str] | None = None,
+    skills: Collection[str] = (),
 ) -> list[str]:
     """`check`'s reasons, or the one a value of a shape no check expected raises (a hand edit)."""
     try:
-        return check(row, None, rows)
+        return check(row, catalog, rows, skills)
     except (TypeError, AttributeError, ValueError, KeyError) as e:
         return [f"{type(e).__name__}: {e}"]
 
 
+_BOOKKEEPING = ("edited", "problems", "builtin", "pack", "own")
+
+
 def _fields(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in row.items() if k not in ("edited", "problems", "builtin")}
+    return {k: v for k, v in row.items() if k not in _BOOKKEEPING}
 
 
 def rows() -> dict[str, dict[str, Any]]:
-    """Every agent's effective row, in the manifest's order."""
+    """Every agent's effective row: the built-in's in the manifest's order, then each imported
+    pack's, then the owner's own."""
     return _loaded()
 
 
 def row(key: str) -> dict[str, Any] | None:
     return _loaded().get(key)
-
-
-def stray() -> list[str]:
-    """The owner's files that name no agent: they change nothing."""
-    _loaded()
-    return list(_CACHE["stray"])
 
 
 def problems(key: str, catalog: Mapping[str, str] | None = None) -> list[str]:
@@ -606,13 +755,26 @@ def hash_of(found: Mapping[str, Any]) -> str:
     return hashlib.sha256(said.encode("utf-8")).hexdigest()[:12]
 
 
+def pack_version(name: str) -> str:
+    """`<name>@<version>` of pack `name`, as a run's `start` records it."""
+    if name == manifest()["name"]:
+        return version()
+    _loaded()
+    found = (_CACHE["packs"].get(name) or {}).get("manifest") or {}
+    return f"{name}@{found.get('version') or ''}"
+
+
 def stamp(key: str, process_ref: str | None = None) -> dict[str, Any]:
     """What a run of `key` records of its row: `pack`, `row_hash`, `edited`; with the unit's
     process, `process` and `process_hash`."""
     found = row(key)
     if found is None:
         return {}
-    out = {"pack": version(), "row_hash": hash_of(found), "edited": list(found["edited"])}
+    out = {
+        "pack": pack_version(str(found["pack"])),
+        "row_hash": hash_of(found),
+        "edited": list(found["edited"]),
+    }
     if process(process_ref) is not None:
         out.update(process=process_ref, process_hash=process_hash(process_ref))
     return out
@@ -852,9 +1014,9 @@ def builtin_rows() -> Mapping[str, Mapping[str, Any]]:
     return _PROCESSES["rows"]
 
 
-def processes() -> dict[str, Process]:
-    """The built-in pack's processes as `<pack>/<name>`; `PackError` with every reason when one
-    cannot run on the built-in rows."""
+def builtin_processes() -> dict[str, Process]:
+    """The built-in pack's processes as `<pack>/<name>`, read once; `PackError` with every reason
+    when one cannot run on the built-in rows. The loop child reads only these and the snapshot's."""
     if "all" not in _PROCESSES:
         raw = json.loads((BUILTIN / PROCESS_FILE).read_text(encoding="utf-8"))
         rows_ = builtin_rows()
@@ -864,6 +1026,33 @@ def processes() -> dict[str, Process]:
             raise PackError("the built-in pack cannot be used:\n" + "\n".join(problems))
         _PROCESSES["all"] = {f"{pack_name}/{n}": p for n, p in raw["processes"].items()}
     return _PROCESSES["all"]
+
+
+def _every_process(
+    rows_: Mapping[str, Mapping[str, Any]], packs: Mapping[str, dict[str, Any]]
+) -> dict[str, Process]:
+    """The built-in's processes, then each loaded pack's that `check_process` passes against every
+    row; a refused one is its pack's problem."""
+    out = dict(builtin_processes())
+    plain = {k: _fields(r) for k, r in rows_.items()}
+    for name, info in packs.items():
+        if info["problems"] and name != LOCAL_NAME:
+            continue
+        for n, p in info["processes"].items():
+            try:
+                bad = check_process(n, p, plain)
+            except (TypeError, AttributeError, ValueError, KeyError) as e:
+                bad = [f"{n}: {type(e).__name__}: {e}"]
+            info["problems"] += bad
+            if not bad:
+                out[f"{name}/{n}"] = p
+    return out
+
+
+def processes() -> dict[str, Process]:
+    """Every pack's processes that can run, as `<pack>/<name>`, on or off."""
+    _loaded()
+    return _CACHE["processes"]
 
 
 def process(ref: str | None) -> Process | None:
@@ -881,6 +1070,29 @@ def process_hash(ref: str | None) -> str:
     """12 hex of sha256 over the process (sorted JSON), as a run's `start` records it."""
     said = json.dumps(process(ref), sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(said.encode("utf-8")).hexdigest()[:12]
+
+
+class Resolved(TypedDict):
+    """A process as the snapshot hands it to the loop: itself, the rows it runs (their `output`
+    alone) and its `process_hash`."""
+
+    process: Process
+    rows: Mapping[str, Mapping[str, Any]]
+    hash: NotRequired[str]
+
+
+def resolved(ref: str | None) -> Resolved | None:
+    """`{process, rows, hash}`: the process `ref` names, the `output` of each row it runs and its
+    `process_hash`, all the loop needs to walk it; `None` when no pack has it."""
+    found = process(ref)
+    if found is None:
+        return None
+    agents = {str(st.get("agent")) for st in found["states"].values() if st.get("agent")}
+    return {
+        "process": found,
+        "rows": {k: {"output": (row(k) or {}).get("output") or {}} for k in sorted(agents)},
+        "hash": process_hash(ref),
+    }
 
 
 def state_names() -> tuple[str, ...]:
@@ -934,9 +1146,20 @@ class PackShown(TypedDict):
     problems: list[str]
 
 
+def pack_names() -> list[str]:
+    """Every pack: the built-in, each imported one, the owner's own."""
+    _loaded()
+    return [manifest()["name"], *(n for n in _CACHE["packs"] if n != LOCAL_NAME), LOCAL_NAME]
+
+
 def pack_on(data: Any, name: str, key: str) -> bool:
+    """Whether pack `name` is on in workspace `key`: the built-in and `local` until switched off,
+    an imported pack once switched on."""
     mine = _pref(data, STATE_PREF).get(name)
-    return not (isinstance(mine, dict) and mine.get(key) == "off")
+    said = mine.get(key) if isinstance(mine, dict) else None
+    if said in DEFAULTS:
+        return said == "on"
+    return name in (manifest()["name"], LOCAL_NAME)
 
 
 def chosen_process(data: Any, key: str) -> str:
@@ -950,25 +1173,41 @@ def default_process(data: Any, key: str) -> str | None:
     return ref if pack_on(data, ref.partition("/")[0], key) else None
 
 
+def _local_manifest() -> dict[str, Any]:
+    try:
+        found = json.loads((owner_dir() / MANIFEST).read_text(encoding="utf-8"))
+    except OSError, ValueError:
+        found = {}
+    return {"name": LOCAL_NAME, "version": "1.0.0", **(found if isinstance(found, dict) else {})}
+
+
 def packs_shown(data: Any, key: str) -> list[PackShown]:
-    """The packs for Settings: name, version, on, the default process and each process's states."""
-    name = manifest()["name"]
-    return [
-        {
-            "name": name,
-            "version": str(manifest()["version"]),
-            "description": str(manifest().get("description") or ""),
-            "on": pack_on(data, name, key),
-            "process": chosen_process(data, key),
-            "processes": [
-                ProcessShown(ref=ref, name=ref.rpartition("/")[2], own=False, **p)
-                for ref, p in processes().items()
-            ],
-            "own": False,
-            "imported": False,
-            "problems": [],
-        }
-    ]
+    """The packs for Settings: name, version, on, the default process, each process's states,
+    whose it is and what does not load."""
+    _loaded()
+    builtin_name = manifest()["name"]
+    out: list[PackShown] = []
+    for name in pack_names():
+        info: dict[str, Any] = _CACHE["packs"].get(name) or {"manifest": manifest(), "problems": []}
+        found: dict[str, Any] = info["manifest"]
+        out.append(
+            {
+                "name": name,
+                "version": str(found.get("version") or ""),
+                "description": str(found.get("description") or ""),
+                "on": pack_on(data, name, key),
+                "process": chosen_process(data, key),
+                "processes": [
+                    ProcessShown(ref=ref, name=ref.partition("/")[2], own=name == LOCAL_NAME, **p)
+                    for ref, p in processes().items()
+                    if ref.partition("/")[0] == name
+                ],
+                "own": name == LOCAL_NAME,
+                "imported": name not in (builtin_name, LOCAL_NAME),
+                "problems": list(info["problems"]),
+            }
+        )
+    return out
 
 
 def set_packs(
@@ -976,7 +1215,7 @@ def set_packs(
 ) -> None:
     """Switch pack `name` on or off for workspace `key` and/or choose its default process;
     `PackError` for a pack or a process that is not there."""
-    if name != manifest()["name"]:
+    if name not in pack_names():
         raise PackError(f"not a pack: {name}")
     if chosen is not None and (process(chosen) is None or not chosen.startswith(f"{name}/")):
         raise PackError(f"not a process of {name}: {chosen}")
@@ -996,11 +1235,15 @@ AGENT_STATE_PREF = "agents.state"
 
 
 def agent_on(data: Any, key: str, workspace: str) -> bool:
+    """Whether `key`'s event or schedule runs it in `workspace`: never while its pack is off."""
+    found = row(key) or {}
+    if not pack_on(data, str(found.get("pack") or ""), workspace):
+        return False
     chosen = _pref(data, AGENT_STATE_PREF).get(key)
     said = chosen.get(workspace) if isinstance(chosen, dict) else None
     if said in DEFAULTS:
         return said == "on"
-    return (row(key) or {}).get("default") == "on"
+    return found.get("default") == "on"
 
 
 def set_agent_on(data: Any, key: str, workspace: str, on: bool) -> None:
@@ -1013,19 +1256,26 @@ def set_agent_on(data: Any, key: str, workspace: str, on: bool) -> None:
     data.set_pref(AGENT_STATE_PREF, state)
 
 
-# --- the owner's layer --------------------------------------------------------
+# --- the owner's pack ---------------------------------------------------------
 
 
-def _atomic(path: Path, text: str) -> None:
+def _atomic(path: Path, text: str | bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
+        with os.fdopen(fd, "wb") as f:
+            f.write(text.encode("utf-8") if isinstance(text, str) else text)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def _own_manifest() -> None:
+    """`local`'s `plugin.json`, written on its first write."""
+    path = owner_dir() / MANIFEST
+    if not path.is_file():
+        _atomic(path, json.dumps({"name": LOCAL_NAME, "version": "1.0.0"}, indent=2) + "\n")
 
 
 def owner_fields(key: str) -> tuple[dict[str, Any], str]:
@@ -1039,10 +1289,11 @@ def owner_fields(key: str) -> tuple[dict[str, Any], str]:
 def write(
     key: str, field: str, value: Any, catalog: Mapping[str, str] | None = None
 ) -> tuple[Any, Any]:
-    """Set `field` of `key` in the owner's layer: a frontmatter key, `body`, or `skill:<name>` (the
-    text of a skill the row names, for every row naming it). `None`, or the built-in's value, resets
-    it. The row is checked as it would then stand, with `catalog` (`check`); a reason is a
-    `ValueError` and nothing is written. `(old, new)` effective values."""
+    """Set `field` of `key` in the owner's pack: a frontmatter key, `body`, or `skill:<name>` (the
+    text of a skill the row names, for every row naming it). On another pack's row `None`, or that
+    pack's value, resets it; on a whole row of the owner's own `None` removes the key. The row is
+    checked as it would then stand, with `catalog` (`check`); a reason is a `ValueError` and
+    nothing is written. `(old, new)` effective values."""
     found = row(key)
     if found is None:
         raise ValueError(f"no such agent: {key} (use one of {', '.join(rows())})")
@@ -1052,14 +1303,16 @@ def write(
         raise ValueError(
             f"{field}: no such key (use one of {', '.join((*KEYS, BODY))}, {SKILL}<name>)"
         )
-    base = found["builtin"]
+    own = bool(found["own"])
+    base = {"key": key} if own else found["builtin"]
     fields, body = owner_fields(key)
     old = found.get(field)
     if field == BODY:
         if value is not None and not isinstance(value, str):
             raise ValueError("the body is text")
-        body = "" if value is None or value.strip() == str(base.get(BODY) or "") else value
-    elif value is None or value == base.get(field):
+        same = not own and value is not None and value.strip() == str(base.get(BODY) or "")
+        body = "" if value is None or same else value
+    elif value is None or (not own and value == base.get(field)):
         fields.pop(field, None)
     else:
         fields[field] = value
@@ -1069,7 +1322,8 @@ def write(
     if reasons:
         raise ValueError("; ".join(reasons))
     path = owner_dir() / "agents" / f"{key}.md"
-    if fields or body.strip():
+    if own or fields or body.strip():
+        _own_manifest()
         _atomic(path, render(fields, body))
     else:
         path.unlink(missing_ok=True)
@@ -1083,8 +1337,7 @@ def _write_skill(found: Mapping[str, Any], name: str, value: Any) -> tuple[str, 
         raise ValueError(f"{SKILL}{name}: {found['key']} names no such skill")
     if value is not None and not isinstance(value, str):
         raise ValueError(f"{SKILL}{name} is text")
-    builtin = BUILTIN / "skills" / name / SKILL_FILE
-    base = builtin.read_text(encoding="utf-8") if builtin.is_file() else ""
+    base = skill_base(name)
     old = skill(name)
     path = owner_dir() / "skills" / name / SKILL_FILE
     if value is None or not value.strip() or value.strip() == base.strip():
@@ -1093,5 +1346,228 @@ def _write_skill(found: Mapping[str, Any], name: str, value: Any) -> tuple[str, 
             path.parent.rmdir()
         return old, base
     text = value if value.endswith("\n") else value + "\n"
+    _own_manifest()
     _atomic(path, text)
     return old, text
+
+
+# The smallest row that runs: a reader a person starts, handing back proposals.
+BLANK: dict[str, Any] = {
+    "model": {"id": "claude-sonnet-5-5[1m]", "effort": "low"},
+    "tools": {},
+    "output": {
+        "kind": "proposal",
+        "version": 1,
+        "fields": {
+            "proposals": {
+                "list": {
+                    "type": "text",
+                    "slug": "text",
+                    "title": "text",
+                    "problem": "text",
+                    "sources": {"list": "text"},
+                }
+            }
+        },
+    },
+    "trigger": {"manual": True},
+    "ceilings": {"turns": 4, "usd": 0.5},
+}
+
+
+def new_row(
+    key: str, name: str, start: str | None, catalog: Mapping[str, str] | None = None
+) -> None:
+    """Write `local/agents/<key>.md`: a copy of row `start` (every key, its body, its skills by
+    name) named `name`, or with no `start` the `BLANK` row. A taken or bad key, or a row `check`
+    refuses, is a `PackError` with every reason and nothing is written."""
+    reasons = [why] if (why := key_problem(key)) else []
+    if key in rows():
+        reasons.append(f"{key} is taken: an agent of {rows()[key]['pack']} has it")
+    base = BLANK
+    if start:
+        found = row(start)
+        if found is None:
+            reasons.append(f"no agent {start} to start from")
+        else:
+            base = {k: found[k] for k in KEYS if k in found}
+            base[BODY] = found.get(BODY) or ""
+    fields = {k: v for k, v in {**base, "name": name}.items() if k != BODY}
+    body = str(base.get(BODY) or "")
+    made = {**fields, "key": key, BODY: body}
+    if not reasons:
+        others = {k: _fields(r) for k, r in rows().items()}
+        reasons = check(made, catalog, {**others, key: made})
+    if reasons:
+        raise PackError(reasons)
+    _own_manifest()
+    _atomic(owner_dir() / "agents" / f"{key}.md", render(fields, body))
+
+
+def naming(key: str) -> list[str]:
+    """Every process that runs `key` in one of its states, `<pack>/<name>`."""
+    return [
+        ref
+        for ref, p in processes().items()
+        if any(st.get("agent") == key for st in p["states"].values())
+    ]
+
+
+def delete_row(key: str) -> None:
+    """Remove a whole row of the owner's own; `PackError` for any other row, or while a process
+    names it."""
+    found = row(key)
+    if found is None or not found["own"]:
+        raise PackError([f"{key} is no agent of your own pack"])
+    if named := naming(key):
+        raise PackError([f"{key} runs in {', '.join(named)}"], code="in-use")
+    (owner_dir() / "agents" / f"{key}.md").unlink(missing_ok=True)
+
+
+def write_process(name: str, given: Any) -> tuple[Any, Any]:
+    """Set the owner's process `local/<name>` to `given`, or remove it with `None`, in
+    `local/process.json`, once `check_process` passes against every row. `(old, new)`."""
+    if why := key_problem(name, "a process name"):
+        raise PackError([why])
+    found, bad = _read_processes(owner_dir())
+    if bad:
+        raise PackError(bad)
+    old = found.get(name)
+    if given is None:
+        if old is None:
+            raise PackError([f"no process {LOCAL_NAME}/{name}"])
+        found.pop(name)
+    else:
+        reasons = check_process(name, given, {k: _fields(r) for k, r in rows().items()})
+        if reasons:
+            raise PackError(reasons)
+        found[name] = given
+    _own_manifest()
+    text = json.dumps({"version": 1, "processes": found}, indent=2, ensure_ascii=False)
+    _atomic(owner_dir() / PROCESS_FILE, text + "\n")
+    return old, given
+
+
+# --- export and import --------------------------------------------------------
+
+# The only files a pack zip holds.
+_ENTRY = re.compile(
+    r"(\.claude-plugin/plugin\.json|agents/[a-z][a-z0-9-]*\.md|skills/[a-z][a-z0-9-]*/SKILL\.md"
+    r"|process\.json)"
+)
+
+
+def export_zip(name: str) -> bytes:
+    """Pack `name` as a zip of its plugin folder. For `local`: its manifest, its own rows, its
+    processes and the skills no other pack has; never its files laid over other packs' rows."""
+    import io
+    import zipfile
+
+    if name not in pack_names():
+        raise PackError([f"not a pack: {name}"])
+    directory = {manifest()["name"]: BUILTIN, LOCAL_NAME: owner_dir()}.get(name)
+    directory = directory or packs_dir() / name
+    files: dict[str, bytes] = {}
+    for path in sorted(directory.rglob("*")):
+        rel = path.relative_to(directory).as_posix()
+        if path.is_file() and not path.is_symlink() and _ENTRY.fullmatch(rel):
+            files[rel] = path.read_bytes()
+    if name == LOCAL_NAME:
+        own = {k for k, r in rows().items() if r["own"]}
+        files = {
+            rel: blob
+            for rel, blob in files.items()
+            if not rel.startswith(("agents/", "skills/"))
+            or (rel.startswith("agents/") and rel[7:-3] in own)
+            or (rel.startswith("skills/") and skill_path(rel.split("/")[1], owner=False) is None)
+        }
+        files[MANIFEST.as_posix()] = json.dumps(_local_manifest(), indent=2).encode() + b"\n"
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for rel, blob in files.items():
+            z.writestr(rel, blob)
+    return out.getvalue()
+
+
+def import_zip(
+    blob: bytes,
+    catalog: Mapping[str, str] | None = None,
+    more: Callable[[str, Mapping[str, Any]], list[str]] | None = None,
+) -> str:
+    """Put the pack in zip `blob` in place under `<data>/packs/<name>/`; its name.
+
+    The zip holds at most `ZIP_MAX` bytes and `ZIP_ENTRIES` entries, only the files of a plugin
+    folder (`_ENTRY`), no absolute path, no `..`, no link. It is unpacked into a fresh
+    `packs/.import-*` folder, read as a pack (`_read_pack`: its manifest name, keys no other pack's,
+    every row `check`ed with `catalog`, and `more`'s reasons for a row) and every process
+    `check_process`ed against every row, then renamed into place. A refusal is a `PackError` with
+    every reason, and nothing is left behind."""
+    import io
+    import shutil
+    import stat
+    import zipfile
+
+    if len(blob) > ZIP_MAX:
+        raise PackError([f"the zip is over {ZIP_MAX} bytes"])
+    try:
+        z = zipfile.ZipFile(io.BytesIO(blob))
+        entries = z.infolist()
+    except (zipfile.BadZipFile, ValueError) as e:
+        raise PackError([f"not a zip: {e}"]) from None
+    reasons = [] if len(entries) <= ZIP_ENTRIES else [f"over {ZIP_ENTRIES} entries"]
+    total = 0
+    for e in entries:
+        mode = e.external_attr >> 16
+        total += e.file_size
+        if e.is_dir():
+            continue
+        if stat.S_ISLNK(mode):
+            reasons.append(f"{e.filename}: a link")
+        elif e.filename.startswith("/") or "\\" in e.filename or ".." in e.filename.split("/"):
+            reasons.append(f"{e.filename}: not a path inside the pack")
+        elif not _ENTRY.fullmatch(e.filename):
+            reasons.append(
+                f"{e.filename}: a pack holds only {MANIFEST}, agents/*.md, "
+                f"skills/*/{SKILL_FILE} and {PROCESS_FILE}"
+            )
+    if total > ZIP_MAX:
+        reasons.append(f"it unpacks to over {ZIP_MAX} bytes")
+    if reasons:
+        raise PackError(reasons)
+    root = packs_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=IMPORTING, dir=root))
+    try:
+        try:
+            for e in entries:
+                if not e.is_dir():
+                    _atomic(staging / e.filename, z.read(e))
+        except (zipfile.BadZipFile, OSError, ValueError) as e:
+            raise PackError([f"the zip cannot be unpacked: {e}"]) from None
+        taken = {k: _fields(r) for k, r in rows().items()}
+        found, mine, procs, problems = _read_pack(staging, taken, catalog)
+        name = str(found.get("name") or "")
+        if name and (name in pack_names() or (root / name).exists()):
+            problems.append(f"{MANIFEST}: name {name} is taken")
+        every = {**taken, **mine}
+        problems += [why for k, r in mine.items() for why in (more(k, r) if more else [])]
+        for n, p in procs.items():
+            try:
+                problems += check_process(n, p, every)
+            except (TypeError, AttributeError, ValueError, KeyError) as e:
+                problems.append(f"{n}: {type(e).__name__}: {e}")
+        if problems:
+            raise PackError(problems)
+        staging.rename(root / name)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return name
+
+
+def remove_pack(name: str) -> None:
+    """Remove an imported pack's folder; `PackError` for the built-in, `local` or no such pack."""
+    if name in (manifest()["name"], LOCAL_NAME) or name not in pack_names():
+        raise PackError([f"{name} is no imported pack"])
+    import shutil
+
+    shutil.rmtree(packs_dir() / name)

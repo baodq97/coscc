@@ -490,7 +490,6 @@ class TheOldPrefsMoveOnce(unittest.TestCase):
                 self.assertEqual(models.resolve("leif", None, None)[0], "claude-haiku-4-5")
                 self.assertEqual(agents.agent_for("plan")["name"], "Rad")
                 self.assertEqual(agents.agent_for("plan")["role"], "Plans.")
-                self.assertEqual(pack.stray(), [])
             self.assertEqual(data.prefs(), {"autopilot": True})
 
 
@@ -654,3 +653,222 @@ class APackIsOnOrOffPerWorkspace(unittest.TestCase):
         ):
             with self.assertRaises(pack.PackError):
                 pack.set_packs(self.data, "/a", args[0], args[1], args[2])
+
+
+def tiny(agent: str = "tidy") -> dict:
+    """`short` with `agent` running its `impl` state (review reads the `impl` artifact)."""
+    found = json.loads(json.dumps(pack.process("coscc-sdlc/short")))
+    found["states"]["impl"]["agent"] = agent
+    return found
+
+
+def zipped(files: dict[str, bytes | str], links: tuple[str, ...] = ()) -> bytes:
+    import io
+    import stat
+    import zipfile
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as z:
+        for name, blob in files.items():
+            z.writestr(name, blob)
+        for name in links:
+            info = zipfile.ZipInfo(name)
+            info.external_attr = (stat.S_IFLNK | 0o777) << 16
+            z.writestr(info, "/etc/passwd")
+    return out.getvalue()
+
+
+ROW = '---\nname: "NAME"\nmodel: {"id": "claude-sonnet-5-5[1m]", "effort": "low"}\ntools: {"Read": "allow"}\noutput: {"kind": "reply"}\ntrigger: {"manual": true}\nceilings: {"turns": 4, "usd": 0.5}\n---\nReads.\n'
+
+
+def a_pack(name: str = "mine", **more: bytes | str) -> dict[str, bytes | str]:
+    """A pack with one row, `<name>-row`."""
+    return {
+        ".claude-plugin/plugin.json": json.dumps({"name": name, "version": "0.1.0"}),
+        f"agents/{name}-row.md": ROW.replace("NAME", f"{name}-row"),
+        **more,
+    }
+
+
+class ManyPacks(unittest.TestCase):
+    """The built-in, each imported pack and the owner's own: one key space; new agents and
+    processes in `local`; export and import."""
+
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.addCleanup(self.d.cleanup)
+        patcher = mock.patch.object(pack, "ROOT", self.d.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def left(self) -> list[str]:
+        root = pack.packs_dir()
+        return sorted(p.name for p in root.iterdir()) if root.is_dir() else []
+
+    def test_a_whole_row_of_local_loads_as_an_agent(self):
+        pack.new_row("tidy", "Tidy", "impl", CATALOG)
+        pack.new_row("look", "Look", None, CATALOG)
+        tidy, look = pack.row("tidy"), pack.row("look")
+        self.assertEqual((tidy["pack"], tidy["own"], tidy["problems"]), ("local", True, []))
+        self.assertEqual(tidy["tools"], pack.row("impl")["tools"])
+        self.assertEqual(tidy[pack.BODY], pack.row("impl")[pack.BODY])
+        self.assertEqual(pack.problems("look", CATALOG), [])
+        self.assertEqual(look["trigger"], {"manual": True})
+        self.assertEqual(list(pack.rows())[-2:], ["look", "tidy"])
+        self.assertEqual(
+            json.loads((pack.owner_dir() / pack.MANIFEST).read_text())["name"], "local"
+        )
+        # The copy is the owner's row: an edit writes it whole, a key removed is gone.
+        pack.write("tidy", "ceilings", {"turns": 20, "usd": 1.0})
+        self.assertEqual(pack.row("tidy")["ceilings"], {"turns": 20, "usd": 1.0})
+        self.assertEqual(pack.stamp("tidy")["pack"], "local@1.0.0")
+
+    def test_a_taken_or_bad_key_or_name_is_refused_and_nothing_written(self):
+        for key, name, why in (
+            ("impl", "Other", "impl is taken"),
+            ("Bad_Key", "Other", "a key is 1 to 24"),
+            ("fresh", "Tiwaz", "name: Tiwaz is another agent's"),
+        ):
+            with self.subTest(key=key), self.assertRaises(pack.PackError) as e:
+                pack.new_row(key, name, "review", CATALOG)
+            self.assertIn(why, str(e.exception))
+        self.assertFalse((pack.owner_dir() / "agents").exists())
+
+    def test_delete_is_refused_while_a_process_names_it(self):
+        pack.new_row("tidy", "Tidy", "impl", CATALOG)
+        pack.write_process("tiny", tiny())
+        with self.assertRaises(pack.PackError) as e:
+            pack.delete_row("tidy")
+        self.assertEqual(
+            (e.exception.code, e.exception.reasons), ("in-use", ["tidy runs in local/tiny"])
+        )
+        with self.assertRaises(pack.PackError):
+            pack.delete_row("impl")
+        pack.write_process("tiny", None)
+        pack.delete_row("tidy")
+        self.assertIsNone(pack.row("tidy"))
+
+    def test_a_local_process_runs_on_any_packs_rows_and_a_bad_one_is_a_problem(self):
+        pack.new_row("tidy", "Tidy", "impl", CATALOG)
+        pack.write_process("tiny", tiny())
+        self.assertEqual(pack.agent_for("local/tiny", "impl"), "tidy")
+        bad = tiny()
+        del bad["states"]["review"]
+        bad["states"]["pr"]["next"] = [{"to": "ship"}]
+        with self.assertRaises(pack.PackError) as e:
+            pack.write_process("tiny", bad)
+        self.assertIn("a review state is not on every path to it", str(e.exception))
+        # A hand edit of the file: the process is a problem on the page, never a crash.
+        raw = json.loads((pack.owner_dir() / pack.PROCESS_FILE).read_text())
+        raw["processes"]["tiny"] = bad
+        (pack.owner_dir() / pack.PROCESS_FILE).write_text(json.dumps(raw))
+        self.assertIsNone(pack.process("local/tiny"))
+        shown = {p["name"]: p for p in pack.packs_shown(Data(self.d.name), "/ws")}
+        self.assertIn(
+            "tiny.ship: a review state is not on every path to it", shown["local"]["problems"]
+        )
+        self.assertEqual(shown["local"]["processes"], [])
+
+    def test_an_imported_pack_is_off_until_turned_on_and_its_rows_load(self):
+        data = Data(self.d.name)
+        self.assertEqual(pack.import_zip(zipped(a_pack()), CATALOG), "mine")
+        self.assertEqual(pack.row("mine-row")["pack"], "mine")
+        shown = {p["name"]: p for p in pack.packs_shown(data, "/ws")}
+        self.assertEqual(list(shown), ["coscc-sdlc", "mine", "local"])
+        self.assertEqual((shown["mine"]["on"], shown["mine"]["imported"]), (False, True))
+        self.assertEqual(self.left(), ["mine"])
+        pack.set_packs(data, "/ws", "mine", on=True)
+        self.assertTrue(pack.pack_on(data, "mine", "/ws"))
+        pack.remove_pack("mine")
+        self.assertIsNone(pack.row("mine-row"))
+
+    def test_an_off_packs_scheduled_row_does_not_run_on_its_schedule(self):
+        data = Data(self.d.name)
+        timed = ROW.replace('{"manual": true}', '{"schedule": {"hours": 24}}\ndefault: "on"')
+        pack.import_zip(zipped(a_pack(**{"agents/mine-row.md": timed.replace("NAME", "Mine")})))
+        self.assertFalse(pack.agent_on(data, "mine-row", "/ws"))
+        pack.set_packs(data, "/ws", "mine", on=True)
+        self.assertTrue(pack.agent_on(data, "mine-row", "/ws"))
+
+    def test_a_colliding_key_in_an_imported_pack_loads_none_of_its_rows(self):
+        folder = pack.packs_dir() / "mine"
+        for rel, text in a_pack(**{"agents/impl.md": ROW.replace("NAME", "Other")}).items():
+            (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+            (folder / rel).write_text(str(text))
+        self.assertIsNone(pack.row("mine-row"))
+        self.assertEqual(pack.row("impl")["pack"], "coscc-sdlc")
+        shown = {p["name"]: p for p in pack.packs_shown(Data(self.d.name), "/ws")}
+        self.assertEqual(
+            shown["mine"]["problems"], ["agents/impl.md: impl is another pack's agent"]
+        )
+
+    def test_each_import_refusal_fires_and_leaves_nothing(self):
+        pack.import_zip(zipped(a_pack("taken")), CATALOG)
+        cases = {
+            "..": (zipped({**a_pack(), "../x.md": "x"}), "../x.md: not a path inside the pack"),
+            "absolute": (zipped({**a_pack(), "/etc/x.md": "x"}), "/etc/x.md: not a path"),
+            "link": (zipped(a_pack(), links=("agents/x.md",)), "agents/x.md: a link"),
+            "kind": (zipped({**a_pack(), "run.sh": "x"}), "run.sh: a pack holds only"),
+            "big": (b"x" * (pack.ZIP_MAX + 1), "over 1000000 bytes"),
+            "many": (
+                zipped({**a_pack(), **{f"skills/s{i}/SKILL.md": "x" for i in range(200)}}),
+                "over 200 entries",
+            ),
+            "row": (
+                zipped(a_pack(**{"agents/mine-row.md": ROW.replace('"Read"', '"Telepathy"')})),
+                "mine-row: tools.Telepathy: no such tool in the catalog",
+            ),
+            "name": (zipped(a_pack("taken")), "name taken is taken"),
+            "key": (
+                zipped(a_pack(**{"agents/review.md": ROW.replace("NAME", "Rev")})),
+                "review is another pack's agent",
+            ),
+            "own": (zipped(a_pack("local")), "name local is the app's own pack"),
+            "skill": (
+                zipped(a_pack(**{"skills/write-impl/SKILL.md": "x"})),
+                "write-impl is another pack's skill",
+            ),
+            "process": (
+                zipped(
+                    a_pack(**{"process.json": json.dumps({"processes": {"p": {"start": "x"}}})})
+                ),
+                "p: a process is",
+            ),
+        }
+        for what, (blob, why) in cases.items():
+            with self.subTest(what), self.assertRaises(pack.PackError) as e:
+                pack.import_zip(blob, CATALOG)
+            self.assertIn(why, str(e.exception))
+            self.assertEqual(self.left(), ["taken"])
+        self.assertIsNone(pack.row("mine-row"))
+
+    def test_export_then_import_under_another_name_is_the_same_rows_byte_for_byte(self):
+        import io
+        import zipfile
+
+        pack.new_row("tidy", "Tidy", "impl", CATALOG)
+        pack.write_process("tiny", tiny())
+        # An override of a built-in row is the workspace's tuning, not the pack's.
+        pack.write("review", "ceilings", {"turns": 10, "usd": 1.0})
+        blob = pack.export_zip("local")
+        files = {
+            n: zipfile.ZipFile(io.BytesIO(blob)).read(n)
+            for n in zipfile.ZipFile(io.BytesIO(blob)).namelist()
+        }
+        self.assertEqual(
+            sorted(files), [".claude-plugin/plugin.json", "agents/tidy.md", "process.json"]
+        )
+        pack.write_process("tiny", None)
+        pack.delete_row("tidy")
+        files[".claude-plugin/plugin.json"] = json.dumps(
+            {"name": "again", "version": "1.0.0"}
+        ).encode()
+        self.assertEqual(pack.import_zip(zipped(files), CATALOG), "again")
+        for rel in ("agents/tidy.md", "process.json"):
+            self.assertEqual((pack.packs_dir() / "again" / rel).read_bytes(), files[rel])
+        self.assertEqual(pack.row("tidy")["pack"], "again")
+        self.assertIsNotNone(pack.process("again/tiny"))
+        # The built-in exports too.
+        self.assertIn(
+            "agents/impl.md", zipfile.ZipFile(io.BytesIO(pack.export_zip("coscc-sdlc"))).namelist()
+        )

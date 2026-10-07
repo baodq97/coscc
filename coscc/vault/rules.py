@@ -35,7 +35,7 @@ def policy(
         return "unknown-secret"
     if meta.tier == "global" and workspace not in meta.granted:
         return "not-granted"
-    if stage not in meta.stages:
+    if stage not in meta.agents:
         return "stage-not-allowed"
     if granted is not None and meta.name not in granted:
         return "not-in-grant"

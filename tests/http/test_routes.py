@@ -14,11 +14,13 @@ from unittest import mock
 import claude_agent_sdk as sdk
 import httpx
 
+from coscc.agent import pack
 from coscc.kernel import Feature
 from coscc.http.app import build
 from coscc.config import Config
 from coscc.runner.run import LIVE
 from tests.http.test_app import seed_unit, use_sessions
+from tests.inprocess import in_process
 
 
 def _tmp_config(test: unittest.TestCase) -> Config:
@@ -2226,4 +2228,110 @@ class PacksOverHttp(unittest.IsolatedAsyncioTestCase):
             r = await self.client.post("/api/packs", json={"cwd": self.cwd, **body})
             self.assertEqual(r.status_code, 400, body)
         r = await self.client.get("/api/packs", params={"cwd": "/etc"})
+        self.assertEqual(r.status_code, 400)
+
+
+class OwnAgentsAndPacksOverHttp(unittest.IsolatedAsyncioTestCase):
+    """New and delete an agent, the owner's processes, export and import: each writes only the
+    owner's packs, and a refusal is a 400 with its `code` and every reason."""
+
+    asyncSetUp = PacksOverHttp.asyncSetUp
+    open_unit = PacksOverHttp.open_unit
+
+    async def post(self, url: str, **body):
+        return await self.client.post(url, json={"cwd": self.cwd, **body})
+
+    def tiny(self, agent: str = "tidy") -> dict:
+        found = json.loads(json.dumps(pack.process("coscc-sdlc/short")))
+        found["states"]["impl"]["agent"] = agent
+        found["states"]["intent"]["hint"] = "tidy up"
+        return found
+
+    async def test_new_from_impl_new_blank_and_a_taken_key(self):
+        r = await self.post("/api/agents/new", key="tidy", name="Tidy", **{"from": "impl"})
+        self.assertEqual(r.status_code, 200)
+        tidy = next(x for x in r.json()["rows"] if x["key"] == "tidy")
+        self.assertEqual((tidy["pack"], tidy["own"], tidy["problems"]), ("local", True, []))
+        self.assertEqual(tidy["row"]["tools"], pack.row("impl")["tools"])
+        r = await self.post("/api/agents/new", key="look", name="Look")
+        self.assertEqual(r.status_code, 200)
+        r = await self.post("/api/agents/new", key="impl", name="Other")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["code"], "pack-refused")
+        self.assertIn("impl is taken: an agent of coscc-sdlc has it", r.json()["reasons"])
+        # Every later edit is the field route's, on the owner's own row.
+        r = await self.post("/api/agents/field", key="tidy", field="ceilings", value={"turns": 9})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(pack.row("tidy")["ceilings"], {"turns": 9})
+        logged = self.app.state.core.ws.journal().records(None, kinds=("agent-setting",))
+        self.assertEqual([(x["field"], x["by"]) for x in logged][:2], [("new", "owner")] * 2)
+
+    async def test_a_process_set_chosen_walked_from_the_snapshot_and_removal_in_use(self):
+        await self.post("/api/agents/new", key="tidy", name="Tidy", **{"from": "impl"})
+        bad = self.tiny()
+        del bad["states"]["review"]
+        bad["states"]["pr"]["next"] = [{"to": "ship"}]
+        r = await self.post("/api/packs/process", name="tiny", process=bad)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("tiny.ship: a review state is not on every path to it", r.json()["reasons"])
+        r = await self.post("/api/packs/process", name="tiny", process=self.tiny())
+        self.assertEqual(r.status_code, 200)
+        local = next(p for p in r.json() if p["name"] == "local")
+        self.assertEqual([(p["ref"], p["own"]) for p in local["processes"]], [("local/tiny", True)])
+        r = await self.post("/api/agents/delete", key="tidy")
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "in-use"))
+        r = await self.post("/api/packs", name="local", process="local/tiny")
+        self.assertEqual(r.status_code, 200)
+        made = (await self.open_unit("tidy-one")).json()
+        core = self.app.state.core
+        self.assertEqual(core.ws.meta_of(self.cwd, made["unit"])["process"], "local/tiny")
+        # The loop walks it from the snapshot alone: no pack file is where it could look.
+        snap = core.ws.snapshot(self.cwd)
+        self.assertIn("local/tiny", snap["processes"])
+        with tempfile.TemporaryDirectory() as empty, mock.patch.object(pack, "ROOT", empty):
+            self.assertIsNone(pack.process("local/tiny"))
+            code, out, err = in_process(
+                ["status", "--json", "--root", str(core.ws.units_root(self.cwd)), "--state", "-"],
+                json.dumps(snap).encode(),
+                self.cwd,
+                {},
+            )
+        self.assertEqual(code, 0, err)
+        (unit,) = json.loads(out)["units"]
+        self.assertEqual((unit["process"], unit["next"]["action"]), ("local/tiny", "tidy up"))
+        r = await self.post("/api/packs/process", name="tiny", process=None)
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "in-use"))
+        logged = core.ws.journal().records(None, kinds=("pack-setting",))
+        self.assertEqual([(x["field"], x["by"]) for x in logged], [("process:tiny", "owner")])
+
+    async def test_export_import_off_refused_and_removed(self):
+        await self.post("/api/agents/new", key="tidy", name="Tidy", **{"from": "impl"})
+        r = await self.client.get("/api/packs/local/export")
+        self.assertEqual((r.status_code, r.headers["content-type"]), (200, "application/zip"))
+        url = f"/api/packs/import?cwd={self.cwd}"
+        r = await self.client.post(url, content=r.content)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("name local is the app's own pack", r.json()["error"])
+        import io
+        import zipfile
+
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            z.writestr(".claude-plugin/plugin.json", json.dumps({"name": "x", "version": "1"}))
+            z.writestr("../x.md", "x")
+        r = await self.client.post(url, content=out.getvalue())
+        self.assertIn("../x.md: not a path inside the pack", r.json()["error"])
+        self.assertEqual(sorted(p.name for p in pack.packs_dir().iterdir()), ["local"])
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            z.writestr(".claude-plugin/plugin.json", json.dumps({"name": "x", "version": "1"}))
+        r = await self.client.post(url, content=out.getvalue())
+        self.assertEqual(r.status_code, 200)
+        x = next(p for p in r.json() if p["name"] == "x")
+        self.assertEqual((x["imported"], x["on"]), (True, False))
+        r = await self.client.post(url, content=b"x" * (pack.ZIP_MAX + 1))
+        self.assertEqual(r.status_code, 400)
+        r = await self.post("/api/packs", name="x", delete=True)
+        self.assertEqual([p["name"] for p in r.json()], ["coscc-sdlc", "local"])
+        r = await self.post("/api/packs", name="coscc-sdlc", delete=True)
         self.assertEqual(r.status_code, 400)

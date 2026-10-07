@@ -25,7 +25,16 @@ Read this before changing `/api/settings/*`, model resolution, `/api/backlog/*` 
 - A pack is on or off per project, and a project has a default process (`GET/POST /api/packs`, the
   prefs `packs.state` and `packs.process`; Settings › Each project). Off, a new unit or idea is
   refused `no-process` and units already open carry on; a unit records its process when it opens and
-  never re-reads the default. A unit whose process no pack has is held `state-gone`.
+  never re-reads the default. A unit whose process no pack has, or whose process no longer has a
+  state it recorded, is held `state-gone`.
+- Packs live under `<data root>/packs/<name>/`, each a plugin folder; the built-in stays in the
+  package. `local` is the owner's: a file there whose key another pack has is laid over that row,
+  any other is a whole row of their own (`POST /api/agents/new`, `/api/agents/delete`), and its
+  `process.json` holds their processes (`POST /api/packs/process`). An imported pack
+  (`POST /api/packs/import`, a zip) is off until a project turns it on; off, its processes open no
+  unit and its rows run on no event or schedule. A bad imported pack or `local` process is a
+  problem on the page, never a crash. The loop is handed each unit's process in the snapshot
+  (`processes`) and reads no pack under the data root.
 - Backlog estimates, relations and the shortlist are run-log rows with `by`; `propose` opens one
   paid session. No gate reads them.
 - A row no state runs may carry a `trigger` (`coscc/runner/triggers.py`): an `event` (at once, or
