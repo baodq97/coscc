@@ -294,6 +294,35 @@ class ThePage(_WithAService):
         impl = self._row(page, "impl")
         self.assertEqual((impl["chip"], impl["cost_30d"]), ("failed", 1.25))
 
+    def test_a_run_view_says_its_log_who_started_it_and_a_skip(self):
+        base = {"v": 1, "workspace": "w", "unit": "", "stage": "scan"}
+        started = base | {"kind": "start", "at": _at(3), "started_by": "leif"}
+        kept = _end("scan", "done", 3, cost=0.1, unit="") | {"run": "abc123"}
+        skip = _end("scan", "done", 2, cost=0.0, unit="") | {
+            "skipped": True,
+            "detail": "nothing new since its last run",
+            "started_by": "manual",
+        }
+        old = _end("scan", "failed", 1, unit="") | {"session_id": "s"}
+        self._seed([started, kept, base | {"kind": "start", "at": _at(2)}, skip, old])
+        runs = [
+            r
+            for g in self._row(self.core.agents.agent_page(now=NOW), "scan")["groups"]
+            for r in g["runs"]
+        ]
+        by = {r["at"]: r for r in runs}
+        self.assertEqual((by[_at(3)]["run"], by[_at(3)]["started_by"]), ("abc123", "leif"))
+        self.assertEqual(
+            (
+                by[_at(2)]["skipped"],
+                by[_at(2)]["detail"],
+                by[_at(2)]["run"],
+                by[_at(2)]["started_by"],
+            ),
+            (True, "nothing new since its last run", "", "manual"),
+        )
+        self.assertEqual((by[_at(1)]["skipped"], by[_at(1)]["run"]), (False, ""))
+
     def test_a_setting_since_the_last_run_heads_a_group_of_no_run(self):
         self.core.agents.set_agent_field("spec", "body", "New.")
         [group] = self._row(self.core.agents.agent_page(), "spec")["groups"]

@@ -583,6 +583,10 @@ export type RunView = {
   "turns": number | null;
   "cost_usd": number | null;
   "row_hash": string;
+  "run": string;
+  "skipped": boolean;
+  "detail": string;
+  "started_by": string;
 };
 
 export type Running = {

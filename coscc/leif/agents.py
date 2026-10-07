@@ -48,7 +48,8 @@ ATTENTION = ("failed", "costly")
 class RunView(TypedDict):
     """One `end` record of an agent, as the page shows it; `workspace` is the run-log key, the
     workspace's resolved path; `row_hash` the definition its `start` ran (`""` before rows had
-    one)."""
+    one). `run` is the run-log id its events were kept under (`""` when none); `skipped` and
+    `detail` say a run that spent nothing and why; `started_by` is who started it."""
 
     workspace: str
     unit: str
@@ -57,6 +58,10 @@ class RunView(TypedDict):
     turns: int | None
     cost_usd: float | None
     row_hash: str
+    run: str
+    skipped: bool
+    detail: str
+    started_by: str
 
 
 class Setting(TypedDict):
@@ -232,6 +237,10 @@ def _run_view(record: dict[str, Any]) -> RunView:
         turns=turns if isinstance(turns, int) else None,
         cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
         row_hash=str(record.get("row_hash") or ""),
+        run=str(record.get("run") or ""),
+        skipped=bool(record.get("skipped")),
+        detail=str(record.get("detail") or ""),
+        started_by=str(record.get("started_by") or ""),
     )
 
 
@@ -439,7 +448,12 @@ class Agents:
             else:
                 start = starts.pop(step, {})
                 ends.setdefault(step[2], []).append(
-                    {**record, "label": start.get("label"), "row_hash": start.get("row_hash")}
+                    {
+                        "started_by": start.get("started_by"),
+                        **record,
+                        "label": start.get("label"),
+                        "row_hash": start.get("row_hash"),
+                    }
                 )
         return ends, settings, []
 
