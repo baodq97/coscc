@@ -126,7 +126,7 @@ export function RunPage({ workspace, run }: { workspace: string; run: string }) 
           <Link to={`/agents?ws=${encodeURIComponent(workspace)}`}>Agents</Link> / <Link to={`/agents/${page.stage}?ws=${encodeURIComponent(workspace)}`}>{agentFace(page.stage).name}</Link>
         </div>
       )}
-      {page && page.outcome && page.outcome !== "paused-budget" && <RunResult page={page} />}
+      {page && page.outcome && <RunResult page={page} />}
       {stopError && <div className="rl-bad" style={{ fontSize: 12.5 }}>{stopError}</div>}
       <div style={{ marginTop: 16 }}>{cwd ? <RunLog cwd={cwd} run={run} live={false} whole onEnd={head.reload} /> : <SkeletonRows rows={3} />}</div>
       {cwd && page && page.status !== "running" && page.stage !== "chat" && <AskRun cwd={cwd} run={run} workspace={workspace} />}
@@ -140,7 +140,7 @@ function RunResult({ page }: { page: EventsPage }) {
   const thin = shallowWords({ refused: page.refused, verdict: page.verdict });
   return (
     <div className="row run-result" style={{ gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-      <Chip square tone={page.outcome === "done" ? "plain" : page.outcome === "failed" ? "red" : "amber"}>{page.outcome === "done" ? "done" : page.outcome}</Chip>
+      {page.outcome !== "done" && <Chip square tone={page.outcome === "failed" ? "red" : "amber"}>{page.outcome}</Chip>}
       {made && <Chip square tone="accent">{made}</Chip>}
       {thin && <Chip square tone="amber">partly checked: {thin}</Chip>}
       {page.helpers ? <span className="faint">{page.helpers} helper{page.helpers === 1 ? "" : "s"}</span> : null}

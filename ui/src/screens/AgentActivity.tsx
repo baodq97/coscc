@@ -55,8 +55,20 @@ function Stat({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
+const PART: Record<string, string> = { new: "agent", body: "role", ceilings: "ceilings", model: "model", tools: "tools", input: "input", output: "output", trigger: "trigger", skills: "skills", helpers: "helpers" };
+
 function settingWords(s: RunGroup["settings"][number]): string {
-  return s.new == null ? `${s.field} reset` : `${s.field} edited`;
+  if (s.field === "new") return "created";
+  if (s.field === "delete") return "deleted";
+  const part = PART[s.field] ?? (s.field.startsWith("skill:") ? `${s.field.slice(6)} skill` : s.field);
+  return s.new == null ? `${part} reset to built-in` : `${part} edited`;
+}
+
+/** Whether the agent is on and when it runs next, without its last run (the next stat has that). */
+function onWords(a: AgentRow, here: string): string {
+  if (a.running) return "running now";
+  if (a.on === null) return "Always on";
+  return statusWords({ ...a, last: null, running: null }, here).replace(/ · never ran$/, "");
 }
 
 export function Activity({ a, page, names, workspace }: { a: AgentRow; page: Page; names: Record<string, string>; workspace: string }) {
@@ -68,7 +80,7 @@ export function Activity({ a, page, names, workspace }: { a: AgentRow; page: Pag
     <>
       <div className="stats">
         <Stat label="Status">
-          {statusWords(a, workspace)}
+          {onWords(a, workspace)}
           {a.running && <> <span className="dot live" /></>}
         </Stat>
         <Stat label="Last run">
