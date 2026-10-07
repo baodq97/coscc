@@ -279,6 +279,9 @@ class _Parsed:
     # Each here-document whose delimiter is quoted (its body is text, nothing expanded):
     # `(where its delimiter stands, body start, body end)`.
     bodies: tuple[tuple[int, int, int], ...] = ()
+    # Every here-document, quoted or not, as `(where its delimiter stands, its body as written)`:
+    # the text a program reading its stdin is given.
+    heredocs: tuple[tuple[int, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -327,6 +330,7 @@ class _Reader:
         self.subs: list[tuple[str, int]] = []
         self.amps: list[int] = []
         self.docs: list[tuple[int, int, int]] = []
+        self.texts: list[tuple[int, str]] = []
 
     def at(self, j: int) -> int:
         return self.base + j
@@ -566,6 +570,7 @@ class _Reader:
                     continue
                 logical += line
                 if logical == delimiter:
+                    self.texts.append((self.at(opened), s[begin:line_start]))
                     if literal:
                         self.docs.append((self.at(opened), self.at(begin), self.at(line_start)))
                     else:
@@ -807,6 +812,7 @@ def _read(command: str) -> _Parsed | _Unreadable:
         tuple(sorted(reader.subs, key=lambda t: t[1])),
         tuple(sorted(reader.amps)),
         tuple(reader.docs),
+        tuple(reader.texts),
     )
 
 
@@ -959,17 +965,22 @@ def _moves_head(simple: _Simple) -> bool:
     )
 
 
-def _glob_reaches(text: str, protected: str) -> bool:
+def _glob_reaches(text: str, protected: str, holds: bool = False) -> bool:
     """Whether a word with `*`, `?` or `[` in it could expand into `protected`: its path, from
-    the word's start or after an `=`, matches `protected` part by part."""
+    the word's start or after an `=`, matches `protected` part by part. `holds` also counts a
+    path that could expand into a folder holding it (`~/.conf*` holds `~/.config/coscc`)."""
     import fnmatch
 
     if not any(c in text for c in "*?["):
         return False
     want = protected.split("/")
     for path in (text, text.partition("=")[2]):
-        parts = path.split("/")
-        if len(parts) >= len(want) and all(map(fnmatch.fnmatchcase, want, parts)):
+        parts = path.rstrip("/").split("/") if holds else path.split("/")
+        if (
+            path
+            and (holds or len(parts) >= len(want))
+            and all(map(fnmatch.fnmatchcase, want, parts))
+        ):
             return True
     return False
 
@@ -1151,11 +1162,21 @@ def _helper_git(parsed: _Parsed, agent_id: str | None) -> str:
 
     Read on the words `_words` leaves, so `git -C . commit` reads as `git commit`. Every word
     `git` counts, so a wrapper (`timeout 5 git commit`, `xargs git add`) hides nothing, except
-    after a program that only reads its words (`grep -rn git .`). A tripwire like the rest:
-    `git diff --output=<file>` still writes, and `python -c` hides the program.
+    after a program that only reads its words (`grep -rn git .`). An interpreter's inline
+    program (`_inline`) that names `git` as a word is refused whatever it does with it.
+
+    A tripwire like the rest, not a boundary. It does not stop: `git diff --output=<file>`, which
+    still writes; a program that builds the name as it runs (`"gi"+"t"`, `getattr`, base64); a
+    script file the agent wrote and then runs (`python3 x.py`, `bash x.sh`); a git another tool
+    runs on its own (`make`, `npm run`, a `pre-commit` hook).
     """
     if agent_id is None:
         return ""
+    refused = (
+        f"a helper runs git only to read ({', '.join(HELPER_GIT)}): "
+        "only the leading session commits"
+    )
+    docs = dict(parsed.heredocs)
     for simple in parsed.commands:
         words = list(simple.words)
         launched = [k for k in _launched(words) if k < len(words)]
@@ -1169,15 +1190,75 @@ def _helper_git(parsed: _Parsed, agent_id: str | None) -> str:
                 continue
             sub = _words("git", words[k + 1 :])[1:2]
             if (first and not sub) or (sub and sub[0] not in HELPER_GIT):
-                return (
-                    f"a helper runs git only to read ({', '.join(HELPER_GIT)}): "
-                    "only the leading session commits"
-                )
+                return refused
+        if any(_GIT_WORD.search(text) for text in _inline(simple, docs)):
+            return refused
     return ""
 
 
+# `git` as a word: `/usr/bin/git` and `'git'` are one, `.git/HEAD`, `gitlab` and `git-lfs` not.
+_GIT_WORD = re.compile(r"(?<![\w.-])git(?![\w.-])")
 # What `find` runs a command with.
 _FIND_EXEC = ("-exec", "-execdir", "-ok", "-okdir")
+_PYTHON = re.compile(r"python[0-9.]*")
+# Flags of an interpreter's that take a value which is not its program.
+_INLINE_VALUED = frozenset({"-W", "-X", "-I", "-r", "--require", "--import"})
+
+
+def _inline(simple: _Simple, docs: Mapping[int, str]) -> list[str]:
+    """The programs an interpreter in one simple command is given as text: its code flag's value
+    (`python -c`, `perl -e`, `node -e`, `_INLINE`), or, given no script or `-`, the here-document
+    (`docs`, by where its delimiter stands) or here-string it reads from stdin.
+
+    An interpreter counts where `_helper_git` counts `git`: where a program starts (`uv run`,
+    `find -exec`), and as a bare name or an absolute path anywhere else (`timeout 9 python3`),
+    except after a program that only reads its words. Text, not what it does: a name built as it
+    runs is not seen.
+    """
+    words = list(simple.words)
+    launched = [k for k in _launched(words) if k < len(words)]
+    reader = bool(launched) and words[launched[0]].rsplit("/", 1)[-1] in _READ_ONLY
+    out: list[str] = []
+    for k, word in enumerate(words):
+        name = word.rsplit("/", 1)[-1]
+        name = "python" if _PYTHON.fullmatch(name) else name
+        if name not in _INLINE or (
+            k not in launched and (reader or ("/" in word and word[:1] != "/"))
+        ):
+            continue
+        flags, rest = _INLINE[name], words[k + 1 :]
+        code: str | None = None
+        script: str | None = None
+        i = 0
+        while i < len(rest) and code is None and script is None:
+            w = rest[i]
+            after = rest[i + 1] if i + 1 < len(rest) else ""
+            cluster = [j for j, c in enumerate(w) if j and "-" + c in flags]
+            if w in flags:
+                code = after
+            elif w[:2] == "--" and w.partition("=")[0] in flags:
+                code = w.partition("=")[2]
+            elif w[:1] == "-" and w[1:2] != "-" and cluster:
+                # `-le 'print'`, `-Bc 'code'`, `-cprint(1)`: the value is what follows the flag.
+                code = w[cluster[0] + 1 :] or after
+            elif w == "--":
+                script = after or "-"
+            elif w in _INLINE_VALUED:
+                i += 1
+            elif w == "-m":
+                script = after
+            elif w == "-" or not w.startswith("-"):
+                script = w
+            i += 1
+        if code is not None:
+            out.append(code)
+        elif script in (None, "-"):
+            for r in simple.redirects:
+                if r.fd in ("", "0") and r.op == "<<<":
+                    out.append(r.target)
+                elif r.fd in ("", "0") and r.op in ("<<", "<<-") and r.at in docs:
+                    out.append(docs[r.at])
+    return out
 
 
 def _launched(words: list[str]) -> list[int]:
@@ -1602,8 +1683,9 @@ def _line_refused(
         return f"{HELPERS}: {reason}"
     cwds = list(cwds)
     moved = not top
+    docs = dict(parsed.heredocs)
     for simple in parsed.commands:
-        reason = _simple_refused(grant, simple, agent_id, cwds, command, known, moved, code)
+        reason = _simple_refused(grant, simple, agent_id, cwds, command, known, docs, moved, code)
         if reason:
             return reason
         moved = moved or _moves_head(simple)
@@ -1617,20 +1699,26 @@ def _simple_refused(
     cwds: list[str | None],
     line: str,
     known: dict,
+    docs: Mapping[int, str],
     moved: bool = True,
     code: bool = False,
 ) -> str:
     """Why one simple command is critical, or ""; a `cd` or `pushd` moves `cwds` on. `moved`
-    unless the line is known to stand on the branch it started on: no push of HEAD then."""
+    unless the line is known to stand on the branch it started on: no push of HEAD then. `docs`
+    the line's here-documents, by where each delimiter stands."""
     words, unknown = list(simple.words), list(simple.expanded)
     message = _messages(words)
     for word in (
         *(w for k, w in enumerate(words) if k not in message),
         *(r.target for r in simple.redirects),
+        *(p for text in _inline(simple, docs) for p in _PIECE.split(text)),
     ):
         hit = _word_secret(grant, word, cwds)
         if hit:
             return f"{SECRETS}: {hit}"
+    hit = _recursive_secret(grant, words, cwds)
+    if hit:
+        return f"{SECRETS}: {hit}"
     names = [w.rsplit("/", 1)[-1] for w in words]
     for i, name in enumerate(names):
         rest, rest_unknown = words[i + 1 :], unknown[i + 1 :]
@@ -1716,9 +1804,49 @@ def _cd_refused(grant: Grant, args: list[str], cwds: list[str | None]) -> str:
     for form in _braces(text):
         for real in _real(form, cwds):
             for s in secrets:
-                if real == s or real.startswith(s + "/") or s.startswith(real.rstrip("/") + "/"):
+                if _holds(real, s):
                     return f"{SECRETS}: {real} holds {s}"
             cwds.append(real)
+    return ""
+
+
+def _holds(real: str, secret: str) -> bool:
+    """Whether the folder `real` is, lies in or holds `secret`."""
+    return (
+        real == secret or real.startswith(secret + "/") or secret.startswith(real.rstrip("/") + "/")
+    )
+
+
+def _recursive_secret(grant: Grant, words: list[str], cwds: list[str | None]) -> str:
+    """The folder holding a secret that a recursive read (`_RECURSIVE`) is given, by its path or
+    a glob, or "". What a word names itself is `_word_secret`'s; a search's pattern is no path."""
+    k = _program_at(words)
+    if k is None or not grant.secrets:
+        return ""
+    name, rest = words[k].rsplit("/", 1)[-1], words[k + 1 :]
+    flags = _RECURSIVE.get(name)
+    if flags is None or (
+        flags
+        and not any(
+            w in ("--recursive", "--archive")
+            or (w[:1] == "-" and w[1:2] != "-" and any(c in flags for c in w[1:]))
+            for w in rest
+        )
+    ):
+        return ""
+    pattern = _patterns(rest) if name in _GREPS or name == "ag" else set()
+    secrets = _secret_dirs(grant.secrets)
+    folders = [
+        real
+        for i, w in enumerate(rest)
+        if i not in pattern and not w.startswith("-")
+        for form in _braces(_expand(w, grant.home))
+        for real in _real(form, cwds)
+    ]
+    for real in folders:
+        for s in secrets:
+            if _holds(real, s) or _glob_reaches(real, s, holds=True):
+                return f"{real} holds {s}"
     return ""
 
 
@@ -1781,7 +1909,13 @@ def _secret_dirs(secrets: tuple[str, ...]) -> tuple[str, ...]:
 
 def _word_secret(grant: Grant, word: str, cwds: list[str | None]) -> str:
     """The secret one word reaches, or "": by its text, a glob, a brace expansion, or the path
-    it names from where the line stands, links followed. A `--flag=` or `NAME=` value counts."""
+    it names from where the line stands, links followed. A `--flag=` or `NAME=` value counts, and
+    so does each piece (`_PIECE`) of an interpreter's inline program (`_inline`).
+
+    A tripwire, not a boundary. It does not stop: a path the program builds as it runs
+    (`os.path.expanduser('~') + '/.ssh'`, base64); a script file the agent wrote and then runs
+    (`python3 x.py`, `bash x.sh`); a path another tool reads on its own (`make`, `npm run`, a
+    `pre-commit` hook)."""
     import os
 
     if not word or not grant.secrets:
@@ -2034,6 +2168,14 @@ def _messages(words: list[str]) -> set[int]:
 
 # `node`'s flags whose value is its program.
 _CODE_FLAGS = frozenset({"-e", "-p", "--eval", "--print"})
+# Interpreters (`python` for `python3` and `python3.N` too) and their flags whose value is the
+# program: what `_inline` reads.
+_INLINE = {
+    "python": frozenset({"-c"}),
+    "perl": frozenset({"-e", "-E"}),
+    "ruby": frozenset({"-e", "-E"}),
+    "node": _CODE_FLAGS,
+}
 
 
 def _code(words: list[str]) -> set[int]:
@@ -2155,6 +2297,15 @@ _READ_ONLY = frozenset(
     {"ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "echo", "printf", "which", "sort"}
     | {"uniq", "diff", "true", "test", "stat", "file", "tree", "find", "cut", "tr", "date"}
 )
+# Programs that read every file below a folder they are given, and the short flags that make
+# them (`-rn` holds `r`); "" for always. `--recursive` and `--archive` count for every one.
+_RECURSIVE = {
+    **dict.fromkeys(("grep", "egrep", "fgrep"), "rR"),
+    **dict.fromkeys(("rg", "ag", "tar", "rsync"), ""),
+    **{"zip": "r", "cp": "rRa", "scp": "r"},
+}
+# Where an inline program's text is cut into the words `_word_secret` reads.
+_PIECE = re.compile(r"[\s'\"(),;`]+")
 
 
 def classified(grant: Grant, tool: str, tool_input: dict) -> bool:
