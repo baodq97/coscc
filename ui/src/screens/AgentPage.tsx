@@ -88,6 +88,11 @@ const LABELS: Record<string, string> = {
   "variants.novel.model.effort": "new-ground effort",
   "variants.novel.ceilings.turns": "new-ground turns",
   "variants.novel.ceilings.usd": "new-ground spend",
+  default: "on or off by default",
+  "trigger.event.name": "starts after",
+  "trigger.event.from": "starts after",
+  "trigger.event.after_hours": "wait",
+  "trigger.schedule.hours": "every",
 };
 
 function leaves(v: unknown, path: string[] = []): [string, unknown][] {
@@ -103,9 +108,15 @@ export function changedParts(draft: Draft, saved: Record<string, unknown>): stri
     const now = new Map(leaves(draft[k], [k]));
     const was = new Map(leaves(saved[k], [k]));
     const hit = [...new Set([...now.keys(), ...was.keys()])].filter((p) => !same(now.get(p), was.get(p)));
-    out.push(...hit.map((p) => LABELS[p] ?? (p.startsWith("skill:") ? `${p.slice(6)} skill` : p)));
+    out.push(...hit.map((p) => LABELS[p] ?? (p.startsWith("skill:") ? `${p.slice(6)} skill` : p.startsWith("trigger") ? "trigger" : p)));
   }
   return [...new Set(out)];
+}
+
+/** "2 unsaved changes: starts after, on or off by default": the count is of the parts named. */
+export function unsavedWords(draft: Draft, saved: Record<string, unknown>): string {
+  const parts = changedParts(draft, saved);
+  return `${parts.length} unsaved change${parts.length === 1 ? "" : "s"}: ${parts.join(", ")}`;
 }
 
 /** The built-in's value of each part, from what the page sends: the edited parts hold it, every other part is still the built-in's. */
@@ -274,7 +285,7 @@ export function AgentPage({ name, tab = "activity" }: { name: string; tab?: stri
       {(pending.length > 0 || error) && (
         <div className="savebar">
           <span className="grow" style={{ fontSize: 13 }}>
-            {error ? <span className="savebar-err">Not saved: {plainReasons(error.message)}</span> : `${pending.length} unsaved change${pending.length > 1 ? "s" : ""}: ${changedParts(draft, saved).join(", ")}`}
+            {error ? <span className="savebar-err">Not saved: {plainReasons(error.message)}</span> : unsavedWords(draft, saved)}
           </span>
           <Button kind="ghost" size="sm" disabled={busy} onClick={() => { setDraft({}); setError(null); setDone(false); }}>
             Discard
