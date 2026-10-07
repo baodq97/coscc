@@ -251,6 +251,18 @@ class AnythingChangedStartsAfresh(_Asking):
         self.transcript = False
         self.assertEqual(await self.fresh(), "its transcript is gone")
 
+    async def test_a_stopped_run_with_or_without_its_session(self):
+        for run, session in (("p1", "s1"), ("p2", "")):
+            self.asked_run(run, ended=False)
+            self.journal.finished(
+                self.ws, "", "scan", "cancelled", agent="scan", run=run, session_id=session
+            )
+            got = await ask.state(self.core, self.ws, run)
+            self.assertEqual(
+                (got["ask"]["may"], got["ask"]["resume"], got["ask"]["why"]),
+                (True, False, "it was stopped before it ended"),
+            )
+
 
 class AStageStepIsAskedByAReader(_Asking):
     """A step's session could write: its own is never resumed, and its reader holds only reads."""

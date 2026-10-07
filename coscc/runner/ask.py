@@ -227,16 +227,23 @@ async def _decide(
     """Sets `plan.session` to the thread's last session when it may be resumed, else
     `plan.why`, the reason a new session is opened. `head` `None` leaves the code it read
     unasked (a look at the thread, every 2 s while one is answered: no git)."""
+
+    # A session stopped mid-turn is not gone on in: what it did last may be half done.
+    def kept(e: Mapping[str, Any]) -> bool:
+        return bool(e.get("session_id")) and e.get("outcome") != "cancelled"
+
     last: tuple[Mapping[str, Any], Mapping[str, Any]] | None = (
-        (start, end) if plan.triggered and end.get("session_id") else None
+        (start, end) if plan.triggered and kept(end) else None
     )
     for s, e in _thread(journal, run):
-        if e is not None and e.get("session_id") and bool(s.get("triggered")) == plan.triggered:
+        if e is not None and kept(e) and bool(s.get("triggered")) == plan.triggered:
             last = (s, e)
     if last is None:
         plan.why = (
             "its session could write, so a reader starts afresh"
             if not plan.triggered
+            else "it was stopped before it ended"
+            if end.get("outcome") == "cancelled"
             else "it kept no session"
         )
         return
