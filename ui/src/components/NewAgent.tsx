@@ -390,7 +390,7 @@ export function Gaps({ cwd, run, gaps }: { cwd: string; run: string; gaps: Draft
   const ws = useResource("/api/workspaces").data?.workspaces.find((w) => w.path === cwd)?.name ?? "";
   // A gap proposed on an earlier visit shows as proposed: its proposal rests on this run and names the gap.
   const before = useResource("/api/proposals", { cwd }).data?.proposals.filter((p) => p.run === run) ?? [];
-  const earlier = (g: DraftGap) => before.find((p) => p.problem.includes(`lacks a ${g.part}: ${g.need.split(/\s+/).join(" ")}.`));
+  const earlier = (g: DraftGap) => before.find((p) => p.problem.includes(`lacks this ${g.part}: ${g.need.split(/\s+/).join(" ")}.`));
   const propose = async (i: number) => {
     try {
       const p = await api.post<ProposalRow>("/api/proposals", { cwd, run, gap: i });

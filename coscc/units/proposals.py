@@ -252,7 +252,7 @@ def of_gap(why: str, gap: Mapping[str, Any], run: str) -> Item:
     words = re.sub(r"[^a-z0-9]+", "-", f"{part} {need}".lower()).strip("-")
     slug = words[:SLUG_MAX].rsplit("-", 1)[0] if len(words) > SLUG_MAX else words
     problem = (
-        f"A person asked for an agent the catalog cannot build whole. It lacks a {part}: {need}. "
+        f"A person asked for an agent the catalog cannot build whole. It lacks this {part}: {need}. "
         f"The draft does instead: {' '.join(str(gap.get('instead') or '').split()) or 'nothing'}."
         f"\n\nWhat the draft understood of the task: {' '.join(why.split())}"
     )
