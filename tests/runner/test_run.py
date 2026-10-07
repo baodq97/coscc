@@ -106,6 +106,23 @@ class EachStatus(Base):
         for field in ("agent", "model", "run", "unit", "stage"):
             self.assertEqual(start[field], end[field], field)
 
+    def test_the_end_says_who_started_it_and_the_agents_name(self):
+        named = run_mod.Agent(
+            "scan", Row(max_turns=4, max_budget_usd=1.0), model="m", name="Sowilo"
+        )
+        self.go(Fake(obj={"units": []}), agent=named, started_by="manual")
+        [end] = self.rows("end")
+        self.assertEqual((end["started_by"], end["agent_name"]), ("manual", "Sowilo"))
+        self.go(Fake(obj={"units": []}))
+        self.assertEqual(self.rows("end")[-1]["started_by"], "person")
+
+    def test_the_start_names_the_rows_skills_unless_the_run_says_otherwise(self):
+        spec = run_mod.Agent("spec", Row(max_turns=4, max_budget_usd=1.0), model="m")
+        self.go(Fake(obj={"units": []}), agent=spec)
+        self.assertRegex(self.rows("start")[-1]["skills"][0], r"^write-spec@[0-9a-f]{12}$")
+        self.go(Fake(obj={"units": []}), agent=spec, start={"skills": []})
+        self.assertEqual(self.rows("start")[-1]["skills"], [])
+
     def test_a_ceiling_is_paused_budget(self):
         got = self.go(Fake(obj={"units": []}, terminal="error_max_budget_usd"))[-1][1]
         self.assertEqual((got.status, got.output), ("paused-budget", None))
@@ -180,6 +197,24 @@ class TheRunIsRecorded(Base):
         call = sessions.calls[0]
         self.assertEqual(call["step"].recorder.run, got.run)
         self.assertNotIn("recorder", call)
+
+    def test_what_a_continued_session_cost_before_and_the_hour_cache_reach_the_session(self):
+        sessions = Fake(obj={"units": []})
+        self.go(sessions, session_id="s0", spent_before={"cost_usd": 0.4}, cache_hour=True)
+        call = sessions.calls[0]
+        self.assertEqual((call["spent_before"], call["cache_hour"]), ({"cost_usd": 0.4}, True))
+        # Its data root is named after the run that opened the session, kept on its `start`.
+        (start,) = self.rows("start")
+        self.assertEqual(call["scratch_as"], start["run"])
+        self.assertEqual(start["scratch_as"], start["run"])
+        sessions = Fake(obj={"units": []})
+        self.go(sessions, session_id="s0", cache_hour=True, scratch_as="a" * 32)
+        self.assertEqual(sessions.calls[0]["scratch_as"], "a" * 32)
+        sessions = Fake(obj={"units": []})
+        self.go(sessions)
+        self.assertNotIn("spent_before", sessions.calls[0])
+        self.assertNotIn("cache_hour", sessions.calls[0])
+        self.assertNotIn("scratch_as", sessions.calls[0])
 
     def test_chat_keeps_its_client_and_its_output_is_its_reply(self):
         sessions = Fake()

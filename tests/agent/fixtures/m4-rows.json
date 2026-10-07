@@ -62,7 +62,7 @@
    "findings": false,
    "outputs": []
   },
-  "meaning": "seed",
+  "meaning": "Turns a noticed friction or want into a recorded idea.",
   "model": "claude-opus-5-5[1m]",
   "name": "Ingwaz",
   "novel": null,
@@ -121,7 +121,7 @@
    "findings": true,
    "outputs": []
   },
-  "meaning": "the strength that gives shape",
+  "meaning": "Writes the code and tests the plan asks for.",
   "model": "claude-sonnet-5-5[1m]",
   "name": "Uruz",
   "novel": {
@@ -240,7 +240,7 @@
    "findings": false,
    "outputs": []
   },
-  "meaning": "need",
+  "meaning": "States the problem a unit solves and how success is judged.",
   "model": "claude-opus-5-5[1m]",
   "name": "Nauthiz",
   "novel": null,
@@ -343,7 +343,7 @@
    "findings": false,
    "outputs": []
   },
-  "meaning": "journey: the right road in the right order",
+  "meaning": "Plans the steps and files of the change and how it will be proven.",
   "model": "claude-opus-5-5[1m]",
   "name": "Raidho",
   "novel": null,
@@ -427,7 +427,7 @@
     "plan?"
    ]
   },
-  "meaning": "Tyr: justice and judgement",
+  "meaning": "Reviews the pull request and says whether it may merge.",
   "model": "claude-opus-5-5[1m]",
   "name": "Tiwaz",
   "novel": {
@@ -542,7 +542,7 @@
    "findings": false,
    "outputs": []
   },
-  "meaning": "torch: knowledge and craft",
+  "meaning": "Turns the intent into requirements and a design.",
   "model": "claude-opus-5-5[1m]",
   "name": "Kenaz",
   "novel": null,

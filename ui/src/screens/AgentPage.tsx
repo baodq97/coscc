@@ -3,29 +3,33 @@
 // as it would then stand before writing anything. The next run uses what was saved.
 
 import { useState, type ReactNode } from "react";
-import type { AgentPage as Page, AgentRow, CatalogTool, RunGroup, RunView } from "../api.gen";
+import type { AgentPage as Page, AgentRow, CatalogTool, TriggerFields } from "../api.gen";
 import { api, ApiError } from "../lib/api";
 import { refreshPacks } from "../lib/pack";
 import { sandboxed, sandboxLine, sandboxOf } from "../lib/build";
-import { ago, modelName, startedBy, money, unitCode, unitTitle } from "../lib/format";
+import { modelName, money } from "../lib/format";
 import { Link, navigate } from "../lib/router";
 import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
+import { useResource } from "../lib/api";
 import { useIndex } from "../lib/pack";
-import { AgentGlyph, WorkspaceSwitch, attention, inWorkspace, triggerWords, useAgents } from "./Agents";
+import { AgentGlyph, WorkspaceSwitch, attention, inWorkspace, statusWords, triggerWords, useAgents } from "./Agents";
+import { Activity } from "./AgentActivity";
+import { SkillPicker } from "../components/SkillPicker";
 
 export const TABS = [
+  { key: "activity", label: "Activity" },
   { key: "configuration", label: "Configuration" },
   { key: "tools", label: "Tools" },
   { key: "io", label: "Input/Output" },
   { key: "trigger", label: "Trigger" },
   { key: "prompt", label: "Prompt & skills" },
-  { key: "runs", label: "Runs & $" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
 const MODELS = ["claude-opus-5-5[1m]", "claude-sonnet-5-5[1m]", "claude-haiku-4-5"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const DATA: Record<string, string> = {
+  catalog: "what agents and processes can be built from",
   idea: "the shared idea",
   siblings: "sibling checkouts",
   mentions: "units this one names",
@@ -69,6 +73,11 @@ export function changes(draft: Draft, saved: Record<string, unknown>): string[] 
   return Object.keys(draft).filter((k) => !same(draft[k], saved[k]));
 }
 
+/** The writes a save makes, one per part, `default` riding with a changed `trigger`. */
+export function savedApart(pending: string[]): string[] {
+  return pending.includes("trigger") ? pending.filter((k) => k !== "default") : pending;
+}
+
 const LABELS: Record<string, string> = {
   "model.id": "model",
   "model.effort": "effort",
@@ -79,6 +88,11 @@ const LABELS: Record<string, string> = {
   "variants.novel.model.effort": "new-ground effort",
   "variants.novel.ceilings.turns": "new-ground turns",
   "variants.novel.ceilings.usd": "new-ground spend",
+  default: "on or off by default",
+  "trigger.event.name": "starts after",
+  "trigger.event.from": "starts after",
+  "trigger.event.after_hours": "wait",
+  "trigger.schedule.hours": "every",
 };
 
 function leaves(v: unknown, path: string[] = []): [string, unknown][] {
@@ -94,13 +108,27 @@ export function changedParts(draft: Draft, saved: Record<string, unknown>): stri
     const now = new Map(leaves(draft[k], [k]));
     const was = new Map(leaves(saved[k], [k]));
     const hit = [...new Set([...now.keys(), ...was.keys()])].filter((p) => !same(now.get(p), was.get(p)));
-    out.push(...hit.map((p) => LABELS[p] ?? (p.startsWith("skill:") ? `${p.slice(6)} skill` : p)));
+    out.push(...hit.map((p) => LABELS[p] ?? (p.startsWith("skill:") ? `${p.slice(6)} skill` : p.startsWith("trigger") ? "trigger" : p)));
   }
   return [...new Set(out)];
 }
 
-export function AgentPage({ name, tab = "configuration" }: { name: string; tab?: string }) {
-  const { ws, list, workspace, cwd, agents } = useAgents();
+/** "2 unsaved changes: starts after, on or off by default": the count is of the parts named. */
+export function unsavedWords(draft: Draft, saved: Record<string, unknown>): string {
+  const parts = changedParts(draft, saved);
+  return `${parts.length} unsaved change${parts.length === 1 ? "" : "s"}: ${parts.join(", ")}`;
+}
+
+/** The built-in's value of each part, from what the page sends: the edited parts hold it, every other part is still the built-in's. */
+export function builtinOf(a: Pick<AgentRow, "row" | "builtin" | "edited" | "skills">): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...a.builtin };
+  for (const [k, v] of Object.entries(a.row)) if (!(k in out) && !a.edited.includes(k)) out[k] = v;
+  for (const s of a.skills) out[`skill:${s.name}`] = s.edited ? s.builtin : s.text;
+  return out;
+}
+
+export function AgentPage({ name, tab = "activity" }: { name: string; tab?: string }) {
+  const { ws, list, workspace, cwd, agents } = useAgents(name);
   const [draft, setDraft] = useState<Draft>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
@@ -112,7 +140,9 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
   const [refused, setRefused] = useState<string[]>([]);
   const [done, setDone] = useState(false);
   const page = fresh ?? agents.data;
-  const a = page?.rows.find((r) => r.key === name);
+  // What it is doing now comes from the latest read, whatever a save handed back.
+  const mine = page?.rows.find((r) => r.key === name);
+  const a = mine && agents.data ? { ...mine, running: agents.data.rows.find((r) => r.key === name)?.running ?? null } : mine;
   if (agents.state === "error" && !page) return <ErrorState error={agents.error} onRetry={agents.reload} />;
   if (!page) return <div className="page"><SkeletonRows rows={5} /></div>;
   if (!a)
@@ -126,8 +156,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
 
   const saved: Record<string, unknown> = { ...a.row };
   for (const s of a.skills) saved[`skill:${s.name}`] = s.text;
-  const builtin: Record<string, unknown> = { ...a.builtin };
-  for (const s of a.skills) builtin[`skill:${s.name}`] = s.builtin;
+  const builtin = builtinOf(a);
   const pending = changes(draft, saved);
   const value = (k: string) => (k in draft ? draft[k] : saved[k]);
   // `v` may be a function of the part as it then stands, so two quick edits both land.
@@ -140,13 +169,16 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
     setBusy(true);
     setError(null);
     let failed = false;
-    for (const field of pending) {
+    const sent = (f: string) => (draft[f] === undefined || (!a.own && same(draft[f], builtin[f])) ? null : draft[f]);
+    for (const field of savedApart(pending)) {
       try {
-        const v = draft[field];
-        const next = await api.post<Page>("/api/agents/field", { key: a.key, field, value: v === undefined || (!a.own && same(v, builtin[field])) ? null : v, cwd });
+        // A trigger and its default are checked as one: a chain needs both or neither.
+        const also = field === "trigger" && pending.includes("default") ? { default: sent("default") } : undefined;
+        const next = await api.post<Page>("/api/agents/field", { key: a.key, field, value: sent(field), cwd, ...(also ? { also } : {}) });
         setFresh(next);
         setDraft((d) => {
           const { [field]: _, ...rest } = d;
+          if (also) delete rest.default;
           return rest;
         });
       } catch (e) {
@@ -157,6 +189,8 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
     }
     setBusy(false);
     setDone(!failed);
+    // The header (its chip, its on/off) reads the latest list: take it again from what was saved.
+    agents.reload();
   };
   const own = a.own;
   const remove = async () => {
@@ -173,25 +207,28 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
       setBusy(false);
     }
   };
-  const ctx: Ctx = { a, page, value, edit, saved, builtin, editable: a.editable && !busy, error, cwd, setPage: setFresh };
-  const t: Tab = TABS.some((x) => x.key === tab) ? (tab as Tab) : "configuration";
+  const ctx: Ctx = { a, page, value, edit, saved, builtin, editable: a.editable && !busy, error, cwd, workspace: workspace?.name, setPage: setFresh };
+  const t: Tab = TABS.some((x) => x.key === tab) ? (tab as Tab) : "activity";
   const look = attention(a);
 
   return (
     <div className="page mid agent-page">
-      <div className="row" style={{ gap: 12, alignItems: "flex-start" }}>
+      <div className="agent-head">
         <AgentGlyph a={a} size="xl" />
-        <div className="grow">
+        <div className="agent-head-main">
           <h1 className="title">
             {a.row.name ?? a.key} <span className="faint mono" style={{ fontSize: 13 }}>{a.key}</span>
           </h1>
           <div className="muted">{a.row.description || triggerWords(a, page.rows)}</div>
+          <div className="faint" style={{ fontSize: 12.5, marginTop: 2 }}>{statusWords(a, workspace?.name ?? "")}</div>
           <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-            <Chip square tone="plain">Runs {triggerWords(a, page.rows)}</Chip>
+            {a.on !== false && <Chip square tone="plain">Runs {triggerWords(a, page.rows)}</Chip>}
+            {a.running && <Chip square tone="accent"><span className="dot live" /> running</Chip>}
             {look && <Chip square tone={look.tone}>{look.label}</Chip>}
             {own ? <Chip square tone="accent">Yours</Chip> : a.edited.length > 0 ? <Chip square tone="accent">{a.edited.length} part{a.edited.length > 1 ? "s" : ""} edited</Chip> : <Chip square tone="plain">as built in</Chip>}
           </div>
         </div>
+        <div className="agent-head-side">
         {own && (
           <div className="row" style={{ gap: 6 }}>
             {asking ? (
@@ -210,7 +247,9 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
           <b>{money(a.cost_30d)}</b> <span className="faint">in 30 days</span>
           <div className="faint" style={{ fontSize: 12 }}>{a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}</div>
         </div>
+        </div>
       </div>
+      {a.group === "triggered" && <Controls {...ctx} />}
       {refused.length > 0 && (
         <div className="card card-b problems">
           <b>Not deleted:</b>
@@ -237,7 +276,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
       {t === "io" && <InputOutput {...ctx} />}
       {t === "trigger" && <Trigger {...ctx} />}
       {t === "prompt" && <Prompt {...ctx} />}
-      {t === "runs" && <Runs a={a} page={page} names={Object.fromEntries((ws.data?.workspaces ?? []).map((w) => [w.path, w.name]))} />}
+      {t === "activity" && <Activity a={a} page={page} names={Object.fromEntries((ws.data?.workspaces ?? []).map((w) => [w.path, w.name]))} workspace={workspace?.name ?? ""} />}
 
       {done && pending.length === 0 && !error && (
         <div className="savebar" role="status">
@@ -248,7 +287,7 @@ export function AgentPage({ name, tab = "configuration" }: { name: string; tab?:
       {(pending.length > 0 || error) && (
         <div className="savebar">
           <span className="grow" style={{ fontSize: 13 }}>
-            {error ? <span className="savebar-err">Not saved: {error.message}</span> : `${pending.length} unsaved change${pending.length > 1 ? "s" : ""}: ${changedParts(draft, saved).join(", ")}`}
+            {error ? <span className="savebar-err">Not saved: {plainReasons(error.message)}</span> : unsavedWords(draft, saved)}
           </span>
           <Button kind="ghost" size="sm" disabled={busy} onClick={() => { setDraft({}); setError(null); setDone(false); }}>
             Discard
@@ -274,8 +313,29 @@ type Ctx = {
   editable: boolean;
   error: { field: string; message: string } | null;
   cwd: string;
+  workspace?: string;
   setPage: (p: Page) => void;
 };
+
+// The Trigger tab's parts, each shown under its own label: a refusal naming one needs no key.
+const LABELLED = ["skills", "trigger.event.from", "trigger.event.after_hours", "trigger.schedule.hours", "default"];
+
+/** A refusal's reasons as a person reads them: those naming a labelled part without its key. */
+export function plainReasons(message: string): string {
+  return message
+    .split("; ")
+    .map((r) => {
+      const at = LABELLED.find((p) => r.startsWith(`${p}: `));
+      return at ? r.slice(at.length + 2) : r;
+    })
+    .join("; ");
+}
+
+/** Whether a refusal of `top` belongs under the part at `path`: one naming a part of `top`
+ * (`trigger.event.from: …`) is shown only under that part, any other under every part of `top`. */
+export function errorIsHere(message: string, top: string, path: string): boolean {
+  return !message.startsWith(`${top}.`) || message.startsWith(path);
+}
 
 /** One part of a row: its label, where it comes from (built in, edited, unsaved) and a reset. */
 function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; label: string; hint?: string; children: ReactNode }) {
@@ -300,7 +360,7 @@ function Part({ ctx, path, label, hint, children }: { ctx: Ctx; path: string; la
       </div>
       <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
         {children}
-        {ctx.error?.field === top && <div className="field-err">{ctx.error.message}</div>}
+        {ctx.error?.field === top && errorIsHere(ctx.error.message, top, path) && <div className="field-err">{plainReasons(ctx.error.message)}</div>}
       </div>
     </div>
   );
@@ -486,7 +546,7 @@ function Tools(ctx: Ctx) {
   const { a, page } = ctx;
   const tools = (ctx.value("tools") as Record<string, unknown> | undefined) ?? {};
   const output = (ctx.value("output") as { by?: string; kind?: string } | undefined) ?? {};
-  const readsOnly = output.by === "app";
+  const appWrites = output.by === "app";
   const helper = a.group === "helper";
   const helpers = page.rows.filter((r) => r.group === "helper");
   const chosen = (ctx.value("helpers") as string[] | undefined) ?? [];
@@ -498,19 +558,24 @@ function Tools(ctx: Ctx) {
     ctx.edit("tools", next);
   };
   // A row a trigger starts holds Bash only inside the OS sandbox.
-  const choices = (t: CatalogTool) => (triggered && t.name === "Bash" ? ["sandboxed", "off"] : ["allow", "ask", "off"]);
+  // What the row can never hold, from the rule saving it uses (`pack.reads_only`): no one to ask, no writes.
+  const noOneToAsk = a.reads_only;
+  const choices = (t: CatalogTool) => (triggered && t.name === "Bash" ? ["sandboxed", "off"] : noOneToAsk ? ["allow", "off"] : ["allow", "ask", "off"]);
   const why = (t: CatalogTool) =>
-    readsOnly && t.effect !== "read" ? "The app writes this agent's output from its reply, so it holds only reading tools." : helper && t.name === "Agent" ? "A helper starts no helper." : "";
+    appWrites && t.effect !== "read" ? "The app writes this agent's output from its reply, so it holds only reading tools." : helper && t.name === "Agent" ? "A helper starts no helper." : "";
+  const shown = page.catalog.filter((t) => !(noOneToAsk && t.effect !== "read" && t.name !== "Bash" && !tools[t.name]));
   return (
     <>
       <p className="muted" style={{ marginTop: 0 }}>
-        Allow gives the tool to its runs; Ask offers it and refuses every call until a person can be asked; Off leaves it out. No setting here lifts the app's critical blocks.
+        {noOneToAsk
+          ? "This agent starts on its own, so it has no one to ask and only reads: tools that change things are not offered. Allow gives a tool to its runs; Off leaves it out."
+          : "Allow gives the tool to its runs; Ask offers it and refuses every call until a person can be asked; Off leaves it out. No setting here lifts the app's critical blocks."}
       </p>
-      {(readsOnly || helper) && (
-        <p className="muted">{readsOnly ? "The app writes this agent's output from its reply, so it holds only reading tools." : "A helper starts no helper."}</p>
+      {(appWrites || helper) && (
+        <p className="muted">{appWrites ? "The app writes this agent's output from its reply, so it holds only reading tools." : "A helper starts no helper."}</p>
       )}
       <div className="card">
-        {page.catalog.map((t) => {
+        {shown.map((t) => {
           const box = sandboxOf(tools[t.name]);
           const p = box ? "sandboxed" : String(tools[t.name] ?? "off");
           const no = why(t);
@@ -525,7 +590,7 @@ function Tools(ctx: Ctx) {
               <span className="tmeta">
                 <Chip square tone="plain">{EFFECT[t.effect] ?? t.effect}</Chip>
                 <Chip square tone={TIER[t.tier] ?? "plain"}>{t.tier} risk</Chip>
-                {!same(tools[t.name] ?? "off", (a.builtin.tools ?? {})[t.name] ?? "off") && <Chip square tone="accent">edited</Chip>}
+                {!same(tools[t.name] ?? "off", ((ctx.builtin.tools as Record<string, unknown> | undefined) ?? {})[t.name] ?? "off") && <Chip square tone="accent">edited</Chip>}
               </span>
               <span className="seg">
                 {choices(t).map((x) => (
@@ -604,9 +669,9 @@ function InputOutput(ctx: Ctx) {
               ))}
             </Part>
             <Part ctx={ctx} path="input.data" label="The app's data">
-              {Object.entries(DATA).map(([k, words]) => (
-                <label key={k} className="check" title={words}>
-                  <input type="checkbox" checked={input.data.includes(k)} disabled={!ctx.editable} onChange={(e) => set("data", e.target.checked ? [...input.data, k] : input.data.filter((x) => x !== k))} /> {k}
+              {Object.entries(DATA).filter(([k]) => ctx.a.usable_data.includes(k) || input.data.includes(k)).map(([k, words]) => (
+                <label key={k} className="check" title={k}>
+                  <input type="checkbox" checked={input.data.includes(k)} disabled={!ctx.editable} onChange={(e) => set("data", e.target.checked ? [...input.data, k] : input.data.filter((x) => x !== k))} /> {words}
                 </label>
               ))}
             </Part>
@@ -623,8 +688,80 @@ function InputOutput(ctx: Ctx) {
       </div>
       <div className="sec-h">What it hands back</div>
       <div className="card card-b">
-        <JsonPart ctx={ctx} field="output" label="Output" hint="What it submits: its kind, version and fields. A field another stage reads cannot be removed." />
+        <OutputForm ctx={ctx} />
       </div>
+    </>
+  );
+}
+
+const KIND_WORDS: Record<string, string> = {
+  artifact: "A file in the unit's folder",
+  review: "A review round of a pull request",
+  session: "A working session on the branch",
+  proposal: "Proposals for the Backlog",
+  verdict: "A verdict, graded criterion by criterion",
+  draft: "A draft of an agent or a process",
+  reply: "A written reply",
+  helper: "A helper's answer to the agent that started it",
+};
+const WRITER_WORDS: Record<string, string> = {
+  app: "The app writes it from the agent's reply",
+  scratch: "The agent writes it in its scratch folder",
+  session: "The agent commits it on the unit's branch",
+};
+
+/** One field of an output, as a short phrase: its enum values, "a list", or "text". */
+function fieldWords(spec: unknown): string {
+  if (spec && typeof spec === "object") {
+    const o = spec as Record<string, unknown>;
+    if (Array.isArray(o.enum)) return (o.enum as string[]).join(" / ");
+    if (o.list) return "a list";
+  }
+  return "text";
+}
+
+/** What an agent hands back, as a form: its kind and who writes it in words, what it is for, and
+ * its fields; the row's own JSON stays one click away for an agent of yours. */
+function OutputForm({ ctx }: { ctx: Ctx }) {
+  const [raw, setRaw] = useState(false);
+  const out = (ctx.value("output") as { kind?: string; by?: string; purpose?: string; fields?: Record<string, unknown> } | undefined) ?? {};
+  const fields = Object.entries(out.fields ?? {});
+  return (
+    <>
+      <Part ctx={ctx} path="output.kind" label="Kind">
+        <div>{KIND_WORDS[out.kind ?? ""] ?? out.kind ?? "—"}</div>
+      </Part>
+      {out.by && (
+        <Part ctx={ctx} path="output.by" label="Written by">
+          <div>{WRITER_WORDS[out.by] ?? out.by}</div>
+        </Part>
+      )}
+      <Part ctx={ctx} path="output.purpose" label="What it is for" hint="Told to the agent beside its fields.">
+        <input
+          className="input"
+          style={{ width: "100%", maxWidth: 560 }}
+          value={out.purpose ?? ""}
+          disabled={!ctx.editable}
+          onChange={(e) => ctx.edit("output", { ...out, purpose: e.target.value })}
+        />
+      </Part>
+      {fields.length > 0 && (
+        <Part ctx={ctx} path="output.fields" label="Fields" hint="A field another stage reads cannot be removed.">
+          <ul className="fields">
+            {fields.map(([k, v]) => (
+              <li key={k}>
+                <b className="mono">{k}</b> <span className="faint">{fieldWords(v)}</span>
+              </li>
+            ))}
+          </ul>
+        </Part>
+      )}
+      {ctx.a.own && (
+        <div style={{ marginTop: 8 }}>
+          <Button size="sm" kind="ghost" onClick={() => setRaw(!raw)}>{raw ? "Hide the text" : "Edit the fields as text"}</Button>
+          {raw && <JsonPart ctx={ctx} field="output" label="Output" hint="Its kind, version and fields." />}
+        </div>
+      )}
     </>
   );
 }
@@ -695,20 +832,71 @@ function Trigger(ctx: Ctx) {
           <div className="muted" style={{ marginTop: 6 }}>It only reads; what it hands back waits for you on Up next.</div>
         </div>
       </div>
-      {a.on !== null && <OnHere {...ctx} />}
       {t.schedule && (
         <Part ctx={ctx} path="trigger.schedule.hours" label="Every" hint="Hours between two runs here, counted from the last.">
           <NumberField ctx={ctx} path="trigger.schedule.hours" />
           <span className="muted" style={{ alignSelf: "center" }}>hours</span>
         </Part>
       )}
+      <StartsAfter {...ctx} />
       {t.event?.after_hours !== undefined && (
         <Part ctx={ctx} path="trigger.event.after_hours" label="Wait" hint="Hours after the event before it runs.">
           <NumberField ctx={ctx} path="trigger.event.after_hours" />
           <span className="muted" style={{ alignSelf: "center" }}>hours</span>
         </Part>
       )}
-      {t.manual && <RunNow {...ctx} />}
+    </div>
+  );
+}
+
+/** A chain to the agent `from`: its trigger waits on that agent's finished run, whose result its
+ * prompt then holds, and it stays off until turned on. `""` undoes it, `default` back to `back`. */
+export function chainTo(trigger: TriggerFields, from: string, back?: unknown): { trigger: TriggerFields; default?: unknown } {
+  const { event: _, ...rest } = trigger;
+  if (!from) return { trigger: rest, default: back };
+  return { trigger: { ...rest, event: { name: "agent-run.ended", from } }, default: "off" };
+}
+
+/** Which agent's finished run starts this one: none, or another agent that runs by itself. */
+function StartsAfter(ctx: Ctx) {
+  const { a, page } = ctx;
+  const trigger = (ctx.value("trigger") ?? {}) as TriggerFields;
+  const from = trigger.event?.from ?? "";
+  // Another event starts it: that is not a chain to change here.
+  if (trigger.event && !from) return null;
+  const choices = page.rows.filter((r) => r.group === "triggered" && r.key !== a.key);
+  const pick = (to: string) => {
+    // Undone, `default` goes back to what it was before this page chained it, else the pack's.
+    const back = same(ctx.value("default"), ctx.saved.default) ? (ctx.builtin.default ?? ctx.saved.default) : ctx.saved.default;
+    const next = chainTo(trigger, to, back);
+    ctx.edit("default", next.default);
+    ctx.edit("trigger", next.trigger);
+  };
+  return (
+    <Part ctx={ctx} path="trigger.event.from" label="Starts after" hint="When that agent finishes a run, this one runs with what it found. It stays off here until you turn it on.">
+      <select className="input sm" style={{ width: 260, maxWidth: "100%" }} value={from} disabled={!ctx.editable} onChange={(e) => pick(e.target.value)}>
+        <option value="">No other agent</option>
+        {choices.map((r) => (
+          <option key={r.key} value={r.key}>
+            {r.row.name ?? r.key}
+          </option>
+        ))}
+      </select>
+    </Part>
+  );
+}
+
+/** The two things an owner does with an agent that runs by itself: turn it on or off here, and run it now. */
+function Controls(ctx: Ctx) {
+  const { a } = ctx;
+  const input = ctx.value("input") as Input | undefined;
+  const readsUnit = Boolean(input?.artifacts.length || input?.outputs.length);
+  const t = a.row.trigger ?? {};
+  return (
+    <div className="row agent-controls" style={{ gap: 12, marginTop: 14, flexWrap: "wrap" }}>
+      {a.on !== null && <OnHere {...ctx} />}
+      {t.manual && !readsUnit && <RunNowButton {...ctx} />}
+      {t.manual && readsUnit && <span className="faint" style={{ fontSize: 12.5 }}>It reads one unit: run it from that unit's page.</span>}
     </div>
   );
 }
@@ -728,75 +916,105 @@ function OnHere({ a, cwd, setPage }: Ctx) {
     setBusy(false);
   };
   return (
-    <div className="field">
-      <div>
-        <div className="lab">In this workspace</div>
-        <div className="hint">{a.on ? "Runs on its own here." : "Runs here only when you press Run now."}</div>
-      </div>
-      <div>
-        <div className="seg" role="group" aria-label="On or off in this workspace">
-          <button className={a.on ? "on" : ""} aria-pressed={!!a.on} disabled={busy} onClick={() => set(true)}>On</button>
-          <button className={a.on ? "" : "on"} aria-pressed={!a.on} disabled={busy} onClick={() => set(false)}>Off</button>
-        </div>
-        {error && <div className="field-err">{error}</div>}
-      </div>
-    </div>
+    <span className="row" style={{ gap: 8 }}>
+      <span className="seg" role="group" aria-label="On or off in this workspace" title={a.on ? "Runs on its own here." : "Runs here only when you press Run now."}>
+        <button className={a.on ? "on" : ""} aria-pressed={!!a.on} disabled={busy} onClick={() => set(true)}>On</button>
+        <button className={a.on ? "" : "on"} aria-pressed={!a.on} disabled={busy} onClick={() => set(false)}>Off</button>
+      </span>
+      {error && <span className="field-err">{error}</span>}
+    </span>
   );
 }
 
-/** One paid run now, asked once with its ceiling named. */
-function RunNow(ctx: Ctx) {
-  const input = ctx.value("input") as Input | undefined;
-  if (input?.artifacts.length || input?.outputs.length)
-    return (
-      <div className="field">
-        <div>
-          <div className="lab">Run now</div>
-        </div>
-        <div className="muted">It reads one unit: run it from that unit's page.</div>
-      </div>
-    );
-  return <RunNowButton {...ctx} />;
-}
-
-function RunNowButton({ a, cwd }: Ctx) {
+/** One paid run now, asked once with its ceiling named and an optional note; once started, a link
+ * to its live page. With no run going, a link to ask its last run a question. */
+function RunNowButton({ a, cwd, workspace }: Ctx) {
   const [asking, setAsking] = useState(false);
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  const [started, setStarted] = useState("");
+  const [error, setError] = useState("");
   const usd = a.config.ceilings.max_budget_usd;
   const run = async () => {
     if (!asking) return setAsking(true);
     setBusy(true);
-    setSaid(null);
+    setError("");
     try {
-      await api.post("/api/agents/run", { cwd, key: a.key });
-      setSaid({ ok: true, text: "Started. Its run shows under Runs & $ once it ends." });
+      const got = await api.post<{ run: string }>("/api/agents/run", { cwd, key: a.key, text: note.trim() });
+      setStarted(got.run);
       setAsking(false);
+      setNote("");
     } catch (e) {
-      setSaid({ ok: false, text: (e as Error).message });
+      setError((e as Error).message);
     }
     setBusy(false);
   };
+  const live = a.running ? a.running.run : started;
+  // The newest run that kept a session and was not stopped: the one a question can be put to.
+  const last = live ? "" : (a.groups.flatMap((g) => g.runs).filter((r) => r.run && r.session && r.outcome !== "cancelled").sort((x, y) => y.at.localeCompare(x.at))[0]?.run ?? "");
   return (
-    <div className="field">
-      <div>
-        <div className="lab">Run now</div>
-        <div className="hint">One paid, read-only run{usd ? `, at most ${money(usd)}` : ""}.</div>
+    <span className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+      {asking && (
+        <input
+          className="input"
+          style={{ width: 280 }}
+          aria-label="A note for this run"
+          placeholder="A note for this run (optional)"
+          value={note}
+          maxLength={4000}
+          disabled={busy}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      )}
+      <Button size="sm" kind={asking ? "primary" : ""} icon="bolt" disabled={busy || !!a.running} onClick={run}>
+        {busy ? "Starting…" : a.running ? "Running" : asking ? `Spend up to ${money(usd ?? 0)}?` : "Run now"}
+      </Button>
+      {asking && !busy && (
+        <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>
+          Cancel
+        </Button>
+      )}
+      {live && workspace && (
+        <Link to={`/run/${workspace}/${live}`} className="live-link">
+          {a.running ? <><span className="dot live" /> Watch it live ▸</> : "Open its run ▸"}
+        </Link>
+      )}
+      {last && workspace && !asking && (
+        <Link to={`/run/${workspace}/${last}?ask=1`} className="live-link">
+          Ask its last run ▸
+        </Link>
+      )}
+      {error && <span className="field-err">{error}</span>}
+    </span>
+  );
+}
+
+/** What a run is handed to work on beside its role: for an agent a trigger starts, the prompt the app builds
+ * from its input now (a preview that starts nothing); for a stage agent, where its input comes from. */
+function Receives({ a, cwd }: Ctx) {
+  const triggered = a.group === "triggered";
+  const got = useResource(triggered && cwd ? "/api/agents/{key}/prompt" : null, { key: a.key, cwd });
+  const input = a.row.input as { artifacts?: string[] } | undefined;
+  return (
+    <>
+      <div className="sec-h">What it receives {triggered && <span className="faint">a preview, not a run</span>}</div>
+      <div className="card card-b">
+        {!triggered ? (
+          <div className="faint">
+            {input?.artifacts?.length
+              ? `The unit's ${input.artifacts.map((n) => n.replace(/\?$/, "")).join(", ")} files, handed whole by the app when a step starts.`
+              : "What the app hands it when its step starts."}{" "}
+            Its role and skills are below.
+          </div>
+        ) : got.state === "error" ? (
+          <div className="field-err">Could not read it: {String((got.error as Error)?.message ?? "")}</div>
+        ) : !got.data ? (
+          <div className="faint">Reading…</div>
+        ) : (
+          <pre className="prompt-preview">{got.data.task || "(nothing but its role)"}</pre>
+        )}
       </div>
-      <div>
-        <div className="row" style={{ gap: 8 }}>
-          <Button size="sm" kind={asking ? "primary" : ""} icon="bolt" disabled={busy} onClick={run}>
-            {busy ? "Starting…" : asking ? `Spend up to ${money(usd ?? 0)} on a run?` : "Run now"}
-          </Button>
-          {asking && !busy && (
-            <Button size="sm" kind="ghost" onClick={() => setAsking(false)}>
-              Cancel
-            </Button>
-          )}
-        </div>
-        {said && <div className={said.ok ? "muted" : "field-err"} style={{ marginTop: 6 }}>{said.text}</div>}
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -804,15 +1022,17 @@ function Prompt(ctx: Ctx) {
   const { a } = ctx;
   return (
     <>
+      <Receives {...ctx} />
       <div className="sec-h">System prompt</div>
       <div className="card card-b">
         <TextPart ctx={ctx} field="body" label="Its role" hint="Given to every run before anything else." rows={6} />
       </div>
       <div className="sec-h">
-        Skills <span className="faint">the rules it is given for its stage; a skill's text is shared by every agent that names it</span>
+        Skills <span className="faint">rules given with its prompt on every run; a skill's text is shared by every agent that names it</span>
       </div>
       <div className="card card-b">
-        {a.skills.length === 0 && <div className="faint">It names no skill.</div>}
+        {ctx.error?.field === "skills" && <div className="field-err">{plainReasons(ctx.error.message)}</div>}
+        <SkillPicker agent={a.key} title={a.row.name ?? a.key} names={(ctx.value("skills") as string[] | undefined) ?? []} editable={ctx.editable} onChange={(n) => ctx.edit("skills", n)} />
         {a.skills.map((s) => (
           <TextPart key={s.name} ctx={ctx} field={`skill:${s.name}`} label={s.name} rows={18} mono />
         ))}
@@ -834,81 +1054,5 @@ function TextPart({ ctx, field, label, hint, rows, mono }: { ctx: Ctx; field: st
         onChange={(e) => ctx.edit(field, e.target.value)}
       />
     </Part>
-  );
-}
-
-/** What one setting record says, in words. */
-function settingWords(s: RunGroup["settings"][number]): string {
-  return s.new == null ? `${s.field} reset` : `${s.field} edited`;
-}
-
-
-/** One run's row: where it opens (only a run with a kept log, or its unit), and what it says. A
- * skip and a run without a log are not links. */
-export function runRow(r: RunView, ws: string): { to: string; code: string; title: string; muted: boolean } {
-  const n = Number(r.unit.slice(0, 4));
-  const code = r.unit ? unitCode(ws, n) : "—";
-  if (r.skipped) return { to: "", code, title: `Skipped — ${r.detail || "nothing to do"}`, muted: true };
-  const title = r.unit ? unitTitle(r.unit) : (r.started_by ? `Run by ${startedBy(r.started_by)}` : "Run");
-  if (r.run) return { to: `/run/${ws}/${r.run}`, code, title, muted: false };
-  if (r.unit) return { to: `/unit/${ws}/${n}`, code, title, muted: false };
-  return { to: "", code, title: `${title} — no log kept`, muted: true };
-}
-
-function Runs({ a, page, names }: { a: AgentRow; page: Page; names: Record<string, string> }) {
-  if (!a.groups.length)
-    return (
-      <Empty icon="clock" title="No runs in 30 days">
-        A run shows here with the definition it ran, so an edit's effect can be compared.
-      </Empty>
-    );
-  return (
-    <>
-      <p className="muted" style={{ marginTop: 0 }}>
-        Runs of the last 30 days, grouped by the definition they ran; an edit starts a new group. Total {money(a.cost_30d)} over {a.runs_30d} run{a.runs_30d === 1 ? "" : "s"}, {page.scope === "workspace" ? "this workspace" : "all workspaces"}.
-      </p>
-      {a.groups.map((g, i) => (
-        <div key={i} className="card run-group">
-          <div className="card-h">
-            <span className="grow">
-              {g.row_hash === a.row_hash ? "As it stands now" : g.row_hash ? "An earlier definition" : g.runs.length ? "Before definitions were recorded" : "Saved, not run yet"}{" "}
-              {g.row_hash && <span className="faint mono" title={g.row_hash}>#{g.row_hash.slice(0, 6)}</span>}
-            </span>
-            <span className="faint" style={{ fontWeight: 500 }}>
-              {g.runs.length} run{g.runs.length === 1 ? "" : "s"} · {money(g.cost_usd)} · {g.turns} turn{g.turns === 1 ? "" : "s"}
-            </span>
-          </div>
-          {g.settings.length > 0 && (
-            <div className="run-settings">
-              {g.settings.map((s, j) => (
-                <span key={j} className="faint">
-                  {settingWords(s)} {ago(s.at)}
-                  {j < g.settings.length - 1 ? " · " : ""}
-                </span>
-              ))}
-            </div>
-          )}
-          {g.runs.map((r) => {
-            const row = runRow(r, names[r.workspace] ?? "");
-            const body = (
-              <>
-                {r.unit && <span className="id">{row.code}</span>}
-                <span className="t" style={row.muted ? { color: "var(--text-3)", fontWeight: 400 } : undefined}>{row.title}</span>
-                <span className="meta">
-                  {r.outcome !== "done" && <Chip square tone="red">{r.outcome}</Chip>}
-                  {r.cost_usd != null ? money(r.cost_usd) : ""} · {ago(r.at)}
-                </span>
-              </>
-            );
-            const key = r.workspace + r.unit + r.at;
-            return row.to ? (
-              <Link key={key} to={row.to} className="lrow">{body}</Link>
-            ) : (
-              <div key={key} className="lrow">{body}</div>
-            );
-          })}
-        </div>
-      ))}
-    </>
   );
 }

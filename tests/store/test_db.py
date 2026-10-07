@@ -521,7 +521,9 @@ class TheOneStepFindsTodaysPack(unittest.TestCase):
         self.assertEqual(db._with(rows, "rests_on"), ["plan"])
         self.assertEqual(db._with(rows, "unmeasured"), ["spec"])
         self.assertEqual(
-            sorted(db._with(rows, "questions")), ["idea", "impl", "intent", "plan", "spec", "spike"]
+            sorted(db._with(rows, "questions")),
+            # Dagaz asks before it drafts; its drafts live on run ends, never in `outputs`.
+            ["dagaz", "idea", "impl", "intent", "plan", "spec", "spike"],
         )
         self.assertEqual(db._coders(rows), ["impl"])
         self.assertEqual(db._scan_row(rows), "scan")

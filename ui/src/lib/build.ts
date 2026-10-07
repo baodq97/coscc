@@ -263,13 +263,30 @@ export function agentNameProblem(name: string): string | null {
   return /^[A-Za-z][A-Za-z0-9-]{0,23}$/.test(name) ? null : "Use 1 to 24 letters, digits or dashes, starting with a letter.";
 }
 
+/** Why a name cannot be used though its shape is fine: another agent already has it (the app compares without case). */
+export function nameTaken(name: string, rows: { key: string; row: { name?: unknown } }[], own = ""): string | null {
+  const n = name.trim().toLowerCase();
+  const hit = n ? rows.find((r) => r.key !== own && String(r.row.name ?? "").toLowerCase() === n) : undefined;
+  return hit ? `${String(hit.row.name)} is another agent's name; pick another.` : null;
+}
+
 // --- Dagaz's drafts -------------------------------------------------------------------------
 
-/** What Dagaz hands back: why, and a whole new agent row, a process, or both, each as the save routes take it. */
+/** A question Dagaz asks before it drafts, with the answer it recommends. */
+export type DraftQuestion = { n: number; text: string; recommendation: string };
+/** A part the task needs that the catalog lacks, and what the draft does without it. */
+export type DraftGap = { part: string; need: string; instead: string };
+
+/**
+ * What Dagaz hands back: why, and a whole new agent row, a process, or both, each as the save routes
+ * take it; or, first, its questions. `gaps` are what the catalog lacks for the task.
+ */
 export type Drafted = {
   why: string;
   agent?: { key: string; fields: Record<string, unknown>; body: string };
   process?: { name: string; process: Pick<ProcessShown, "start" | "end" | "states"> };
+  questions?: DraftQuestion[];
+  gaps?: DraftGap[];
 };
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
@@ -282,8 +299,36 @@ export function draftOf(page: Pick<EventsPage, "draft">): Drafted | null {
   const p = d.process;
   const agent = isObj(a) && typeof a.key === "string" && isObj(a.fields) && typeof a.body === "string" ? { key: a.key, fields: a.fields, body: a.body } : undefined;
   const process = isObj(p) && typeof p.name === "string" && isObj(p.process) && isObj(p.process.states) ? { name: p.name, process: p.process as NonNullable<Drafted["process"]>["process"] } : undefined;
-  if (!agent && !process) return null;
-  return { why: d.why, ...(agent ? { agent } : {}), ...(process ? { process } : {}) };
+  const questions = (Array.isArray(d.questions) ? d.questions : []).filter(isObj).map((q) => ({ n: Number(q.n), text: String(q.text ?? ""), recommendation: String(q.recommendation ?? "") }));
+  const gaps = (Array.isArray(d.gaps) ? d.gaps : []).filter(isObj).map((g) => ({ part: String(g.part ?? ""), need: String(g.need ?? ""), instead: String(g.instead ?? "") }));
+  if (!agent && !process && !questions.length) return null;
+  return { why: d.why, ...(agent ? { agent } : {}), ...(process ? { process } : {}), ...(questions.length ? { questions } : {}), ...(gaps.length ? { gaps } : {}) };
+}
+
+/** The person's answers as Dagaz reads them: each question with its answer, an empty one as the recommendation. */
+export function answersText(questions: DraftQuestion[], answers: string[]): string {
+  return questions.map((q, i) => `${q.n}. ${q.text}\n   ${(answers[i] ?? "").trim() || q.recommendation}`).join("\n");
+}
+
+/** What each gap's part is called on the page. */
+export const GAP_PART: Record<string, string> = { tool: "Tool", data: "Data", trigger: "When it runs", output: "What it hands back", event: "Event" };
+
+/** The draft a person started in one project and has not saved yet: the run and the words, kept across pages. */
+export type KeptDraft = { run: string; words: string };
+const keptKey = (want: string, cwd: string) => `coscc.draft.${want}.${cwd}`;
+
+export function keptDraft(want: string, cwd: string): KeptDraft | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(keptKey(want, cwd)) ?? "null") as unknown;
+    return isObj(v) && typeof v.run === "string" && typeof v.words === "string" ? { run: v.run, words: v.words } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function keepDraft(want: string, cwd: string, kept: KeptDraft | null): void {
+  if (kept) localStorage.setItem(keptKey(want, cwd), JSON.stringify(kept));
+  else localStorage.removeItem(keptKey(want, cwd));
 }
 
 /** What a running draft is doing, in a few words, from its last event. */

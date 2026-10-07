@@ -54,6 +54,9 @@ Name = Literal[
     "hold.moved",
     "mode.set",
     "unit.shipped",
+    # An agent run (`coscc/runner/triggers.py`): held from `started` to `ended`, its `end` already written.
+    "agent-run.started",
+    "agent-run.ended",
 ]
 NAMES: tuple[Name, ...] = get_args(Name)
 
@@ -76,6 +79,22 @@ class OfWorkspace(TypedDict):
     workspace: str
 
 
+class OfAgent(TypedDict):
+    workspace: str
+    agent: str
+    run: str
+
+
+class AgentEnded(TypedDict):
+    """An agent run let go: `outcome` its `end`'s (`done`, `failed`, `cancelled`, `paused-budget`), or
+    `skipped` when it found nothing new and opened no session, `tried` for a trial of a draft."""
+
+    workspace: str
+    agent: str
+    run: str
+    outcome: str
+
+
 class ChatTurn(TypedDict):
     session: str
 
@@ -89,7 +108,7 @@ class Shipped(TypedDict):
     at: str
 
 
-Payload = Moved | OfUnit | OfWorkspace | ChatTurn | Shipped
+Payload = Moved | OfUnit | OfWorkspace | OfAgent | AgentEnded | ChatTurn | Shipped
 
 # The states an attempt moves to.
 MOVES = ("queued", "preparing", "running", "ending", "ended", "refused", "stop-asked")
@@ -102,6 +121,8 @@ SCHEMAS: dict[str, type] = {
     "hold.moved": OfUnit,
     "mode.set": OfUnit,
     "unit.shipped": Shipped,
+    "agent-run.started": OfAgent,
+    "agent-run.ended": AgentEnded,
 }
 
 

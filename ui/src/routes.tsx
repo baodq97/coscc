@@ -1,6 +1,7 @@
 // Every screen of the studio: its path, its place in the sidebar, and what draws it.
 // The command bar and the sidebar are both built from this one list.
 
+import { agentFace } from "./lib/pack";
 import type { ReactNode } from "react";
 import type { IconName } from "./lib/icons";
 import { Briefing } from "./screens/Briefing";
@@ -18,6 +19,7 @@ import { Insights } from "./screens/Insights";
 import { RunPage } from "./screens/RunLog";
 import { Feature } from "./screens/Feature";
 import { Decided } from "./screens/Decided";
+import { Skills } from "./screens/Skills";
 
 export type Screen = {
   path: string;
@@ -67,8 +69,9 @@ export const SCREENS: Screen[] = [
     render: () => <NewWork />,
   },
   { path: "/agents", title: "Agents", nav: "Team", icon: "team", keys: "G T", render: () => <Agents /> },
-  { path: "/agents/:key", title: "Agent", crumbs: (p) => ["Agents", p.key], render: (p) => <AgentPage name={p.key} /> },
-  { path: "/agents/:key/:tab", title: "Agent", crumbs: (p) => ["Agents", p.key], render: (p) => <AgentPage name={p.key} tab={p.tab} /> },
+  { path: "/skills", title: "Skills", nav: "Team", icon: "wand", keys: "G R", render: () => <Skills /> },
+  { path: "/agents/:key", title: "Agent", crumbs: (p) => ["Agents", agentFace(p.key).name], render: (p) => <AgentPage name={p.key} /> },
+  { path: "/agents/:key/:tab", title: "Agent", crumbs: (p) => ["Agents", agentFace(p.key).name], render: (p) => <AgentPage name={p.key} tab={p.tab} /> },
   {
     path: "/insights",
     title: "Insights",
@@ -77,7 +80,7 @@ export const SCREENS: Screen[] = [
     keys: "G S",
     render: () => <Insights />,
   },
-  { path: "/run/:ws/:run", title: "Run", crumbs: (p) => ["Insights", p.ws, "Run"], render: (p) => <RunPage workspace={p.ws} run={p.run} /> },
+  { path: "/run/:ws/:run", title: "Run", crumbs: () => ["Run"], render: (p) => <RunPage workspace={p.ws} run={p.run} /> },
   {
     path: "/may-do",
     title: "What Leif may do",

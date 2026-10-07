@@ -33,16 +33,19 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response, StreamingResponse
 
 from coscc import kernel
-from coscc.agent import pack
+from coscc.agent import pack, skills
 from coscc.agent.pack import PackShown
-from coscc.store.db import Data
+from coscc.agent.skills import SkillsPage
+from coscc.store.db import Busy, Data
+from coscc.store.journal import BadRecord
 from coscc.bus import Event
 from coscc.http import plugin
 from coscc.kernel import Invalid
-from coscc.leif.agents import AgentPage, ProposalsView
+from coscc.leif.agents import SETTING_KIND, AgentPage, Live, ProposalsView
 from coscc.leif.chat import ChatHistory, ChatSessions
 from coscc.leif.insights import Insights
-from coscc.runner import triggers
+from coscc.runner import ask, triggers
+from coscc.runner.queue import Refused
 from coscc.runner.steps import NextStep
 from coscc.runner.watch import EventsPage
 from coscc.units import proposals
@@ -231,17 +234,52 @@ async def remove_workspace(name: str, request: Request) -> Any:
 async def get_agents(request: Request) -> AgentPage:
     """Every agent, every part of its row as it stands and as built in, which keys the owner set,
     its problems, skills, hash and runs grouped by definition; the tool catalog, each feature on
-    or off for `cwd`; what was wrong."""
+    or off for `cwd`; what was wrong. `agent` names the one agent whose runs come with it."""
     core, cwd = _core(request), _cwd(request)
     with pack.held():
-        return core.agents.agent_page(core.ws.key(cwd) if cwd else None, cwd=cwd)
+        return await asyncio.to_thread(
+            core.agents.agent_page,
+            core.ws.key(cwd) if cwd else None,
+            cwd=cwd,
+            agent=request.query_params.get("agent", ""),
+        )
+
+
+@router.get("/api/agents/live")
+async def get_agents_live(request: Request) -> Live:
+    """The agent runs in flight and the proposals waiting for a person, across every listed
+    workspace: what the Briefing and Needs you show."""
+    return await asyncio.to_thread(_core(request).agents.live)
+
+
+class PromptPreview(TypedDict):
+    # What a run is handed to work on beside the row's own text (its role); `""` for a row no
+    # trigger starts, whose input is the unit's, handed when a step begins.
+    task: str
+
+
+@router.get("/api/agents/{key}/prompt", response_model=PromptPreview)
+async def get_agent_prompt(key: str, request: Request) -> PromptPreview:
+    """What a run of a triggered agent would be handed now in `cwd`: the prompt
+    `triggers.compose` builds from its input. Read only, starts and spends nothing. A folder that
+    is no workspace, or an agent that does not exist, is a 400."""
+    core, cwd = _core(request), _cwd(request)
+    row = pack.row(key)
+    if row is None:
+        raise Invalid(f"no agent {key}")
+    ws = core.ws.key(core.ws.check(cwd)) if cwd else ""
+    task = ""
+    if ws and pack.triggered(row):
+        task = await triggers.preview(core, key, cwd, ws)
+    return {"task": task}
 
 
 @router.post("/api/agents/field")
 async def set_agent_field(request: Request) -> AgentPage:
-    """`{key, field, value}` saves one part of one agent's row in the owner's layer: a frontmatter
-    key whole, `body`, or `skill:<name>`; `value` `null` puts the built-in's back. A row that would
-    not pass its checks is a 400 naming every reason, and nothing is written.
+    """`{key, field, value, also?}` saves one part of one agent's row in the owner's layer: a
+    frontmatter key whole, `body`, or `skill:<name>`; `value` `null` puts the built-in's back;
+    `also` holds frontmatter keys saved with it, checked as one. A row that would not pass its
+    checks is a 400 naming every reason, and nothing is written.
 
     Whoever holds the password or a session can give any agent another model, larger ceilings,
     another prompt or more of the catalog's tools, never past the critical calls every session is
@@ -250,7 +288,11 @@ async def set_agent_field(request: Request) -> AgentPage:
     """
     body = await kernel.body(request)
     return _core(request).agents.set_agent_field(
-        body.get("key"), body.get("field"), body.get("value"), cwd=str(body.get("cwd") or "")
+        body.get("key"),
+        body.get("field"),
+        body.get("value"),
+        cwd=str(body.get("cwd") or ""),
+        also=body.get("also"),
     )
 
 
@@ -291,6 +333,56 @@ async def set_agent_state(request: Request) -> AgentPage:
     return _core(request).agents.set_state(cwd, body.get("key"), body.get("on"))
 
 
+@router.get("/api/skills")
+async def get_skills(request: Request) -> SkillsPage:
+    """Every skill of every pack once: its pack, whether the owner wrote or edited it, its text,
+    the agents naming it and the runs whose `start` named it in the last 30 days."""
+    core = _core(request)
+    with pack.held():
+        return await asyncio.to_thread(skills.page, core.ws.journal())
+
+
+@router.post("/api/skills/new")
+async def new_skill(request: Request) -> SkillsPage:
+    """`{name, text, agent?, cwd?}` writes a new skill into the owner's layer,
+    `local/skills/<name>/SKILL.md`, and with `agent` adds it to that row's `skills` (an
+    `agent-setting` record `by: owner`, as `/api/agents/field`); the new skill is its own
+    `agent-setting` record, `field: skill:<name>`. A bad or taken name, text that is empty or over
+    16 KB, a link on the way or a write that fails is a 400 and nothing is written. Same trust as
+    editing a prompt: every run of a row naming it is given its text."""
+    body = await kernel.body(request)
+    core, name, agent = _core(request), body.get("name"), body.get("agent")
+    found = pack.row(agent) if isinstance(agent, str) and agent else None
+    if agent and found is None:
+        raise Invalid(f"no such agent: {agent}")
+    try:
+        skills.new(name, body.get("text"))
+    except ValueError as e:
+        raise Invalid(str(e)) from e
+    except OSError as e:
+        raise Invalid(f"the owner's layer could not be written, so nothing was saved: {e}") from e
+    journal = core.ws.journal()
+    if journal is not None:
+        said = {
+            "kind": SETTING_KIND,
+            "workspace": "",
+            "unit": "",
+            "stage": "",
+            # Under the agent it is given to, so its page lists it; else under no agent.
+            "agent": agent if found is not None else "",
+            "by": kernel.OWNER,
+        }
+        try:
+            journal.append({**said, "field": f"{pack.SKILL}{name}", "old": None, "new": "new"})
+        except (BadRecord, Busy) as e:
+            raise Invalid(f"the skill was saved but not logged: {e}") from e
+    if found is not None:
+        named = [*(found.get("skills") or []), name]
+        core.agents.set_agent_field(agent, "skills", named, cwd=str(body.get("cwd") or ""))
+    with pack.held():
+        return await asyncio.to_thread(skills.page, core.ws.journal())
+
+
 class Started(TypedDict):
     agent: str
     started: bool
@@ -307,13 +399,30 @@ async def run_agent(request: Request) -> Started:
     ceilings; its `start` and `end` are in the run log."""
     body = await kernel.body(request)
     key = str(body.get("key") or "")
-    run = triggers.start(
+    run = await triggers.begin(
         _core(request),
         key,
         str(body.get("cwd") or ""),
         str(body.get("unit") or ""),
         by="manual",
         text=str(body.get("text") or ""),
+    )
+    return {"agent": key, "started": True, "run": run}
+
+
+@router.post("/api/agents/try")
+async def try_agent(request: Request) -> Started:
+    """`{cwd, key, fields, body}` **opens one paid, read-only session** of a row not saved yet
+    (Dagaz's draft, *Try it*), on the owner's press: the checks a save runs and the read-only rule
+    of a row that runs unpressed, no unit, its own ceilings and the daily cap; `started_by` and
+    `stage` `trial`. What it hands back is shown on its run's `end` (`tried`) and kept nowhere
+    else: no proposal, no verdict, no row. Refused before spend (`code`)."""
+    body = await kernel.body(request)
+    key, fields = str(body.get("key") or ""), body.get("fields")
+    if not isinstance(fields, dict):
+        raise Invalid("fields is the row's frontmatter, an object")
+    run = await triggers.trial(
+        _core(request), str(body.get("cwd") or ""), key, fields, str(body.get("body") or "")
     )
     return {"agent": key, "started": True, "run": run}
 
@@ -340,10 +449,41 @@ async def decide_proposal(pid: int, request: Request) -> proposals.Proposal:
         async def create(slug: str, brief: str) -> str:
             return str((await core.answers.create_unit(cwd, slug, brief))["unit"])
 
-        return await proposals.accept(data, ws, pid, str(body.get("slug") or ""), create)
+        made = await proposals.accept(data, ws, pid, str(body.get("slug") or ""), create)
+        # The page opens the unit next: the held board must hold it, as after `POST /api/units`.
+        if ws in core.boards.held:
+            await asyncio.shield(core.boards.refresh(cwd, again=True))
+        return made
     if action == "dismiss":
         return await proposals.dismiss(data, ws, pid, str(body.get("reason") or ""))
     raise Invalid("action must be accept or dismiss")
+
+
+@router.post("/api/proposals")
+async def propose_gap(request: Request) -> proposals.Proposal:
+    """`{cwd, run, gap}`: the person's "propose this capability" on the `gap`-th gap (from 0)
+    the draft of `run` names, as a `pending` proposal of the run's agent resting on the run. The
+    words are the draft's, kept on the run's `end`, never the page's; a gap proposed once is
+    refused again. Acts for whoever holds the password; it only adds a row to decide."""
+    body = await kernel.body(request)
+    core = _core(request)
+    cwd = core.ws.check(str(body.get("cwd") or ""))
+    run, at = str(body.get("run") or ""), body.get("gap")
+    ws, data, journal = core.ws.key(cwd), Data(core.config.data_dir), core.ws.journal()
+    ends = await asyncio.to_thread(journal.records, ws, "", kinds=("end",)) if journal else []
+    end = next((r for r in reversed(ends) if r.get("run") == run), {})
+    draft = end.get("draft")
+    draft = draft if isinstance(draft, dict) else {}
+    gaps = draft.get("gaps") or []
+    if not isinstance(at, int) or isinstance(at, bool) or not 0 <= at < len(gaps):
+        raise Invalid(f"run {run} drafted no gap {at}")
+    item = proposals.of_gap(str(draft.get("why") or ""), gaps[at], run)
+    agent = str(end.get("agent") or "")
+    made = await asyncio.to_thread(proposals.listed, data, ws, agent)
+    if any(p["run"] == run and p["slug"] == item["slug"] for p in made):
+        raise Invalid("this capability is proposed already")
+    (pid,) = await asyncio.to_thread(proposals.add, data, ws, agent, "", [item], run=run)
+    return await asyncio.to_thread(proposals.one, data, ws, pid)
 
 
 @router.get("/api/insights")
@@ -380,7 +520,7 @@ async def chat(request: Request) -> Any:
     body = await kernel.body(request)
     cwd, text = str(body.get("cwd") or ""), str(body.get("text") or "")
     core = _core(request)
-    core.chat.check_send(cwd, text)
+    core.chat.check_send(cwd, text, body.get("session_id") or None)
 
     async def turn() -> AsyncIterator[tuple[str, Any]]:
         async for kind, payload in core.chat.stream(cwd, text, body.get("session_id") or None):
@@ -687,6 +827,56 @@ async def get_run_events(run: str, request: Request) -> Any:
         seq=_number(request, "seq"),
         **({"limit": limit} if limit else {}),
     )
+
+
+@router.get("/api/runs/{run}/thread")
+async def get_run_thread(run: str, request: Request) -> ask.Thread:
+    """`?cwd=`: the questions asked of one run and their answers, oldest first, and whether one may
+    be asked now: resuming its warm session, or afresh and why not."""
+    return await ask.state(_core(request), _cwd(request), run)
+
+
+@router.post("/api/runs/{run}/ask")
+async def ask_run(run: str, request: Request) -> ask.Asked:
+    """`{cwd, text}` **opens one paid, read-only follow-up session** about an ended run, in the
+    background: it resumes the run's session when it ended under 55 min ago with the same row,
+    grant, head and model, else starts afresh from its summary. It writes nothing and hands back
+    no object, under $0.50 and 3 turns and the daily cap. Refused before spend (`code`): no such
+    run here (`no-run`), a run still going or one already being asked (`unit-busy`), an update,
+    the cap. Its `start` names the `parent_run` and the question; its `end` its own cost."""
+    body = await kernel.body(request)
+    return await ask.ask(
+        _core(request), str(body.get("cwd") or ""), run, str(body.get("text") or "")
+    )
+
+
+@router.post("/api/runs/{run}/answer")
+async def answer_draft(run: str, request: Request) -> ask.Asked:
+    """`{cwd, task, text}`: the person's answers (`text`) to the questions a draft of `run`
+    asked. **Opens one paid session**: the drafting row goes on in its warm session (as a question
+    about a run resumes) with its own grant and ceilings, `submit` kept, and the new draft lands
+    on that run's `end`; else a new run of the row starts from `task` and the answers. Refused
+    before spend as `/ask` is, and for a run that drafted nothing."""
+    body = await kernel.body(request)
+    return await ask.continue_draft(
+        _core(request),
+        str(body.get("cwd") or ""),
+        run,
+        str(body.get("task") or ""),
+        str(body.get("text") or ""),
+    )
+
+
+@router.post("/api/runs/{run}/stop")
+async def stop_run(run: str, request: Request) -> Started:
+    """`{cwd}` stops one agent run or follow-up this process runs in that workspace; it ends
+    `cancelled`. A board step is stopped from its unit."""
+    body = await kernel.body(request)
+    core, cwd = _core(request), str(body.get("cwd") or "")
+    core.ws.check(cwd)
+    if not triggers.stop_run(run, core.ws.key(cwd)):
+        raise Refused("no agent run or follow-up of that id runs in this workspace", ("no-run",))
+    return {"agent": "", "started": False, "run": run}
 
 
 @router.get("/api/runs/{run}/follow")

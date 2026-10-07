@@ -17,7 +17,7 @@ request, so that is how a listener whose session ended is refused.
 - `{"type": "notice", "id", "at", "workspace", "unit", "stage", "kind", "text", "record"}`,
   one per run-log row past `after` that `notices.notice_of` makes a notice, by `id`, none
   twice. `kind` is one of `autopilot-stop`, `questions`, `step-ended`, `ship-refused`,
-  `shipped`, `agent-off` (a triggered run stopped at its ceiling turned its agent off); `record` is the row as stored. Every line opens with `type` then `id`, and the
+  `shipped`, `proposed` and `agent-failed` (the end of an agent run no unit holds), `agent-off` (a triggered run stopped at its ceiling turned its agent off); `record` is the row as stored. Every line opens with `type` then `id`, and the
   listener below reads `id` off that prefix.
 - `{"type": "beat", "id": N}` after `notices.BEAT_SECONDS` (15, chosen) without a line.
   It moves no cursor.

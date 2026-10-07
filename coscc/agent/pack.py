@@ -76,13 +76,16 @@ NAME_MAX = 24
 GLYPH_MAX = 2
 LINE_MAX = 200
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
+# Names no row takes, in any case: the runes of the stages the app runs with no row of their own
+# (pull request, ship) and a name retired with its agent. A row's own name is taken already.
+RESERVED_NAMES = {"Ansuz": "the pull-request stage", "Othala": "the ship stage", "Jera": "retired"}
 
 POLICIES = ("allow", "ask", "off")
 # A row a trigger starts may hold Bash only inside Claude Code's OS sandbox:
 # `{"Bash": {"sandbox": {"network": ["127.0.0.1:3000"]}}}`, each host a loopback one with its port.
 SANDBOX_HOST = re.compile(r"(?:127\.0\.0\.1|localhost|\[::1\]):([0-9]{1,5})")
 # Issued by the engine with the grant, never named by a row.
-ENGINE_TOOLS = ("submit", "peers", "run_agent")
+ENGINE_TOOLS = ("submit", "peers", "run_agent", "ask_agent")
 # What a row's `output.kind` may be: the `submit` kinds, a reply read as it is, a helper.
 # `proposal` hands back work for the Backlog (`coscc/units/proposals.py`); `verdict` grades criteria;
 # `draft` a row or a process for a person to save (`coscc/units/submit.py` `draft_problem`).
@@ -104,6 +107,9 @@ CWDS = ("trunk",)
 THENS = ("proposal-if-no",)
 # A schedule's hours and an event's delay. Chosen: a year.
 HOURS_MAX = 8760
+# A row another agent's run starts (`trigger.event.from`) is at most this many agents after the
+# first of its chain.
+CHAIN_MAX = 2
 # Claude Code's tools known to only read, all of its own a row checked with no catalog may hold.
 KNOWN_READ = ("Read", "Glob", "Grep", "SendMessage", "peers")
 # What a process state may do in place of running an agent: the engine opens the pull request, or
@@ -247,6 +253,7 @@ def check(
     out += _check_tools(row, kind, output.get("by"), catalog)
     out += _check_links(row, rows, skills)
     out += _check_trigger(row, kind, catalog)
+    out += _check_chain(row, rows)
     if output.get("then") is not None and (output["then"] not in THENS or kind != "verdict"):
         out.append(f"output.then: a verdict may have {', '.join(THENS)}")
     if "cwd" in row and (row["cwd"] not in CWDS or not triggered(row)):
@@ -267,6 +274,8 @@ def _check_identity(
         out.append(
             f"name must be 1 to {NAME_MAX} ASCII letters, digits or hyphens, starting with a letter"
         )
+    elif reserved := next((n for n in RESERVED_NAMES if n.lower() == name.lower()), None):
+        out.append(f"name: {reserved} is reserved ({RESERVED_NAMES[reserved]}): take another")
     elif rows and any(
         str(r.get("name") or "").lower() == name.lower() for k, r in rows.items() if k != key
     ):
@@ -420,12 +429,22 @@ def _check_trigger(
     for k in ("manual", "leif"):
         if k in trigger and trigger[k] is not True:
             out.append(f"trigger.{k} is true")
+    # A run a trigger starts is bounded in money by its own row: without `usd` it has no limit.
+    ceilings = row.get("ceilings")
+    if not isinstance(ceilings, dict) or "usd" not in ceilings:
+        out.append("ceilings.usd: a row a trigger starts says what one run may spend")
     if "schedule" in trigger:
         out += _check_hours("trigger.schedule", trigger["schedule"], "hours", required=True)
     if "event" in trigger:
         out += _check_event(row, trigger["event"])
-    if any(k in trigger for k in TRIGGERS if k != "engine"):
+    if reads_only(row):
         held = [t for t, p in (row.get("tools") or {}).items() if p != "off"]
+        asked = [t for t, p in (row.get("tools") or {}).items() if p == "ask"]
+        if asked:
+            out.append(
+                f"tools: a row a trigger starts has no one to ask, so {', '.join(asked)} is "
+                "allow or off"
+            )
         if catalog is None:
             # No catalog at load: a feature's tool (lower case) waits for the run's check, which
             # has the catalog and refuses one that does more than read; Claude Code's own must be
@@ -459,13 +478,25 @@ def _check_hours(where: str, given: Any, key: str, required: bool) -> list[str]:
 
 
 def _check_event(row: Mapping[str, Any], event: Any) -> list[str]:
-    """`{name, after_hours?}`: a bus fact whose payload names the workspace, and the unit when the
-    row reads one."""
-    if not isinstance(event, dict) or not set(event) <= {"name", "after_hours"}:
-        return ["trigger.event is {name, after_hours}"]
+    """`{name, after_hours?, from?}`: a bus fact whose payload names the workspace, and the unit
+    when the row reads one. Every agent's run publishes `agent-run.*`, this row's own too: a row
+    waits only on the end of the one agent `from` names (`_check_chain`)."""
+    if not isinstance(event, dict) or not set(event) <= {"name", "after_hours", "from"}:
+        return ["trigger.event is {name, after_hours, from}"]
     name = event.get("name")
     if name not in bus.NAMES:
         return [f"trigger.event.name: no bus event {name!r}"]
+    if name == "agent-run.started":
+        return [
+            f"trigger.event.name: every run starts with {name}, this one's too: it would start itself"
+        ]
+    if name == "agent-run.ended" and not isinstance(event.get("from"), str):
+        return [
+            "trigger.event.from: name the agent it runs after; on every run's end, its own too, "
+            "it would start itself"
+        ]
+    if "from" in event and name != "agent-run.ended":
+        return ["trigger.event.from: only agent-run.ended names the agent it runs after"]
     fields = bus.fields_of(str(name))
     out = [] if "workspace" in fields else [f"trigger.event.name: {name} names no workspace"]
     raw = row.get("input")
@@ -473,6 +504,79 @@ def _check_event(row: Mapping[str, Any], event: Any) -> list[str]:
     if (given.get("artifacts") or given.get("outputs")) and "unit" not in fields:
         out.append(f"trigger.event.name: {name} names no unit, and the row reads one")
     return out + _check_hours("trigger.event", event, "after_hours", required=False)
+
+
+def after_of(found: Mapping[str, Any] | None) -> str:
+    """The agent whose done run starts `found` (`trigger.event.from`), `""` for none."""
+    trigger = (found or {}).get("trigger")
+    event = trigger.get("event") if isinstance(trigger, dict) else None
+    got = event.get("from") if isinstance(event, dict) else None
+    return got if isinstance(got, str) else ""
+
+
+def _check_chain(row: Mapping[str, Any], rows: Mapping[str, Mapping[str, Any]] | None) -> list[str]:
+    """A row another agent's done run starts (and hands that run's result) is off until the owner
+    turns it on in a workspace, and runs after a row its own trigger starts; among `rows`, no
+    circle and at most `CHAIN_MAX` agents after the first."""
+    key, first = str(row.get("key") or ""), after_of(row)
+    if not first:
+        return []
+    out: list[str] = []
+    if row.get("default") != "off":
+        out.append("default: a row another agent starts is off until you turn it on in a workspace")
+    if first == key:
+        return [*out, "trigger.event.from: an agent cannot run after itself"]
+    if rows is None:
+        return out
+    every = {**rows, key: row}
+    if first not in every:
+        return [*out, f"trigger.event.from: no agent {first}"]
+    if not triggered(every[first]):
+        return [
+            *out,
+            f"trigger.event.from: no event, schedule, press or Leif starts {first}, so it never "
+            "ends a run of its own",
+        ]
+    up, at = [key], first
+    while at:
+        if at in up:
+            names = " runs after ".join(_named(every, k) for k in [*up, at])
+            return [
+                *out,
+                f"trigger.event.from: {names}: agents cannot start each other in a circle",
+            ]
+        up.append(at)
+        at = after_of(every.get(at))
+    chain = [*reversed(up), *_below(key, every)]
+    if len(chain) - 1 > CHAIN_MAX:
+        names = " → ".join(_named(every, k) for k in chain)
+        out.append(
+            f"trigger.event.from: a chain holds at most {CHAIN_MAX} agents after the first, "
+            f"not {len(chain) - 1} ({names})"
+        )
+    return out
+
+
+def _named(rows: Mapping[str, Mapping[str, Any]], key: str) -> str:
+    return str((rows.get(key) or {}).get("name") or key)
+
+
+def _below(
+    key: str, rows: Mapping[str, Mapping[str, Any]], seen: tuple[str, ...] = ()
+) -> list[str]:
+    """The longest line of agents that run after `key`, one after another."""
+    best: list[str] = []
+    for k, r in rows.items():
+        if after_of(r) == key and k not in seen and k != key:
+            line = [k, *_below(k, rows, (*seen, key))]
+            best = line if len(line) > len(best) else best
+    return best
+
+
+def reads_only(found: Mapping[str, Any] | None) -> bool:
+    """Whether a row holds only reading tools, with no one to ask: a trigger starts it, which is
+    what `triggered` says (`_check_trigger`'s rule, and what the page hides from its Tools tab)."""
+    return triggered(found)
 
 
 def triggered(found: Mapping[str, Any] | None, how: str = "") -> bool:
@@ -824,14 +928,35 @@ def _fields(row: Mapping[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k not in _BOOKKEEPING}
 
 
+# A row tried before it is saved (`triggers.trial`), seen only inside that run's context:
+# `[the row, the loaded rows it was laid over, the two together]`.
+_TRIED: ContextVar[list[Any] | None] = ContextVar("pack_tried", default=None)
+
+
+@contextmanager
+def trying(made: Mapping[str, Any]) -> Iterator[None]:
+    """`made` (a whole new row, as `new_row_problems` takes it) among the rows for what starts
+    inside: a task begun here keeps seeing it; nothing is written and nothing else sees it."""
+    token = _TRIED.set([_entry(dict(made), LOCAL_NAME, own=True), None, None])
+    try:
+        yield
+    finally:
+        _TRIED.reset(token)
+
+
 def rows() -> dict[str, dict[str, Any]]:
     """Every agent's effective row: the built-in's in the manifest's order, then each imported
-    pack's, then the owner's own."""
-    return _loaded()
+    pack's, then the owner's own; and the row tried, inside `trying`."""
+    loaded, tried = _loaded(), _TRIED.get()
+    if tried is None:
+        return loaded
+    if tried[1] is not loaded:
+        tried[1:] = [loaded, {**loaded, str(tried[0]["key"]): tried[0]}]
+    return tried[2]
 
 
 def row(key: str) -> dict[str, Any] | None:
-    return _loaded().get(key)
+    return rows().get(key)
 
 
 def problems(key: str, catalog: Mapping[str, str] | None = None) -> list[str]:
@@ -877,15 +1002,21 @@ def pack_version(name: str) -> str:
 
 
 def stamp(key: str, process_ref: str | None = None) -> dict[str, Any]:
-    """What a run of `key` records of its row: `pack`, `row_hash`, `edited`; with the unit's
-    process, `process` and `process_hash`."""
+    """What a run of `key` records of its row: `pack`, `row_hash`, `edited`, `skills` (each skill
+    it or a helper it names is given, as `name@<12 hex of its text>`); with the unit's process,
+    `process` and `process_hash`."""
     found = row(key)
     if found is None:
         return {}
+    named = [*(found.get("skills") or [])]
+    for helper in found.get("helpers") or []:
+        named += (row(helper) or {}).get("skills") or []
+    given = [(n, p) for n in dict.fromkeys(named) if (p := skill_path(n))]
     out = {
         "pack": pack_version(str(found["pack"])),
         "row_hash": hash_of(found),
         "edited": list(found["edited"]),
+        "skills": [f"{n}@{hashlib.sha256(p.read_bytes()).hexdigest()[:12]}" for n, p in given],
     }
     if process(process_ref) is not None:
         out.update(process=process_ref, process_hash=process_hash(process_ref))
@@ -1268,6 +1399,12 @@ class ProcessShown(Process):
     own: bool
 
 
+class AgentFace(TypedDict):
+    key: str
+    name: str
+    glyph: str
+
+
 class PackShown(TypedDict):
     name: str
     version: str
@@ -1275,6 +1412,8 @@ class PackShown(TypedDict):
     on: bool
     process: str
     processes: list[ProcessShown]
+    # Each of its agents as every screen names it: what the studio reads before any screen shows.
+    agents: list[AgentFace]
     # `local`, the owner's own pack; one they imported (which they may remove).
     own: bool
     imported: bool
@@ -1322,6 +1461,11 @@ def packs_shown(data: Any, key: str) -> list[PackShown]:
     whose it is and what does not load."""
     _loaded()
     builtin_name = manifest()["name"]
+    faces: dict[str, list[AgentFace]] = {}
+    for agent, found in rows().items():
+        named = str(found.get("name") or agent)
+        glyph = str(found.get("glyph") or named[:1])
+        faces.setdefault(found["pack"], []).append(AgentFace(key=agent, name=named, glyph=glyph))
     out: list[PackShown] = []
     for name in pack_names():
         info: dict[str, Any] = _CACHE["packs"].get(name) or {"manifest": manifest(), "problems": []}
@@ -1338,6 +1482,7 @@ def packs_shown(data: Any, key: str) -> list[PackShown]:
                     for ref, p in processes().items()
                     if ref.partition("/")[0] == name
                 ],
+                "agents": faces.get(name, []),
                 "own": name == LOCAL_NAME,
                 "imported": name not in (builtin_name, LOCAL_NAME),
                 "problems": list(info["problems"]),
@@ -1422,23 +1567,34 @@ def owner_fields(key: str) -> tuple[dict[str, Any], str]:
     return parse(path.read_text(encoding="utf-8"))
 
 
+# What may be saved with another part, checked as one: a chain's `default` with its `trigger`.
+ALSO = ("default",)
+
+
 def write(
-    key: str, field: str, value: Any, catalog: Mapping[str, str] | None = None
+    key: str,
+    field: str,
+    value: Any,
+    catalog: Mapping[str, str] | None = None,
+    also: Mapping[str, Any] | None = None,
 ) -> tuple[Any, Any]:
     """Set `field` of `key` in the owner's pack: a frontmatter key, `body`, or `skill:<name>` (the
-    text of a skill the row names, for every row naming it). On another pack's row `None`, or that
-    pack's value, resets it; on a whole row of the owner's own `None` removes the key. The row is
-    checked as it would then stand, with `catalog` (`check`); a reason is a `ValueError` and
-    nothing is written. `(old, new)` effective values."""
+    text of a skill the row names, for every row naming it), and with it the frontmatter keys of
+    `also`, checked together (a chain's `trigger` and its `default: off`). On another pack's row
+    `None`, or that pack's value, resets it; on a whole row of the owner's own `None` removes the
+    key. The row is checked as it would then stand, with `catalog` (`check`); a reason is a
+    `ValueError` and nothing is written. `(old, new)` effective values of `field`."""
     found = row(key)
     if found is None:
         raise ValueError(f"no such agent: {key} (use one of {', '.join(rows())})")
-    if field.startswith(SKILL):
+    if field.startswith(SKILL) and not also:
         return _write_skill(found, field.removeprefix(SKILL), value)
     if field not in (*KEYS, BODY):
         raise ValueError(
             f"{field}: no such key (use one of {', '.join((*KEYS, BODY))}, {SKILL}<name>)"
         )
+    if set(also or {}) - set(ALSO):
+        raise ValueError(f"saved with another part: only {', '.join(ALSO)}")
     own = bool(found["own"])
     base = {"key": key} if own else found["builtin"]
     fields, body = owner_fields(key)
@@ -1448,13 +1604,26 @@ def write(
             raise ValueError("the body is text")
         same = not own and value is not None and value.strip() == str(base.get(BODY) or "")
         body = "" if value is None or same else value
-    elif value is None or (not own and value == base.get(field)):
-        fields.pop(field, None)
-    else:
-        fields[field] = value
+    for f, v in (({} if field == BODY else {field: value}) | dict(also or {})).items():
+        if v is None or (not own and v == base.get(f)):
+            fields.pop(f, None)
+        else:
+            fields[f] = v
     after = {**_fields(base), **fields, **({BODY: body.strip()} if body.strip() else {})}
     others = {k: _fields(r) for k, r in rows().items() if k != key}
     reasons = check(after, catalog, {**others, key: after})
+    # A stage's rules are its skills, or the body of a row no built-in ships (`prompt.skill_for`).
+    bare = found["pack"] == manifest()["name"] or not str(after.get(BODY) or "").strip()
+    if (
+        {field, *(also or {})} & {"skills", BODY}
+        and not after.get("skills")
+        and bare
+        and naming(key)
+    ):
+        who = after.get("name") or key
+        reasons.append(
+            f"skills: {who} runs a stage of your process, so it needs at least one skill"
+        )
     if reasons:
         raise ValueError("; ".join(reasons))
     path = owner_dir() / "agents" / f"{key}.md"

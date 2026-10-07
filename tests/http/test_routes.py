@@ -4,6 +4,8 @@ None of these create a session — the guards are exactly the paths that must re
 *before* anything is spawned, so testing them costs nothing. What needs a
 real session is `scripts/verify_0001.py`, which is run on purpose."""
 
+import asyncio
+from datetime import datetime, timezone
 import json
 import os
 import tempfile
@@ -14,7 +16,7 @@ from unittest import mock
 import claude_agent_sdk as sdk
 import httpx
 
-from coscc.agent import pack
+from coscc.agent import pack, policy
 from coscc.kernel import Feature
 from coscc.http.app import build
 from coscc.config import Config
@@ -216,6 +218,17 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         return r.json()
 
+    async def test_the_prompt_preview_shows_the_text_a_run_is_given_and_changes_nothing(self):
+        r = await self.client.get("/api/agents/scan/prompt")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"task": ""})
+        r = await self.client.get("/api/agents/nobody/prompt")
+        self.assertEqual(r.status_code, 400)
+        # A folder that is no workspace is refused, for a triggered row and for any other.
+        for key in ("scan", "spec"):
+            r = await self.client.get(f"/api/agents/{key}/prompt", params={"cwd": "/etc"})
+            self.assertEqual(r.status_code, 400, key)
+
     async def test_set_then_reset(self):
         body = {"key": "spec", "field": "ceilings", "value": {"turns": 30, "usd": 4.0}}
         r = await self.client.post("/api/agents/field", json=body)
@@ -280,8 +293,8 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
             for route in self.app.routes
             if "POST" in getattr(route, "methods", ()) and "agents" in route.path
         ]
-        # New and delete write a row of the owner's pack; the owner's on/off and *Run now* beside
-        # them write none; none writes a grant.
+        # New and delete write a row of the owner's pack; the owner's on/off, *Run now* and *Try
+        # it* beside them write none; none writes a grant.
         self.assertEqual(
             writes,
             [
@@ -290,6 +303,7 @@ class AgentsOverHttp(unittest.IsolatedAsyncioTestCase):
                 "/api/agents/delete",
                 "/api/agents/state",
                 "/api/agents/run",
+                "/api/agents/try",
             ],
         )
 
@@ -324,13 +338,69 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
             r = await self.client.post("/api/agents/state", json=bad)
             self.assertEqual(r.status_code, 400, bad)
 
+    async def test_a_row_says_what_it_is_doing_when_it_runs_next_and_why_it_is_off(self):
+        key = str(self.ws.resolve())
+
+        async def scan():
+            r = await self.client.get("/api/agents", params={"cwd": str(self.ws)})
+            return next(x for x in r.json()["rows"] if x["key"] == "scan")
+
+        body = {"cwd": str(self.ws), "key": "scan", "on": True}
+        await self.client.post("/api/agents/state", json=body)
+        row = await scan()
+        self.assertEqual((row["on_in"], row["running"]), (["ws"], None))
+        # Never run here: it is due now, not one period from now.
+        self.assertLessEqual(
+            row["next_at"], datetime.now(timezone.utc).isoformat(timespec="seconds")
+        )
+        self.assertEqual(row["off_reason"], "")
+        self.core.agents.spent = lambda _cwd: (119.5, 120.0)
+        self.assertIn("daily cap", (await scan())["off_reason"])
+        self.core.agents.spent = lambda _cwd: (1.0, 120.0)
+        from coscc.agent import pack
+        from coscc.store.db import Data
+
+        pack.set_packs(Data(self.root), key, "coscc-sdlc", on=False)
+        self.assertEqual((await scan())["off_reason"], "its pack is off here")
+        pack.set_packs(Data(self.root), key, "coscc-sdlc", on=True)
+        with mock.patch.dict(triggers._RUNNING, {(key, "scan"): ("r9", "2026-10-07T01:00:00Z")}):
+            self.assertEqual(
+                (await scan())["running"], {"run": "r9", "started": "2026-10-07T01:00:00Z"}
+            )
+            live = (await self.client.get("/api/agents/live")).json()
+        self.assertEqual(
+            [(x["agent"], x["name"], x["run"], x["workspace"]) for x in live["running"]],
+            [("scan", "Sowilo", "r9", "ws")],
+        )
+        triggers._turn_off(self.core, self.core.ws.journal(), key, "scan", "at its ceiling")
+        row = await scan()
+        self.assertEqual((row["on"], row["next_at"], row["on_in"]), (False, None, []))
+        self.assertIn("at its ceiling", row["off_reason"])
+        await self.client.post("/api/agents/state", json={**body, "on": False})
+        self.assertEqual((await scan())["off_reason"], "turned off by you")
+
+    async def test_live_lists_pending_proposals_only_with_their_workspace_and_agent(self):
+        from coscc.store.db import Data
+        from coscc.units import proposals
+
+        item = {"type": "fix", "slug": "a-b", "title": "T", "problem": "p" * 250, "sources": ["x"]}
+        key = str(self.ws.resolve())
+        a, b = proposals.add(Data(self.root), key, "scan", "", [item, {**item, "slug": "c-d"}])
+        await proposals.dismiss(Data(self.root), key, b, "no")
+        live = (await self.client.get("/api/agents/live")).json()
+        self.assertEqual(live["running"], [])
+        self.assertEqual(
+            [(x["id"], x["workspace"], x["agent_name"]) for x in live["proposals"]],
+            [(a, "ws", "Sowilo")],
+        )
+
     async def test_run_now_starts_a_manual_run_and_refuses_a_row_it_does_not_start(self):
-        with mock.patch("coscc.http.routes.triggers.start", return_value="r1") as start:
+        with mock.patch("coscc.http.routes.triggers._hold", return_value="r1") as start:
             r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "scan"})
         self.assertEqual(
             (r.status_code, r.json()), (200, {"agent": "scan", "started": True, "run": "r1"})
         )
-        self.assertEqual(start.call_args.kwargs["by"], "manual")
+        self.assertEqual(start.call_args.args[5], "manual")
         r = await self.client.post("/api/agents/run", json={"cwd": str(self.ws), "key": "impl"})
         self.assertEqual((r.status_code, r.json()["code"]), (400, "not-triggered"))
 
@@ -339,6 +409,43 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post("/api/agents/run", json=body)
         self.assertEqual((r.status_code, r.json()["code"]), (400, "no-unit"))
         self.assertEqual(triggers._TASKS, set())
+
+    async def test_asking_a_run_says_its_thread_and_refuses_one_that_is_not_here(self):
+        cwd = str(self.ws)
+        r = await self.client.post("/api/runs/nope/ask", json={"cwd": cwd, "text": "why?"})
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "no-run"))
+        r = await self.client.get("/api/runs/nope/thread", params={"cwd": cwd})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual((r.json()["followups"], r.json()["ask"]["may"]), ([], False))
+        told = {"run": "f1", "resumed": True, "why": ""}
+
+        async def asked(core, cwd_, run, text):
+            return told
+
+        with mock.patch("coscc.http.routes.ask.ask", asked):
+            r = await self.client.post("/api/runs/p1/ask", json={"cwd": cwd, "text": "why?"})
+        self.assertEqual((r.status_code, r.json()), (200, told))
+        self.assertEqual(triggers._TASKS, set())
+
+    async def test_stop_reaches_one_run_of_this_process_and_none_other(self):
+        r = await self.client.post("/api/runs/nope/stop", json={"cwd": str(self.ws)})
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "no-run"))
+        held = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        triggers.spawn(loop, held.wait(), "r2", "another workspace's key")
+        triggers.spawn(loop, held.wait(), "r1", self.core.ws.key(str(self.ws)))
+        # Another workspace's run is not stopped from this one.
+        r = await self.client.post("/api/runs/r2/stop", json={"cwd": str(self.ws)})
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "no-run"))
+        tasks = {t.get_name(): t for t in triggers._TASKS}
+        r = await self.client.post("/api/runs/r1/stop", json={"cwd": str(self.ws)})
+        self.assertEqual(r.status_code, 200)
+        await asyncio.gather(tasks["r1"], return_exceptions=True)
+        self.assertEqual((tasks["r1"].cancelled(), tasks["r2"].done()), (True, False))
+        held.set()
+        await asyncio.gather(*triggers._TASKS, return_exceptions=True)
+        r = await self.client.post("/api/runs/r1/stop", json={"cwd": "/etc"})
+        self.assertEqual(r.status_code, 400)
 
     async def test_proposals_name_their_agent_and_the_owner_decides(self):
         from coscc.store.db import Data
@@ -356,7 +463,10 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         got = r.json()
         self.assertEqual(got["proposals"][0]["agent_name"], "Sowilo")
-        self.assertEqual(got["agents"], [{"key": "scan", "name": "Sowilo", "on": False}])
+        self.assertEqual(
+            got["agents"],
+            [{"key": "scan", "name": "Sowilo", "on": False, "after": "", "after_on": None}],
+        )
         r = await self.client.post(
             f"/api/proposals/{pid}", json={"cwd": str(self.ws), "action": "accept", "slug": "No"}
         )
@@ -368,6 +478,67 @@ class TriggersAndProposalsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             (r.status_code, r.json()["state"], r.json()["by"]), (200, "dismissed", "owner")
         )
+
+    async def test_a_drafts_gap_becomes_one_pending_proposal_in_the_drafts_words(self):
+        key = str(self.ws.resolve())
+        journal = self.core.ws.journal()
+        gap = {"part": "trigger", "need": "a time of day", "instead": "every 24 h"}
+        for run, extra in (
+            ("r-gap", {"draft": {"why": "stuck units", "gaps": [gap]}}),
+            ("r-no", {}),
+        ):
+            journal.started(key, "", "dagaz", "manual", run=run, started_by="manual")
+            journal.finished(key, "", "dagaz", "done", run=run, agent="dagaz", **extra)
+        body = {"cwd": str(self.ws), "run": "r-gap", "gap": 0}
+        r = await self.client.post("/api/proposals", json=body)
+        self.assertEqual(r.status_code, 200, r.text)
+        got = r.json()
+        self.assertEqual((got["agent"], got["state"], got["run"]), ("dagaz", "pending", "r-gap"))
+        self.assertEqual([s["id"] for s in got["sources"]], ["r-gap"])
+        self.assertIn("a time of day", got["title"])
+        self.assertEqual((await self.client.post("/api/proposals", json=body)).status_code, 400)
+        for bad in (
+            {**body, "gap": 1},
+            {**body, "gap": "0"},
+            {**body, "gap": True},
+            {**body, "run": "r-no"},
+            {**body, "run": "nope"},
+            {**body, "cwd": "/etc"},
+        ):
+            r = await self.client.post("/api/proposals", json=bad)
+            self.assertEqual(r.status_code, 400, bad)
+        from coscc.store.db import Data
+        from coscc.units import proposals
+
+        self.assertEqual(len(proposals.listed(Data(self.root), key)), 1)
+
+    async def test_answers_go_only_to_a_draft_and_are_refused_before_spend(self):
+        key = str(self.ws.resolve())
+        journal = self.core.ws.journal()
+        journal.started(key, "", "scan", "manual", run="r-scan", trigger="manual", agent="scan")
+        journal.finished(key, "", "scan", "done", run="r-scan", agent="scan", session_id="s")
+        body = {"cwd": str(self.ws), "task": "code quality", "text": "1. All of it"}
+        for run, extra in (("nope", {}), ("r-scan", {}), ("r-scan", {"text": ""})):
+            r = await self.client.post(f"/api/runs/{run}/answer", json={**body, **extra})
+            self.assertEqual(r.status_code, 400, (run, r.text))
+        self.assertEqual(journal.records(key, kinds=("start",))[-1]["run"], "r-scan")
+
+    async def test_a_trial_of_an_unsaved_row_is_refused_before_spend_and_saves_no_row(self):
+        from coscc.agent import pack
+        from tests.units.test_submit import _draft_agent
+
+        made = _draft_agent(tools={"Write": "allow"})
+        body = {"cwd": str(self.ws), "key": "tidy", "fields": made["fields"], "body": "Read."}
+        for bad in (
+            body,
+            {**body, "fields": "x"},
+            {**body, "cwd": "/etc"},
+            {**body, "key": "scan"},
+        ):
+            r = await self.client.post("/api/agents/try", json=bad)
+            self.assertEqual(r.status_code, 400, bad)
+        self.assertIsNone(pack.row("tidy"))
+        self.assertEqual(triggers._TASKS, set())
 
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
@@ -2480,3 +2651,63 @@ class OwnAgentsAndPacksOverHttp(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post(f"/api/packs/import?cwd={self.cwd}", content=out.getvalue())
         self.assertEqual(r.status_code, 400)
         self.assertIn("coder: a vault secret names an agent coder", r.json()["reasons"])
+
+
+class SkillsOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`/api/skills`: every skill with its uses; `/api/skills/new` writes one into the owner's layer
+    and gives it to an agent, or refuses with a 400 and writes nothing."""
+
+    asyncSetUp = PacksOverHttp.asyncSetUp
+
+    async def post(self, **body):
+        return await self.client.post("/api/skills/new", json={"cwd": self.cwd, **body})
+
+    async def test_a_new_skill_given_to_an_agent_is_listed_named_and_counted(self):
+        r = await self.post(name="note-taking", text="Write down what you found.", agent="scout")
+        self.assertEqual(r.status_code, 200, r.text)
+        mine = next(s for s in r.json()["skills"] if s["name"] == "note-taking")
+        self.assertEqual(
+            (mine["pack"], mine["own"], mine["agents"]),
+            ("local", True, [{"key": "scout", "name": "Scout"}]),
+        )
+        self.assertEqual(mine["uses_30d"], 0)
+        self.assertEqual((pack.row("scout") or {})["skills"], ["note-taking"])
+        core = self.app.state.core
+        logged = core.ws.journal().records(None, kind="agent-setting")
+        self.assertEqual(
+            [(r["agent"], r["field"], r["new"], r["by"]) for r in logged][:1],
+            [("scout", "skill:note-taking", "new", "owner")],
+        )
+        self.assertEqual([r["field"] for r in logged], ["skill:note-taking", "skills"])
+        run = core.models.agent("scout", policy.row_for("scout"))
+        self.assertTrue(run.system.endswith("Write down what you found."))
+        self.assertRegex(pack.stamp("scout")["skills"][0], r"^note-taking@[0-9a-f]{12}$")
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        core.ws.journal().started(
+            core.ws.key(self.cwd), "", "scout", "manual", skills=["note-taking@abc"], at=now
+        )
+        got = (await self.client.get("/api/skills")).json()
+        mine = next(s for s in got["skills"] if s["name"] == "note-taking")
+        self.assertEqual(mine["uses_30d"], 1)
+
+    async def test_a_bad_name_a_taken_name_bad_text_or_no_such_agent_is_a_400(self):
+        for body in (
+            {"name": "../evil", "text": "x"},
+            {"name": "write-intent", "text": "x"},
+            {"name": "fine", "text": ""},
+            {"name": "fine", "text": "x" * 16_001},
+            {"name": "fine", "text": "x", "agent": "nobody"},
+        ):
+            with self.subTest(body=body["name"]):
+                r = await self.post(**body)
+                self.assertEqual(r.status_code, 400, body)
+        self.assertFalse((pack.owner_dir() / "skills").exists())
+        self.assertEqual(self.app.state.core.ws.journal().records(None, kind="agent-setting"), [])
+        r = await self.post(name="loose", text="Cite sources.")
+        self.assertEqual(r.status_code, 200)
+        (logged,) = self.app.state.core.ws.journal().records(None, kind="agent-setting")
+        self.assertEqual((logged["agent"], logged["field"]), ("", "skill:loose"))
+        with mock.patch.object(pack, "_atomic", side_effect=OSError("disk full")):
+            r = await self.post(name="full", text="x")
+        self.assertEqual((r.status_code, pack.skill_path("full")), (400, None))
+        self.assertIn("disk full", r.text)

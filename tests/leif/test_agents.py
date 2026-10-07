@@ -5,14 +5,15 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest import mock
 
 from coscc import kernel
 from coscc.config import Config
 from coscc.agent import models, pack, policy
 from coscc.runner import run as run_mod
+from coscc.runner import triggers
 from coscc.units import contracts
 from coscc.store.db import Data
 from coscc.http.app import Core
@@ -113,6 +114,27 @@ class AFieldIsCheckedSavedAndLogged(_WithAService):
                 self.core.agents.set_agent_field(key, field, value)
         self.assertEqual(pack.owner_fields("spec"), ({}, ""))
         self.assertEqual(self._settings(), [])
+
+    def test_a_chain_saves_its_default_with_it_and_logs_both(self):
+        chain = {"event": {"name": "agent-run.ended", "from": "outcome"}, "manual": True}
+        self.core.agents.set_agent_field("scan", "default", "on")
+        with self.assertRaises(Invalid):
+            self.core.agents.set_agent_field(
+                "scan",
+                "trigger",
+                {**chain, "event": {"name": "agent-run.ended", "from": "scan"}},
+                also={"default": "off"},
+            )
+        self.assertEqual(pack.row("scan")["default"], "on")
+        self.core.agents.set_agent_field("scan", "trigger", chain, also={"default": "off"})
+        self.assertEqual(
+            [(f, new) for _, f, _, new, _ in self._settings()][-2:],
+            [("trigger", chain), ("default", "off")],
+        )
+        for wrong in (["default"], {"output": {"kind": "x"}}, {"input": {"data": []}}):
+            with self.assertRaises(Invalid, msg=wrong):
+                self.core.agents.set_agent_field("scan", "trigger", None, also=wrong)
+        self.assertEqual(pack.after_of(pack.row("scan")), "outcome")
 
     def test_an_empty_value_puts_the_builtin_back(self):
         self.core.agents.set_agent_field("spec", "body", "Another role.")
@@ -223,7 +245,10 @@ class EveryPartReachesTheNextRun(_WithAService):
         self.assertIn("note", json.dumps(contracts.schema("spec")))
         self.core.agents.set_agent_field("spec", "body", "Begin with MARKER-M4.")
         agent = self.core.models.agent("spec", policy.row_for("spec"))
-        self.assertEqual(agent.system, "Begin with MARKER-M4.")
+        # A run with no stage prompt gets the row's skills after its body (`skills.system`).
+        self.assertEqual(
+            agent.system, f"Begin with MARKER-M4.\n\n{pack.skill('write-spec').strip()}"
+        )
         self.core.agents.set_agent_field("spec", "skill:write-spec", "# Write a spec\n\nShort.")
         self.assertEqual(pack.skill("write-spec"), "# Write a spec\n\nShort.\n")
         row = self._row(self.core.agents.agent_page(now=NOW), "spec")
@@ -278,7 +303,7 @@ class ThePage(_WithAService):
         setting |= {"at": _at(6), "agent": "spec", "field": "body", "old": "x", "new": "y"}
         seed += [setting, _end("impl", "done", 2, cost=1.0), _end("impl", "failed", 1, cost=0.25)]
         self._seed(sorted(seed, key=lambda r: r["at"]))
-        page = self.core.agents.agent_page(now=NOW)
+        page = self.core.agents.agent_page(now=NOW, agent="spec")
         spec = self._row(page, "spec")
         self.assertEqual([g["row_hash"] for g in spec["groups"]], ["b", "a"])
         newest, older = spec["groups"]
@@ -297,7 +322,7 @@ class ThePage(_WithAService):
     def test_a_run_view_says_its_log_who_started_it_and_a_skip(self):
         base = {"v": 1, "workspace": "w", "unit": "", "stage": "scan"}
         started = base | {"kind": "start", "at": _at(3), "started_by": "leif"}
-        kept = _end("scan", "done", 3, cost=0.1, unit="") | {"run": "abc123"}
+        kept = _end("scan", "done", 3, cost=0.1, unit="") | {"run": "abc123", "proposals": 4}
         skip = _end("scan", "done", 2, cost=0.0, unit="") | {
             "skipped": True,
             "detail": "nothing new since its last run",
@@ -307,11 +332,12 @@ class ThePage(_WithAService):
         self._seed([started, kept, base | {"kind": "start", "at": _at(2)}, skip, old])
         runs = [
             r
-            for g in self._row(self.core.agents.agent_page(now=NOW), "scan")["groups"]
+            for g in self._row(self.core.agents.agent_page(now=NOW, agent="scan"), "scan")["groups"]
             for r in g["runs"]
         ]
         by = {r["at"]: r for r in runs}
         self.assertEqual((by[_at(3)]["run"], by[_at(3)]["started_by"]), ("abc123", "leif"))
+        self.assertEqual((by[_at(3)]["made"], by[_at(2)]["made"]), (4, None))
         self.assertEqual(
             (
                 by[_at(2)]["skipped"],
@@ -322,10 +348,189 @@ class ThePage(_WithAService):
             (True, "nothing new since its last run", "", "manual"),
         )
         self.assertEqual((by[_at(1)]["skipped"], by[_at(1)]["run"]), (False, ""))
+        # Only a run that kept a session can be asked a question.
+        self.assertEqual((by[_at(1)]["session"], by[_at(3)]["session"]), (True, False))
+
+    def test_a_question_to_a_run_counts_only_to_the_asked_agents_cost(self):
+        self._seed(
+            [
+                _end("scan", "done", 2, cost=0.1, unit="") | {"agent": "scan"},
+                _end("ask", "done", 1, cost=0.02, unit="") | {"agent": "scan", "parent_run": "r"},
+            ]
+        )
+        page = self.core.agents.agent_page(now=NOW, agent="scan")
+        scan = self._row(page, "scan")
+        # Its cost counts; it is not a run: not its last, not in its count, groups or chip.
+        self.assertEqual((scan["runs_30d"], scan["cost_30d"]), (1, 0.12))
+        self.assertEqual(scan["last"]["at"], _at(2))
+        self.assertEqual([r["at"] for g in scan["groups"] for r in g["runs"]], [_at(2)])
+        self.assertNotIn("ask", [r["key"] for r in page["rows"]])
+
+    def test_only_the_agent_asked_for_holds_its_runs_and_a_skip_is_no_run(self):
+        base = {"v": 1, "workspace": "w", "unit": "", "stage": "scan"}
+        skip = _end("scan", "done", 2, cost=0.0, unit="") | {"skipped": True}
+        ran = _end("scan", "done", 1, cost=0.2, unit="") | {"run": "r1"}
+        self._seed([base | {"kind": "start", "at": _at(1)}, skip, ran])
+        page = self.core.agents.agent_page(now=NOW)
+        scan = self._row(page, "scan")
+        self.assertEqual((scan["groups"], scan["runs_30d"], scan["skips_30d"]), ([], 1, 1))
+        self.assertEqual(scan["cost_30d"], 0.2)
+        got = self._row(self.core.agents.agent_page(now=NOW, agent="scan"), "scan")
+        self.assertEqual(sum(len(g["runs"]) for g in got["groups"]), 2)  # the skip is listed
+
+    def test_a_run_counts_its_refused_calls_and_helpers_and_is_shallow_when_refused(self):
+        from coscc.store.db import Data
+
+        base = {"v": 1, "workspace": "w", "unit": "", "stage": "scan"}
+        clean = _end("scan", "done", 2, unit="") | {"run": "clean"}
+        refused = _end("scan", "done", 1, unit="") | {"run": "cut", "verdict": "met"}
+        unclear = _end("scan", "done", 3, unit="") | {"run": "weak", "verdict": "unclear"}
+        self._seed([base | {"kind": "start", "at": _at(1)}, clean, refused, unclear])
+        with Data(self.core.config.data_dir).write() as conn:
+            for seq, (run, kind) in enumerate(
+                [("cut", "denied"), ("cut", "denied"), ("cut", "worker_start"), ("clean", "text")]
+            ):
+                conn.execute(
+                    "INSERT INTO step_events (run, seq, at, kind, event, bytes) "
+                    "VALUES (?, ?, 0, ?, '{}', 2)",
+                    (run, seq, kind),
+                )
+        got = self._row(self.core.agents.agent_page(now=NOW, agent="scan"), "scan")
+        by = {r["run"]: r for g in got["groups"] for r in g["runs"]}
+        self.assertEqual(
+            (by["cut"]["refused"], by["cut"]["helpers"], by["cut"]["shallow"]), (2, 1, True)
+        )
+        self.assertEqual((by["clean"]["refused"], by["clean"]["shallow"]), (0, False))
+        self.assertEqual((by["weak"]["shallow"], by["weak"]["verdict"]), (True, "unclear"))
+
+    def test_proposals_are_counted_by_what_became_of_them(self):
+        from coscc.store.db import Data
+
+        with Data(self.core.config.data_dir).write() as conn:
+            for state in ("accepted", "dismissed", "dismissed", "pending"):
+                conn.execute(
+                    "INSERT INTO proposals (workspace, agent, type, slug, title, problem, "
+                    "sources, decision, at) VALUES ('w', 'scan', 'fix', 's', 't', 'p', '[]', ?, ?)",
+                    (state, _at(1)),
+                )
+        scan = self._row(self.core.agents.agent_page(now=NOW), "scan")
+        self.assertEqual((scan["accepted_30d"], scan["dismissed_30d"], scan["pending"]), (1, 2, 1))
+
+    def test_builtin_holds_only_the_parts_the_owner_edited(self):
+        before = self._row(self.core.agents.agent_page(), "spec")
+        self.assertEqual((before["builtin"], [s["builtin"] for s in before["skills"]]), ({}, [""]))
+        self.core.agents.set_agent_field("spec", "body", "New.")
+        after = self._row(self.core.agents.agent_page(), "spec")
+        self.assertEqual(list(after["builtin"]), ["body"])
+        self.assertNotEqual(after["builtin"]["body"], "New.")
+
+    def test_a_failed_latest_run_is_live_until_a_later_run_does_not_fail(self):
+        now = datetime.now(timezone.utc)
+        failed = _end("scan", "failed", 1, unit="") | {
+            "run": "r1",
+            "agent": "scan",
+            "detail": "boom",
+            "at": (now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        }
+        self._seed([failed])
+        listed = {"workspaces": [{"name": "proj", "path": "w", "missing": False}], "paths": ["w"]}
+        self.enterContext(mock.patch.object(self.core.ws, "all", return_value=listed))
+        self.enterContext(mock.patch.object(self.core.ws, "key", side_effect=lambda p: p))
+        pack.set_agent_on(self.data, "scan", "w", True)
+        [got] = self.core.agents.live()["failed"]
+        self.assertEqual(
+            (got["workspace"], got["agent"], got["run"], got["detail"]),
+            ("proj", "scan", "r1", "boom"),
+        )
+        later = {"run": "r2", "agent": "scan", "at": now.isoformat(timespec="seconds")}
+        self._seed([_end("scan", "done", 0, unit="") | later])
+        self.assertEqual(self.core.agents.live()["failed"], [])
+
+    def test_a_failed_trial_is_no_run_of_the_agent_saved_later_under_its_key(self):
+        now = datetime.now(timezone.utc)
+        tried = _end("trial", "failed", 1, unit="", cost=0.05) | {
+            "run": "t1",
+            "agent": "tidy",
+            "started_by": "trial",
+            "trial": True,
+            "at": (now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        }
+        self._seed([{**tried, "kind": "start"}, tried])
+        pack.new_row("tidy", "Tidy", "scan")
+        listed = {"workspaces": [{"name": "proj", "path": "w", "missing": False}], "paths": ["w"]}
+        self.enterContext(mock.patch.object(self.core.ws, "all", return_value=listed))
+        self.enterContext(mock.patch.object(self.core.ws, "key", side_effect=lambda p: p))
+        pack.set_agent_on(self.data, "tidy", "w", True)
+        self.assertEqual(self.core.agents.live()["failed"], [])
+        tidy = self._row(self.core.agents.agent_page(agent="tidy"), "tidy")
+        self.assertEqual((tidy["runs_30d"], tidy["cost_30d"], tidy["last"]), (0, 0.0, None))
+        self.assertEqual([r for g in tidy["groups"] for r in g["runs"]], [])
+        self.assertNotEqual(tidy["chip"], "failed")
+
+    def test_a_failed_run_of_an_agent_turned_off_is_not_held_up(self):
+        now = datetime.now(timezone.utc)
+        failed = _end("scan", "failed", 1, unit="") | {
+            "run": "r1",
+            "agent": "scan",
+            "at": (now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        }
+        old = failed | {
+            "stage": "scan",
+            "agent": "scan",
+            "run": "r0",
+            "at": "2020-01-01T00:00:00+00:00",
+        }
+        self._seed([old, failed])
+        listed = {"workspaces": [{"name": "proj", "path": "w", "missing": False}], "paths": ["w"]}
+        self.enterContext(mock.patch.object(self.core.ws, "all", return_value=listed))
+        self.enterContext(mock.patch.object(self.core.ws, "key", side_effect=lambda p: p))
+        pack.set_agent_on(self.data, "scan", "w", True)
+        self.assertEqual(len(self.core.agents.live()["failed"]), 1)
+        pack.set_agent_on(self.data, "scan", "w", False)
+        self.assertEqual(len(self.core.agents.live()["failed"]), 1)
+        self._seed([dict(triggers.state_record("w", "scan", False, "owner"), at=now.isoformat())])
+        self.assertEqual(self.core.agents.live()["failed"], [])
+
+    def test_a_failure_of_an_agent_off_here_stays_listed_unless_it_was_turned_off_after(self):
+        now = datetime.now(timezone.utc)
+        failed = _end("scan", "failed", 1, unit="") | {
+            "run": "r1",
+            "agent": "scan",
+            "at": (now - timedelta(hours=2)).isoformat(timespec="seconds"),
+        }
+        self._seed([failed])
+        listed = {"workspaces": [{"name": "proj", "path": "w", "missing": False}], "paths": ["w"]}
+        self.enterContext(mock.patch.object(self.core.ws, "all", return_value=listed))
+        self.enterContext(mock.patch.object(self.core.ws, "key", side_effect=lambda p: p))
+        pack.set_agent_on(self.data, "scan", "w", False)
+        self.assertEqual(len(self.core.agents.live()["failed"]), 1)
+
+    def test_an_off_reason_comes_from_the_runs_outcome_not_from_logged_words(self):
+        from coscc.leif.agents import _off_reason
+
+        app = {"by": "app", "reason": "a run stopped at its ceiling: stopped at its ceiling: x"}
+        paused = [{"outcome": "paused-budget"}]
+        self.assertEqual(_off_reason(app, paused), "its last run stopped at its ceiling")
+        self.assertEqual(_off_reason(app, [{"outcome": "done"}]), app["reason"])
+        self.assertEqual(_off_reason({"by": "owner"}, paused), "turned off by you")
+
+    def test_a_pause_or_a_stop_is_not_called_a_failure(self):
+        from coscc.leif.agents import chip_of
+
+        def last(outcome):
+            return {"outcome": outcome, "cost_usd": None}
+
+        self.assertEqual(
+            [
+                chip_of(last(o), None, 1)
+                for o in ("failed", "paused-budget", "cancelled", "stopped")
+            ],
+            ["failed", "paused", "stopped", "stopped"],
+        )
 
     def test_a_setting_since_the_last_run_heads_a_group_of_no_run(self):
         self.core.agents.set_agent_field("spec", "body", "New.")
-        [group] = self._row(self.core.agents.agent_page(), "spec")["groups"]
+        [group] = self._row(self.core.agents.agent_page(agent="spec"), "spec")["groups"]
         self.assertEqual((group["runs"], group["settings"][0]["new"]), ([], "New."))
 
     def test_a_bad_owner_file_shows_its_problem(self):

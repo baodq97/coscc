@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import type { AgentRow } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { LeifAvatar, Rune } from "../lib/icons";
-import { modelName, money } from "../lib/format";
+import { ago, modelName, money, until } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { Link, navigate, useQuery } from "../lib/router";
 import { isBuiltIn, packTitle, type BuildAgent } from "../lib/build";
@@ -14,10 +14,10 @@ import { NewAgent } from "../components/NewAgent";
 import { Button, Chip, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 export const GROUPS: { key: AgentRow["group"]; title: string; lede: string }[] = [
+  { key: "triggered", title: "Periodic and on request", lede: "A schedule, an event, your press or Leif starts these; they only read." },
   { key: "stage", title: "Stage agents", lede: "Each opens when a unit reaches its state." },
   { key: "engine", title: "Engine agents", lede: "The app opens these itself, or on your press." },
   { key: "helper", title: "Helpers", lede: "Started by another agent inside its run." },
-  { key: "triggered", title: "Periodic and on request", lede: "A schedule, an event, your press or Leif starts these; they only read." },
 ];
 
 const ENGINE_WORDS: Record<string, string> = {
@@ -26,7 +26,21 @@ const ENGINE_WORDS: Record<string, string> = {
   chat: "when you talk to Leif",
 };
 
-const EVENT_WORDS: Record<string, string> = { "unit.shipped": "a ship" };
+const EVENT_WORDS: Record<string, string> = {
+  "unit.shipped": "a ship",
+  "unit.merged": "a merge",
+  "chat-turn.ended": "a chat turn",
+};
+
+/** The name of the agent `key`, from `rows`, else the key. */
+const nameOf = (key: string, rows: AgentRow[]) => rows.find((r) => r.key === key)?.row.name ?? key;
+
+/** How often a schedule runs: `24` is "daily", `168` "weekly", `48` "every 2 days", `6` "every 6 hours". */
+export function everyWords(h: number): string {
+  if (h === 24) return "daily";
+  if (h === 168) return "weekly";
+  return h % 24 ? `every ${h} hours` : `every ${h / 24} days`;
+}
 
 /** `168` is "7 days", `24` "1 day", `6` "6 h". */
 export function hoursWords(h: number): string {
@@ -37,15 +51,18 @@ export function hoursWords(h: number): string {
 /** When an agent runs, in words: its trigger, or who starts a helper. */
 export function triggerWords(a: AgentRow, rows: AgentRow[] = []): string {
   const t = a.row.trigger ?? {};
-  if (t.state) return `on state ${t.state}`;
+  if (t.state) return `when a unit reaches ${t.state.split(" ")[0]}`;
   if (t.engine) return ENGINE_WORDS[t.engine] ?? `by the engine (${t.engine})`;
   const said: string[] = [];
-  if (t.schedule) said.push(`every ${t.schedule.hours} h`);
-  if (t.event) {
-    const what = EVENT_WORDS[t.event.name ?? ""] ?? t.event.name;
+  if (t.schedule) said.push(everyWords(t.schedule.hours));
+  if (t.event?.from) {
+    const who = nameOf(t.event.from, rows);
+    said.push(t.event.after_hours ? `${hoursWords(t.event.after_hours)} after ${who} ends` : `after ${who}`);
+  } else if (t.event) {
+    const what = EVENT_WORDS[t.event.name ?? ""] ?? (t.event.name ?? "").replace(/[.-]/g, " ");
     said.push(t.event.after_hours ? `${hoursWords(t.event.after_hours)} after ${what}` : `on ${what}`);
   }
-  if (t.manual || t.leif) said.push("on request");
+  if (t.manual || t.leif) said.push("when you or Leif ask");
   if (said.length) return said.join(", ");
   if (a.group === "helper") {
     const by = rows.filter((r) => (r.row.helpers ?? []).includes(a.key)).map((r) => r.row.name ?? r.key);
@@ -57,10 +74,37 @@ export function triggerWords(a: AgentRow, rows: AgentRow[] = []): string {
 /** What needs a look on a line, worst first: a problem stops its runs, then the last run's chip. */
 export function attention(a: AgentRow): { tone: "red" | "amber"; label: string } | null {
   if (a.problems.length) return { tone: "red", label: "Cannot run" };
+  // A run in flight is the news: its last run's chip waits.
+  if (a.running) return null;
   if (a.chip === "failed") return { tone: "red", label: "Last run failed" };
+  if (a.chip === "paused") return { tone: "amber", label: "Paused at its ceiling" };
   if (a.chip === "costly") return { tone: "amber", label: "Near its $ ceiling" };
   return null;
 }
+
+/** Whether the agent is on or off here, and why: the first part of `statusWords`. */
+export function onHere(a: AgentRow, here: string): string {
+  if (a.on === null) return "Always on";
+  const held = a.on && a.off_reason ? ` · ${a.off_reason}` : "";
+  const elsewhere = a.on_in.filter((n) => n !== here);
+  const also = elsewhere.length ? ` (${a.on ? "also on" : "on"} in ${elsewhere.join(", ")})` : "";
+  return a.on ? `On here${also}${held}` : `Off here${a.off_reason ? `: ${a.off_reason}` : ""}${also}`;
+}
+
+const RAN: Record<string, string> = { failed: "failed", cancelled: "stopped", stopped: "stopped", "paused-budget": "paused" };
+
+/** Where an agent stands, in a line: on or off here, its last run and what it made, its next run. */
+export function statusWords(a: AgentRow, here: string): string {
+  const said = [onHere(a, here)];
+  if (a.running) said.push("running now");
+  else if (a.last) said.push(`${a.last.skipped ? "skipped" : RAN[a.last.outcome ?? ""] ?? "ran"} ${ago(a.last.at)}${a.last.made != null ? `, last run proposed ${a.last.made}` : ""}`);
+  else said.push("never ran");
+  if (a.next_at && !a.running) said.push(`next ${until(a.next_at)}`);
+  return said.join(" · ");
+}
+
+/** The address of a run the app holds now, which the run page follows live. */
+export const liveRun = (a: AgentRow, workspace?: Workspace) => (a.running && workspace ? `/run/${workspace.name}/${a.running.run}` : "");
 
 export function AgentGlyph({ a, size = "" }: { a: AgentRow; size?: "" | "lg" | "xl" }) {
   if (a.key === "leif") return <LeifAvatar size={size} />;
@@ -104,14 +148,19 @@ export function useRunWorkspace(run: string, list: { path: string }[]): string |
 export const inWorkspace = (to: string, w?: Workspace) => (w ? `${to}?ws=${encodeURIComponent(w.name)}` : to);
 
 /** The agents of the workspace the address names: one read gives every row and the catalog. */
-export function useAgents() {
+export function useAgents(only = "") {
   const ws = useResource("/api/workspaces");
   const list = ws.data?.workspaces ?? [];
-  const named = useQuery("ws");
+  // The chosen project stays chosen while the person moves between pages.
+  const urlNamed = useQuery("ws");
   const draft = useQuery("draft");
+  const named = urlNamed || (draft ? "" : sessionStorage.getItem("agents.ws") || "");
   const ofRun = useRunWorkspace(named ? "" : draft, list);
   const workspace = pickWorkspace(list, named, ofRun);
-  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path } : {});
+  useEffect(() => {
+    if (workspace) sessionStorage.setItem("agents.ws", workspace.name);
+  }, [workspace?.name]);
+  const agents = useResource(workspace ? "/api/agents" : null, workspace ? { cwd: workspace.path, ...(only ? { agent: only } : {}) } : {}, { on: ["agent-run."], every: 60_000, wait: 0 });
   return { ws, list, workspace, cwd: workspace?.path ?? "", agents };
 }
 
@@ -121,7 +170,7 @@ export function WorkspaceSwitch({ list, workspace, to }: { list: Workspace[]; wo
   return (
     <label className="row faint" style={{ gap: 6, fontSize: 12.5 }}>
       Project
-      <select className="input sm" value={workspace.name} onChange={(e) => navigate(`${to}?ws=${encodeURIComponent(e.target.value)}`)}>
+      <select className="input sm" style={{ width: "auto", maxWidth: 240 }} value={workspace.name} onChange={(e) => navigate(`${to}?ws=${encodeURIComponent(e.target.value)}`)}>
         {list.map((w) => (
           <option key={w.path} value={w.name}>
             {w.name}
@@ -153,16 +202,16 @@ export function Agents() {
   const packs = [...new Set(idle.map(packTitle))].sort((a, b) => (a === "Yours" ? -1 : b === "Yours" ? 1 : a.localeCompare(b)));
   return (
     <div className="page" style={{ maxWidth: 1040 }}>
-      <PageHead
-        title="Agents"
-        lede="Every agent the app runs: when it runs, on what model, what it may do and what it cost. Open one to change any part; its next run uses the change."
-        actions={
-          <>
-            <WorkspaceSwitch list={list} workspace={workspace} to="/agents" />
-            <Button kind="primary" icon="plus" disabled={!agents.data} onClick={() => setAdding(true)}>New agent</Button>
-          </>
-        }
-      />
+      <div className="agents-head">
+        <PageHead
+          title="Agents"
+          lede="Every agent the app runs: when it runs, on what model, what it may do and what it cost. Open one to change any part; its next run uses the change."
+        />
+        <div className="agents-tools">
+          <WorkspaceSwitch list={list} workspace={workspace} to="/agents" />
+          <Button kind="primary" icon="plus" disabled={!agents.data} onClick={() => setAdding(true)}>New agent</Button>
+        </div>
+      </div>
       {adding && agents.data && <NewAgent rows={rows} catalog={agents.data.catalog} cwd={cwd} run={run || undefined} onClose={() => setAdding(false)} />}
       {agents.state === "error" ? (
         <ErrorState error={agents.error} onRetry={agents.reload} />
@@ -218,13 +267,14 @@ export function Agents() {
 
 function AgentLine({ a, rows, workspace }: { a: AgentRow; rows: AgentRow[]; workspace?: Workspace }) {
   const look = attention(a);
+  const live = liveRun(a, workspace);
   const whose = isBuiltIn(a as BuildAgent) ? "" : packTitle(a as BuildAgent);
   return (
     <Link to={inWorkspace(`/agents/${a.key}`, workspace)} className="agent-line">
       <AgentGlyph a={a} />
       <span className="who">
         <b>{a.row.name ?? a.key}</b> <span className="faint mono">{a.key}</span>
-        <span className="when">{triggerWords(a, rows)}</span>
+        <span className="when">{[statusWords(a, workspace?.name ?? ""), triggerWords(a, rows)].filter(Boolean).join(" · ")}</span>
       </span>
       <span className="what">
         {modelName(a.config.model)}
@@ -240,6 +290,25 @@ function AgentLine({ a, rows, workspace }: { a: AgentRow; rows: AgentRow[]; work
         )}
       </span>
       <span className="marks">
+        {a.running && (
+          <Chip square tone="accent">
+            <span className="dot live" /> running
+            {live && (
+              <span
+                role="link"
+                tabIndex={0}
+                className="live-link"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigate(live);
+                }}
+              >
+                {" "}▸ live
+              </span>
+            )}
+          </Chip>
+        )}
         {whose && <Chip square tone={whose === "Yours" ? "accent" : "plain"}>{whose === "Yours" ? "yours" : whose}</Chip>}
         {look && <Chip square tone={look.tone}>{look.label}</Chip>}
         {a.edited.length > 0 && <Chip square tone="accent">edited</Chip>}

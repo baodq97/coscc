@@ -59,6 +59,21 @@ class ARecordSurvivesAndIsStamped(unittest.TestCase):
             self.assertIn("this is not json", stored)
 
 
+class ARunAndASessionAreFoundByTheirIds(unittest.TestCase):
+    def test_where_narrows_by_one_field_and_kind_and_a_session_costs_its_ends(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("ws", "", "scan", "manual", run="r1")
+            j.finished("ws", "", "scan", "done", run="r1", session_id="s1", cost_usd=0.4)
+            j.finished("ws", "", "ask", "done", run="r2", session_id="s1", cost_usd=0.05)
+            j.finished("ws", "", "scan", "done", run="r3", session_id="s2", cost_usd=1.0)
+            self.assertEqual([r["kind"] for r in j.where("run", "r1")], ["start", "end"])
+            self.assertEqual(j.where("run", ""), [])
+            self.assertAlmostEqual(j.session_cost("s1")["cost_usd"], 0.45)
+            with self.assertRaises(ValueError):
+                j.where("run') OR 1=1 --", "r1")
+
+
 class ModeIsTheLatestRecordForAStep(unittest.TestCase):
     def test_setting_a_mode_twice_leaves_the_second_one_in_force(self):
         with tempfile.TemporaryDirectory() as d:

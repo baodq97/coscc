@@ -1,14 +1,15 @@
-// What the autopilot works on next, per project: the shortlist in its order, the other units in
-// the order their estimates give (Leif's suggestion, with the why), and what has no estimate yet.
+// What the autopilot works on next, per project: the shortlist in its order, the agents' proposals
+// waiting on a decision, the other units in the order their estimates give (Leif's suggestion, with
+// the why), and what has no estimate yet.
 // Every change saves the whole shortlist again with a reason, so the run log keeps who and why.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { EstimateBrief, Paused } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { pausedAt, unitCode, unitTitle } from "../lib/format";
 import type { Workspace } from "../lib/model";
-import { Link } from "../lib/router";
+import { Link, useQuery } from "../lib/router";
 import { Proposals } from "../components/Proposals";
 import { Button, Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
@@ -26,7 +27,12 @@ export function moved(list: string[], unit: string, by: number): string[] {
 
 export function UpNext() {
   const { boards, loading } = useBoards();
-  const [project, setProject] = useState("");
+  const named = useQuery("ws");
+  const [project, setProject] = useState(named);
+  // A link to another project's proposal moves the page there.
+  useEffect(() => {
+    setProject(named);
+  }, [named]);
   const workspace = boards.find((b) => b.workspace.name === project)?.workspace ?? boards[0]?.workspace;
   return (
     <div className="page mid">
@@ -115,6 +121,8 @@ function Project({ workspace }: { workspace: Workspace }) {
         </div>
       )}
 
+      <Proposals workspace={workspace} />
+
       <div className="sec-h">
         Leif's order <span className="faint">{v.order.length || ""}</span>
       </div>
@@ -133,7 +141,6 @@ function Project({ workspace }: { workspace: Workspace }) {
         {!v.order.length && <div className="card-b faint">Nothing estimated waits outside the shortlist.</div>}
       </div>
 
-      <Proposals workspace={workspace} />
       {v.unestimated.length > 0 && (
         <>
           <div className="sec-h">

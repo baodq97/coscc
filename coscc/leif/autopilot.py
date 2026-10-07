@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
+from coscc.agent import pack
 from coscc.leif import decide, guide
 from coscc.units import backlog
 from coscc.git import fetches
@@ -335,18 +336,26 @@ class Autopilot:
             return None
         return set(plan["files"]) or None if plan else None
 
+    @staticmethod
+    def _cap_records(journal: Journal) -> list[dict[str, Any]]:
+        """The `start`s and `end`s `cap` counts, and no older: every board read asks for them."""
+        since = decide.cap_since(datetime.now().astimezone())
+        return journal.records(kinds=("start", "end"), since=since)
+
     def cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:
         """The figures for a pass and for the board: every workspace, every starter."""
         now = datetime.now().astimezone()
-        spent = decide.spent_today(records, now)
         active = {
             (row["workspace"], row["unit"]): row["stage"] or row["machine"]
             for row in self.holds.attempts.unfinished()
             if row["unit"]
         }
-        running = decide.reserved(
-            records, now, [(k, unit, stage) for (k, unit), stage in active.items()]
-        )
+        # Both name a row's ceiling per record: the packs are looked at once for them all.
+        with pack.held():
+            spent = decide.spent_today(records, now)
+            running = decide.reserved(
+                records, now, [(k, unit, stage) for (k, unit), stage in active.items()]
+            )
         return {
             "limit": limit,
             "spent": round(spent["known"] + spent["estimated"], 2),
@@ -781,9 +790,7 @@ class Autopilot:
         journal = self.ws.journal()
         if journal is not None:
             try:
-                block["cap"] = self.cap(
-                    journal.records(kinds=("start", "end")), values["daily_cap_usd"]
-                )
+                block["cap"] = self.cap(self._cap_records(journal), values["daily_cap_usd"])
             except Busy:
                 block["cap"] = None
         if not on:
@@ -863,7 +870,7 @@ class Autopilot:
             return None
         limit = autopilot_values(self.config, self.ws.key(cwd))["daily_cap_usd"]
         try:
-            return self.cap(journal.records(kinds=("start", "end")), limit)["spent"], limit
+            return self.cap(self._cap_records(journal), limit)["spent"], limit
         except Busy:
             return None
 

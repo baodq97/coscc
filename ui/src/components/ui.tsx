@@ -3,6 +3,8 @@
 
 import { useEffect, type ReactNode } from "react";
 import { Icon, type IconName } from "../lib/icons";
+import { mdBlocks, mdSpans, type MdSpan } from "../lib/format";
+import { Link } from "../lib/router";
 
 export function Button({
   children,
@@ -117,6 +119,60 @@ export function Dialog({ title, onClose, children, wide }: { title: string; onCl
         <div className="dlg-h">{title}</div>
         <div className="dlg-b">{children}</div>
       </div>
+    </div>
+  );
+}
+
+function Spans({ spans }: { spans: MdSpan[] }) {
+  return (
+    <>
+      {spans.map((s, i) =>
+        s.kind === "b" ? <b key={i}><Spans spans={mdSpans(s.text)} /></b> : s.kind === "i" ? <i key={i}>{s.text}</i> : s.kind === "code" ? <code key={i}>{s.text}</code> : s.kind === "link" ? (s.href?.startsWith("/") ? <Link key={i} to={s.href}>{s.text}</Link> : <a key={i} href={s.href} target="_blank" rel="noreferrer">{s.text}</a>) : <span key={i}>{s.text}</span>,
+      )}
+    </>
+  );
+}
+
+/** One line of an agent's words with its inline marks (`code`, **bold**) read, never shown raw. */
+export function Inline({ text }: { text: string }) {
+  return <Spans spans={mdSpans(text)} />;
+}
+
+/** An agent's words as markdown reads them: emphasis, lists, code, links; never raw `**`. */
+export function Markdown({ text }: { text: string }) {
+  return (
+    <div className="md">
+      {mdBlocks(text).map((b, i) =>
+        b.kind === "pre" ? (
+          <pre key={i}>{b.code}</pre>
+        ) : b.kind === "ul" || b.kind === "ol" ? (
+          (() => {
+            const List = b.kind;
+            return (
+              <List key={i}>
+                {b.lines.map((l, j) => (
+                  <li key={j}>
+                    <Spans spans={l} />
+                  </li>
+                ))}
+              </List>
+            );
+          })()
+        ) : b.kind === "h" ? (
+          <div key={i} className="md-h">
+            <Spans spans={b.lines[0]} />
+          </div>
+        ) : (
+          <p key={i}>
+            {b.lines.map((l, j) => (
+              <span key={j}>
+                {j > 0 && <br />}
+                <Spans spans={l} />
+              </span>
+            ))}
+          </p>
+        ),
+      )}
     </div>
   );
 }

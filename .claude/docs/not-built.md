@@ -27,6 +27,10 @@ Read this before adding a route, a button or a grant.
   critical calls read only the grant, so no row reaches the secrets, another branch, a
   background command, a nested helper, a merge or a release. No agent holds a tool that writes
   a row.
+- **Whoever holds the password can write new skills.** `POST /api/skills/new` writes
+  `local/skills/<name>/SKILL.md` (a new name only, no link on the way, at most 16 KB), the same
+  trust as editing a prompt: every run of a row naming it is given its text, and its `start`
+  names it as `name@hash`. An owner's skill wins over a same-named skill an update adds later.
 - **Whoever holds the password can add agents, processes and packs.** `POST /api/agents/new`
   (a copy, a blank reader, or a whole `row`: Dagaz's draft, which holds no tool and writes
   nothing; its `end` keeps the draft and a person saves it) and `/api/agents/delete` write a whole
@@ -67,7 +71,15 @@ Read this before adding a route, a button or a grant.
   only the chat's grant holds, refused `not-leif` for a row without `trigger.leif`) each open one
   paid session under the row's ceilings and the daily cap, its `start` naming who started it.
   `POST /api/proposals/{id}` is the owner's accept or dismiss of a proposal, `by: owner`; no agent
-  holds a tool that reaches it.
+  holds a tool that reaches it. `POST /api/runs/{run}/ask` opens one paid follow-up about an ended
+  run (≤ $0.50, 3 turns, the daily cap): a triggered row's session is resumed with its grant less
+  `submit`, any other run gets a new reader holding Read, Grep and Glob only; it writes nothing
+  and its `start` names the `parent_run` and the question. `POST /api/runs/{run}/stop` cancels one.
+  One agent starts another only through a row the owner turned on in that workspace whose
+  `trigger.event.from` names it: after its done run, `started_by: event`, its `start` naming the
+  `from_run`, under the daily cap, no circle, at most two agents after the first (`pack.check`);
+  the leader's words reach it as data. Leif's `ask_agent` is `run_agent` with a question, waiting
+  for the result, under the same `needs-confirm` and daily count.
 - **A screenshot is an agent's look,** not a person's.
 - **Say what a new route can do,** to whom, at what cost, and where the trace is. Prefer a row
   in the run log to a claim in prose.

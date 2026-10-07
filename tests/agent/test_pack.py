@@ -611,6 +611,101 @@ class TriggersAreChecked(unittest.TestCase):
         said = self.reasons(_scan(trigger={"event": {"name": "chat-turn.ended"}}))
         self.assertIn("names no workspace", said)
 
+    def test_an_agent_run_fact_does_not_start_a_row_by_itself(self):
+        # Every run publishes these, the row's own too: on one, the row would start itself again.
+        for name in ("agent-run.ended", "agent-run.started"):
+            said = self.reasons(_scan(trigger={"event": {"name": name}}))
+            self.assertIn("it would start itself", said)
+            with self.assertRaises(ValueError):
+                pack.write("scan", "trigger", {"event": {"name": name}})
+        # The neighbour stays open: another fact naming a workspace.
+        self.assertEqual(self.reasons(_scan(trigger={"event": {"name": "unit.shipped"}})), "")
+
+    def follower(self, key: str, after: str, **over) -> dict:
+        return _scan(
+            key=key,
+            name=key.capitalize(),
+            trigger={"event": {"name": "agent-run.ended", "from": after}, "manual": True},
+            **over,
+        )
+
+    def chain(self, row: dict, *others: dict) -> str:
+        rows = {k: r["builtin"] for k, r in pack.rows().items()}
+        rows.update({o["key"]: o for o in others})
+        return "\n".join(pack.check(row, CATALOG, {**rows, row["key"]: row}))
+
+    def test_a_row_runs_after_another_agents_done_run(self):
+        self.assertEqual(self.chain(self.follower("b", "scan")), "")
+        self.assertEqual(pack.after_of(self.follower("b", "scan")), "scan")
+        self.assertEqual(pack.after_of(_scan()), "")
+
+    def test_what_a_follower_must_say_and_the_neighbours_refused(self):
+        said = self.chain(self.follower("b", "scan", default="on"))
+        self.assertIn("off until you turn it on in a workspace", said)
+        self.assertIn("cannot run after itself", self.chain(self.follower("b", "b")))
+        self.assertIn("no agent nobody", self.chain(self.follower("b", "nobody")))
+        # A stage's agent ends no run of its own through a trigger.
+        self.assertIn("so it never ends a run", self.chain(self.follower("b", "plan")))
+        shipped = self.follower("b", "scan")
+        shipped["trigger"] = {"event": {"name": "unit.shipped", "from": "scan"}}
+        self.assertIn("only agent-run.ended names", self.chain(shipped))
+
+    def test_agents_cannot_start_each_other_in_a_circle(self):
+        b = self.follower("b", "c")
+        c = self.follower("c", "b")
+        self.assertIn("B runs after C runs after B", self.chain(b, c))
+        d = self.follower("d", "f")
+        e = self.follower("e", "d")
+        f = self.follower("f", "e")
+        self.assertIn("in a circle", self.chain(d, e, f))
+
+    def test_a_chain_holds_at_most_two_after_the_first(self):
+        b, c = self.follower("b", "scan"), self.follower("c", "b")
+        self.assertEqual(self.chain(c, b), "")
+        d = self.follower("d", "c")
+        self.assertIn(
+            "at most 2 agents after the first, not 3 (Sowilo → B → C → D)", self.chain(d, b, c)
+        )
+        # From below too: putting b after scan, when c and d already follow it.
+        self.assertIn("not 3", self.chain(b, c, d))
+
+    def test_a_chain_and_its_default_are_one_write(self):
+        pack.write("scan", "default", "on")
+        chain = {"event": {"name": "agent-run.ended", "from": "outcome"}, "manual": True}
+        with self.assertRaises(ValueError):
+            pack.write("scan", "trigger", chain)
+        # Refused together: neither is saved.
+        with self.assertRaises(ValueError):
+            pack.write(
+                "scan",
+                "trigger",
+                {**chain, "event": {**chain["event"], "from": "x"}},
+                None,
+                {"default": "off"},
+            )
+        self.assertEqual((pack.row("scan")["default"], pack.after_of(pack.row("scan"))), ("on", ""))
+        pack.write("scan", "trigger", chain, None, {"default": "off"})
+        self.assertEqual(
+            (pack.row("scan")["default"], pack.after_of(pack.row("scan"))), ("off", "outcome")
+        )
+        # Undone with its default back, in one write too.
+        pack.write("scan", "trigger", None, None, {"default": "on"})
+        self.assertEqual((pack.row("scan")["default"], pack.after_of(pack.row("scan"))), ("on", ""))
+        # Nothing else rides with a part past its own checks.
+        for other in ({"body": "x"}, {"output": {"kind": "x"}}, {"input": {"data": ["gossip"]}}):
+            with self.assertRaises(ValueError, msg=other):
+                pack.write("scan", "trigger", chain, None, other)
+
+    def test_a_reserved_name_is_refused_in_any_case(self):
+        for name in ("Ansuz", "othala", "JERA"):
+            self.assertIn("is reserved", self.reasons(_scan(name=name)), name)
+            with self.assertRaises(ValueError):
+                pack.write("scan", "name", name)
+        # Neighbours stay open: a name holding one, and a row's own name kept.
+        self.assertEqual(self.reasons(_scan(name="Ansuz2")), "")
+        self.assertEqual(self.reasons(_scan(name="Sowilo")), "")
+        self.assertIn("is another agent's", self.reasons(_scan(name="tiwaz")))
+
     def test_an_engine_mixed_with_others(self):
         said = self.reasons(_scan(trigger={"engine": "estimate", "manual": True}, default=None))
         self.assertIn("an engine row has no other trigger", said)
@@ -627,6 +722,36 @@ class TriggersAreChecked(unittest.TestCase):
         pack.write("scan", "trigger", {"manual": True})
         with self.assertRaises(ValueError):
             pack.write("scan", "tools", {"Write": "allow"})
+
+    def test_a_triggered_row_says_what_one_run_may_spend(self):
+        said = self.reasons(_scan(ceilings={"turns": 4}))
+        self.assertIn("ceilings.usd: a row a trigger starts says what one run may spend", said)
+        self.assertIn(
+            "ceilings.usd", self.reasons({k: v for k, v in _scan().items() if k != "ceilings"})
+        )
+        # An engine row is bounded by the engine; a state's agent by its process step.
+        engine = _scan(trigger={"engine": "estimate"}, ceilings={"turns": 4}, default=None)
+        self.assertNotIn("ceilings.usd", self.reasons(engine))
+        for key, row in pack.rows().items():
+            if pack.triggered(row):
+                self.assertIn("usd", row["ceilings"], key)
+
+    def test_a_triggered_row_has_no_one_to_ask(self):
+        said = self.reasons(_scan(tools={"Read": "ask"}))
+        self.assertIn("no one to ask, so Read is allow or off", said)
+        self.assertEqual(self.reasons(_scan(tools={"Read": "allow", "Grep": "off"})), "")
+        # A row a state runs may still ask; a trigger of the engine's is not a person-less start.
+        self.assertTrue(pack.reads_only(_scan()))
+        self.assertFalse(pack.reads_only(_scan(trigger={"engine": "estimate"})))
+        self.assertFalse(pack.reads_only({"tools": {"Write": "ask"}}))
+        # Both ask one rule: an engine row with another key, an unknown key, an empty trigger.
+        for trigger in ({"engine": "estimate", "manual": True}, {"cron": "x"}, {}, "x", None):
+            row = {"trigger": trigger}
+            self.assertEqual(pack.reads_only(row), pack.triggered(row), trigger)
+        self.assertEqual(
+            pack.check(_scan(tools={"Read": "ask"})),
+            pack.check(_scan(tools={"Read": "ask"}), CATALOG),
+        )
 
     def test_a_triggered_row_holds_bash_only_in_the_sandbox(self):
         boxed = {"Read": "allow", "Bash": {"sandbox": {"network": ["127.0.0.1:3000"]}}}
@@ -900,6 +1025,17 @@ class ManyPacks(unittest.TestCase):
         self.assertTrue(pack.pack_on(data, "mine", "/ws"))
         pack.remove_pack("mine")
         self.assertIsNone(pack.row("mine-row"))
+
+    def test_each_pack_shows_its_own_agents_faces(self):
+        pack.import_zip(zipped(a_pack()), CATALOG)
+        shown = {p["name"]: p for p in pack.packs_shown(Data(self.d.name), "/ws")}
+        mine = pack.row("mine-row")["name"]
+        self.assertEqual(
+            shown["mine"]["agents"], [{"key": "mine-row", "name": mine, "glyph": mine[0]}]
+        )
+        impl = next(a for a in shown["coscc-sdlc"]["agents"] if a["key"] == "impl")
+        self.assertEqual(impl["name"], pack.row("impl")["name"])
+        self.assertNotIn("mine-row", [a["key"] for a in shown["coscc-sdlc"]["agents"]])
 
     def test_an_off_packs_scheduled_row_does_not_run_on_its_schedule(self):
         data = Data(self.d.name)

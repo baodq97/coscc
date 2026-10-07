@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from coscc.bus import Bus
@@ -13,6 +14,7 @@ from coscc.config import Config
 from coscc.kernel import Invalid
 from coscc.http.app import Core
 from coscc.runner.run import LIVE
+from coscc.store.db import Data
 from coscc.agent.sessions import Sessions
 from tests.http.test_app import create_sync
 from tests.units.test_meta import seed
@@ -133,6 +135,33 @@ class AStepCanBeWatched(unittest.TestCase):
         [end] = [r for r in self.core.ws.journal().records(kind="end")]
         self.assertEqual((start["run"], end["run"], end["events_lost"]), (run, run, 0))
 
+    def test_a_follower_of_a_run_abandoned_with_no_end_is_let_go(self):
+        ws = str(self.repo)
+        key = self.core.ws.key(ws)
+
+        async def go():
+            recorder = events_mod.Recorder(
+                "r-stopped", Data(self.root / "data"), str(self.root / "work"), key, "", "scan"
+            )
+            LIVE[recorder.run] = recorder
+            recorder.start()
+            got = []
+
+            async def follow():
+                async for kind, _ in self.core.watch.follow_events(ws, recorder.run):
+                    got.append(kind)
+
+            follower = asyncio.create_task(follow())
+            await asyncio.sleep(0.05)
+            await recorder.abandon()
+            LIVE.pop(recorder.run, None)
+            await asyncio.wait_for(follower, 5)
+            return got
+
+        with mock.patch.object(events_mod, "IDLE_WAKE", 0.05):
+            got = asyncio.run(go())
+        self.assertEqual(got[-1], "status")
+
     def _live(self):
         """The recorders of this test's workspace that run now."""
         key = self.core.ws.key(str(self.repo))
@@ -141,6 +170,35 @@ class AStepCanBeWatched(unittest.TestCase):
     async def _drain(self):
         async for _ in self.core.steps.run_step(str(self.repo), self.unit, "spec"):
             pass
+
+    def test_an_agent_run_a_press_handed_out_is_running_before_its_start_is_written(self):
+        from coscc.runner import triggers
+
+        ws = str(self.repo)
+        key = self.core.ws.key(ws)
+        with mock.patch.dict(triggers._RUNNING, {(key, "scan"): ("r77", "2026-10-07T00:00:00Z")}):
+            page = self.core.watch.events_page(ws, "r77")
+            self.assertEqual(
+                (page["status"], page["stage"], page["events"]), ("running", "scan", [])
+            )
+
+            async def first():
+                async for item in self.core.watch.follow_events(ws, "r77"):
+                    return item
+
+            # Its recorder opens a moment later: the follower waits for it, then says it is over.
+            async def go():
+                task = asyncio.create_task(first())
+                await asyncio.sleep(0.25)
+                triggers._RUNNING.clear()
+                with self.assertRaises(Invalid):
+                    await task
+
+            asyncio.run(go())
+        other = str(self.root / "work" / "other")
+        with mock.patch.dict(triggers._RUNNING, {(other, "scan"): ("r78", "t")}):
+            with self.assertRaises(Invalid):
+                self.core.watch.events_page(ws, "r78")
 
     def test_a_run_nobody_knows_is_refused_and_a_step_the_gate_closes_leaves_no_recorder(self):
         with self.assertRaises(Invalid):
@@ -181,3 +239,46 @@ class ARunsEndIsOnItsFirstPage(unittest.TestCase):
         page = core.watch.events_page(str(repo), "r9")
         self.assertEqual((page["outcome"], page["draft"]), ("done", draft))
         self.assertNotIn("draft", core.watch.events_page(str(repo), "r9", before=5))
+
+    def test_what_it_made_and_how_far_it_looked_come_with_its_end(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        repo = root / "work" / "proj"
+        repo.mkdir(parents=True)
+        config = Config(
+            workspaces=(str(repo),), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
+        core = Core(config, Sessions(config))
+        ws = core.ws.key(str(repo))
+        with Data(config.data_dir).write() as conn:
+            conn.execute(
+                "INSERT INTO step_events (run, seq, at, kind, event, bytes) "
+                "VALUES ('r8', 1, 0, 'denied', '{}', 2), ('r8', 2, 0, 'worker_start', '{}', 2)"
+            )
+        core.ws.journal().finished(ws, "", "scan", "done", run="r8", proposals=2, verdict="met")
+        page = core.watch.events_page(str(repo), "r8")
+        self.assertEqual(
+            (page["made"], page["verdict"], page["refused"], page["helpers"]), (2, "met", 1, 1)
+        )
+
+
+class ASkippedRunHasAPage(unittest.TestCase):
+    def test_a_run_with_only_an_end_opens_a_page_not_no_such_run(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        repo = root / "work" / "proj"
+        repo.mkdir(parents=True)
+        config = Config(
+            workspaces=(str(repo),), working_dir=str(root / "work"), data_dir=str(root / "data")
+        )
+        core = Core(config, Sessions(config))
+        ws = core.ws.key(str(repo))
+        core.ws.journal().finished(
+            ws, "", "scan", "done", run="r5", skipped=True, started_by="manual"
+        )
+        page = core.watch.events_page(str(repo), "r5")
+        self.assertEqual((page["events"], page["outcome"]), ([], "done"))
+        with self.assertRaises(Invalid):
+            core.watch.events_page(str(repo), "r6")

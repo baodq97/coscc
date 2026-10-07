@@ -260,7 +260,10 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
             sessions = Counting()
             runner = Runner(sessions=sessions, journal=journal)
 
-            pack.write("spec", "skills", [])
+            # A hand edit: the page refuses a stage left with no skill (`pack.write`).
+            row_file = pack.owner_dir() / "agents" / "spec.md"
+            row_file.parent.mkdir(parents=True, exist_ok=True)
+            row_file.write_text(pack.render({"skills": []}), encoding="utf-8")
 
             async def go():
                 async for _ in runner.run(

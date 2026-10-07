@@ -91,9 +91,9 @@ class RemovingAFieldRefusesTheLoad(unittest.TestCase):
                 )
                 cases += 1
         # judgement and questions for six artifacts, four review fields, one field each for
-        # integrate, estimate, the scan's proposals and the grader's criteria, Dagaz's three; then
+        # integrate, estimate, the scan's proposals and the grader's criteria, Dagaz's five; then
         # the nine read by name.
-        self.assertEqual(cases, 6 * 2 + 4 + 4 + 3 + 9)
+        self.assertEqual(cases, 6 * 2 + 4 + 4 + 5 + 9)
 
     def test_the_intents_type_names_branch_for(self):
         raw = _shipped()
@@ -246,7 +246,7 @@ PINNED = {
     "estimate": (1, "cd5fc053a8e3"),
     "scan": (1, "b4482adace0e"),
     "outcome": (1, "5a28b9ca8b0f"),
-    "dagaz": (1, "4c242a14f390"),
+    "dagaz": (2, "c2164bfa60dd"),
 }
 
 
@@ -454,3 +454,22 @@ class AnInputDeclarationIsChecked(unittest.TestCase):
         del raw["agents"]["spec"]["input"]["findings"]
         with self.assertRaises(ContractError):
             self.inputs(raw)
+
+
+class TheCacheIsReadOnce(unittest.TestCase):
+    def test_a_cache_replaced_meanwhile_does_not_change_what_this_read_returns(self):
+        from unittest import mock
+
+        real = contracts.load_inputs
+
+        def others_write_meanwhile(rows):
+            got = real(rows)
+            contracts._READ[:] = [(object(), {}, {})]
+            return got
+
+        contracts._READ.clear()
+        with mock.patch.object(contracts, "load_inputs", others_write_meanwhile):
+            outputs, inputs = contracts._read()
+        self.assertIn("dagaz", outputs)
+        self.assertIn("dagaz", inputs)
+        contracts._READ.clear()

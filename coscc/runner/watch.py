@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, NotRequired, TypedDict
 
 from coscc.runlog import events
+from coscc.runner import triggers
 from coscc.runner.run import LIVE
 from coscc.store.db import Data
 from coscc.store.db import Busy
@@ -74,6 +75,14 @@ class EventsPage(TypedDict):
     outcome: NotRequired[str]
     detail: NotRequired[str]
     draft: NotRequired[dict[str, Any]]
+    # What the run made and how thoroughly it looked (on the same page): the proposals it kept, a
+    # verdict's judgement, the tool calls it was refused and the helpers it started.
+    made: NotRequired[int]
+    verdict: NotRequired[str]
+    refused: NotRequired[int]
+    helpers: NotRequired[int]
+    # What a trial of a row not saved yet handed back (`triggers.trial`), shown and kept nowhere else.
+    tried: NotRequired[Any]
 
 
 class Watch:
@@ -110,15 +119,25 @@ class Watch:
             if row["workspace"] != key:
                 raise Invalid(f"run {run} is not a run of this workspace")
             return None, row, str(row["unit"] or "")
+        if self._held(key, run):
+            return None, None, ""
         journal = self.ws.journal()
         try:
-            started = journal.records(key, kind="start") if journal is not None else []
+            started = journal.records(key, kinds=("start", "end")) if journal is not None else []
         except Busy as e:
             raise Invalid(str(e)) from e
         for r in started:
             if r.get("run") == run:
                 return None, None, str(r.get("unit") or "")
         raise Invalid(f"no such run: {run}")
+
+    @staticmethod
+    def _held(key: str, run: str) -> dict[str, str] | None:
+        """The agent run `run` of workspace `key` that this process holds, before its `start` is
+        written (a press hands the id out first)."""
+        return next(
+            (h for h in triggers.running() if h["run"] == run and h["workspace"] == key), None
+        )
 
     def events_page(
         self,
@@ -181,6 +200,9 @@ class Watch:
                     found, out["has_older"] = data.step_events_page(run, before, limit)
             except Busy as e:
                 raise Invalid(str(e)) from e
+        elif held := self._held(self.ws.key(cwd), run):
+            out.update(stage=held["agent"], status="running")
+            found = []
         else:
             found = []
         out["events"] = found
@@ -217,6 +239,15 @@ class Watch:
         out = {"outcome": str(end.get("outcome") or ""), "detail": str(end.get("detail") or "")}
         if isinstance(end.get("draft"), dict):
             out["draft"] = end["draft"]
+        if isinstance(end.get("proposals"), int):
+            out["made"] = end["proposals"]
+        if end.get("verdict"):
+            out["verdict"] = str(end["verdict"])
+        kept = Data(self.config.data_dir).step_event_counts([run], ("denied", "worker_start"))
+        out["refused"] = kept.get(run, {}).get("denied", 0)
+        out["helpers"] = kept.get(run, {}).get("worker_start", 0)
+        if "tried" in end:
+            out["tried"] = end["tried"]
         return out
 
     async def follow_events(
@@ -232,7 +263,11 @@ class Watch:
 
         Subscribes before it reads what is there. `gather` > 0 holds each batch up to that many
         seconds; an empty batch comes every `IDLE_WAKE` seconds so a caller can notice it should stop."""
-        recorder, _, _ = self._run_of(cwd, run)
+        recorder, row, _ = self._run_of(cwd, run)
+        # A press hands the id out before the run has begun: wait for its first event.
+        while recorder is None and row is None and self._held(self.ws.key(cwd), run):
+            await asyncio.sleep(0.1)
+            recorder, row, _ = self._run_of(cwd, run)
         if recorder is None:
             yield ("status", self.events_page(cwd, run, limit=1))
             return
@@ -253,6 +288,10 @@ class Watch:
                 try:
                     first = await asyncio.wait_for(q.get(), events.IDLE_WAKE)
                 except asyncio.TimeoutError:
+                    if recorder.closed:
+                        # Abandoned with no `end` event (a stopped run, the app going down).
+                        yield ("status", self.events_page(cwd, run, limit=1))
+                        return
                     yield ("events", [])
                     continue
                 wait = last + gather - loop.time()

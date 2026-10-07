@@ -1,5 +1,11 @@
 // Made by `uv run python -m coscc.http > ui/src/api.gen.ts` from the app's routes. Do not edit.
 
+export type AgentFace = {
+  "key": string;
+  "name": string;
+  "glyph": string;
+};
+
 export type AgentPage = {
   "rows": AgentRow[];
   "catalog": CatalogTool[];
@@ -27,7 +33,17 @@ export type AgentRow = {
   "cost_30d": number;
   "chip": string;
   "groups": RunGroup[];
+  "accepted_30d": number;
+  "dismissed_30d": number;
+  "pending": number;
+  "skips_30d": number;
+  "reads_only": boolean;
+  "usable_data": string[];
   "on": boolean | null;
+  "running": coscc__leif__agents__Running | null;
+  "next_at": string | null;
+  "on_in": string[];
+  "off_reason": string;
 };
 
 export type AgentRun = {
@@ -70,6 +86,18 @@ export type ArmStats = {
 export type Arms = {
   "on": ArmStats;
   "off": ArmStats;
+};
+
+export type AskState = {
+  "may": boolean;
+  "resume": boolean;
+  "why": string;
+};
+
+export type Asked = {
+  "run": string;
+  "resumed": boolean;
+  "why": string;
 };
 
 export type AutopilotBrief = {
@@ -147,7 +175,7 @@ export type Cards = {
   "read_at": string;
   "units": Card[];
   "autopilot": AutopilotBrief | null;
-  "running": Running[];
+  "running": coscc__units__read__Running[];
 };
 
 export type CatalogTool = {
@@ -169,6 +197,7 @@ export type Ceilings = {
 export type ChatHistory = {
   "session_id": string;
   "messages": ChatMessage[];
+  "runs": LeifRun[];
 };
 
 export type ChatMessage = {
@@ -264,6 +293,7 @@ export type Detail = {
   "decisions": Decision[];
   "outcome": Outcome | null;
   "brief": string;
+  "origin": Origin | null;
 };
 
 export type EstimateBrief = {
@@ -293,6 +323,24 @@ export type EventsPage = {
   "outcome"?: string;
   "detail"?: string;
   "draft"?: Record<string, unknown>;
+  "made"?: number;
+  "verdict"?: string;
+  "refused"?: number;
+  "helpers"?: number;
+  "tried"?: unknown;
+};
+
+export type Followup = {
+  "run": string;
+  "at": string;
+  "question": string;
+  "outcome": string;
+  "cost_usd": number | null;
+  "resumed": boolean;
+  "why": string;
+  "cache_read_tokens": number;
+  "cache_creation_tokens": number;
+  "answer": string;
 };
 
 export type HoldView = {
@@ -325,6 +373,50 @@ export type Leaks = {
   "names": string[];
 };
 
+export type LeifRun = {
+  "run": string;
+  "agent": string;
+  "name": string;
+  "at": string;
+  "outcome": string;
+  "cost_usd": number | null;
+  "proposals": number;
+  "said": string;
+};
+
+export type Live = {
+  "running": LiveRun[];
+  "proposals": LiveProposal[];
+  "failed": LiveFailed[];
+};
+
+export type LiveFailed = {
+  "workspace": string;
+  "agent": string;
+  "name": string;
+  "run": string;
+  "at": string;
+  "detail": string;
+};
+
+export type LiveProposal = {
+  "id": number;
+  "workspace": string;
+  "agent": string;
+  "agent_name": string;
+  "type": string;
+  "title": string;
+  "at": string;
+};
+
+export type LiveRun = {
+  "run": string;
+  "started": string;
+  "workspace": string;
+  "agent": string;
+  "name": string;
+};
+
 export type Meta = {
   "name": string;
   "tier": string;
@@ -334,6 +426,11 @@ export type Meta = {
   "broker": boolean;
   "has_value": boolean;
   "granted": boolean | null;
+};
+
+export type Named = {
+  "key": string;
+  "name": string;
 };
 
 export type NextStep = {
@@ -349,6 +446,14 @@ export type NextStep = {
   "continue"?: string;
   "reasons": string[];
   "gate"?: string;
+};
+
+export type Origin = {
+  "id": number;
+  "title": string;
+  "agent": string;
+  "name": string;
+  "run": string;
 };
 
 export type Outcome = {
@@ -389,6 +494,7 @@ export type PackShown = {
   "on": boolean;
   "process": string;
   "processes": ProcessShown[];
+  "agents": AgentFace[];
   "own": boolean;
   "imported": boolean;
   "problems": string[];
@@ -411,6 +517,10 @@ export type ProcessShown = {
   "ref": string;
   "name": string;
   "own": boolean;
+};
+
+export type PromptPreview = {
+  "task": string;
 };
 
 export type Proposal = {
@@ -459,6 +569,8 @@ export type ProposingAgent = {
   "key": string;
   "name": string;
   "on": boolean | null;
+  "after": string;
+  "after_on": boolean | null;
 };
 
 export type PullRequest = {
@@ -587,13 +699,12 @@ export type RunView = {
   "skipped": boolean;
   "detail": string;
   "started_by": string;
-};
-
-export type Running = {
-  "unit": string;
-  "stage": string;
-  "agent": string;
-  "started": string;
+  "made": number | null;
+  "session": boolean;
+  "verdict": string;
+  "refused": number | null;
+  "helpers": number | null;
+  "shallow": boolean;
 };
 
 export type Saved = {
@@ -658,11 +769,32 @@ export type Shown = {
   "summary"?: string;
 };
 
+export type Skill = {
+  "name": string;
+  "pack": string;
+  "builtin": boolean;
+  "description": string;
+  "own": boolean;
+  "edited": boolean;
+  "hash": string;
+  "chars": number;
+  "text": string;
+  "agents": Named[];
+  "uses_30d": number;
+  "last_used": string;
+};
+
 export type SkillText = {
   "name": string;
   "text": string;
   "builtin": string;
   "edited": boolean;
+};
+
+export type SkillsPage = {
+  "skills": Skill[];
+  "problems": string[];
+  "counted_since": string;
 };
 
 export type Source = {
@@ -746,9 +878,16 @@ export type Target = {
   "over": string[];
 };
 
+export type Thread = {
+  "run": string;
+  "followups": Followup[];
+  "ask": AskState;
+};
+
 export type TriggerEvent = {
   "name"?: string;
   "after_hours"?: number;
+  "from"?: string;
 };
 
 export type TriggerFields = {
@@ -863,8 +1002,22 @@ export type Worktree = {
   "path": string;
 };
 
+export type coscc__leif__agents__Running = {
+  "run": string;
+  "started": string;
+};
+
+export type coscc__units__read__Running = {
+  "unit": string;
+  "stage": string;
+  "agent": string;
+  "started": string;
+};
+
 export type Get = {
   "/api/agents": AgentPage;
+  "/api/agents/live": Live;
+  "/api/agents/{key}/prompt": PromptPreview;
   "/api/backlog": UpNext;
   "/api/chat/history": ChatHistory;
   "/api/chat/sessions": ChatSessions;
@@ -876,7 +1029,9 @@ export type Get = {
   "/api/proposals": ProposalsView;
   "/api/release": ReleaseView | null;
   "/api/runs/{run}": EventsPage;
+  "/api/runs/{run}/thread": Thread;
   "/api/settings/autopilot": AutopilotSettings;
+  "/api/skills": SkillsPage;
   "/api/units": Cards;
   "/api/units/next": NextStep;
   "/api/units/{name}": Detail;

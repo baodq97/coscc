@@ -206,6 +206,20 @@ def listed(data: Data, workspace: str, agent: str | None = None) -> list[Proposa
     return [_proposal(r) for r in rows]
 
 
+def counts(data: Data, workspace: str | None, since: str) -> dict[str, dict[str, int]]:
+    """Each agent's proposals made since `since` (all workspaces when `workspace` is None), by
+    their state."""
+    sql, args = "SELECT agent, decision, COUNT(*) AS n FROM proposals WHERE at >= ?", [since]
+    if workspace is not None:
+        sql += " AND workspace = ?"
+        args.append(workspace)
+    out: dict[str, dict[str, int]] = {}
+    with data.connect() as conn:
+        for r in conn.execute(sql + " GROUP BY agent, decision", args):
+            out.setdefault(r["agent"], {})[r["decision"]] = r["n"]
+    return out
+
+
 def one(data: Data, workspace: str, pid: int) -> Proposal:
     with data.connect() as conn:
         row = conn.execute(
@@ -214,6 +228,46 @@ def one(data: Data, workspace: str, pid: int) -> Proposal:
     if row is None:
         raise Invalid(f"no proposal {pid} in this workspace")
     return _proposal(row)
+
+
+def origin(data: Data, workspace: str, unit: str) -> Proposal | None:
+    """The proposal whose acceptance made `unit`, `None` for a unit a person opened."""
+    with data.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM proposals WHERE workspace = ? AND made = ? AND decision = 'accepted' "
+            "ORDER BY id DESC LIMIT 1",
+            (workspace, unit),
+        ).fetchone()
+    return _proposal(row) if row is not None else None
+
+
+def _sentence(text: Any) -> str:
+    """Words on one line without a closing full stop, for a sentence that adds its own."""
+    return " ".join(str(text or "").split()).rstrip(". ")
+
+
+def of_gap(why: str, gap: Mapping[str, Any], run: str) -> Item:
+    """A person's "propose this capability" on a gap a draft named (`{part, need, instead}`): a
+    `feat` for the part the catalog lacks, resting on the draft's run."""
+    need = _sentence(gap.get("need"))
+    part = str(gap.get("part") or "")
+    if not need or not part:
+        raise Invalid("a gap names its part and what is needed")
+    title = f"New {part} for agents: {need}"
+    words = re.sub(r"[^a-z0-9]+", "-", f"{part} {need}".lower()).strip("-")
+    slug = words[:SLUG_MAX].rsplit("-", 1)[0] if len(words) > SLUG_MAX else words
+    problem = (
+        f"A person asked for an agent the catalog cannot build whole. It lacks this {part}: {need}. "
+        f"The draft does instead: {_sentence(gap.get('instead')) or 'nothing'}."
+        f"\n\nWhat the draft understood of the task: {' '.join(why.split())}"
+    )
+    return {
+        "type": "feat",
+        "slug": slug or "capability",
+        "title": title if len(title) <= TITLE_MAX else title[: TITLE_MAX - 1] + "…",
+        "problem": problem[:PROBLEM_MAX],
+        "sources": [run],
+    }
 
 
 def lists_of(made: Sequence[Proposal]) -> str:

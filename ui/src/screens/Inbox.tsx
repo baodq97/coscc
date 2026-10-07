@@ -4,9 +4,9 @@
 import { useState } from "react";
 import type { Question } from "../api.gen";
 import { api, useResource } from "../lib/api";
-import { allUnits, useBoards, type PlacedUnit } from "../lib/boards";
-import { liveQuestions } from "../lib/model";
-import { ago, unitCode, unitTitle } from "../lib/format";
+import { allUnits, failedLink, needsYou, proposalLink, useBoards, useLive, type PlacedUnit } from "../lib/boards";
+import { liveQuestions, unitState } from "../lib/model";
+import { ago, failureWords, unitCode, unitTitle } from "../lib/format";
 import { Icon } from "../lib/icons";
 import { stageLabel } from "../lib/pack";
 import { Link, navigate } from "../lib/router";
@@ -19,16 +19,20 @@ export function inboxView(waiting: number, asked: boolean, found: boolean): "emp
 }
 
 export function Inbox({ workspace, number }: { workspace?: string; number?: string }) {
-  const { boards, loading } = useBoards();
-  const waiting = allUnits(boards)
-    .filter((u) => liveQuestions(u) > 0)
-    .sort((a, b) => b.updated.localeCompare(a.updated));
+  const { boards, loading: loadingBoards } = useBoards();
+  const { proposals, failed, loading: loadingLive } = useLive();
+  const loading = loadingBoards || loadingLive;
+  const needs = needsYou(allUnits(boards), proposals, failed);
+  const newest = (a: PlacedUnit, b: PlacedUnit) => b.updated.localeCompare(a.updated);
+  const waiting = needs.units.filter((u) => liveQuestions(u) > 0).sort(newest);
+  // Units that need a person without a question: a pause at a ceiling, a missing file.
+  const other = needs.units.filter((u) => liveQuestions(u) === 0).sort(newest);
   const asked = workspace !== undefined && number !== undefined;
   const found = waiting.find((u) => u.workspace.name === workspace && u.number === Number(number));
   const chosen = found ?? (asked ? undefined : waiting[0]);
 
   if (loading) return <div className="page"><SkeletonRows rows={4} /></div>;
-  const view = inboxView(waiting.length, asked, Boolean(found));
+  const view = inboxView(needs.total, asked, Boolean(found));
   if (view === "missing")
     return (
       <div className="page mid">
@@ -50,7 +54,7 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
     <div className="two">
       <div className="lp">
         <div className="lgroup" style={{ background: "var(--panel)" }}>
-          Needs you <span className="n">{waiting.length}</span>
+          Needs you <span className="n">{needs.total}</span>
           <span className="r">newest first</span>
         </div>
         {waiting.map((u) => (
@@ -74,9 +78,70 @@ export function Inbox({ workspace, number }: { workspace?: string; number?: stri
             </div>
           </div>
         ))}
+        {other.map((u) => (
+          <Link key={`${u.workspace.name}/${u.name}`} to={`/unit/${u.workspace.name}/${u.number}`} className="ny">
+            <div className="ny-ic">
+              <Icon name="arrow" size={15} />
+            </div>
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="row">
+                <span className="ny-t ellipsis" style={{ fontSize: 13 }}>{unitState(u).label} on {unitCode(u.workspace.name, u.number)}</span>
+                <span className="faint nowrap" style={{ fontSize: 12, marginLeft: "auto" }}>{u.updated ? ago(u.updated) : ""}</span>
+              </div>
+              <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{unitTitle(u.name)}</div>
+            </div>
+          </Link>
+        ))}
+        {failed.length > 0 && (waiting.length > 0 || other.length > 0) && (
+          <div className="lgroup" style={{ background: "var(--panel)" }}>
+            Agent runs that failed <span className="n">{failed.length}</span>
+          </div>
+        )}
+        {failed.map((f) => (
+          <Link key={f.workspace + f.agent} to={failedLink(f)} className="ny">
+            <div className="ny-ic">
+              <Icon name="warn" size={15} />
+            </div>
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="row">
+                <span className="ny-t ellipsis" style={{ fontSize: 13 }}>{f.name} failed on {f.workspace}</span>
+                <span className="faint nowrap" style={{ fontSize: 12, marginLeft: "auto" }}>{ago(f.at)}</span>
+              </div>
+              <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{failureWords(f.detail || "Open the run to see why.").plain.split("\n")[0]}</div>
+            </div>
+          </Link>
+        ))}
+        {proposals.length > 0 && (waiting.length > 0 || other.length > 0) && (
+          <div className="lgroup" style={{ background: "var(--panel)" }}>
+            Proposals to decide <span className="n">{proposals.length}</span>
+          </div>
+        )}
+        {proposals.map((p) => (
+          <Link key={p.workspace + p.id} to={proposalLink(p)} className="ny">
+            <div className="ny-ic">
+              <Icon name="arrow" size={15} />
+            </div>
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="row">
+                <span className="ny-t ellipsis" style={{ fontSize: 13 }}>{p.agent_name} proposed on {p.workspace}</span>
+                <span className="faint nowrap" style={{ fontSize: 12, marginLeft: "auto" }}>{ago(p.at)}</span>
+              </div>
+              <div className="ny-s ellipsis" style={{ fontSize: 12.5 }}>{p.title}</div>
+            </div>
+          </Link>
+        ))}
       </div>
       <div className="rp">
-        {chosen && <Questions unit={chosen} />}
+        {chosen ? (
+          <Questions unit={chosen} />
+        ) : (
+          <Empty
+            icon="inbox"
+            title={proposals.length || failed.length ? `${proposals.length + failed.length} thing${proposals.length + failed.length === 1 ? "" : "s"} to look at` : "No question waits for you"}
+          >
+            {proposals.length || failed.length ? "No question waits for you. Open a proposal or a failed run on the left." : "Units that need you are listed on the left."}
+          </Empty>
+        )}
       </div>
     </div>
   );

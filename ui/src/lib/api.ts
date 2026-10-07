@@ -67,12 +67,21 @@ export async function readLines(body: ReadableStream<Uint8Array>, on: (line: Rec
   if (rest.trim()) on(JSON.parse(rest));
 }
 
+// The reads in flight by address: two parts asking for the same thing at once (the sidebar and a page
+// both read a board) share one request.
+const flying = new Map<string, Promise<unknown>>();
+
 export const api = {
   /** A `GET` route the app types (`Get`, made from its routes), so the answer is never guessed. */
   get: <P extends keyof Get>(path: P, query: Record<string, string> = {}) => {
     const url = fill(path, query);
     const qs = new URLSearchParams(url.rest).toString();
-    return call<Get[P]>("GET", qs ? `${url.path}?${qs}` : url.path);
+    const address = qs ? `${url.path}?${qs}` : url.path;
+    const going = flying.get(address) as Promise<Get[P]> | undefined;
+    if (going) return going;
+    const read = call<Get[P]>("GET", address).finally(() => flying.delete(address));
+    flying.set(address, read);
+    return read;
   },
   /** `body` is JSON, a `URLSearchParams` sent as a form (the vault's one door for a value), or a file. */
   post: <T>(path: string, body: unknown) => call<T>("POST", path, body),
@@ -177,7 +186,7 @@ export type Resource<T> =
 export function useResource<P extends keyof Get>(
   path: P | null,
   query: Record<string, string> = {},
-  { on = null, every = 0 }: { on?: string[] | null; every?: number } = {},
+  { on = null, every = 0, wait }: { on?: string[] | null; every?: number; wait?: number } = {},
 ): Resource<Get[P]> & { reload: () => void } {
   const [res, setRes] = useState<Resource<Get[P]>>({ state: "loading" });
   const [tick, setTick] = useState(0);
@@ -208,7 +217,7 @@ export function useResource<P extends keyof Get>(
     return () => clearInterval(id);
   }, [every]);
 
-  useChanges(path === null ? null : on, () => setTick((t) => t + 1), query.cwd ?? "");
+  useChanges(path === null ? null : on, () => setTick((t) => t + 1), query.cwd ?? "", wait);
 
   return { ...res, reload: () => setTick((t) => t + 1) };
 }

@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { startedBy, ago, modelName, money, unitCode, unitTitle } from "./format";
+import { describe, expect, it, vi } from "vitest";
+import { failureWords, until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
 import { match } from "./router";
-import { findUnit, type PlacedUnit } from "./boards";
+import { findUnit, needsYou, failedLink, proposalLink, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
 import { matches } from "./stream";
-import { fill, readLines } from "./api";
+import { api, fill, readLines } from "./api";
 import { FEATURE_UIS } from "./feature";
 import { slugOf } from "../screens/NewWork";
 import { inUnit, merged, runFacts, toolLines, toolSummary } from "../screens/RunLog";
@@ -14,18 +14,26 @@ import { noRuns } from "../screens/Insights";
 import { moved } from "../screens/UpNext";
 import { lastDays } from "../screens/Insights";
 import { kinds } from "../../../coscc/features/release/ui/index";
-import { attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
+import { onWords } from "../screens/AgentActivity";
+import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
-import { runRow, changedParts, changes, get, modelOptions, put } from "../screens/AgentPage";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Inline } from "../components/ui";
+import { submitWords } from "../screens/RunLog";
+import { runCount } from "../screens/AgentActivity";
+import { proposingWords } from "../components/Proposals";
+import { builtinOf, chainTo, changedParts, unsavedWords, changes, errorIsHere, get, modelOptions, plainReasons, put, savedApart } from "../screens/AgentPage";
+import { runRow, resultWords, shallowWords } from "../screens/AgentActivity";
 import { fieldLabel, isEmpty, itemLine } from "../screens/UnitPage";
 import { inboxView } from "../screens/Inbox";
 import { featureView } from "../screens/Feature";
 import { filterUnits } from "../screens/Work";
 import type { NextStep } from "../api.gen";
 import type { AgentRow } from "../api.gen";
-import { afterAgentSaved, draftOf, draftParts, draftTools, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
+import { afterAgentSaved, answersText, draftOf, draftParts, draftTools, keepDraft, keptDraft, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
 import { asks, rerunFor, addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
-import { sandboxed, sandboxLine, sandboxOf } from "./build";
+import { sandboxed, sandboxLine, sandboxOf, nameTaken } from "./build";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -223,16 +231,38 @@ describe("agents", () => {
 
   it("sends only the parts the draft changed", () => {
     expect(changes({ model: { id: "a" }, body: "same" }, { model: { id: "b" }, body: "same" })).toEqual(["model"]);
+    // A trigger and its default are one write; the rest one write each.
+    expect(savedApart(["default", "model", "trigger"])).toEqual(["model", "trigger"]);
+    expect(savedApart(["default", "model"])).toEqual(["default", "model"]);
+    const chained = chainTo({ schedule: { hours: 24 }, manual: true }, "telemetry-audit");
+    expect(chained.trigger).toEqual({ schedule: { hours: 24 }, manual: true, event: { name: "agent-run.ended", from: "telemetry-audit" } });
+    expect(chained.default).toBe("off");
+    expect(chainTo(chained.trigger, "", "on")).toEqual({ trigger: { schedule: { hours: 24 }, manual: true }, default: "on" });
+    // A refusal naming one part of the trigger shows under that part alone.
+    const circle = "trigger.event.from: Laguz runs after Echo runs after Laguz";
+    expect(errorIsHere(circle, "trigger", "trigger.event.from")).toBe(true);
+    expect(errorIsHere(circle, "trigger", "trigger.schedule.hours")).toBe(false);
+    expect(errorIsHere("default: a row another agent starts is off", "default", "default")).toBe(true);
+    expect(plainReasons(`${circle}: agents cannot start each other in a circle; default: off until you turn it on`)).toBe(
+      "Laguz runs after Echo runs after Laguz: agents cannot start each other in a circle; off until you turn it on",
+    );
+    expect(plainReasons("skills: Kenaz runs a stage of your process, so it needs at least one skill")).toBe("Kenaz runs a stage of your process, so it needs at least one skill");
+    expect(plainReasons("tools.Write: no such tool in the catalog")).toBe("tools.Write: no such tool in the catalog");
   });
 
   it("says when an agent runs, and what needs a look first", () => {
     const helper = row({ key: "scout", group: "helper", row: { name: "Scout" } });
     const impl = row({ key: "impl", row: { name: "Uruz", trigger: { state: "impl" }, helpers: ["scout"] } });
-    expect(triggerWords(impl)).toBe("on state impl");
+    expect(triggerWords(impl)).toBe("when a unit reaches impl");
     expect(triggerWords(helper, [impl, helper])).toBe("started by Uruz");
     expect(triggerWords(row({ row: { trigger: { engine: "chat" } } }))).toBe("when you talk to Leif");
-    expect(triggerWords(row({ group: "triggered", row: { trigger: { schedule: { hours: 24 }, manual: true, leif: true } } }))).toBe("every 24 h, on request");
-    expect(triggerWords(row({ group: "triggered", row: { trigger: { event: { name: "unit.shipped", after_hours: 168 }, manual: true } } }))).toBe("7 days after a ship, on request");
+    expect(triggerWords(row({ group: "triggered", row: { trigger: { schedule: { hours: 24 }, manual: true, leif: true } } }))).toBe("daily, when you or Leif ask");
+    expect(triggerWords(row({ group: "triggered", row: { trigger: { event: { name: "unit.shipped", after_hours: 168 }, manual: true } } }))).toBe("7 days after a ship, when you or Leif ask");
+    const laguz = row({ key: "telemetry-audit", group: "triggered", row: { name: "Laguz", trigger: { schedule: { hours: 24 } } } });
+    const after = (event: object) => row({ group: "triggered", row: { trigger: { event: { name: "agent-run.ended", ...event }, manual: true } } });
+    expect(triggerWords(after({ from: "telemetry-audit" }), [laguz])).toBe("after Laguz, when you or Leif ask");
+    expect(triggerWords(after({ from: "telemetry-audit", after_hours: 2 }), [laguz])).toBe("2 h after Laguz ends, when you or Leif ask");
+    expect(triggerWords(after({ from: "gone" }), [laguz])).toBe("after gone, when you or Leif ask");
     expect(attention(row({ problems: ["bad"], chip: "failed" }))?.label).toBe("Cannot run");
     expect(attention(row({ chip: "costly" }))?.tone).toBe("amber");
     expect(attention(row({}))).toBeNull();
@@ -432,6 +462,39 @@ describe("Dagaz's draft fills the forms", () => {
     expect(draftOf({ draft: { why: "w", agent: { key: "x" } } })).toBeNull();
   });
 
+  it("a draft that asks first is read with its questions, and its gaps with it", () => {
+    const questions = [{ n: 1, text: "Which code?", recommendation: "All of it" }];
+    const gaps = [{ part: "trigger", need: "every morning", instead: "every 24 h" }];
+    const d = draftOf({ draft: { why: "w", questions, gaps } });
+    expect(d?.questions).toEqual(questions);
+    expect(d?.gaps).toEqual(gaps);
+    expect(d?.agent).toBeUndefined();
+    expect(draftOf({ draft: { why: "w", agent, gaps } })?.gaps).toEqual(gaps);
+    expect(draftOf({ draft: { why: "w", questions: [] } })).toBeNull();
+  });
+
+  it("answers go back under their questions, an empty answer as the recommendation", () => {
+    const qs = [
+      { n: 1, text: "Which code?", recommendation: "All of it" },
+      { n: 2, text: "When?", recommendation: "Weekly" },
+    ];
+    expect(answersText(qs, ["Only coscc/", " "])).toBe("1. Which code?\n   Only coscc/\n2. When?\n   Weekly");
+  });
+
+  it("a kept draft is per project until it is set aside", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) });
+    keepDraft("agent", "/a", { run: "r1", words: "tell me" });
+    expect(keptDraft("agent", "/a")).toEqual({ run: "r1", words: "tell me" });
+    expect(keptDraft("agent", "/b")).toBeNull();
+    expect(keptDraft("process", "/a")).toBeNull();
+    keepDraft("agent", "/a", null);
+    expect(keptDraft("agent", "/a")).toBeNull();
+    localStorage.setItem("coscc.draft.agent./a", "{not json");
+    expect(keptDraft("agent", "/a")).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
   it("a drafted process becomes the editor's steps in walk order", () => {
     const d = draftOf({ draft: { why: "w", process } });
     const steps = fromProcess(d!.process!.name, d!.process!.process);
@@ -494,10 +557,20 @@ describe("screens", () => {
     }
   });
 
+  it("waits on no read that counts runs before any screen shows: agents' names come with the packs", () => {
+    const sources = import.meta.glob<string>(["./pack.tsx", "../shell/*.tsx"], { query: "?raw", import: "default", eager: true });
+    expect(Object.keys(sources).length).toBeGreaterThan(1);
+    for (const [file, text] of Object.entries(sources)) expect(text.includes('"/api/agents"'), file).toBe(false);
+  });
+
   it("names a changed part as the page does, not by its record's key", () => {
     const saved = { model: { id: "a", effort: "low" }, ceilings: { turns: 5, usd: 1 } };
     expect(changedParts({ model: { id: "a", effort: "high" } }, saved)).toEqual(["effort"]);
     expect(changedParts({ ceilings: { turns: 9, usd: 2 }, model: { id: "b", effort: "low" } }, saved)).toEqual(["turns", "spend", "model"]);
+    const tr = { trigger: { event: { name: "e", from: "a" } }, default: "on" };
+    const was = { trigger: { event: { name: "f", from: "b" } }, default: "off" };
+    expect(changedParts(tr, was)).toEqual(["starts after", "on or off by default"]);
+    expect(unsavedWords(tr, was)).toBe("2 unsaved changes: starts after, on or off by default");
     expect(changedParts({ "skill:impl": "x" }, { "skill:impl": "y" })).toEqual(["impl skill"]);
   });
 });
@@ -541,6 +614,7 @@ describe("a run's header", () => {
     const facts = runFacts([e({ kind: "config", model: "claude-sonnet-4-5", effort: "high" }), e({ kind: "result", cost_usd: 1.5, num_turns: 12, duration_ms: 125000 })], { status: "ended", outcome: "done", started_by: "autopilot" });
     expect(Object.fromEntries(facts.map((f) => [f.label, f.value]))).toMatchObject({ Outcome: "done", Cost: "$1.50", Turns: "12", Took: "2 min 5 s", "Started by": "the autopilot" });
     expect(runFacts([], { status: "running" })[0].value).toBe("running");
+    expect(runFacts([e({ kind: "end", outcome: "cancelled" })], { status: "running" })[0].value).toBe("cancelled");
   });
 });
 
@@ -631,7 +705,7 @@ describe("work and needs you", () => {
 });
 
 describe("runRow", () => {
-  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "" };
+  const run = { workspace: "/w", unit: "", outcome: "done", at: "", turns: null, cost_usd: null, row_hash: "", run: "", skipped: false, detail: "", started_by: "", made: null, session: false, verdict: "", refused: null, helpers: null, shallow: false };
   it("opens the log of a unitless run and names who started it", () => {
     expect(runRow({ ...run, run: "abc", started_by: "leif" }, "ws")).toMatchObject({ to: "/run/ws/abc", title: "Run by Leif" });
     expect(runRow({ ...run, run: "abc", started_by: "schedule" }, "ws").title).toBe("Run by the schedule");
@@ -640,10 +714,41 @@ describe("runRow", () => {
     expect(runRow({ ...run, skipped: true, detail: "nothing new" }, "ws")).toMatchObject({ to: "", title: "Skipped — nothing new", muted: true });
   });
   it("says a run with no kept log has none", () => {
-    expect(runRow(run, "ws")).toMatchObject({ to: "", title: "Run — no log kept", muted: true });
+    expect(runRow(run, "ws")).toMatchObject({ to: "", title: "An earlier run — no log kept", muted: true });
   });
   it("sends a unit's run without a log to its unit", () => {
     expect(runRow({ ...run, unit: "0007_a-thing" }, "ws").to).toBe("/unit/ws/7");
+  });
+});
+
+describe("builtinOf", () => {
+  const skill = (over: object) => ({ name: "write-spec", text: "mine", builtin: "", edited: false, ...over });
+  it("keeps an unedited part as the built-in's, so a reset of it is a no-op", () => {
+    const got = builtinOf({ row: { model: { id: "m" }, ceilings: { usd: 5 } }, builtin: { ceilings: { usd: 2 } }, edited: ["ceilings"], skills: [skill({}), skill({ name: "b", text: "new", builtin: "old", edited: true })] } as never);
+    expect(got.model).toEqual({ id: "m" });
+    expect(got.ceilings).toEqual({ usd: 2 });
+    expect(got["skill:write-spec"]).toBe("mine");
+    expect(got["skill:b"]).toBe("old");
+  });
+  it("leaves out a part the owner added that the built-in lacks", () => {
+    const got = builtinOf({ row: { description: "mine" }, builtin: {}, edited: ["description"], skills: [] } as never);
+    expect("description" in got).toBe(false);
+  });
+});
+
+describe("what a run made", () => {
+  const run = { made: null, verdict: "", refused: null, shallow: false } as unknown as Parameters<typeof resultWords>[0];
+  it("says proposed N, a verdict, or nothing", () => {
+    expect(resultWords({ ...run, made: 2 })).toBe("proposed 2");
+    expect(resultWords({ ...run, made: 0 })).toBe("proposed nothing");
+    expect(resultWords({ ...run, verdict: "not-met" })).toBe("verdict: not met");
+    expect(resultWords(run)).toBe("");
+  });
+  it("flags a run that was refused calls or left a criterion unclear", () => {
+    expect(shallowWords({ ...run, refused: 1 })).toBe("1 call was refused");
+    expect(shallowWords({ ...run, refused: 3 })).toBe("3 calls were refused");
+    expect(shallowWords({ ...run, verdict: "unclear" })).toBe("left a criterion unclear");
+    expect(shallowWords(run)).toBe("");
   });
 });
 
@@ -665,5 +770,173 @@ describe("a sandboxed Bash", () => {
     expect(sandboxed("")).toEqual({ sandbox: { network: [] } });
     const [t] = draftTools({ tools: { Bash: { sandbox: { network: ["127.0.0.1:3000"] } } } }, []);
     expect(t.policy).toBe("Bash, sandboxed: network 127.0.0.1:3000; writes its scratch folder only.");
+  });
+});
+
+describe("until and statusWords", () => {
+  const now = Date.parse("2026-10-07T10:00:00Z");
+  it("says when something comes", () => {
+    expect(until("2026-10-07T09:59:00Z", now)).toBe("due");
+    expect(until("2026-10-07T10:12:00Z", now)).toBe("in 12 min");
+    expect(until("2026-10-07T15:00:00Z", now)).toBe("in 5 h");
+    expect(until("2026-10-09T10:00:00Z", now)).toBe("in 2 d");
+  });
+  const row = { on: true, on_in: ["a", "b"], off_reason: "", last: null, next_at: null } as unknown as AgentRow;
+  it("tells on, last and next in one line", () => {
+    const said = statusWords({ ...row, last: { at: "", made: 3 } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" }, "a");
+    expect(said).toMatch(/^On here \(also on in b\) · ran .*, last run proposed 3 · next in \d+ d$/);
+  });
+  it("says why an agent is off and that it never ran", () => {
+    expect(statusWords({ ...row, on: false, on_in: [], off_reason: "a run stopped at its ceiling" }, "a")).toBe("Off here: a run stopped at its ceiling · never ran");
+  });
+  it("tells a stage agent's last run and says it is always on", () => {
+    expect(statusWords({ ...row, on: null }, "a")).toBe("Always on · never ran");
+    expect(statusWords({ ...row, on: null, last: { at: "", made: null } as AgentRow["last"] }, "a")).toMatch(/^Always on · ran /);
+  });
+  it("says a failed or stopped last run as it ended, and the tile's line has no 'never ran' mid-line", () => {
+    const failed = { ...row, last: { at: "", made: null, outcome: "failed" } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" };
+    expect(statusWords(failed, "a")).toMatch(/ · failed .* · next in/);
+    expect(onWords({ ...row, next_at: "2999-01-01T00:00:00Z" }, "a")).toMatch(/^On here \(also on in b\) · next in \d+ d$/);
+    expect(attention({ ...failed, problems: [], chip: "failed", running: { run: "r", started: "" } } as unknown as AgentRow)).toBeNull();
+  });
+  it("says running now, not never ran or next, while the first run is in flight", () => {
+    const said = statusWords({ ...row, running: { run: "r", started: "" }, next_at: "2999-01-01T00:00:00Z" }, "a");
+    expect(said).toBe("On here (also on in b) · running now");
+  });
+});
+
+describe("failedLink", () => {
+  it("opens the run, or the agent's page in its workspace when no log was kept", () => {
+    expect(failedLink({ workspace: "my proj", agent: "scan", run: "r1" })).toBe("/run/my%20proj/r1");
+    expect(failedLink({ workspace: "my proj", agent: "scan", run: "" })).toBe("/agents/scan?ws=my%20proj");
+  });
+});
+
+describe("proposalLink", () => {
+  it("opens the proposal on its project's Up next", () => {
+    expect(proposalLink({ workspace: "my proj", id: 31 })).toBe("/up-next?ws=my%20proj#proposal-31");
+  });
+});
+
+describe("needsYou", () => {
+  const unit = (over: object) => ({ why: "", phase: "full", open: 0, ...over }) as unknown as PlacedUnit;
+  it("counts a failed agent run beside the proposals", () => {
+    expect(needsYou([], [1, 2], [{}]).total).toBe(3);
+  });
+  it("counts the units that need a person and the proposals once, for every screen", () => {
+    const got = needsYou([unit({ open: 2 }), unit({ paused: { at: "impl" } }), unit({}), unit({ why: "dropped", open: 1 })], ["p1", "p2", "p3"]);
+    expect(got.units.length).toBe(2);
+    expect(got.total).toBe(5);
+  });
+});
+
+describe("matches with something left out", () => {
+  const run = { subject: "agent-run.started", workspace: "w", agent: "a", run: "r" };
+  it("leaves out a subject but never the reconnect replay", () => {
+    expect(matches(run, [""], "", ["agent-run."])).toBe(false);
+    expect(matches({ subject: "step.ended", workspace: "w", unit: "u", going_down: false }, [""], "", ["agent-run."])).toBe(true);
+    expect(matches({ subject: "", workspace: "" }, [""], "", ["agent-run.", "chat-turn."])).toBe(true);
+  });
+});
+
+describe("an agent's markdown and tool names", () => {
+  it("reads emphasis, code and only safe links", () => {
+    const line = "**#31** uses `step_events`, see [run](/run/proj/a) or [x](javascript:alert(1))";
+    const spans = mdSpans(line);
+    expect(spans.slice(0, 5)).toEqual([
+      { kind: "b", text: "#31" },
+      { kind: "text", text: " uses " },
+      { kind: "code", text: "step_events" },
+      { kind: "text", text: ", see " },
+      { kind: "link", text: "run", href: "/run/proj/a" },
+    ]);
+    // A link anywhere but the app or the web stays words.
+    expect(spans.slice(5).every((s) => s.kind === "text")).toBe(true);
+    expect(spans.slice(5).map((s) => s.text).join("")).toBe(" or [x](javascript:alert(1))");
+  });
+  it("groups lines into headings, lists, paragraphs and code", () => {
+    const blocks = mdBlocks("## Why\n- one\n- two\n\nText\nmore\n```\ncode **x**\n```\n1. first");
+    expect(blocks.map((b) => b.kind)).toEqual(["h", "ul", "p", "pre", "ol"]);
+    expect(blocks[1].lines).toHaveLength(2);
+    expect(blocks[3].code).toBe("code **x**");
+  });
+  it("names a tool by its own name", () => {
+    expect(toolName("mcp__cos__proposals")).toBe("proposals");
+    expect(toolName("mcp__code-graph__explore")).toBe("explore");
+    expect(toolName("Read")).toBe("Read");
+  });
+});
+
+describe("submitWords and inline marks", () => {
+  it("says a submit in plain words", () => {
+    expect(submitWords({ proposals: [] })).toBe("handed back 0 proposals");
+    expect(submitWords({ proposals: [{ a: 1 }] })).toBe("handed back 1 proposal");
+    expect(submitWords({ why: "x" })).toBe("handed back its result");
+  });
+  it("shows code inside bold as code, with no backticks left", () => {
+    const html = renderToStaticMarkup(createElement(Inline, { text: "**`GET /api/units`:** and `x`" }));
+    expect(html).toBe("<b><code>GET /api/units</code><span>:</span></b><span> and </span><code>x</code>");
+  });
+});
+
+describe("runCount", () => {
+  it("counts skipped runs apart, in the group as in the tile", () => {
+    const runs = [...Array(12).fill({ skipped: false }), ...Array(3).fill({ skipped: true })];
+    expect(runCount(runs)).toBe("12 runs, 3 skipped");
+    expect(runCount(12, 3)).toBe("12 runs, 3 skipped");
+    expect(runCount([{ skipped: false }])).toBe("1 run");
+  });
+});
+
+describe("proposingWords", () => {
+  it("says a follower starts after its leader, naming the leader's state", () => {
+    const base = { key: "echo", name: "Echo", on: false, after: "Laguz", after_on: false };
+    expect(proposingWords(base)).toBe("starts after Laguz (off here)");
+    expect(proposingWords({ ...base, after_on: true })).toBe("starts after Laguz");
+    expect(proposingWords({ ...base, after: "", after_on: null })).toBe("off here, runs when you press Run now");
+  });
+});
+
+describe("failureWords", () => {
+  it("says a killed process plainly and keeps the raw text apart", () => {
+    const raw = "the session failed: Command failed with exit code 143 (exit code: 143) Error output: Check stderr output for details";
+    const got = failureWords(raw);
+    expect(got.plain).toBe("The agent's process was stopped (exit 143) before it finished");
+    expect(got.raw).toBe(raw);
+  });
+  it("says a signal exit plainly, negative or shifted", () => {
+    for (const n of [-9, -15, 137, 143]) {
+      const raw = `the session failed: Command failed with exit code ${n} (exit code: ${n})`;
+      expect(failureWords(raw).plain).toBe(`The agent's process was stopped (exit ${n}) before it finished`);
+    }
+    expect(failureWords("exit code: 1").plain).toContain("broke off");
+  });
+  it("leaves a detail with no exit code as it is", () => {
+    expect(failureWords("the ceiling was reached")).toEqual({ plain: "the ceiling was reached", raw: "" });
+  });
+});
+
+describe("api.get", () => {
+  it("shares one request between two reads of the same address in flight", async () => {
+    const fetched = vi.fn(async () => new Response(JSON.stringify({ units: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetched);
+    const [a, b] = await Promise.all([api.get("/api/units", { cwd: "/w" }), api.get("/api/units", { cwd: "/w" })]);
+    expect(fetched).toHaveBeenCalledTimes(1);
+    expect(a).toBe(b);
+    await api.get("/api/units", { cwd: "/w" });
+    expect(fetched).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("a name another agent has", () => {
+  const rows = [{ key: "pr-review", row: { name: "Tiwaz" } }, { key: "x", row: {} }];
+  it("is refused before the save, without case", () => {
+    expect(nameTaken("tiwaz", rows)).toMatch(/another agent's name/);
+    expect(nameTaken("Tidy", rows)).toBeNull();
+    expect(nameTaken("", rows)).toBeNull();
+  });
+  it("is not taken by the row it names", () => {
+    expect(nameTaken("Tiwaz", rows, "pr-review")).toBeNull();
   });
 });

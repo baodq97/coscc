@@ -1,7 +1,7 @@
 ---
 name: "Ingwaz"
 glyph: "ᛜ"
-description: "seed"
+description: "Turns a noticed friction or want into a recorded idea."
 model: {"id": "claude-opus-5-5[1m]", "effort": "medium"}
 skills: ["write-idea"]
 tools: {}
