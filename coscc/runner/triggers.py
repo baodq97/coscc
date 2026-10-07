@@ -641,10 +641,10 @@ async def leif_call(core: Core, cwd: str, args: Mapping[str, Any]) -> Reply:
     return {"content": [{"type": "text", "text": said}]}
 
 
-def leif_server(core: Core, cwd: str) -> Any:
-    """The chat's `cos` server holding `run_agent` (`leif_call`): it starts a row whose trigger says
-    `leif`, in the chat's workspace, with Leif's reason on its `start`; any other row is refused
-    `not-leif`."""
+def leif_server(core: Core, cwd: str, reads: Sequence[Any] = ()) -> Any:
+    """The chat's `cos` server holding `run_agent` (`leif_call`) and `reads`, the read-only tools
+    beside it (`coscc/leif/chat.py`). `run_agent` starts a row whose trigger says `leif`, in the
+    chat's workspace, with Leif's reason on its `start`; any other row is refused `not-leif`."""
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
     named = ", ".join(k for k, r in pack.rows().items() if _trigger(r).get("leif")) or "none"
@@ -661,7 +661,7 @@ def leif_server(core: Core, cwd: str) -> Any:
         "person's words, for an agent that takes them (Dagaz drafts from the task they state)."
     )
     return create_sdk_mcp_server(
-        submit.SERVER, "1.0.0", [tool(LEIF_TOOL, described, LEIF_SCHEMA)(_handle)]
+        submit.SERVER, "1.0.0", [tool(LEIF_TOOL, described, LEIF_SCHEMA)(_handle), *reads]
     )
 
 

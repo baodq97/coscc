@@ -45,10 +45,9 @@ from coscc.leif.insights import Insights
 from coscc.runner import triggers
 from coscc.runner.steps import NextStep
 from coscc.runner.watch import EventsPage
-from coscc import units
-from coscc.units import proposals, read, states
+from coscc.units import proposals
 from coscc.units.backlog import SHORTLIST_MAX
-from coscc.units.read import Cards, Detail, UpNext, cards, detail
+from coscc.units.read import Cards, Detail, UpNext, cards
 from coscc.units.workspaces import WorkspaceList
 from coscc.update.updater import refusals, update_words
 
@@ -663,28 +662,7 @@ async def get_unit(name: str, request: Request) -> Detail:
 
 
 async def _unit(name: str, request: Request) -> Detail:
-    core, cwd = _core(request), _cwd(request)
-    board = await core.boards.get(cwd, "held")
-    unit = next((u for u in board.get("units") or [] if u.get("name") == name), None)
-    if unit is None:
-        raise Invalid(f"no unit {name} in {cwd}")
-    journal = core.ws.journal()
-    timeline = await asyncio.to_thread(journal.timeline, core.ws.key(cwd), name) if journal else []
-    meta = core.ws.unit_meta()
-    outputs = await asyncio.to_thread(meta.outputs, core.ws.key(cwd), name)
-    decisions = await asyncio.to_thread(meta.decisions, core.ws.key(cwd), name)
-    graded = await asyncio.to_thread(meta.graded, core.ws.key(cwd), name)
-    found = read.grader()
-    shown = None
-    if found is not None:
-        verdict = await asyncio.to_thread(meta.verdict, core.ws.key(cwd), name)
-        made = await asyncio.to_thread(
-            proposals.listed, Data(core.config.data_dir), core.ws.key(cwd), found[0]
-        )
-        shown = read.outcome(*found, verdict, [p for p in made if p["unit"] == name])
-    idea = units.unit_dir(cwd, name, core.config.data_dir) / states.brief_file()
-    brief = await asyncio.to_thread(idea.read_text, "utf-8") if idea.is_file() else ""
-    return detail(unit, timeline, outputs, decisions, graded, shown, brief)
+    return await _core(request).unit(_cwd(request), name)
 
 
 def _number(request: Request, name: str) -> int | None:

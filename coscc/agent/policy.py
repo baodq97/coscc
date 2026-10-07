@@ -80,6 +80,9 @@ SEND_MESSAGE = "SendMessage"
 PEERS_TOOL = "mcp__cos__peers"
 # The kernel's own tool Leif's chat starts a triggered row with (`coscc/runner/triggers.py`).
 RUN_AGENT_TOOL = "mcp__cos__run_agent"
+# The kernel's read-only tools beside it, which read the app's own state (`coscc/leif/chat.py`).
+LEIF_READS = ("board", "unit", "needs_you", "spend", "agents")
+LEIF_TOOLS = (RUN_AGENT_TOOL, *(f"mcp__cos__{n}" for n in LEIF_READS))
 # Lists every Claude session on the machine, not only this run's helpers.
 LIST_AGENTS = "ListAgents"
 # What a helper calls to hand its result back to the leading session.
@@ -1305,7 +1308,7 @@ class Grant:
         for name in self.mcp:
             m = MCP_NAME.fullmatch(name)
             if m is None or (
-                m.group(1) == "cos" and name not in (SUBMIT_TOOL, PEERS_TOOL, RUN_AGENT_TOOL)
+                m.group(1) == "cos" and name not in (SUBMIT_TOOL, PEERS_TOOL, *LEIF_TOOLS)
             ):
                 raise ValueError(f"not an MCP tool name a grant may hold: {name!r}")
 

@@ -36,6 +36,7 @@ from coscc.leif.agents import Agents, Models
 from coscc.leif.answers import Answers
 from coscc.leif.autopilot import Autopilot, autopilot_values
 from coscc.leif.backlog import Backlog
+from coscc.leif import chat
 from coscc.leif.chat import Chat
 from coscc.leif.insights import Activity
 from coscc.runner.queue import Attempts, Holds, Updating
@@ -45,7 +46,9 @@ from coscc.runner.steps import Steps
 from coscc.runner.watch import Watch
 from coscc.store.db import Data
 from coscc.units.ideas import Ideas
-from coscc.units.read import Asked, Board
+from coscc import units
+from coscc.units import proposals, read, states
+from coscc.units.read import Asked, Board, Detail
 from coscc.units.workspaces import Workspaces
 from coscc.update import updater as updater_mod
 from coscc.update.updater import (
@@ -92,7 +95,7 @@ class Core:
             self.sessions,
             lambda: refuse_while_updating(self.updater),
             self.models.agent,
-            lambda cwd: triggers.leif_server(self, cwd),
+            lambda cwd: triggers.leif_server(self, cwd, chat.read_tools(self, cwd)),
         )
         self.ideas = Ideas(self.config, self.ws)
         self.backlog = Backlog(
@@ -260,6 +263,30 @@ class Core:
         data = await self.boards.get(cwd, which)
         self.autopilot.show(self.ws.key(cwd), data)
         return data
+
+    async def unit(self, cwd: str, name: str) -> Detail:
+        """One unit as its page shows it (`read.detail`), from the board held."""
+        board = await self.boards.get(cwd, "held")
+        unit = next((u for u in board.get("units") or [] if u.get("name") == name), None)
+        if unit is None:
+            raise Invalid(f"no unit {name} in {cwd}")
+        key, meta = self.ws.key(cwd), self.ws.unit_meta()
+        journal = self.ws.journal()
+        timeline = await asyncio.to_thread(journal.timeline, key, name) if journal else []
+        outputs = await asyncio.to_thread(meta.outputs, key, name)
+        decisions = await asyncio.to_thread(meta.decisions, key, name)
+        graded = await asyncio.to_thread(meta.graded, key, name)
+        found = read.grader()
+        shown = None
+        if found is not None:
+            verdict = await asyncio.to_thread(meta.verdict, key, name)
+            made = await asyncio.to_thread(
+                proposals.listed, Data(self.config.data_dir), key, found[0]
+            )
+            shown = read.outcome(*found, verdict, [p for p in made if p["unit"] == name])
+        idea = units.unit_dir(cwd, name, self.config.data_dir) / states.brief_file()
+        brief = await asyncio.to_thread(idea.read_text, "utf-8") if idea.is_file() else ""
+        return read.detail(unit, timeline, outputs, decisions, graded, shown, brief)
 
     def _asks(self) -> list[tuple[str, asyncio.Task]]:
         """The background `gh` asks running now: CI, the board's and each feature's."""
