@@ -281,6 +281,10 @@ class ProposingAgent(TypedDict):
     key: str
     name: str
     on: bool | None
+    # The agent whose finished run starts this one (its name) and whether that agent is on here;
+    # empty and `None` for one no event starts.
+    after: str
+    after_on: bool | None
 
 
 class ProposalRow(proposals.Proposal):
@@ -893,6 +897,16 @@ class Agents:
         timed = pack.triggered(found, "event") or pack.triggered(found, "schedule")
         return pack.agent_on(data, key, workspace) if timed and workspace else None
 
+    def _proposing(self, data: Data, key: str, name: Callable[[str], str], ws: str) -> ProposingAgent:
+        leader = str((((pack.row(key) or {}).get("trigger") or {}).get("event") or {}).get("from") or "")
+        return ProposingAgent(
+            key=key,
+            name=name(key),
+            on=self._on(data, key, ws),
+            after=name(leader) if leader else "",
+            after_on=self._on(data, leader, ws) if leader and pack.row(leader) else None,
+        )
+
     def set_state(self, cwd: str, key: object, on: object) -> AgentPage:
         """Turn `key`'s event or schedule on or off in the workspace `cwd`: the pref
         `agents.state`, logged as an `agent-state` row `by: owner`. A press and Leif run it
@@ -928,7 +942,7 @@ class Agents:
                 ProposalRow(**p, agent_name=name(p["agent"])) for p in proposals.listed(data, ws)
             ],
             agents=[
-                ProposingAgent(key=k, name=name(k), on=self._on(data, k, ws))
+                self._proposing(data, k, name, ws)
                 for k, r in rows.items()
                 if (r.get("output") or {}).get("kind") == "proposal"
             ],

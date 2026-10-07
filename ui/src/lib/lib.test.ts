@@ -17,6 +17,7 @@ import { kinds } from "../../../coscc/features/release/ui/index";
 import { onWords } from "../screens/AgentActivity";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
+import { proposingWords } from "../components/Proposals";
 import { builtinOf, chainTo, changedParts, unsavedWords, changes, errorIsHere, get, modelOptions, plainReasons, put, savedApart } from "../screens/AgentPage";
 import { runRow, resultWords, shallowWords } from "../screens/AgentActivity";
 import { fieldLabel, isEmpty, itemLine } from "../screens/UnitPage";
@@ -771,7 +772,7 @@ describe("until and statusWords", () => {
   const row = { on: true, on_in: ["a", "b"], off_reason: "", last: null, next_at: null } as unknown as AgentRow;
   it("tells on, last and next in one line", () => {
     const said = statusWords({ ...row, last: { at: "", made: 3 } as AgentRow["last"], next_at: "2999-01-01T00:00:00Z" }, "a");
-    expect(said).toMatch(/^On here \(also on in b\) · ran .*, last run made 3 · next in \d+ d$/);
+    expect(said).toMatch(/^On here \(also on in b\) · ran .*, last run proposed 3 · next in \d+ d$/);
   });
   it("says why an agent is off and that it never ran", () => {
     expect(statusWords({ ...row, on: false, on_in: [], off_reason: "a run stopped at its ceiling" }, "a")).toBe("Off here: a run stopped at its ceiling · never ran");
@@ -851,6 +852,15 @@ describe("an agent's markdown and tool names", () => {
     expect(toolName("mcp__cos__proposals")).toBe("proposals");
     expect(toolName("mcp__code-graph__explore")).toBe("explore");
     expect(toolName("Read")).toBe("Read");
+  });
+});
+
+describe("proposingWords", () => {
+  it("says a follower starts after its leader, naming the leader's state", () => {
+    const base = { key: "echo", name: "Echo", on: false, after: "Laguz", after_on: false };
+    expect(proposingWords(base)).toBe("starts after Laguz (off here)");
+    expect(proposingWords({ ...base, after_on: true })).toBe("starts after Laguz");
+    expect(proposingWords({ ...base, after: "", after_on: null })).toBe("off here, runs when you press Run now");
   });
 });
 

@@ -562,6 +562,8 @@ export type ProposingAgent = {
   "key": string;
   "name": string;
   "on": boolean | null;
+  "after": string;
+  "after_on": boolean | null;
 };
 
 export type PullRequest = {
