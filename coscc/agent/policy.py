@@ -54,6 +54,9 @@ class Row:
     helpers: tuple[str, ...] = ()
     # Of `tools`, those set to `ask`: offered to the session, and every call refused `ASKS`.
     asks: tuple[str, ...] = ()
+    # The loopback hosts its Bash may reach inside Claude Code's OS sandbox (`pack.sandbox_of`);
+    # `None`: its Bash, if any, is not sandboxed.
+    sandbox: tuple[str, ...] | None = None
 
     @property
     def opens_anything(self) -> bool:
@@ -138,6 +141,7 @@ def _row(key: str, label: str | None) -> Row:
         submits=output.get("kind") in SUBMIT_KINDS,
         prose=output.get("by") == "app",
         helpers=tuple(found.get("helpers") or ()),
+        sandbox=pack.sandbox_of(found),
     )
 
 
@@ -1303,6 +1307,9 @@ class Grant:
     # The tools its row sets to `ask`, as the session names them (`Read`, `mcp__vault__get`):
     # offered, and every call refused `ASKS` until a person can be asked.
     asks: tuple[str, ...] = ()
+    # Its Bash runs inside Claude Code's OS sandbox, reaching only these loopback hosts and
+    # writing only in the session's own data root (`sessions.sandbox_settings`); `None`: it does not.
+    sandbox: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         for name in self.mcp:
@@ -1327,6 +1334,8 @@ def granted(grant: Grant) -> list[str]:
         out.append("write: " + ", ".join(where))
     if grant.branch:
         out.append(f"push: {grant.branch}" + (" (with a lease)" if grant.lease else ""))
+    if grant.sandbox is not None:
+        out.append("bash: sandboxed, network " + (", ".join(grant.sandbox) or "none"))
     if grant.helpers:
         out.append("helpers: " + ", ".join(grant.helpers))
     used: dict[str, list[str]] = {}
@@ -1357,6 +1366,7 @@ def record(grant: Grant) -> dict:
         "tools": list(grant.tools),
         "held": list(grant.held),
         "asks": list(grant.asks),
+        "sandbox": None if grant.sandbox is None else list(grant.sandbox),
     }
 
 

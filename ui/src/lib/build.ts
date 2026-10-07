@@ -363,12 +363,30 @@ const KIND_WORDS: Record<string, string> = {
   reply: "a reply",
 };
 
+/** The loopback hosts a sandboxed Bash may reach, or null when the tool's setting is no sandbox. */
+export function sandboxOf(policy: unknown): string[] | null {
+  const box = isObj(policy) ? policy.sandbox : undefined;
+  if (!isObj(box)) return null;
+  return Array.isArray(box.network) ? box.network.map(String) : [];
+}
+
+/** A sandboxed Bash in plain words: what it reaches and where it writes. */
+export function sandboxLine(hosts: string[]): string {
+  return `Bash, sandboxed: network ${hosts.length ? hosts.join(", ") : "none"}; writes its scratch folder only.`;
+}
+
+/** A Bash setting that runs in the sandbox, reaching the hosts typed (comma or space between). */
+export function sandboxed(typed: string): { sandbox: { network: string[] } } {
+  return { sandbox: { network: typed.split(/[\s,]+/).filter(Boolean) } };
+}
+
 /** A drafted row's tools, each with what it does and how much a wrong call costs, from the catalog. */
 export function draftTools(fields: Record<string, unknown>, catalog: CatalogTool[]): { name: string; policy: string; effect: string; tier: string }[] {
   const tools = isObj(fields.tools) ? fields.tools : {};
   return Object.entries(tools).map(([name, policy]) => {
     const c = catalog.find((t) => t.name === name);
-    return { name, policy: String(policy), effect: c?.effect ?? "not in the catalog", tier: c?.tier ?? "" };
+    const box = sandboxOf(policy);
+    return { name, policy: box ? sandboxLine(box) : String(policy), effect: c?.effect ?? "not in the catalog", tier: c?.tier ?? "" };
   });
 }
 

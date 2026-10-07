@@ -548,7 +548,7 @@ export type RowFields = {
   "model"?: Record<string, unknown>;
   "variants"?: Record<string, unknown>;
   "skills"?: string[];
-  "tools"?: Record<string, string>;
+  "tools"?: Record<string, unknown>;
   "helpers"?: string[];
   "input"?: Record<string, unknown>;
   "output"?: Record<string, unknown>;

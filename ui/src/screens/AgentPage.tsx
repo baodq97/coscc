@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 import type { AgentPage as Page, AgentRow, CatalogTool, RunGroup, RunView } from "../api.gen";
 import { api, ApiError } from "../lib/api";
 import { refreshPacks } from "../lib/pack";
+import { sandboxed, sandboxLine, sandboxOf } from "../lib/build";
 import { ago, modelName, startedBy, money, unitCode, unitTitle } from "../lib/format";
 import { Link, navigate } from "../lib/router";
 import { Button, Chip, Empty, ErrorState, SkeletonRows } from "../components/ui";
@@ -483,18 +484,21 @@ function Configuration(ctx: Ctx) {
 
 function Tools(ctx: Ctx) {
   const { a, page } = ctx;
-  const tools = (ctx.value("tools") as Record<string, string> | undefined) ?? {};
+  const tools = (ctx.value("tools") as Record<string, unknown> | undefined) ?? {};
   const output = (ctx.value("output") as { by?: string; kind?: string } | undefined) ?? {};
   const readsOnly = output.by === "app";
   const helper = a.group === "helper";
   const helpers = page.rows.filter((r) => r.group === "helper");
   const chosen = (ctx.value("helpers") as string[] | undefined) ?? [];
-  const set = (t: string, p: string) => {
+  const triggered = a.group === "triggered";
+  const set = (t: string, p: unknown) => {
     const next = { ...tools };
     if (p === "off") delete next[t];
     else next[t] = p;
     ctx.edit("tools", next);
   };
+  // A row a trigger starts holds Bash only inside the OS sandbox.
+  const choices = (t: CatalogTool) => (triggered && t.name === "Bash" ? ["sandboxed", "off"] : ["allow", "ask", "off"]);
   const why = (t: CatalogTool) =>
     readsOnly && t.effect !== "read" ? "The app writes this agent's output from its reply, so it holds only reading tools." : helper && t.name === "Agent" ? "A helper starts no helper." : "";
   return (
@@ -507,7 +511,8 @@ function Tools(ctx: Ctx) {
       )}
       <div className="card">
         {page.catalog.map((t) => {
-          const p = tools[t.name] ?? "off";
+          const box = sandboxOf(tools[t.name]);
+          const p = box ? "sandboxed" : String(tools[t.name] ?? "off");
           const no = why(t);
           return (
             <div key={t.name} className="tool-line">
@@ -523,12 +528,28 @@ function Tools(ctx: Ctx) {
                 {!same(p, (a.builtin.tools ?? {})[t.name] ?? "off") && <Chip square tone="accent">edited</Chip>}
               </span>
               <span className="seg">
-                {["allow", "ask", "off"].map((x) => (
-                  <button key={x} className={p === x ? "on" : ""} disabled={!ctx.editable || (x !== "off" && !!no)} onClick={() => set(t.name, x)}>
+                {choices(t).map((x) => (
+                  <button key={x} className={p === x ? "on" : ""} disabled={!ctx.editable || (x !== "off" && !!no)} onClick={() => set(t.name, x === "sandboxed" ? sandboxed(box?.join(", ") ?? "") : x)}>
                     {x}
                   </button>
                 ))}
               </span>
+              {box && (
+                <span className="tool-why">
+                  {sandboxLine(box)}{" "}
+                  <label>
+                    Network{" "}
+                    <input
+                      key={box.join(", ")}
+                      className="mono"
+                      defaultValue={box.join(", ")}
+                      placeholder="127.0.0.1:3000"
+                      disabled={!ctx.editable}
+                      onBlur={(e) => e.target.value !== box.join(", ") && set(t.name, sandboxed(e.target.value))}
+                    />
+                  </label>
+                </span>
+              )}
               {t.name === "Agent" && p !== "off" && (
                 <span className="tool-why">
                   Starts:{" "}

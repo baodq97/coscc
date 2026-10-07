@@ -248,6 +248,16 @@ class TheRunIsIssuedItsGrant(Base):
             ["push: feat/x", "helpers: scout, worker", "submit", "vault: ws:db"],
         )
 
+    def test_a_sandboxed_bash_carries_its_hosts_and_writes_nowhere_of_the_grant(self):
+        boxed = Row(tools=("Read", "Bash"), sandbox=("127.0.0.1:3000",))
+        g = run_mod.issue(boxed, Fake(), cwd="/w", unit_dir="/u", scratch=("/r", "/d"))
+        self.assertEqual((g.sandbox, g.write, g.scratch), (("127.0.0.1:3000",), (), None))
+        self.assertIn("bash: sandboxed, network 127.0.0.1:3000", policy.granted(g))
+        self.assertEqual(policy.record(g)["sandbox"], ["127.0.0.1:3000"])
+        asked = Row(tools=("Bash",), asks=("Bash",), sandbox=())
+        self.assertIsNone(run_mod.issue(asked, Fake(), cwd="/w").sandbox)
+        self.assertIsNone(run_mod.issue(self.IMPL, Fake(), cwd="/w").sandbox)
+
     def test_the_start_and_the_first_event_say_what_was_granted(self):
         agent = run_mod.Agent("estimate", policy.row_for("estimate"), model="m")
         got = self.go(Fake(obj={"units": []}), agent=agent)[-1][1]

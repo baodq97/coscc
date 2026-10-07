@@ -25,6 +25,7 @@ import type { NextStep } from "../api.gen";
 import type { AgentRow } from "../api.gen";
 import { afterAgentSaved, draftOf, draftParts, draftTools, liveLine, runsByItself, unsavedAgent, walkChoices } from "./build";
 import { asks, rerunFor, addStep, blankDraft, fieldOf, fieldOptions, fromProcess, keyProblem, missingInput, moveStep, reasonsByStep, renameStep, removeStep, setAgent, setStep, slugKey, toProcess } from "./build";
+import { sandboxed, sandboxLine, sandboxOf } from "./build";
 
 describe("format", () => {
   it("reads a model id as its family and version", () => {
@@ -647,5 +648,20 @@ describe("runRow", () => {
 describe("startedBy", () => {
   it("says who in plain words", () => {
     expect(["manual", "person", "leif", "schedule", "event", "autopilot", "", null].map(startedBy)).toEqual(["you", "you", "Leif", "the schedule", "an event", "the autopilot", "", ""]);
+  });
+});
+
+describe("a sandboxed Bash", () => {
+  it("reads as what it reaches and where it writes, and edits back into the row's form", () => {
+    const box = sandboxOf({ sandbox: { network: ["127.0.0.1:3000"] } });
+    expect(box).toEqual(["127.0.0.1:3000"]);
+    expect(sandboxLine(box ?? [])).toBe("Bash, sandboxed: network 127.0.0.1:3000; writes its scratch folder only.");
+    expect(sandboxLine([])).toBe("Bash, sandboxed: network none; writes its scratch folder only.");
+    expect(sandboxOf("allow")).toBeNull();
+    expect(sandboxOf({ sandbox: {} })).toEqual([]);
+    expect(sandboxed("127.0.0.1:3000, localhost:9090 ")).toEqual({ sandbox: { network: ["127.0.0.1:3000", "localhost:9090"] } });
+    expect(sandboxed("")).toEqual({ sandbox: { network: [] } });
+    const [t] = draftTools({ tools: { Bash: { sandbox: { network: ["127.0.0.1:3000"] } } } }, []);
+    expect(t.policy).toBe("Bash, sandboxed: network 127.0.0.1:3000; writes its scratch folder only.");
   });
 });
