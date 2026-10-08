@@ -48,7 +48,9 @@ export function PackProvider({ children }: { children: ReactNode }) {
   const cwd = ws.data?.workspaces[0]?.path;
   const packs = useResource(cwd ? "/api/packs" : null, cwd ? { cwd } : {});
   const settled = ws.state !== "loading" && (!cwd || packs.state !== "loading");
-  useEffect(() => readers.forEach((f) => f()), [packs.data]);
+  useEffect(() => {
+    readers.forEach((f) => f());
+  }, [packs.data]);
   if (!settled) return <div className="page"><SkeletonRows rows={4} /></div>;
 
   const faces = facesOf(packs.data ?? []);
