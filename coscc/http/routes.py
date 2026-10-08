@@ -129,6 +129,13 @@ class Decided(TypedDict):
     date: str
 
 
+class DecidedPage(TypedDict):
+    """One page of a workspace's answers, and how many match before paging."""
+
+    rows: list[Decided]
+    total: int
+
+
 # A comment line this often keeps a quiet stream open through proxies and tells the page it is
 # still connected. Chosen, not measured.
 STREAM_PING_SECONDS = 10.0
@@ -607,11 +614,19 @@ async def answer_question(request: Request) -> Any:
     )
 
 
+DECIDED_PAGE = 50
+
+
 @router.get("/api/decided")
-async def get_decided(request: Request) -> list[Decided]:
-    """Every answer in one workspace sent `by: delegated`, newest first: what Leif and the
-    agents decided for the owner. Read from the board held."""
+async def get_decided(request: Request) -> DecidedPage:
+    """The answers in one workspace sent `by: delegated`, newest first: what Leif and the agents
+    decided for the owner. `q` keeps the answers whose unit, question, answer, decider or artifact
+    has every word of it; `total` counts those before paging. At most 50 rows a call, from
+    `offset`. Read from the board held."""
     board = await _core(request).boards.get(_cwd(request), "held")
+    words = request.query_params.get("q", "").lower().split()
+    offset = _number(request, "offset") or 0
+    limit = min(_number(request, "limit") or DECIDED_PAGE, DECIDED_PAGE)
     out: list[Decided] = [
         {
             "unit": str(u.get("name") or ""),
@@ -626,7 +641,16 @@ async def get_decided(request: Request) -> list[Decided]:
         for a in u.get("answers") or []
         if a.get("by") == "delegated"
     ]
-    return sorted(out, key=lambda d: d["date"], reverse=True)
+    out = [
+        d
+        for d in out
+        if all(
+            w in f"{d['unit']} {d['question']} {d['text']} {d['name']} {d['artifact']}".lower()
+            for w in words
+        )
+    ]
+    out.sort(key=lambda d: d["date"], reverse=True)
+    return {"rows": out[offset : offset + limit], "total": len(out)}
 
 
 @router.post("/api/units/outcome")

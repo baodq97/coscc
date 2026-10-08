@@ -18,6 +18,14 @@ export function kinds(units: { type: string }[]): string {
     .join(", ");
 }
 
+/** What a release would gather: the sentence for the card, and one line per commit without a unit. */
+export function summary(r: Pick<ReleaseView, "count" | "units" | "unmatched" | "last_tag">): { text: string; lines: string[] } {
+  const n = r.unmatched.length;
+  const units = `${r.count} ${r.count === 1 ? "unit" : "units"}${r.count ? ` (${kinds(r.units)})` : ""}`;
+  const loose = n ? ` and ${n} ${n === 1 ? "commit" : "commits"} without a unit` : "";
+  return { text: `${units}${loose} since ${r.last_tag}`, lines: r.unmatched.map((c) => c.subject) };
+}
+
 function Release({ workspace }: { workspace: Workspace }) {
   const cwd = workspace.path;
   const release = useResource("/api/release", { cwd }, { on: ["integration.ended", "step.ended"] });
@@ -50,7 +58,7 @@ function Release({ workspace }: { workspace: Workspace }) {
           <b>Release {r.version || r.proposed}</b>
           <span className="faint">
             {r.state === "ready"
-              ? `${r.count} units since ${r.last_tag}: ${kinds(r.units)}`
+              ? summary(r).text
               : r.state === "pr-open"
                 ? `pull request #${r.pr} open`
                 : r.state === "merged-untagged"
@@ -64,6 +72,13 @@ function Release({ workspace }: { workspace: Workspace }) {
             </a>
           )}
         </div>
+        {r.state === "ready" && r.unmatched.length > 0 && (
+          <ul className="faint" style={{ fontSize: 12, margin: "8px 0 0", paddingLeft: 18 }}>
+            {summary(r).lines.map((l, i) => (
+              <li key={i}>{l}</li>
+            ))}
+          </ul>
+        )}
         {r.checks.length > 0 && (
           <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: "wrap" }}>
             {r.checks.map((c) => (

@@ -6,7 +6,7 @@ import { useState } from "react";
 import type { AgentSpend, Outcomes, Insights as View, Target } from "../api.gen";
 import { useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
-import { stageLabel } from "../lib/pack";
+import { agentFace, type AgentFace } from "../lib/pack";
 import { ago, money, unitCode, unitTitle } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { Link } from "../lib/router";
@@ -24,6 +24,9 @@ const WASTE: Record<string, string> = {
 const number = (unit: string) => Number(unit.slice(0, 4));
 // Units a target card names; the shipped list below has every one.
 const WORST = 5;
+
+/** An agent in the word the Agents page uses for it. */
+export const agentName = (key: string, face: (key: string) => AgentFace = agentFace) => face(key).name;
 
 /** The last `n` days, oldest first, each with its spend or zero. */
 export function lastDays(by: { day: string; usd: number | null }[], n: number, today = new Date()): { day: string; usd: number }[] {
@@ -244,7 +247,7 @@ function Agents({ rows, workspace }: { rows: AgentSpend[]; workspace: Workspace 
       {rows.map((r) => (
         <details key={r.agent} id={`agent-${r.agent}`} className="agent">
           <summary className="lrow">
-            <span style={{ width: 96 }}>{stageLabel(r.agent)}</span>
+            <span style={{ width: 96 }}>{agentName(r.agent)}</span>
             <div className="grow" style={{ background: "var(--bg-sunk)", borderRadius: 3, height: 8 }}>
               <div style={{ width: `${((r.usd ?? 0) / top) * 100}%`, background: "var(--accent)", height: 8, borderRadius: 3 }} />
             </div>

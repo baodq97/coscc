@@ -4,7 +4,7 @@
 // Every change saves the whole shortlist again with a reason, so the run log keeps who and why.
 
 import { useEffect, useState, type ReactNode } from "react";
-import type { EstimateBrief, Paused } from "../api.gen";
+import type { EstimateBrief, Paused, UpNext as UpNextView } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { pausedAt, unitCode, unitTitle } from "../lib/format";
@@ -24,6 +24,9 @@ export function moved(list: string[], unit: string, by: number): string[] {
   out.splice(to, 0, unit);
   return out;
 }
+
+/** The "Last saved by" line: a saved record and something on the shortlist for it to describe. */
+export const showSaved = (v: Pick<UpNextView, "shortlist" | "shortlist_record">) => !!v.shortlist_record && v.shortlist.length > 0;
 
 export function UpNext() {
   const { boards, loading } = useBoards();
@@ -115,7 +118,7 @@ function Project({ workspace }: { workspace: Workspace }) {
           </Empty>
         )}
       </div>
-      {v.shortlist_record && (
+      {v.shortlist_record && showSaved(v) && (
         <div className="prov" style={{ marginTop: 6 }}>
           Last saved by {v.shortlist_record.by}: {v.shortlist_record.reason}
         </div>
