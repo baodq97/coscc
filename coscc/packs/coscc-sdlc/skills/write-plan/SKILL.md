@@ -25,6 +25,10 @@ cite it as `spec.md câu N`. Do not check the spec again.
 - One batched `Glob` (or one `ls`) of every path you mean to name; mark missing ones `(new)`.
 - Read only files you will name, and only the part the change touches: `Grep` for the symbol,
   then `Read` with an offset. `git log` / `git show` when history decides a choice.
+- When the spec changes a rule, `Grep` by the outcome, not by the function you mean to change:
+  every other place that writes the same field or state, the automatic paths and the ones a
+  person starts, and every caller. `Grep` too every caller of each symbol you move, rename or
+  delete.
 - Run no test: `## Proof` and `## Verification` say what impl runs.
 
 ## Steps
@@ -34,7 +38,10 @@ cite it as `spec.md câu N`. Do not check the spec again.
    repository's shared files come first under `## Order of work`, in no step; the new work's
    own files split into the record's `steps` on disjoint paths, which run at the same time.
    Only past about 30 paths in all is the unit too big: say how to split it and stop. Most new
-   work is its own files, one registration line and its test.
+   work is its own files, one registration line and its test. A changed rule lists every path
+   to the same outcome, and every caller of a moved, renamed or deleted symbol, in the step of
+   `## Order of work` it belongs to: one `path:line` a line, marked changed or unchanged with a
+   one-sentence reason. A changed one goes into `files`.
 3. `## Risks` answers what could break, which step is riskiest and which option you rejected.
 4. Present it with `ExitPlanMode`; revise until the person approves.
 5. Write it to the unit's `plan.md`, and nothing else.

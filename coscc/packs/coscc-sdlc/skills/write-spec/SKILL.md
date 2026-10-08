@@ -24,7 +24,9 @@ Gate: from the board it was asked (the prompt says so); at a terminal ask
 2. Every requirement traces to the intent's outcome and is testable (a number with a unit).
    `## Design` names components, boundaries and data crossing them, not files or order of work,
    and where the new work plugs in (the extension points the repository's CLAUDE.md names). A
-   need none of them serves is a change to the core: name it apart.
+   need none of them serves is a change to the core: name it apart. A requirement that changes a
+   rule states it as an invariant on the outcome, "every path to <outcome> <rule>", never on one
+   function or branch, so review scores it on every path to the same outcome.
 3. Two contradicting constraints: a numbered item under `## Open questions`, its recommended
    answer in `recommendation` of `submit`, which the board can take; `## Concerns` holds no
    decision. Never pick silently.
