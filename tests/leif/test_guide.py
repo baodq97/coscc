@@ -150,8 +150,35 @@ class TheWaitingLine(unittest.TestCase):
         )
         self.assertEqual(line["why"], "PR conflicts with main; it is integrated once impl ends.")
 
+    def test_a_unit_that_holds_another_is_named_apart_from_the_words(self):
+        line = guide.waiting_line(("overlap", "0172_x"), None)
+        self.assertEqual((line["holder"], line["pr"]), ("0172_x", None))
+        self.assertIn("{unit}", line["why"])
+        self.assertNotIn("0172", line["why"] + line["moves_it"])
+
+    def test_a_pull_request_that_holds_one_carries_its_number_and_unit(self):
+        line = guide.waiting_line(("overlap-pr", "#270"), None, {270: "0172_x"})
+        self.assertEqual((line["holder"], line["pr"]), ("0172_x", 270))
+        lone = guide.waiting_line(("overlap-pr", "#270"), None)
+        self.assertEqual((lone["holder"], lone["pr"]), ("", 270))
+
+    def test_said_names_the_holder_and_the_pull_request(self):
+        line = guide.waiting_line(("overlap-pr", "#270"), None, {270: "0172_x"})
+        got = guide.said(line["moves_it"], line["holder"], line["pr"], str.upper)
+        self.assertEqual(got, "It goes on once PR #270 of 0172_X merges or closes.")
+        lone = guide.waiting_line(("overlap-pr", "#270"), None)
+        self.assertEqual(
+            guide.said(lone["moves_it"], "", lone["pr"], str),
+            "It goes on once PR #270 merges or closes.",
+        )
+
+    def test_the_guide_block_list_has_no_token_left(self):
+        line = guide.waiting_line(("overlap-pr", "#270"), None, {270: "0172_x"})
+        got = guide.waiting([{"name": "0002_b", "waiting_line": line, "state": {"state": "ready"}}])
+        self.assertNotIn("{", got[0]["why"] + got[0]["moves_it"])
+
     def test_the_list_leaves_out_what_needs_you(self):
-        w = {"code": "full", "why": "x", "moves_it": "y", "until": ""}
+        w = {"code": "full", "why": "x", "moves_it": "y", "until": "", "holder": "", "pr": None}
         got = guide.waiting(
             [
                 {"name": "0002_b", "waiting_line": w, "state": {"state": "ready"}},

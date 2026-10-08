@@ -207,6 +207,9 @@ h2 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
 .lrow.sel::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); }
 .lrow .id { width: 74px; color: var(--text-3); font-size: 12px; flex: none; }
 .lrow .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.lrow.wrap { height: auto; min-height: 40px; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; row-gap: 2px; }
+.hold { font-size: 12.5px; white-space: normal; overflow-wrap: anywhere; }
+.lrow .hold { flex: 1 1 100%; order: 4; }
 .lrow .meta { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: 12px; flex: none; }
 details.agent > summary { list-style: none; cursor: pointer; }
 details.agent > summary::-webkit-details-marker { display: none; }

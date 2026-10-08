@@ -331,8 +331,10 @@ class TheCardSaysWhatItWaitsOn(unittest.TestCase):
     }
 
     def test_the_line_and_none(self):
-        w = {"code": "full", "why": "x", "moves_it": "y", "until": ""}
+        w = {"code": "full", "why": "x", "moves_it": "y", "until": "", "holder": "", "pr": None}
         self.assertEqual(read.card({**self.UNIT, "waiting_line": w})["waiting"], w)
+        held = {**w, "code": "overlap-pr", "holder": "0172_x", "pr": 270}
+        self.assertEqual(read.card({**self.UNIT, "waiting_line": held})["waiting"], held)
         self.assertIsNone(read.card(self.UNIT)["waiting"])
 
     def test_none_while_the_autopilot_is_off(self):

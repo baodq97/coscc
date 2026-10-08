@@ -155,12 +155,16 @@ class Paused(TypedDict):
 class Waiting(TypedDict):
     """Why the autopilot did not start a unit of its shortlist and what moves it on
     (`guide.waiting_line`): `code` is a stop kind or a `decide.REASONS` code, `until` the moment
-    the account's session limit resets, else empty."""
+    the account's session limit resets, else empty. `holder` is the unit whose step or pull request
+    holds it, `pr` that pull request's number; `why` and `moves_it` keep `{unit}` and `{pr}` for the
+    screen to name."""
 
     code: str
     why: str
     moves_it: str
     until: str
+    holder: str
+    pr: int | None
 
 
 class Card(TypedDict):
@@ -330,6 +334,8 @@ def waiting(w: Mapping[str, Any] | None) -> Waiting | None:
         "why": _text(w.get("why")),
         "moves_it": _text(w.get("moves_it")),
         "until": _text(w.get("until")),
+        "holder": _text(w.get("holder")),
+        "pr": w["pr"] if isinstance(w.get("pr"), int) else None,
     }
 
 
