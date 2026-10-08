@@ -598,14 +598,35 @@ def incomplete_draft(unit):
     )
 
 
-def rounds_used(unit):
+def round_fault(rounds, i):
+    """What makes round `i` one a new round mends, whatever its verdict: it drops findings an
+    earlier round raised, it is not numbered `i + 1`, or it names no reviewed commit. `""` when
+    none. The ship gate (`repo_rules`) refuses the same three on the last round."""
+    r = rounds[i]
+    if r.get("dropped"):
+        return "dropped"
+    if r["n"] != i + 1:
+        return "numbering"
+    return "" if r.get("reviewed") else "reviewed"
+
+
+def review_fault(unit):
+    """`round_fault` of the last review round; `""` with no round."""
     rounds = review_of(unit)
+    return round_fault(rounds, len(rounds) - 1) if rounds else ""
+
+
+def rounds_used(unit):
+    """The review rounds spent: each that asked for changes. A faulty round (`round_fault`) is not
+    counted, as an `unfinished` one is not: the round after it does the work it left."""
+    rounds = review_of(unit)
+    faulty = [bool(round_fault(rounds, i)) for i in range(len(rounds))]
     asked = len(
-        [r for r in rounds if r["verdict"] == "changes-requested" and not r.get("unfinished")]
+        [r for i, r in enumerate(rounds) if r["verdict"] == "changes-requested" and not faulty[i]]
     )
     waived = any(r["verdict"] == "needs-person" for r in rounds)
     last = rounds[-1] if rounds else None
-    unfinished = bool(last and last.get("unfinished"))
+    unfinished = bool(last and (last.get("unfinished") or faulty[-1]))
     floor = (status_of(unit, review_file(unit)) == "changes-requested" and not unfinished) or (
         (incomplete_draft(unit) or unfinished) and any(r["verdict"] is None for r in rounds)
     )

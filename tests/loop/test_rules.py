@@ -19,6 +19,8 @@ import pytest
 from coscc.loop import proc_of
 from coscc.loop.model import read_unit
 from coscc.loop.rules import gate_answer, next_answer
+from tests.loop.test_model import fx, green_probe, round_
+from tests.loop.test_model_pr import TWO, review_of_rounds
 from tests.loop.conftest import (
     UnitStore,
     entry,
@@ -606,3 +608,35 @@ class AShipThatAskedForAMergeIsMergingNotRefused(unittest.TestCase):
         state = json.loads(self.store.state().read_text())
         unit = read_unit(str(self.store.cos / "0001_a"), "0001_a", state)
         self.assertEqual(next_answer(unit)["reasons"], ["ship-refused"])
+
+
+# --- a review round a new round mends, whatever review.md says -----------------------------
+
+FAULTY = {
+    "dropped": lambda v: [round_(1, "changes-requested", TWO), round_(2, v, [fx("F1")])],
+    "numbering": lambda v: [
+        round_(1, "changes-requested", TWO),
+        round_(3, v, [fx("F1"), fx("F2")]),
+    ],
+    "reviewed": lambda v: [
+        round_(1, "changes-requested", TWO),
+        round_(2, v, [fx("F1"), fx("F2")], reviewed=""),
+    ],
+}
+# review.md's status, and the verdict its last round carries under it.
+UNDER = {"accepted": "pass", "changes-requested": "changes-requested", "draft": "pass"}
+
+
+@pytest.mark.parametrize("status", UNDER)
+@pytest.mark.parametrize("fault", FAULTY)
+def test_a_faulty_last_round_sends_next_to_review_under_every_status(fault, status):
+    u = review_of_rounds(status, FAULTY[fault](UNDER[status]))
+    got = next_answer(u, green_probe())
+    assert (got["stage"], got["reasons"]) == ("review", ["review-incomplete"])
+    spent = next_answer(u, green_probe(), 1)
+    assert (spent["stage"], spent["reasons"]) == ("", ["needs-person"])
+
+
+def test_a_round_with_no_fault_is_not_sent_back():
+    clean = [round_(1, "changes-requested", TWO), round_(2, "pass", [fx("F1"), fx("F2")])]
+    assert next_answer(review_of_rounds("accepted", clean), green_probe())["stage"] != "review"
