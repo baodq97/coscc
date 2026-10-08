@@ -681,7 +681,7 @@ class Scripted(_Base):
         """What each unit's card says it waits on, as `show` lays it on a board read."""
         data = {"units": [dict(u) for u in self.units.values()]}
         self.core.autopilot.show(self.key, data)
-        return {u["name"]: u["waiting"] for u in data["units"]}
+        return {u["name"]: u["waiting_line"] for u in data["units"]}
 
     async def test_every_unit_of_the_shortlist_not_started_says_why(self):
         """One held back by `max_parallel` waits with `full`, a line on its card."""

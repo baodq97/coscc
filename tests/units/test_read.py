@@ -332,7 +332,7 @@ class TheCardSaysWhatItWaitsOn(unittest.TestCase):
 
     def test_the_line_and_none(self):
         w = {"code": "full", "why": "x", "moves_it": "y", "until": ""}
-        self.assertEqual(read.card({**self.UNIT, "waiting": w})["waiting"], w)
+        self.assertEqual(read.card({**self.UNIT, "waiting_line": w})["waiting"], w)
         self.assertIsNone(read.card(self.UNIT)["waiting"])
 
     def test_none_while_the_autopilot_is_off(self):

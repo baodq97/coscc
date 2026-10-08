@@ -154,9 +154,9 @@ class TheWaitingLine(unittest.TestCase):
         w = {"code": "full", "why": "x", "moves_it": "y", "until": ""}
         got = guide.waiting(
             [
-                {"name": "0002_b", "waiting": w, "state": {"state": "ready"}},
-                {"name": "0001_a", "waiting": w, "state": {"state": "needs-you"}},
-                {"name": "0003_c", "waiting": None},
+                {"name": "0002_b", "waiting_line": w, "state": {"state": "ready"}},
+                {"name": "0001_a", "waiting_line": w, "state": {"state": "needs-you"}},
+                {"name": "0003_c", "waiting_line": None},
             ]
         )
         self.assertEqual([g["unit"] for g in got], ["0002_b"])

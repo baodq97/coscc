@@ -830,7 +830,8 @@ class Autopilot:
             held = (self.held.get(key) or {}).get(unit["name"])
             unit["held"] = " ".join(p for p in held if p) if held else ""
             stop = (self.stops.get(key) or {}).get(unit["name"])
-            unit["waiting"] = guide.waiting_line(held, stop) if self._on(key) else None
+            # Not `waiting`, which names the findings a person is awaited on.
+            unit["waiting_line"] = guide.waiting_line(held, stop) if self._on(key) else None
         data["autopilot"] = self._block(key)
         data["guide"] = self.guide_block(key, data["units"])
 

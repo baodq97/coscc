@@ -197,17 +197,17 @@ def waiting_line(held: tuple[str, str] | None, stop: Mapping[str, Any] | None) -
 
 def waiting(units: Iterable[Mapping[str, Any]]) -> list[Waiting]:
     """Every unit with a waiting line that the board does not label `Needs you`, by name,
-    `[{unit, code, why, moves_it, until}]`. `units` carry `Autopilot.show`'s `waiting`."""
+    `[{unit, code, why, moves_it, until}]`. `units` carry `Autopilot.show`'s `waiting_line`."""
     units = list(units)
     asking = {str(u.get("name") or "") for u in _labelled(units)}
     return [
         {
             "unit": str(u.get("name") or ""),
-            "code": str(u["waiting"]["code"]),
-            "why": str(u["waiting"]["why"]),
-            "moves_it": str(u["waiting"]["moves_it"]),
-            "until": str(u["waiting"]["until"]),
+            "code": str(u["waiting_line"]["code"]),
+            "why": str(u["waiting_line"]["why"]),
+            "moves_it": str(u["waiting_line"]["moves_it"]),
+            "until": str(u["waiting_line"]["until"]),
         }
         for u in sorted(units, key=lambda u: str(u.get("name") or ""))
-        if u.get("waiting") and u.get("name") not in asking
+        if u.get("waiting_line") and u.get("name") not in asking
     ]

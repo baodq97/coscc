@@ -316,12 +316,12 @@ def card(u: Mapping[str, Any]) -> Card:
         "rank": backlog_.get("rank"),
         "effort": backlog_.get("effort"),
         "paused": paused(u.get("paused")),
-        "waiting": waiting(u.get("waiting")),
+        "waiting": waiting(u.get("waiting_line")),
     }
 
 
 def waiting(w: Mapping[str, Any] | None) -> Waiting | None:
-    """`Autopilot.show`'s `waiting` as a card carries it."""
+    """`Autopilot.show`'s `waiting_line` as a card carries it."""
     if not w:
         return None
     return {
