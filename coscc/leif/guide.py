@@ -111,48 +111,42 @@ def notes(stops: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
 # What a unit the autopilot did not start waits on, by the code it was held with
 # (`decide.REASONS`): `(why, moves_it)`, `{detail}` the code's detail.
 WAITS: dict[str, tuple[str, str]] = {
-    "held": (
-        "A person put it on hold ({detail}).",
-        "A person taking the hold off.",
+    "held": ("A person put it on hold ({detail}).", "It goes on once a person takes the hold off."),
+    "stop": ("{detail}", "It goes on once a person settles the stop."),
+    "ci": ("CI is still running on its pull request.", "It goes on once CI finishes."),
+    "overlap": ("A step of {detail} changes the same files.", "It goes on once that step ends."),
+    "ship-busy": (
+        "{detail} is shipping, and one ship runs at a time.",
+        "It goes on once that ship ends.",
     ),
-    "stop": ("{detail}", "A person looking at the stop."),
-    "ci": ("CI is still running on its pull request.", "CI finishing; the next pass asks again."),
-    "overlap": (
-        "A step of {detail} changes the same files.",
-        "That step ending.",
-    ),
-    "ship-busy": ("{detail} is shipping, and one ship runs at a time.", "That ship ending."),
     "missing": (
         "It is on the shortlist but not on the board.",
-        "Its directory coming back, or a person taking it off the shortlist.",
+        "It goes on once its directory is back, or a person takes it off the shortlist.",
     ),
     "dependency": (
         "It waits on a unit it depends on: {detail}",
-        "That unit merging.",
+        "It goes on once that unit merges.",
     ),
     "overlap-pr": (
         "Another unit's pull request {detail} changes files its plan names.",
-        "That pull request merging or closing.",
+        "It goes on once that pull request merges or closes.",
     ),
     "full": (
         "The most steps this workspace allows are already running.",
-        "A running step ending, or a person raising Max parallel in Settings.",
+        "It goes on once a running step ends.",
     ),
-    "cap": (
-        "The daily cap is spent.",
-        "Tomorrow, or a person raising the daily cap in Settings.",
-    ),
+    "cap": ("The daily cap is spent.", "It goes on tomorrow, or once a person raises the cap."),
     "session-limit": (
         "The account reached its session limit.",
-        "The limit resetting; the autopilot runs it again then.",
+        "The autopilot runs it again once the limit resets.",
     ),
     "conflict-running": (
         "PR conflicts with main; it is integrated once {detail} ends.",
-        "The {detail} step ending; the autopilot then integrates it first.",
+        "Once {detail} ends, the autopilot integrates it first.",
     ),
     "conflict-person": (
         "PR conflicts with main while {detail} runs, and the autopilot may not ship here.",
-        "A person integrating it or merging once {detail} ends.",
+        "Once {detail} ends, a person integrates or merges it.",
     ),
 }
 # The codes of a unit that is not waiting: a step of it runs, or it is over.
@@ -171,7 +165,7 @@ def waiting_line(
         return None
     if stop is not None and not code.startswith("conflict-"):
         kind = str(stop.get("kind") or "")
-        moves = TODO[kind][0] if kind in TODO else "A running step ending, so a place frees."
+        moves = TODO[kind][0] if kind in TODO else WAITS["full"][1]
         return {
             "code": kind,
             "why": str(stop.get("reason") or ""),

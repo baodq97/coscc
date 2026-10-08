@@ -7,7 +7,7 @@ import { unitState } from "../lib/model";
 import { Link } from "../lib/router";
 import { ago, failureWords, unitCode, unitTitle } from "../lib/format";
 import { Button, Empty, ErrorState, SkeletonRows } from "../components/ui";
-import { waitingLine } from "./UnitPage";
+import { waitingWhy } from "./UnitPage";
 
 function greeting(now = new Date()): string {
   const h = now.getHours();
@@ -121,7 +121,7 @@ export function Briefing() {
               <Link key={u.workspace.name + u.name} to={`/unit/${u.workspace.name}/${u.number}`} className="lrow stack">
                 <span className="id">{unitCode(u.workspace.name, u.number)}</span>
                 <span className="t">{unitTitle(u.name)}</span>
-                <span className="meta">{u.waiting && waitingLine(u.waiting)}</span>
+                <span className="meta">{u.waiting && waitingWhy(u.waiting)}</span>
               </Link>
             ))}
           </div>

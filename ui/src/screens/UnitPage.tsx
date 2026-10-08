@@ -756,12 +756,11 @@ export function runWords(label: string, engine: boolean): { button: string; conf
   return { button: `Run ${label}`, confirm: `Spend quota on ${label}?`, note };
 }
 
-/** Why a unit waits and what moves it, as one line; the account's reset, when it has one, reads relative. */
-export function waitingLine(w: Waiting, now = Date.now()): string {
-  const text = [w.why, w.moves_it].filter(Boolean).join(" ");
-  if (!w.until || Number.isNaN(Date.parse(w.until))) return text;
+/** Why a unit waits, with the account's reset read relative when it has one. */
+export function waitingWhy(w: Waiting, now = Date.now()): string {
+  if (!w.until || Number.isNaN(Date.parse(w.until))) return w.why;
   const when = until(w.until, now);
-  return `${text} ${when === "due" ? "The limit resets now." : `The limit resets ${when}.`}`;
+  return `${w.why.replace(/\.$/, "")}; it resets ${when === "due" ? "now" : when}.`;
 }
 
 /**
@@ -801,7 +800,8 @@ function Actions({ unit, running, stage, upNext, lines, moves, onDone }: { unit:
     <div className="col gap6">
       {unit.waiting && (
         <div id="unit-waiting" style={{ fontSize: 12.5 }}>
-          {waitingLine(unit.waiting)}
+          <div>{waitingWhy(unit.waiting)}</div>
+          <div className="faint">{unit.waiting.moves_it}</div>
         </div>
       )}
       {running ? (

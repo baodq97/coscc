@@ -468,7 +468,9 @@ SESSION_RESETS_IN = 5  # hours from the capture to the session limit's reset (ch
 Rows = list[tuple[Path, str, Mapping[str, Any]]]
 
 # `gh`: `pr list` answers `[]`, except the board's own call (the one asking for `mergeable`),
-# which also lists `CONFLICT_IMPL`'s pull request as CONFLICTING at `{head}`; the rest is refused.
+# which also lists `CONFLICT_IMPL`'s pull request as CONFLICTING at `{head}`. `pr view` reads every
+# pull request open at `{head}`, and `pr checks` one required check passed, so `next` names the
+# stage each unit is at; the rest is refused.
 FAKE_GH = (
     "#!/bin/sh\n"
     'if [ "$1" = pr ] && [ "$2" = list ]; then\n'
@@ -479,6 +481,13 @@ FAKE_GH = (
     "      exit 0;;\n"
     "  esac\n"
     "  echo '[]'; exit 0\n"
+    "fi\n"
+    'if [ "$1" = pr ] && [ "$2" = view ]; then\n'
+    '  echo \'{"state": "OPEN", "headRefOid": "{head}", "headRefName": "feat/x", '
+    '"title": "x", "mergeCommit": null, "mergedAt": null}\'; exit 0\n'
+    "fi\n"
+    'if [ "$1" = pr ] && [ "$2" = checks ]; then\n'
+    '  echo \'[{"name": "test", "bucket": "pass"}]\'; exit 0\n'
     "fi\n"
     "exit 1\n"
 )

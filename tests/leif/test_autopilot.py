@@ -716,7 +716,7 @@ class Scripted(_Base):
             {
                 "code": "session-limit",
                 "why": "The account reached its session limit.",
-                "moves_it": "The limit resetting; the autopilot runs it again then.",
+                "moves_it": "The autopilot runs it again once the limit resets.",
                 "until": later,
             },
         )

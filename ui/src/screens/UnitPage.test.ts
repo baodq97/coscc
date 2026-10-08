@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PackShown, Waiting } from "../api.gen";
-import { isEngineStage, runWords, waitingLine } from "./UnitPage";
+import { isEngineStage, runWords, waitingWhy } from "./UnitPage";
 
 const packs = [
   {
@@ -38,16 +38,16 @@ describe("the run button's words", () => {
 
 describe("the waiting line", () => {
   const now = Date.parse("2026-01-01T10:00:00Z");
-  const w = { code: "session-limit", why: "The account is at its session limit.", moves_it: "It starts again when the limit resets.", until: "" } as Waiting;
+  const w = { code: "session-limit", why: "The account reached its session limit.", moves_it: "The autopilot runs it again once the limit resets.", until: "" } as Waiting;
 
-  it("joins why and what moves it", () => {
-    expect(waitingLine(w, now)).toBe("The account is at its session limit. It starts again when the limit resets.");
+  it("says why as it is with no reset", () => {
+    expect(waitingWhy(w, now)).toBe("The account reached its session limit.");
   });
   it("adds the reset as a relative time when there is one", () => {
-    expect(waitingLine({ ...w, until: "2026-01-01T12:00:00+00:00" }, now)).toBe(`${waitingLine(w, now)} The limit resets in 2 h.`);
-    expect(waitingLine({ ...w, until: "2025-12-31T10:00:00Z" }, now)).toContain("The limit resets now.");
+    expect(waitingWhy({ ...w, until: "2026-01-01T12:00:00+00:00" }, now)).toBe("The account reached its session limit; it resets in 2 h.");
+    expect(waitingWhy({ ...w, until: "2025-12-31T10:00:00Z" }, now)).toBe("The account reached its session limit; it resets now.");
   });
   it("leaves out a reset it cannot read", () => {
-    expect(waitingLine({ ...w, until: "soon" }, now)).toBe(waitingLine(w, now));
+    expect(waitingWhy({ ...w, until: "soon" }, now)).toBe(w.why);
   });
 });
