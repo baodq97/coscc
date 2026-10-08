@@ -642,6 +642,22 @@ class TheStateOfAUnit(unittest.TestCase):
         # 7/8: in the window and missing is awaiting, not ready.
         self.assertEqual(self._is(self._unit(at="review", between_pr_and_ship=True)), "awaiting")
 
+    def test_a_ship_gate_shut_by_a_faulty_round_is_not_awaiting(self):
+        for at in ("review", "ship"):
+            unit = self._unit(at=at, why="review-incomplete", between_pr_and_ship=True)
+            self.assertEqual(self._is(unit), "ready", at)
+
+    def test_a_stage_at_the_session_limit_is_paused_not_an_error(self):
+        end = {
+            "stage": "impl",
+            "outcome": "session-limit",
+            "resets_at": "2026-10-07T18:50:00+00:00",
+        }
+        got = unit_state(self._unit(at="impl"), end, None)
+        self.assertEqual((got["state"], got["label"]), ("ready", "Paused at the session limit"))
+        failed = {"stage": "impl", "outcome": "failed"}
+        self.assertEqual(self._is(self._unit(at="impl"), failed), "error")
+
     def test_a_stage_held_at_a_ceiling_needs_you_and_says_how_much_was_spent(self):
         usd = {"stage": "impl", "ceiling": "usd", "usd": 8.0, "max_usd": 8.0}
         turns = {"stage": "impl", "ceiling": "turns", "turns": 250, "max_turns": 250}
