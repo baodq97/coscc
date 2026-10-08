@@ -205,6 +205,7 @@ function Estimate({ disabled, onSave }: { disabled: boolean; onSave: (value: num
   const [value, setValue] = useState(0);
   const [effort, setEffort] = useState("");
   const [basis, setBasis] = useState("");
+  const missing = !value || !effort || !basis.trim();
   return (
     <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
       <div className="seg" title="Value: 1 low to 5 high">
@@ -222,9 +223,10 @@ function Estimate({ disabled, onSave }: { disabled: boolean; onSave: (value: num
         ))}
       </div>
       <input className="input sm grow" placeholder="Why this value?" value={basis} onChange={(e) => setBasis(e.target.value)} />
-      <Button size="sm" kind="primary" disabled={disabled || !value || !effort || !basis.trim()} onClick={() => onSave(value, effort, basis.trim())}>
+      <Button size="sm" kind="primary" disabled={disabled || missing} onClick={() => onSave(value, effort, basis.trim())}>
         Save
       </Button>
+      {missing && <div className="faint" style={{ fontSize: 12 }}>Pick a value, an effort and a reason.</div>}
     </div>
   );
 }
