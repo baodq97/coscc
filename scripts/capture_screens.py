@@ -48,6 +48,11 @@ After them `make_idea_fixture` makes `0006_frontend-calls-api`, and
                            the gate refused with `gate-closed` (`seed_refusal`)
     0010_paused-impl       an accepted plan whose `impl` hit its $4 ceiling, was raised to $8
                            and hit that: held `budget-reached`, two parts of one session
+    0011_session-limit     an accepted plan whose `impl` ended `session-limit` with a `resets_at`
+                           five hours on: held `session-limit` until then
+    0012_conflict-while-impl  a review that asked for changes, its `impl` running now
+                           (`seed_running`), its pull request (number 3) CONFLICTING on the
+                           `gh` stand-in: held `conflict-running`
 
 Every file is written by hand as prose; each unit's states (the `statuses`, `type`, `shipped`
 and `questions` its fixture carries) are seeded as rows in `cos.db` by `seed_fixture`, since
@@ -80,8 +85,9 @@ only with `npm` on `PATH`, else the feature is locked and the row shows `off`.
 `v0.1.0`, then a `feat` and a `build(deps)` commit of no unit (`seed_release`), so `/work/proj`
 shows its *Release* panel ready with `0.2.0` proposed.
 
-The autopilot is on for `proj` and its shortlist names `0008` and `0009` alone, so `/up-next`
-shows both on its shortlist, and it starts nothing.
+The autopilot is on for `proj` and its shortlist names `0008`, `0009`, `0011` and `0012` alone, so
+`/up-next` shows all four on its shortlist, and it starts nothing (`/unit/proj/11` and
+`/unit/proj/12` show the two that wait).
 **Add a unit to the shortlist, or let one of the two leave its stop, and the app under the
 camera starts real steps**, sessions that spend quota.
 
@@ -95,8 +101,8 @@ with a dialog open: it is taken as the viewport shows it, and what the dialog ho
 fold is not in the image (`full_page` in the manifest says which).
 
 It logs in by writing a password hash and one session into that root before the app
-starts, and puts a `gh` first on `PATH` that answers `pr list` with `[]` and refuses the
-rest. No session, no quota, no network.
+starts, and puts a `gh` first on `PATH` that answers `pr list` with `[]` (but for the board's
+own call, which also lists pull request 3 as CONFLICTING) and refuses the rest. No session, no quota, no network.
 
 The studio (`coscc/_studio/`) is built first when it is missing or older than `ui/src`; a
 failed build is exit 2.
@@ -118,7 +124,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -399,12 +405,88 @@ AUTOPILOT_FIXTURE = {
             "plan.md": "# Plan: paused impl\nIntent: intent.md. Author: capture_screens.\n",
         },
     },
+    # An `impl` the account's session limit stopped (`make_autopilot_fixture` writes its `end` with
+    # `resets_at` some hours on): the autopilot holds it `session-limit` until then.
+    "session-limit": {
+        "statuses": dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"),
+        "type": "feat",
+        "files": {
+            "intent.md": INTENT.format(
+                title="session limit", problem="Một impl dừng vì chạm giới hạn phiên của tài khoản."
+            ),
+            "spec.md": "# Spec: session limit\nIntent: intent.md. Author: capture_screens.\n",
+            "plan.md": "# Plan: session limit\nIntent: intent.md. Author: capture_screens.\n",
+        },
+    },
+    # A review that asked for changes, so `impl` runs again (`seed_running` opens that step), while
+    # GitHub reports its pull request CONFLICTING (`fake_gh`): held `conflict-running`.
+    "conflict-while-impl": {
+        "statuses": {
+            **dict.fromkeys(("intent.md", "spec.md", "plan.md", "impl.md", "pr.md"), "accepted"),
+            "review.md": "changes-requested",
+        },
+        "type": "feat",
+        "files": {
+            "intent.md": INTENT.format(
+                title="conflict while impl", problem="Một pull request xung đột khi impl đang chạy."
+            ),
+            "spec.md": "# Spec: conflict while impl\nIntent: intent.md. Author: capture_screens.\n",
+            "plan.md": "# Plan: conflict while impl\nAuthor: capture_screens.\n",
+            "impl.md": "# Impl: conflict while impl\nAuthor: capture_screens.\n",
+            "pr.md": "# PR: conflict while impl\nPR: https://github.com/o/r/pull/3. Author: capture_screens.\n",
+            "review.md": "# Review: conflict while impl\nAuthor: capture_screens.\n"
+            + ASKED.format(n=1, sha="e" * 40, findings="- F1 [open] a.py:1 — medium — Thiếu test."),
+        },
+        "pr": 3,
+        "rounds": [
+            (
+                1,
+                "e" * 40,
+                "changes-requested",
+                [
+                    {
+                        "id": "F1",
+                        "state": "open",
+                        "fixed_in": "",
+                        "severity": "medium",
+                        "criterion": "R1",
+                        "path": "a.py",
+                        "lines": "1",
+                        "text": "Thiếu test.",
+                    },
+                ],
+                CRITERIA,
+            ),
+        ],  # fmt: skip
+    },
 }
 DRAFT_IMPL, REFUSED_IMPL, PAUSED_IMPL = "0008_draft-impl", "0009_refused-impl", "0010_paused-impl"
+SESSION_LIMIT_IMPL, CONFLICT_IMPL = "0011_session-limit", "0012_conflict-while-impl"
+CONFLICT_PR = 3  # the number `CONFLICT_IMPL`'s `pr.md` names
+SESSION_RESETS_IN = 5  # hours from the capture to the session limit's reset (chosen)
 
 Rows = list[tuple[Path, str, Mapping[str, Any]]]
 
-FAKE_GH = '#!/bin/sh\nif [ "$1" = pr ] && [ "$2" = list ]; then echo \'[]\'; exit 0; fi\nexit 1\n'
+# `gh`: `pr list` answers `[]`, except the board's own call (the one asking for `mergeable`),
+# which also lists `CONFLICT_IMPL`'s pull request as CONFLICTING at `{head}`; the rest is refused.
+FAKE_GH = (
+    "#!/bin/sh\n"
+    'if [ "$1" = pr ] && [ "$2" = list ]; then\n'
+    '  case "$*" in\n'
+    "    *mergeable*)\n"
+    '      echo \'[{"number": {number}, "headRefOid": "{head}", '
+    '"headRefName": "feat/conflict-while-impl", "mergeable": "CONFLICTING"}]\'\n'
+    "      exit 0;;\n"
+    "  esac\n"
+    "  echo '[]'; exit 0\n"
+    "fi\n"
+    "exit 1\n"
+)
+
+
+def fake_gh(head: str) -> str:
+    """`FAKE_GH` for a repository whose pull request 3 has `head`, a commit it holds."""
+    return FAKE_GH.replace("{number}", str(CONFLICT_PR)).replace("{head}", head)
 
 
 # One conversation with a title and a markdown reply, written where the SDK
@@ -1005,6 +1087,18 @@ def seed_refusal(data_dir: Path, proj: Path) -> None:
     attempts.move(row["id"], "refused", "gate-closed")
 
 
+def seed_running(data_dir: Path, proj: Path) -> None:
+    """The `impl` step of `CONFLICT_IMPL` running now: an attempt row in `running`. Written once
+    the app is up, since a start-up ends a `running` step no task holds `interrupted`; no session
+    is behind it."""
+    from coscc.bus import Bus
+    from coscc.runner.queue import Attempts
+
+    Attempts(data_dir, Bus()).open(
+        "step", str(proj.resolve()), CONFLICT_IMPL, "impl", state="running"
+    )
+
+
 SCAN_PROPOSALS = (
     (
         "fix",
@@ -1220,9 +1314,10 @@ def seed_pilot(data_dir: Path, proj: Path) -> None:
 def make_autopilot_fixture(
     api: httpx.Client, work: Path, data_dir: Path, proj: Path, rows: Rows
 ) -> None:
-    """`AUTOPILOT_FIXTURE`, a shortlist of the first two units alone, and two tries of
+    """`AUTOPILOT_FIXTURE`, a shortlist of its first two units and the last two, and two tries of
     `0008_draft-impl` on one head: each an `autopilot-pick` that went on with the draft and the
-    step it began, ended. Then the scan's proposals, the rest of what the Backlog shows."""
+    step it began, ended; then `0011_session-limit`'s `impl` step, ended at the session limit.
+    Then the scan's proposals, the rest of what the Backlog shows."""
     from coscc.store.journal import Journal
 
     make_fixture(api, proj, rows, AUTOPILOT_FIXTURE)
@@ -1243,12 +1338,27 @@ def make_autopilot_fixture(
             key, DRAFT_IMPL, "impl", "autonomous", started_by="autopilot", head="d" * 40
         )
         journal.finished(key, DRAFT_IMPL, "impl", "done", turns=8, cost_usd=0.30)
+    # An `impl` the account's session limit stopped; it resets hours after the capture, so the
+    # unit still waits when the pass reads it.
+    resets_at = (datetime.now().astimezone() + timedelta(hours=SESSION_RESETS_IN)).isoformat(
+        timespec="seconds"
+    )
+    journal.started(key, SESSION_LIMIT_IMPL, "impl", "autonomous", started_by="autopilot")
+    journal.finished(
+        key,
+        SESSION_LIMIT_IMPL,
+        "impl",
+        "session-limit",
+        turns=31,
+        cost_usd=2.40,
+        resets_at=resets_at,
+    )
     journal.append(
         {
             "kind": "shortlist",
             "workspace": key,
             "unit": "",
-            "units": [DRAFT_IMPL, REFUSED_IMPL],
+            "units": [DRAFT_IMPL, REFUSED_IMPL, SESSION_LIMIT_IMPL, CONFLICT_IMPL],
             "reason": "capture_screens",
             "by": "owner",
         }
@@ -1396,8 +1506,6 @@ def capture(args: argparse.Namespace, roots: list[Path]) -> int:
     roots += [work, data_dir, outside]
     bin_dir = outside / "bin"
     bin_dir.mkdir()
-    (bin_dir / "gh").write_text(FAKE_GH, encoding="utf-8")
-    (bin_dir / "gh").chmod(0o755)
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
     # `RealApp` hands `os.environ` to the app (`scripts/proof_harness.py`).
     os.environ["CLAUDE_CONFIG_DIR"] = str(outside / "claude")
@@ -1407,6 +1515,11 @@ def capture(args: argparse.Namespace, roots: list[Path]) -> int:
     try:  # noqa: PLR1702 - still to split
         proj = make_repo(work, outside)
         seed_release(proj)
+        # After the release commits: the pull request's head is one the clone holds.
+        from scripts.proof_harness import git
+
+        (bin_dir / "gh").write_text(fake_gh(git(proj, "rev-parse", "HEAD")), encoding="utf-8")
+        (bin_dir / "gh").chmod(0o755)
         token = seed_session(data_dir)
         seed_conversation(proj)
         seed_refusal(data_dir, proj)
@@ -1426,6 +1539,7 @@ def capture(args: argparse.Namespace, roots: list[Path]) -> int:
                     seed_agents(api, data_dir)
                     seed_runs(work, data_dir, proj)
                     seed_transitions(work, data_dir, proj)
+                    seed_running(data_dir, proj)
                 except RuntimeError as e:
                     print(str(e), file=sys.stderr)
                     return EXIT_BROKEN

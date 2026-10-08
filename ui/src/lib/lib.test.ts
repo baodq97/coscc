@@ -84,7 +84,7 @@ describe("unit state", () => {
   const base: Unit = {
     name: "0001_x", number: 1, slug: "x", type: "fix", phase: "started", next_stage: "spec", why: "", open: 0,
     state: { state: "ready", label: "Ready", color: "gray" }, hold: null, pr: null, cost_usd: 0, at: "", updated: "",
-    attention_reason: "", process: "p/full", missing: [], idea: "", rank: null, effort: null, paused: null,
+    attention_reason: "", process: "p/full", missing: [], idea: "", rank: null, effort: null, paused: null, waiting: null,
   };
 
   it("reads a paused hold as paused", () => {
