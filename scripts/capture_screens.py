@@ -973,6 +973,10 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
         journal.finished(
             key, "", stage, "done", agent=stage, status="done", run=run, turns=2, cost_usd=usd
         )
+    # Ends naming no agent: the two stages the app runs with no row, and a `precedent` of an older
+    # version. Insights names them Ansuz, Othala and Leif.
+    for stage, usd in (("pr", 0.06), ("ship", 0.02), ("precedent", 0.03)):
+        journal.finished(key, "", stage, "done", turns=1, cost_usd=usd)
     # One `impl` that paused at $4.00, was raised to $8.00 and paused again: two runs, one session.
     journal.started(key, PAUSED_IMPL, "impl", "manual", run="capture-paused-1")
     _run_events(work, data_dir, key, PAUSED_IMPL, "impl", "capture-paused-1", "paused-budget")

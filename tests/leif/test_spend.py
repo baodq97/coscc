@@ -11,6 +11,7 @@ from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from coscc.agent import pack
 from coscc.leif import spend
 from coscc.config import Config
 from coscc.store.db import DB_FILENAME
@@ -70,6 +71,31 @@ class OnlyEndsAreAdded(unittest.TestCase):
         plan = next(r for r in m["by_stage"] if r["key"] == "plan")
         self.assertIsNone(plan["usd"])
         self.assertEqual(plan["unknown"], 1)
+
+
+class EachRowIsTheAgentThatRanIt(unittest.TestCase):
+    """An `end` naming no agent falls to the agent that ran it: a row, or a stage the app runs."""
+
+    def test_no_row_is_a_stage_and_no_cent_is_lost(self):
+        ends = [
+            end("u", "pr", cost_usd=0.5, run="p1"),
+            end("u", "ship", cost_usd=0.25),
+            end("", "precedent", cost_usd=1.0, run="old1"),
+            end("", "chat", cost_usd=0.75, run="c1"),
+            end("", "estimate", cost_usd=0.1),
+            end("u", "", cost_usd=2.0, agent="review"),
+        ]
+        m = spend.model(ends, tz=TZ)
+        keys = {r["key"] for r in m["by_agent"]}
+        self.assertLessEqual(
+            keys, set(pack.rows()) | {a["key"] for a in pack.app_agents("coscc-sdlc")}
+        )
+        self.assertEqual(keys, {"pr", "ship", "leif", "estimate", "review"})
+        self.assertEqual(sum(r["usd"] for r in m["by_agent"]), sum(e["cost_usd"] for e in ends))
+        self.assertEqual(sum(r["steps"] for r in m["by_agent"]), len(ends))
+        [leif] = [r for r in m["by_agent"] if r["key"] == "leif"]
+        self.assertEqual((leif["usd"], leif["steps"]), (1.75, 2))
+        self.assertEqual({r["run"] for r in leif["runs"]}, {"old1", "c1"})
 
 
 class Waste(unittest.TestCase):

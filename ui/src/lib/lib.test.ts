@@ -16,6 +16,8 @@ import { kinds } from "../../../coscc/features/release/ui/index";
 import { onWords } from "../screens/AgentActivity";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
+import { facesOf } from "./pack";
+import type { PackShown } from "../api.gen";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Inline } from "../components/ui";
@@ -928,5 +930,17 @@ describe("a name another agent has", () => {
   });
   it("is not taken by the row it names", () => {
     expect(nameTaken("Tiwaz", rows, "pr-review")).toBeNull();
+  });
+});
+
+describe("facesOf", () => {
+  const sdlc = {
+    agents: [{ key: "estimate", name: "Berkanan", glyph: "ᛒ" }],
+    app_agents: [{ key: "pr", name: "Ansuz", glyph: "ᚨ" }, { key: "ship", name: "Othala", glyph: "ᛟ" }],
+  } as PackShown;
+  it("names the stages the app runs and the rows by their runes", () => {
+    const faces = facesOf([sdlc]);
+    expect([faces.pr?.name, faces.ship?.name, faces.estimate?.name]).toEqual(["Ansuz", "Othala", "Berkanan"]);
+    expect(faces.pr?.glyph).toBe("ᚨ");
   });
 });

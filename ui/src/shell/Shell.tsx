@@ -8,7 +8,7 @@ import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { LeifPanel } from "./LeifPanel";
 import { CommandBar } from "./CommandBar";
-import { PackProvider } from "../lib/pack";
+import { PackProvider, usePacksRead } from "../lib/pack";
 
 type ShellState = {
   navOpen: boolean;
@@ -45,7 +45,13 @@ function stored<T extends string>(key: string, fallback: T): T | string {
   return localStorage.getItem(key) || fallback;
 }
 
-export function Shell({ title, crumbs, children }: { title: string; crumbs: string[]; children: ReactNode }) {
+// The crumbs may name an agent: read once the packs are, so a page opened by its address names it.
+function Crumbs({ of }: { of: () => string[] }) {
+  usePacksRead();
+  return <Topbar crumbs={of()} />;
+}
+
+export function Shell({ title, crumbs, children }: { title: string; crumbs: () => string[]; children: ReactNode }) {
   const [leifOpen, setLeifOpen] = useState(() => stored("cos-leif", "0") === "1" && !matchMedia(PHONE).matches);
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
@@ -113,7 +119,7 @@ export function Shell({ title, crumbs, children }: { title: string; crumbs: stri
         <Sidebar />
         <div className="side-scrim" onClick={() => setNavOpen(false)} />
         <main className="main">
-          <Topbar crumbs={crumbs} />
+          <Crumbs of={crumbs} />
           <div className="scroll">
             <PackProvider>{children}</PackProvider>
           </div>

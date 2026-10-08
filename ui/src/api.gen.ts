@@ -507,6 +507,7 @@ export type PackShown = {
   "process": string;
   "processes": ProcessShown[];
   "agents": AgentFace[];
+  "app_agents": AgentFace[];
   "own": boolean;
   "imported": boolean;
   "problems": string[];
