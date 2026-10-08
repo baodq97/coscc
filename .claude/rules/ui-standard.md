@@ -94,7 +94,9 @@ A UI unit changes a file under `paths:`.
   saw>` per image; `<what you saw>` answers S9's three questions in a few words, and a missing
   answer is an `S9` finding. A violation is a finding whose first word after its severity is the
   rule id; its location is the source file that draws the violation, not the screenshot, and
-  it is never labelled non-blocking by review: the loop decides.
+  it is never labelled non-blocking by review: the loop decides. One the gate lets through, or
+  one on a file the patch does not change, stays `[open]` and does not make a round
+  `changes-requested`: the loop sends such a round back to review, and it counts.
   `high` and `changes-requested`: no manifest or image, a `head` older than the last UI commit,
   `dirty: true`, an unexplained `hits` entry. When the prompt says the app took the screenshots
   again, a hit counts as explained if `impl.md ## Screens` explains one with the same address,
