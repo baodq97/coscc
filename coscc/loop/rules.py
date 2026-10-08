@@ -48,6 +48,7 @@ from coscc.loop.model import (
     review_fault,
     rounds_used,
     route,
+    screens_spared,
     settled,
     walk,
     skipped_by,
@@ -652,6 +653,15 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
                 [
                     f"every open finding of review round {js(last_round(unit)['n'])} is claimed "
                     "as needing a person — review confirms or rejects each"
+                ]
+            )
+        if screens_spared(unit):
+            # Nothing is left for impl to fix: the review that runs again is told which these are.
+            let = ", ".join(p["id"] for p in unit["screenPasses"])
+            return on_review(
+                [
+                    f"every open finding of review round {js(last_round(unit)['n'])} is one the "
+                    f"screens rule lets through ({let}) — they do not block a pass"
                 ]
             )
         if not probe:

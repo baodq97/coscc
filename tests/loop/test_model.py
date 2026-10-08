@@ -28,7 +28,8 @@ from coscc.loop.model import (
 )
 from coscc.loop.paths import next_number
 from coscc.loop import SPIKE_ROUNDS
-from coscc.loop.model import fold_holds, non_blocking, rounds_used, standard_findings
+from coscc.loop.model import fold_holds, non_blocking, rounds_used, screens_spared
+from coscc.loop.model import standard_findings
 from coscc.loop.rules import between_pr_and_ship, decide, gate_answer, next_answer
 from coscc.loop.run import ask
 from coscc.loop.model import review_from, review_rounds
@@ -1759,29 +1760,53 @@ def test_an_s_finding_on_a_file_the_patch_changes_blocks_even_when_low():
         assert [p["why"] for p in u["screenPasses"]] == ([] if g["need"] else ["screen-untouched"])
 
 
-def test_rounds_used_and_severity_rule_share_what_lets_an_s_finding_through():
+def test_severity_rule_lets_through_what_the_screens_rule_does_and_the_round_still_counts():
     r1 = round_(1, "changes-requested", [standard_finding("F1")], screens=SHOTS)
     u = asked(r1)
-    assert rounds_used(u) == 1
     assert non_blocking(u) == []
+    assert screens_spared(u) is False
     u["screenPasses"] = [{"id": "F1", "why": "screen-untouched"}]
-    assert rounds_used(u) == 0
     assert [f["id"] for f in non_blocking(u)] == ["F1"]
-    # One blocking finding beside it, and the round counts again.
+    assert screens_spared(u) is True
+    # A round that asked for changes counts, let through or not: it bounds the rounds.
+    assert rounds_used(u) == 1
+    # One blocking finding beside it, and a fix is still owed.
     mixed = asked(round_(1, "changes-requested", [standard_finding("F1"), fr("F2")]))
     mixed["screenPasses"] = [{"id": "F1", "why": "screen-untouched"}]
-    assert rounds_used(mixed) == 1
+    assert screens_spared(mixed) is False
     assert [f["id"] for f in non_blocking(mixed)] == ["F1"]
 
 
-def test_a_gate_with_a_probe_sets_what_rounds_used_and_the_severity_rule_read():
+def test_a_gate_with_a_probe_sets_what_the_severity_rule_reads():
     u = asked(round_(1, "changes-requested", [standard_finding("F1")], screens=SHOTS))
     check_gate(u, "review", with_diff("ui/other.tsx"))
     assert [p["id"] for p in u["screenPasses"]] == ["F1"]
-    assert rounds_used(u) == 0
+    assert screens_spared(u) is True
     check_gate(u, "review", with_diff("ui/a.tsx"))
     assert u["screenPasses"] == []
-    assert rounds_used(u) == 1
+    assert screens_spared(u) is False
+
+
+def test_changes_asked_only_for_what_the_screens_rule_lets_through_is_review_not_impl():
+    u = asked(round_(1, "changes-requested", [standard_finding("F1")], screens=SHOTS))
+    n = next_answer(u, with_diff("ui/other.tsx"))
+    assert n["stage"] == "review"
+    assert (
+        "every open finding of review round 1 is one the screens rule lets through (F1)"
+        in (n["action"])
+    )
+    assert n["reasons"] == ["changes-requested"]
+    # On a file the patch changes it blocks, and a fix is owed first.
+    assert next_step(u, with_diff("ui/a.tsx"))["stage"] == "impl"
+
+
+def test_a_review_that_keeps_asking_for_what_the_screens_rule_lets_through_stops_at_the_limit():
+    finding = standard_finding("F1")
+    rounds = [round_(n, "changes-requested", [finding], screens=SHOTS) for n in (1, 2, 3)]
+    n = next_answer(asked(*rounds), with_diff("ui/other.tsx"))
+    assert n["stage"] == ""
+    assert n["reasons"] == ["needs-person"]
+    assert "review used 3 of 3 rounds" in n["action"]
 
 
 def test_next_step_never_offers_a_closed_gate_in_the_person_states(tmp_path):

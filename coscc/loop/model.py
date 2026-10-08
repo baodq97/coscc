@@ -618,36 +618,20 @@ def review_fault(unit):
 
 def rounds_used(unit):
     """The review rounds spent: each that asked for changes. A faulty round (`round_fault`) is not
-    counted, as an `unfinished` one is not: the round after it does the work it left. Nor is one
-    whose every unresolved finding is an `S<n>` one that `severity_rule` lets through."""
+    counted, as an `unfinished` one is not: the round after it does the work it left. One that
+    asked for changes the screens rule lets through counts too (`screens_spared`): it is what
+    bounds the rounds a review that should have passed can spend."""
     rounds = review_of(unit)
     faulty = [bool(round_fault(rounds, i)) for i in range(len(rounds))]
-    let = screen_pass_ids(unit)
-    answers = person_answers(unit)
-
-    def spared(r):
-        left = [
-            f
-            for f in r["findings"]
-            if f["label"] != "fixed" and not (f["label"] == "answered" and f["id"] in answers)
-        ]
-        return bool(left) and all(f["label"] == "open" and f["id"] in let for f in left)
-
     asked = len(
-        [
-            r
-            for i, r in enumerate(rounds)
-            if r["verdict"] == "changes-requested" and not faulty[i] and not spared(r)
-        ]
+        [r for i, r in enumerate(rounds) if r["verdict"] == "changes-requested" and not faulty[i]]
     )
     waived = any(r["verdict"] == "needs-person" for r in rounds)
     last = rounds[-1] if rounds else None
     unfinished = bool(last and (last.get("unfinished") or faulty[-1]))
-    # The floor of one would count a spared last round after all.
-    freed = bool(last and last["verdict"] == "changes-requested" and spared(last))
-    floor = (
-        status_of(unit, review_file(unit)) == "changes-requested" and not unfinished and not freed
-    ) or ((incomplete_draft(unit) or unfinished) and any(r["verdict"] is None for r in rounds))
+    floor = (status_of(unit, review_file(unit)) == "changes-requested" and not unfinished) or (
+        (incomplete_draft(unit) or unfinished) and any(r["verdict"] is None for r in rounds)
+    )
     return max(asked, 1 if floor and not waived else 0)
 
 
@@ -686,7 +670,7 @@ def standard_findings(unit):
 
     it blocks unless the unit's patch does not touch its file, or the screens of the round that
     first raised it were no news (`repo_rules.screen_passes` asks git, `unit["screenPasses"]`
-    holds the answer). `severity_rule`, `rounds_used` and the ship gate all read that list, so
+    holds the answer). `severity_rule`, `screens_spared` and the ship gate all read that list, so
     whether such a finding blocks is decided here and nowhere else. Its severity is no part of
     it: a `low` one on a changed file blocks."""
     rounds = review_of(unit)
@@ -721,6 +705,23 @@ def standard_findings(unit):
 def screen_pass_ids(unit):
     """The ids the one rule on an `S<n>` finding lets through; none while `screenPasses` is unset."""
     return {p["id"] for p in unit.get("screenPasses") or ()}
+
+
+def screens_spared(unit):
+    """Whether the last round asked for changes and every finding it left unresolved is an
+    `[open]` one the screens rule lets through: nothing is left for a fix to do, and the review
+    that runs again, told which, may pass."""
+    last = last_round(unit)
+    if not last or last["verdict"] != "changes-requested":
+        return False
+    let = screen_pass_ids(unit)
+    answers = person_answers(unit)
+    left = [
+        f
+        for f in last["findings"]
+        if f["label"] != "fixed" and not (f["label"] == "answered" and f["id"] in answers)
+    ]
+    return bool(left) and all(f["label"] == "open" and f["id"] in let for f in left)
 
 
 def severity_rule(unit):
