@@ -120,8 +120,8 @@ export function Briefing() {
             {held.map((u) => (
               <Link key={u.workspace.name + u.name} to={`/unit/${u.workspace.name}/${u.number}`} className="lrow stack">
                 <span className="id">{unitCode(u.workspace.name, u.number)}</span>
-                <span className="t">{unitTitle(u.name)}</span>
-                <span className="meta">{u.waiting && waitingWhy(u.waiting)}</span>
+                <span className="t">{u.waiting && waitingWhy(u.waiting)}</span>
+                <span className="meta">{unitTitle(u.name)}</span>
               </Link>
             ))}
           </div>
