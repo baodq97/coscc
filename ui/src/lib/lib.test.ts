@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { failureWords, until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
+import { failureWords, until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle, waitingWords } from "./format";
 import { match } from "./router";
 import { findUnit, needsYou, failedLink, proposalLink, readBoard, onBoardRead, boardsOf, NOT_WAITED, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
@@ -17,10 +17,10 @@ import { onWords } from "../screens/AgentActivity";
 import { statusWords, attention, groupOf, pickWorkspace, triggerWords } from "../screens/Agents";
 import { whenWords } from "../components/process";
 import { facesOf } from "./pack";
-import type { PackShown } from "../api.gen";
+import type { PackShown, Waiting } from "../api.gen";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Inline } from "../components/ui";
+import { Hold, Inline } from "../components/ui";
 import { submitWords } from "../screens/RunLog";
 import { runCount } from "../screens/AgentActivity";
 import { proposingWords } from "../components/Proposals";
@@ -1040,5 +1040,34 @@ describe("facesOf", () => {
     const faces = facesOf([sdlc]);
     expect([faces.pr?.name, faces.ship?.name, faces.estimate?.name]).toEqual(["Ansuz", "Othala", "Berkanan"]);
     expect(faces.pr?.glyph).toBe("ᚨ");
+  });
+});
+
+describe("the words of a unit the autopilot holds", () => {
+  const now = Date.parse("2026-01-01T10:00:00Z");
+  const base = { until: "", holder: "", pr: null } as const;
+  const overlap = { ...base, code: "overlap", why: "A step of {unit} changes the same files.", moves_it: "It goes on once that step ends.", holder: "0172_insights-names-some-agents-by-stage" } as Waiting;
+  const byPr = { ...base, code: "overlap-pr", why: "Another unit's {pr} changes files its plan names.", moves_it: "It goes on once {pr} merges or closes.", holder: "0172_insights-names-some-agents-by-stage", pr: 270 } as Waiting;
+  const limit = { ...base, code: "session-limit", why: "The account reached its session limit.", moves_it: "The autopilot runs it again once the limit resets." } as Waiting;
+
+  it("calls the unit by its code, never its slug", () => {
+    expect(waitingWords(overlap, "coscc").why).toBe("A step of COS-172 changes the same files.");
+  });
+  it("calls the pull request by its number and unit", () => {
+    expect(waitingWords(byPr, "coscc").moves_it).toBe("It goes on once PR #270 of COS-172 merges or closes.");
+    expect(waitingWords({ ...byPr, holder: "" }, "coscc").moves_it).toBe("It goes on once PR #270 merges or closes.");
+  });
+  it("shows the same two sentences wherever the hold is shown, with no slug", () => {
+    const w = waitingWords(byPr, "coscc");
+    const html = renderToStaticMarkup(createElement(Hold, { waiting: byPr, workspace: "coscc" }));
+    expect(html).toContain(w.why.replace("'", "&#x27;"));
+    expect(html).toContain(w.moves_it);
+    expect(`${w.why} ${w.moves_it} ${html}`).not.toMatch(/\d{4}_[a-z]/);
+  });
+  it("adds the account's reset as a relative time when there is one", () => {
+    expect(waitingWords(limit, "coscc", now).why).toBe("The account reached its session limit.");
+    expect(waitingWords({ ...limit, until: "2026-01-01T12:00:00+00:00" }, "coscc", now).why).toBe("The account reached its session limit; it resets in 2 h.");
+    expect(waitingWords({ ...limit, until: "2025-12-31T10:00:00Z" }, "coscc", now).why).toBe("The account reached its session limit; it resets now.");
+    expect(waitingWords({ ...limit, until: "soon" }, "coscc", now).why).toBe(limit.why);
   });
 });

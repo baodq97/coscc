@@ -1,6 +1,6 @@
 // How numbers, times and names read on screen: no raw ids, no model strings.
 
-import type { Paused } from "../api.gen";
+import type { Paused, Waiting } from "../api.gen";
 
 export function money(x: number | null | undefined, digits = 2): string {
   if (x == null) return "—";
@@ -39,6 +39,23 @@ export function modelName(model: string | null | undefined): string {
 export function unitCode(workspace: string, number: number | string): string {
   const prefix = workspace.replace(/[^a-z]/gi, "").slice(0, 3).toUpperCase() || "U";
   return `${prefix}-${Number(number)}`;
+}
+
+/**
+ * What a unit's card says it waits on, as the one pair of sentences every screen shows: the server
+ * leaves `{unit}` and `{pr}` in the words, and this names them (`COS-172`, `PR #270 of COS-172`).
+ * The account's reset reads relative when the wait has one.
+ */
+export function waitingWords(w: Waiting, workspace: string, now = Date.now()): { why: string; moves_it: string } {
+  const unit = w.holder ? unitCode(workspace, Number(w.holder.slice(0, 4))) : "another unit";
+  const pr = w.pr == null ? "a pull request" : w.holder ? `PR #${w.pr} of ${unit}` : `PR #${w.pr}`;
+  const said = (text: string) => text.replaceAll("{unit}", unit).replaceAll("{pr}", pr);
+  const why = said(w.why);
+  const when = w.until && !Number.isNaN(Date.parse(w.until)) ? until(w.until, now) : "";
+  return {
+    why: when ? `${why.replace(/\.$/, "")}; it resets ${when === "due" ? "now" : when}.` : why,
+    moves_it: said(w.moves_it),
+  };
 }
 
 /** `0162_shipped-units-are-run-again` reads "Shipped units are run again". */

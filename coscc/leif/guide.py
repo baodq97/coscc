@@ -6,7 +6,7 @@ autopilot holds back. `Autopilot.guide_block` hands in what it already read.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, TypedDict
+from typing import Any, Callable, Iterable, Mapping, TypedDict
 
 # What one stop asks of a person: `(do, screen, tab)`.
 # Every stop kind of `decide.STOP_KINDS` but `full`, which only waits for a free place.
@@ -110,12 +110,15 @@ def notes(stops: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
 
 class Line(TypedDict):
     """What a unit waits on: `code` a stop kind or a `decide.REASONS` code, `until` the moment the
-    account's session limit resets, else `""`."""
+    account's session limit resets, else `""`. `holder` is the unit whose step or pull request holds
+    it, `pr` that pull request's number; `why` and `moves_it` keep `{unit}` and `{pr}` for `said`."""
 
     code: str
     why: str
     moves_it: str
     until: str
+    holder: str
+    pr: int | None
 
 
 class Waiting(Line):
@@ -123,14 +126,15 @@ class Waiting(Line):
 
 
 # What a unit the autopilot did not start waits on, by the code it was held with
-# (`decide.REASONS`): `(why, moves_it)`, `{detail}` the code's detail.
+# (`decide.REASONS`): `(why, moves_it)`, `{detail}` the code's detail. `{unit}` and `{pr}` stay in
+# the text for `said`: a screen names a unit by its code, which only it knows.
 WAITS: dict[str, tuple[str, str]] = {
     "held": ("A person put it on hold ({detail}).", "It goes on once a person takes the hold off."),
     "stop": ("{detail}", "It goes on once a person settles the stop."),
     "ci": ("CI is still running on its pull request.", "It goes on once CI finishes."),
-    "overlap": ("A step of {detail} changes the same files.", "It goes on once that step ends."),
+    "overlap": ("A step of {unit} changes the same files.", "It goes on once that step ends."),
     "ship-busy": (
-        "{detail} is shipping, and one ship runs at a time.",
+        "{unit} is shipping, and one ship runs at a time.",
         "It goes on once that ship ends.",
     ),
     "missing": (
@@ -142,8 +146,8 @@ WAITS: dict[str, tuple[str, str]] = {
         "It goes on once that unit merges.",
     ),
     "overlap-pr": (
-        "Another unit's pull request {detail} changes files its plan names.",
-        "It goes on once that pull request merges or closes.",
+        "Another unit's {pr} changes files its plan names.",
+        "It goes on once {pr} merges or closes.",
     ),
     "full": (
         "The most steps this workspace allows are already running.",
@@ -165,11 +169,28 @@ WAITS: dict[str, tuple[str, str]] = {
 }
 # The codes of a unit that is not waiting: a step of it runs, or it is over.
 NOT_WAITING = ("running", "finished", "closed")
+# The codes whose detail is the unit that holds the waiting one.
+HOLDERS = ("overlap", "ship-busy")
 
 
-def waiting_line(held: tuple[str, str] | None, stop: Mapping[str, Any] | None) -> Line | None:
-    """What the card says a unit waits on, `{code, why, moves_it, until}`, or `None` when it does
-    not wait. `held` is the `(code, detail)` the last pass held it with, `stop` its stop. A
+def said(text: str, holder: str, pr: int | None, name: Callable[[str], str]) -> str:
+    """`text` with `{unit}` the holder as `name` calls it, and `{pr}` the pull request, `PR #7`,
+    with its unit (`PR #7 of COS-3`) when known."""
+    unit = name(holder) if holder else "another unit"
+    number = "a pull request" if pr is None else f"PR #{pr}"
+    if pr is not None and holder:
+        number += f" of {unit}"
+    return text.replace("{unit}", unit).replace("{pr}", number)
+
+
+def waiting_line(
+    held: tuple[str, str] | None,
+    stop: Mapping[str, Any] | None,
+    prs: Mapping[int, str] | None = None,
+) -> Line | None:
+    """What the card says a unit waits on, `{code, why, moves_it, until, holder, pr}`, or `None`
+    when it does not wait. `held` is the `(code, detail)` the last pass held it with, `stop` its
+    stop, `prs` the open pull requests' units by number. A
     conflict while its step runs is said over a stop; a stop over its code. `until` is the moment
     the session limit resets, else `""`."""
     code, detail = held or ("", "")
@@ -183,15 +204,22 @@ def waiting_line(held: tuple[str, str] | None, stop: Mapping[str, Any] | None) -
             "why": str(stop.get("reason") or ""),
             "moves_it": moves,
             "until": "",
+            "holder": "",
+            "pr": None,
         }
     if code not in WAITS:
         return None
     why, moves = WAITS[code]
+    pr = int(detail[1:]) if code == "overlap-pr" and detail[1:].isdigit() else None
+    holder = (prs or {}).get(pr, "") if pr is not None else detail if code in HOLDERS else ""
+    tokens = {"unit": "{unit}", "pr": "{pr}"}
     return {
         "code": code,
-        "why": why.format(detail=detail or "another unit"),
-        "moves_it": moves.format(detail=detail or "its step"),
+        "why": why.format(detail=detail or "another unit", **tokens),
+        "moves_it": moves.format(detail=detail or "its step", **tokens),
         "until": detail if code == "session-limit" else "",
+        "holder": holder,
+        "pr": pr,
     }
 
 
@@ -203,11 +231,14 @@ def waiting(units: Iterable[Mapping[str, Any]]) -> list[Waiting]:
     return [
         {
             "unit": str(u.get("name") or ""),
-            "code": str(u["waiting_line"]["code"]),
-            "why": str(u["waiting_line"]["why"]),
-            "moves_it": str(u["waiting_line"]["moves_it"]),
-            "until": str(u["waiting_line"]["until"]),
+            "code": str(w["code"]),
+            "why": said(str(w["why"]), str(w["holder"]), w["pr"], str),
+            "moves_it": said(str(w["moves_it"]), str(w["holder"]), w["pr"], str),
+            "until": str(w["until"]),
+            "holder": str(w["holder"]),
+            "pr": w["pr"],
         }
         for u in sorted(units, key=lambda u: str(u.get("name") or ""))
         if u.get("waiting_line") and u.get("name") not in asking
+        for w in [u["waiting_line"]]
     ]

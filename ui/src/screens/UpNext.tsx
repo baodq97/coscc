@@ -4,14 +4,14 @@
 // Every change saves the whole shortlist again with a reason, so the run log keeps who and why.
 
 import { useEffect, useState, type ReactNode } from "react";
-import type { EstimateBrief, Paused, UpNext as UpNextView } from "../api.gen";
+import type { EstimateBrief, Paused, UpNext as UpNextView, Waiting } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import { useBoards } from "../lib/boards";
 import { pausedAt, unitCode, unitTitle } from "../lib/format";
 import type { Workspace } from "../lib/model";
 import { Link, useQuery } from "../lib/router";
 import { Proposals } from "../components/Proposals";
-import { Button, Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
+import { Button, Chip, Hold, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 const number = (unit: string) => Number(unit.slice(0, 4));
 
@@ -64,6 +64,7 @@ function Project({ workspace }: { workspace: Workspace }) {
   // The units held at a ceiling, by name: a card says so wherever it is listed.
   const { boards } = useBoards();
   const paused = Object.fromEntries((boards.find((b) => b.workspace.path === cwd)?.board?.units ?? []).filter((u) => u.paused).map((u) => [u.name, u.paused as Paused]));
+  const waiting = Object.fromEntries((boards.find((b) => b.workspace.path === cwd)?.board?.units ?? []).filter((u) => u.waiting).map((u) => [u.name, u.waiting as Waiting]));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const v = view.data;
@@ -95,6 +96,7 @@ function Project({ workspace }: { workspace: Workspace }) {
       <div className="card">
         {v.shortlist.map((s, i) => (
           <Row key={s.unit} workspace={workspace.name} unit={s.unit} rank={String(s.rank)} estimate={s.estimate} paused={paused[s.unit]}>
+            {waiting[s.unit] && <Hold waiting={waiting[s.unit]} workspace={workspace.name} />}
             {s.drift && s.computed && <div className="prov">Leif would put it {s.computed === 1 ? "first" : `at ${s.computed}`}</div>}
             {s.warnings.map((w) => (
               <div key={w} className="prov" style={{ color: "var(--amber)" }}>

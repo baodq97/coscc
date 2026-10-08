@@ -53,6 +53,8 @@ After them `make_idea_fixture` makes `0006_frontend-calls-api`, and
     0012_conflict-while-impl  a review that asked for changes, its `impl` running now
                            (`seed_running`), its pull request (number 3) CONFLICTING on the
                            `gh` stand-in: held `conflict-running`
+    0013_overlapping-impl  an accepted plan naming a file the plan of `0012` names, so the
+                           autopilot holds it `overlap` while `0012`'s `impl` runs
 
 Every file is written by hand as prose; each unit's states (the `statuses`, `type`, `shipped`
 and `questions` its fixture carries) are seeded as rows in `cos.db` by `seed_fixture`, since
@@ -85,9 +87,9 @@ only with `npm` on `PATH`, else the feature is locked and the row shows `off`.
 `v0.1.0`, then a `feat` and a `build(deps)` commit of no unit (`seed_release`), so `/work/proj`
 shows its *Release* panel ready with `0.2.0` proposed.
 
-The autopilot is on for `proj` and its shortlist names `0008`, `0009`, `0011` and `0012` alone, so
-`/up-next` shows all four on its shortlist, and it starts nothing (`/unit/proj/11` and
-`/unit/proj/12` show the two that wait).
+The autopilot is on for `proj` and its shortlist names `0008`, `0009`, `0011`, `0012` and `0013`
+alone, so `/up-next` shows all five on its shortlist, and it starts nothing (`/unit/proj/11`,
+`/unit/proj/12` and `/unit/proj/13` show the three that wait).
 **Add a unit to the shortlist, or let one of the two leave its stop, and the app under the
 camera starts real steps**, sessions that spend quota.
 
@@ -366,7 +368,9 @@ FIXTURE = {
     },
 }
 
-# The two units the shortlist names, each at a stop of the autopilot, so it starts neither.
+SHARED_FILE = "coscc/shared.py"  # a file the plans of `0012` and `0013` both name
+
+# The units the shortlist names, each at a stop of the autopilot, so it starts neither.
 AUTOPILOT_FIXTURE = {
     # A draft `impl.md` with no question, gone on with twice on one head: stop `e`.
     "draft-impl": {
@@ -438,6 +442,7 @@ AUTOPILOT_FIXTURE = {
             + ASKED.format(n=1, sha="e" * 40, findings="- F1 [open] a.py:1 — medium — Thiếu test."),
         },
         "pr": 3,
+        "plan": [SHARED_FILE],
         "rounds": [
             (
                 1,
@@ -459,9 +464,24 @@ AUTOPILOT_FIXTURE = {
             ),
         ],  # fmt: skip
     },
+    # An accepted plan over a file `0012`'s plan names, while `0012`'s `impl` runs (`seed_running`):
+    # held `overlap`.
+    "overlapping-impl": {
+        "statuses": dict.fromkeys(("intent.md", "spec.md", "plan.md"), "accepted"),
+        "type": "feat",
+        "plan": [SHARED_FILE],
+        "files": {
+            "intent.md": INTENT.format(
+                title="overlapping impl", problem="Một impl trùng file với một impl đang chạy."
+            ),
+            "spec.md": "# Spec: overlapping impl\nIntent: intent.md. Author: capture_screens.\n",
+            "plan.md": "# Plan: overlapping impl\nIntent: intent.md. Author: capture_screens.\n",
+        },
+    },
 }
 DRAFT_IMPL, REFUSED_IMPL, PAUSED_IMPL = "0008_draft-impl", "0009_refused-impl", "0010_paused-impl"
 SESSION_LIMIT_IMPL, CONFLICT_IMPL = "0011_session-limit", "0012_conflict-while-impl"
+OVERLAP_IMPL = "0013_overlapping-impl"
 CONFLICT_PR = 3  # the number `CONFLICT_IMPL`'s `pr.md` names
 SESSION_RESETS_IN = 5  # hours from the capture to the session limit's reset (chosen)
 
@@ -1322,7 +1342,7 @@ def seed_pilot(data_dir: Path, proj: Path) -> None:
 def make_autopilot_fixture(
     api: httpx.Client, work: Path, data_dir: Path, proj: Path, rows: Rows
 ) -> None:
-    """`AUTOPILOT_FIXTURE`, a shortlist of its first two units and the last two, and two tries of
+    """`AUTOPILOT_FIXTURE`, a shortlist of its first two units and the last three, and two tries of
     `0008_draft-impl` on one head: each an `autopilot-pick` that went on with the draft and the
     step it began, ended; then `0011_session-limit`'s `impl` step, ended at the session limit.
     Then the scan's proposals, the rest of what the Backlog shows."""
@@ -1366,7 +1386,7 @@ def make_autopilot_fixture(
             "kind": "shortlist",
             "workspace": key,
             "unit": "",
-            "units": [DRAFT_IMPL, REFUSED_IMPL, SESSION_LIMIT_IMPL, CONFLICT_IMPL],
+            "units": [DRAFT_IMPL, REFUSED_IMPL, SESSION_LIMIT_IMPL, CONFLICT_IMPL, OVERLAP_IMPL],
             "reason": "capture_screens",
             "by": "owner",
         }

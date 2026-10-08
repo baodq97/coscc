@@ -6,8 +6,7 @@ import { LeifAvatar } from "../lib/icons";
 import { unitState } from "../lib/model";
 import { Link } from "../lib/router";
 import { ago, failureWords, unitCode, unitTitle } from "../lib/format";
-import { Button, Empty, ErrorState, SkeletonRows } from "../components/ui";
-import { waitingWhy } from "./UnitPage";
+import { Button, Empty, Hold, ErrorState, SkeletonRows } from "../components/ui";
 
 function greeting(now = new Date()): string {
   const h = now.getHours();
@@ -116,12 +115,12 @@ export function Briefing() {
           <div className="sec-h">
             Waiting <span className="faint">{held.length}</span>
           </div>
-          <div className="card" style={{ overflow: "hidden" }}>
+          <div className="card">
             {held.map((u) => (
-              <Link key={u.workspace.name + u.name} to={`/unit/${u.workspace.name}/${u.number}`} className="lrow stack">
+              <Link key={u.workspace.name + u.name} to={`/unit/${u.workspace.name}/${u.number}`} className="lrow wrap">
                 <span className="id">{unitCode(u.workspace.name, u.number)}</span>
-                <span className="t">{u.waiting && waitingWhy(u.waiting)}</span>
-                <span className="meta">{unitTitle(u.name)}</span>
+                <span className="t">{unitTitle(u.name)}</span>
+                {u.waiting && <Hold waiting={u.waiting} workspace={u.workspace.name} />}
               </Link>
             ))}
           </div>

@@ -9,7 +9,7 @@ import { FeatureSlots } from "../lib/feature";
 import { unitCode, unitTitle } from "../lib/format";
 import { GROUP_ORDER, unitState, type Workspace } from "../lib/model";
 import { Link, navigate } from "../lib/router";
-import { Button, Chip, Empty, ErrorState, PageHead, SkeletonRows } from "../components/ui";
+import { Button, Chip, Empty, Hold, ErrorState, PageHead, SkeletonRows } from "../components/ui";
 
 const FOLDED = new Set(["Shipped", "Dropped"]);
 
@@ -63,7 +63,7 @@ export function Work({ workspace }: { workspace?: string }) {
                 {group} <span className="n">{rows.length}</span>
               </summary>
               {rows.map((u) => (
-                <Link key={u.workspace.name + u.name} to={`/unit/${u.workspace.name}/${u.number}`} className="lrow">
+                <Link key={u.workspace.name + u.name} to={`/unit/${u.workspace.name}/${u.number}`} className={u.waiting ? "lrow wrap" : "lrow"}>
                   <span className="id">{unitCode(u.workspace.name, u.number)}</span>
                   <span className="t">{unitTitle(u.name)}</span>
                   <span className="meta">
@@ -71,6 +71,7 @@ export function Work({ workspace }: { workspace?: string }) {
                     {!workspace && <span>{u.workspace.name}</span>}
                     {u.paused ? <Chip square tone="amber">{unitState(u).label}</Chip> : <span>{unitState(u).label}</span>}
                   </span>
+                  {u.waiting && <Hold waiting={u.waiting} workspace={u.workspace.name} />}
                 </Link>
               ))}
             </details>

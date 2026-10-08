@@ -222,7 +222,8 @@ def seed_fixture(
 ) -> None:
     """A fixture's units as the board holds them: rows in `cos.db`, one transition per
     artifact state, written as `by`'s own. A unit is `(workspace, unit, kw)`, `kw` holding any
-    of `statuses` (`{artifact: state}`), `type` (an intent record), `shipped` (the merge
+    of `statuses` (`{artifact: state}`), `type` (an intent record), `plan` (the files a plan record
+    names, `[path]`), `shipped` (the merge
     row the PR machine writes), `questions` (`{artifact: [text or (text, recommendation)]}`,
     numbered from 1), `pr` (the number the PR machine's `open` row names), `rounds` (`[(n,
     head, verdict, [finding], [criterion])]`, a finding as `review_findings` takes it), `answers` (`[(artifact,
@@ -242,6 +243,15 @@ def seed_fixture(
                     "object": {"judgement": "ready", "type": kw["type"]},
                 }
                 meta.record_result(conn, key, unit, "intent", "intent.md", submitted)
+            if kw.get("plan") is not None:
+                plan = {
+                    "judgement": "ready",
+                    "questions": [],
+                    "variant": "novel",
+                    "files": kw["plan"],
+                }
+                plan.update(steps=[], rests_on=[])
+                meta.record_result(conn, key, unit, "plan", "plan.md", {"object": plan})
             for artifact, asked in (kw.get("questions") or {}).items():
                 conn.executemany(
                     "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text, "

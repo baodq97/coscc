@@ -143,6 +143,8 @@ class Autopilot:
         self.pending: set[asyncio.Task] = set()
         # What the last pass held back by unit, `(code, detail)`, for the card to show.
         self.held: dict[str, dict[str, tuple[str, str]]] = {}
+        # The unit of each pull request the last pass saw open, by number, to name what holds a unit.
+        self.pr_units: dict[str, dict[int, str]] = {}
         # The reader of each workspace's pull requests, while it is on.
         self.pr_readers: dict[str, asyncio.Task] = {}
 
@@ -179,6 +181,7 @@ class Autopilot:
         self.waiting.pop(key, None)
         self.stops.pop(key, None)
         self.held.pop(key, None)
+        self.pr_units.pop(key, None)
 
     def resume(self) -> list[str]:
         """At start-up, every workspace whose switch is on starts again. Returns them."""
@@ -767,6 +770,7 @@ class Autopilot:
             # Why each unit of the shortlist not started this pass waits, for its card.
             chosen = {c["unit"] for c in picked["chosen"]}
             self.held[key] = {u: r for u, r in reasons.items() if u not in chosen}
+            self.pr_units[key] = {p["number"]: p["unit"] for p in prs}
             await self.put_stops(key, found)
             if not self._on(key):
                 return
@@ -867,7 +871,9 @@ class Autopilot:
             unit["held"] = " ".join(p for p in held if p) if held else ""
             stop = (self.stops.get(key) or {}).get(unit["name"])
             # Not `waiting`, which names the findings a person is awaited on.
-            unit["waiting_line"] = guide.waiting_line(held, stop) if self._on(key) else None
+            unit["waiting_line"] = (
+                guide.waiting_line(held, stop, self.pr_units.get(key)) if self._on(key) else None
+            )
         data["autopilot"] = await in_thread(self._block, key)
         data["guide"] = await in_thread(self.guide_block, key, data["units"])
 

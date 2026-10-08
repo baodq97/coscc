@@ -996,6 +996,8 @@ export type Waiting = {
   "why": string;
   "moves_it": string;
   "until": string;
+  "holder": string;
+  "pr": number | null;
 };
 
 export type Waste = {

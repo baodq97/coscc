@@ -719,6 +719,8 @@ class Scripted(_Base):
                 "why": "The account reached its session limit.",
                 "moves_it": "The autopilot runs it again once the limit resets.",
                 "until": later,
+                "holder": "",
+                "pr": None,
             },
         )
         before = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat()
@@ -2282,6 +2284,9 @@ class Scripted(_Base):
         )
         # What the board's card shows, kept from the same pass.
         self.assertEqual(self.core.autopilot.held[self.key].get("0002_b"), ("overlap-pr", "#7"))
+        card = (await self.lines())["0002_b"]
+        self.assertEqual((card["holder"], card["pr"]), ("0001_a", 7))
+        self.assertIn("{pr}", card["moves_it"])
         gh.open_prs, gh.state = [], "MERGED"
         await self.core.autopilot.pr_read(self.key)
         await self.until(lambda: len(self.launched) == 2, "the pass the merge scheduled")
@@ -2289,6 +2294,8 @@ class Scripted(_Base):
         self.assertNotIn("0002_b", self.core.autopilot.held[self.key])
         self.core.autopilot.stop(self.key)
         self.assertNotIn(self.key, self.core.autopilot.held)
+        self.assertNotIn(self.key, self.core.autopilot.pr_units)
+        self.assertIsNone((await self.lines())["0002_b"])
 
     async def test_off_the_reader_calls_no_gh(self):
         gh = test_prmachine.FakeGh()

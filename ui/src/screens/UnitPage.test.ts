@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { PackShown, Waiting } from "../api.gen";
-import { isEngineStage, runWords, waitingWhy } from "./UnitPage";
+import type { PackShown } from "../api.gen";
+import { isEngineStage, runWords } from "./UnitPage";
 
 const packs = [
   {
@@ -33,21 +33,5 @@ describe("the run button's words", () => {
   it("finds the state in any pack when the unit's process is in none", () => {
     expect(isEngineStage(packs, "gone/proc", "ship")).toBe(true);
     expect(isEngineStage(packs, "gone/proc", "nothing")).toBe(false);
-  });
-});
-
-describe("the waiting line", () => {
-  const now = Date.parse("2026-01-01T10:00:00Z");
-  const w = { code: "session-limit", why: "The account reached its session limit.", moves_it: "The autopilot runs it again once the limit resets.", until: "" } as Waiting;
-
-  it("says why as it is with no reset", () => {
-    expect(waitingWhy(w, now)).toBe("The account reached its session limit.");
-  });
-  it("adds the reset as a relative time when there is one", () => {
-    expect(waitingWhy({ ...w, until: "2026-01-01T12:00:00+00:00" }, now)).toBe("The account reached its session limit; it resets in 2 h.");
-    expect(waitingWhy({ ...w, until: "2025-12-31T10:00:00Z" }, now)).toBe("The account reached its session limit; it resets now.");
-  });
-  it("leaves out a reset it cannot read", () => {
-    expect(waitingWhy({ ...w, until: "soon" }, now)).toBe(w.why);
   });
 });

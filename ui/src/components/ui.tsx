@@ -3,8 +3,20 @@
 
 import { useEffect, type ReactNode } from "react";
 import { Icon, type IconName } from "../lib/icons";
-import { mdBlocks, mdSpans, type MdSpan } from "../lib/format";
+import type { Waiting } from "../api.gen";
+import { mdBlocks, mdSpans, waitingWords, type MdSpan } from "../lib/format";
 import { Link } from "../lib/router";
+
+/** Why the autopilot holds a unit and what moves it on: the same two sentences on every screen. */
+export function Hold({ waiting, workspace, id }: { waiting: Waiting; workspace: string; id?: string }) {
+  const w = waitingWords(waiting, workspace);
+  return (
+    <div id={id} className="hold">
+      <div>{w.why}</div>
+      <div className="faint">{w.moves_it}</div>
+    </div>
+  );
+}
 
 export function Button({
   children,

@@ -2,12 +2,13 @@
 // panel holds the facts; the timeline holds every run and answer, newest first.
 
 import { Fragment, useState, type ReactNode } from "react";
-import type { Answer, Decision, Detail, Outcome, OutputRecord, PackShown, Paused, Round, RoundCriterion, StageView, UnitRun, Waiting } from "../api.gen";
+import type { Answer, Decision, Detail, Outcome, OutputRecord, PackShown, Paused, Round, RoundCriterion, StageView, UnitRun } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import type { PlacedUnit } from "../lib/boards";
 import { allUnits, findUnit, useBoards } from "../lib/boards";
 import { FeatureSlots } from "../lib/feature";
-import { ago, modelName, money, pausedAt, unitCode, unitTitle, until } from "../lib/format";
+import { ago, modelName, money, pausedAt, unitCode, unitTitle } from "../lib/format";
+import { Hold } from "../components/ui";
 import { AgentAvatar, Icon, LeifMark } from "../lib/icons";
 import { consequence, liveQuestions, runnable, unitState } from "../lib/model";
 import { stageLabel, useIndex } from "../lib/pack";
@@ -757,13 +758,6 @@ export function runWords(label: string, engine: boolean): { button: string; conf
   return { button: `Run ${label}`, confirm: `Spend quota on ${label}?`, note };
 }
 
-/** Why a unit waits, with the account's reset read relative when it has one. */
-export function waitingWhy(w: Waiting, now = Date.now()): string {
-  if (!w.until || Number.isNaN(Date.parse(w.until))) return w.why;
-  const when = until(w.until, now);
-  return `${w.why.replace(/\.$/, "")}; it resets ${when === "due" ? "now" : when}.`;
-}
-
 /**
  * What a person may do to the unit now. A paid or lasting action asks once more before it acts:
  * a step spends quota, a drop closes the pull request.
@@ -800,10 +794,7 @@ function Actions({ unit, running, stage, upNext, lines, moves, onDone }: { unit:
   return (
     <div className="col gap6">
       {unit.waiting && (
-        <div id="unit-waiting" style={{ fontSize: 12.5 }}>
-          <div>{waitingWhy(unit.waiting)}</div>
-          <div className="faint">{unit.waiting.moves_it}</div>
-        </div>
+        <Hold id="unit-waiting" waiting={unit.waiting} workspace={unit.workspace.name} />
       )}
       {running ? (
         <Button icon="x" disabled={busy} onClick={() => act("stop", () => api.post("/api/board/stop", { ...at, by: "owner" }))}>
