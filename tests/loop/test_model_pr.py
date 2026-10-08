@@ -198,7 +198,9 @@ def test_an_open_low_against_the_standard_blocks_and_one_that_is_not_still_does_
         fr("F3", "open", "Sx is not a rule id", "low"),
     ]
     assert [f["id"] for f in non_blocking(asked(round_(1, "pass", findings)))] == ["F2", "F3"]
-    g = ship_gate(round_(1, "pass", findings[:1]))
+    rounds = [round_(1, "pass", findings[:1], screens=screens())]
+    u = branched({**CHAIN, "review.md": review_art("accepted", rounds)})
+    g = check_gate(u, "ship", ui_probe(["coscc/screens.py"]))
     assert g["ok"] is False
     assert "F1 [open]" in "\n".join(g["need"])
 

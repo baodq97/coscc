@@ -15,7 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from coscc.loop.repo_rules import branch_checks
+from coscc.loop.model import review_from
+from coscc.loop.repo_rules import branch_checks, branch_files, make_probe, screen_passes, ui_changed
 from tests.loop.conftest import (
     UnitStore,
     entry,
@@ -27,6 +28,7 @@ from tests.loop.conftest import (
     git_repo,
     header,
     pr_row,
+    python,
     round_row,
 )
 
@@ -1042,3 +1044,165 @@ def test_ship_gate_when_git_cannot_diff_what_the_screens_followed(tmp_path):
     s.shim({"match": [*DIFF_NAMES, f"{first}..{s.reviewed}"], "code": 128, "err": "fatal: boom\n"})
     ship, _, _ = s.three(open_pr(s.reviewed))
     assert "git could not diff" in text_of(ship)
+
+
+# --- an S<n> finding that does not block ---------------------------------------------------
+
+# The narrowed standard: what a patch of the lib files alone must not count as a screen.
+NARROW_STANDARD = (
+    "---\npaths:\n"
+    '  - "ui/src/**/*.tsx"\n'
+    '  - "ui/src/styles.css"\n'
+    '  - "ui/index.html"\n'
+    '  - "coscc/http/auth.py"\n'
+    '  - "coscc/features/*/ui/**/*.tsx"\n'
+    '  - "ui/src/lib/format.ts"\n'
+    "---\n# UI standard\n"
+)
+X = "ui/src/x.tsx"
+
+
+def standard_row(
+    n: int, label: str = "open", path: str = X, severity: str = "high", fixed_in=None
+) -> dict:
+    return finding_row(
+        f"F{n}",
+        label,
+        severity,
+        "shows the sha",
+        path=path,
+        lines="7",
+        rule="S2",
+        fixed_in=fixed_in,
+    )
+
+
+def reviewing(*rounds: dict) -> dict:
+    return {"name": UNIT, "artifacts": {"review.md": {"review": review_from(list(rounds))}}}
+
+
+def passes(s: Scene, *rounds: dict) -> list:
+    return screen_passes(reviewing(*rounds), make_probe(str(s.repo)))
+
+
+def asks(s: Scene, *words: str, gh: dict | None = None) -> dict:
+    """What the command prints as JSON, from the real repository and a `gh` that answers `gh`."""
+    argv = s.store.argv(*words, "--repo", str(s.repo))
+    return json.loads(python(argv, environ=fake_gh(s.bin, gh or {})).out)
+
+
+def test_ui_changed_counts_no_screen_in_a_patch_of_lib_files_the_standard_leaves_out(tmp_path):
+    s = Scene(tmp_path, standard=NARROW_STANDARD)
+    head = s.commit(
+        {
+            "ui/src/lib/boards.ts": "b\n",
+            "ui/src/lib/stream.ts": "s\n",
+            "ui/src/lib/lib.test.ts": "t\n",
+        },
+        "lib",
+    )
+    probe = make_probe(str(s.repo))
+    assert ui_changed({"name": UNIT}, probe, head)["changed"] == []
+    head = s.commit({"ui/src/lib/format.ts": "f\n"}, "format")
+    assert ui_changed({"name": UNIT}, probe, head)["changed"] == ["ui/src/lib/format.ts"]
+
+
+def test_screen_passes_a_finding_on_a_file_the_patch_leaves_alone(sc):
+    r = rnd(1, "changes-requested", sc.reviewed, standard_row(1), screens=shots(sc.reviewed))
+    assert passes(sc, r) == [
+        {
+            "id": "F1",
+            "criterion": "S2",
+            "path": X,
+            "lines": "7",
+            "text": "shows the sha",
+            "why": "screen-untouched",
+        }
+    ]
+
+
+def test_screen_passes_nothing_that_is_high_or_low_on_a_file_the_patch_changes(sc):
+    for severity in ("high", "low"):
+        f = standard_row(1, path="src/a.py", severity=severity)
+        assert passes(sc, rnd(1, "pass", sc.reviewed, f, screens=shots(sc.reviewed))) == []
+
+
+def test_screen_passes_a_finding_raised_in_a_round_without_screens(sc):
+    r = rnd(1, "changes-requested", sc.reviewed, standard_row(1, path="src/a.py"))
+    assert [p["why"] for p in passes(sc, r)] == ["screen-late"]
+
+
+def test_screen_passes_a_finding_the_earlier_screens_already_showed(sc):
+    first = sc.commit({X: "1\n"}, "x")
+    second = sc.commit({"README.md": "2\n"}, "readme")
+    r1 = rnd(1, "changes-requested", first, fixed(9, first), screens=shots(first))
+    r2 = rnd(2, "changes-requested", second, standard_row(1), screens=shots(second))
+    assert [p["why"] for p in passes(sc, r1, r2)] == ["screen-late"]
+    # The file moved after those screens: this round's are news.
+    third = sc.commit({X: "3\n"}, "x again")
+    r3 = rnd(2, "changes-requested", third, standard_row(1), screens=shots(third))
+    assert passes(sc, r1, r3) == []
+
+
+def test_screen_passes_nothing_for_a_fixed_or_answered_finding(sc):
+    for label in ("fixed", "answered"):
+        f = standard_row(1, label, path="ui/src/other.tsx", fixed_in="abcdef1")
+        assert passes(sc, rnd(1, "pass", sc.reviewed, f, screens=shots(sc.reviewed))) == []
+
+
+@pytest.mark.parametrize("path", [".screens/home-800x600.png", ""])
+def test_screen_passes_nothing_for_a_finding_that_points_at_no_source_file(sc, path):
+    f = standard_row(1, path=path)
+    assert passes(sc, rnd(1, "changes-requested", sc.reviewed, f)) == []
+
+
+def test_screen_passes_nothing_for_a_finding_that_blocked_until_it_is_fixed(sc):
+    first = sc.commit({X: "1\n"}, "x")
+    git(sc.repo, "rm", "-q", X)
+    second = sc.commit({"README.md": "2\n"}, "x gone")
+    assert X not in branch_files({"name": UNIT}, make_probe(str(sc.repo)), second)["files"]
+    r1 = rnd(1, "changes-requested", first, standard_row(1), screens=shots(first))
+    r2 = rnd(2, "changes-requested", second, standard_row(1), screens=shots(second))
+    assert passes(sc, r1, r2) == []
+
+
+def test_screen_passes_nothing_for_a_finding_whose_severity_was_lowered(sc):
+    sc.reviewed = sc.commit({X: "1\n"}, "x")
+    git(sc.repo, "update-ref", f"refs/remotes/origin/{BRANCH}", sc.reviewed)
+    high = rnd(1, "changes-requested", sc.reviewed, standard_row(1), screens=shots(sc.reviewed))
+    low = rnd(2, "pass", sc.reviewed, standard_row(1, severity="low"), screens=shots(sc.reviewed))
+    assert passes(sc, high, low) == []
+    sc.unit([high, low])
+    gate = asks(sc, "gate", UNIT, "ship", "--json", gh=open_pr(sc.reviewed))
+    assert gate["ok"] is False
+    assert "F1 [open]" in text_of(gate)
+    assert gate["passed"] == []
+
+
+def test_ship_gate_opens_when_only_findings_the_screens_rule_lets_through_remain(sc):
+    sc.unit([rnd(1, "pass", sc.reviewed, standard_row(1), screens=shots(sc.reviewed))])
+    gate = asks(sc, "gate", UNIT, "ship", "--json", gh=open_pr(sc.reviewed))
+    assert gate["ok"] is True
+    assert gate["passed"] == [
+        {
+            "id": "F1",
+            "criterion": "S2",
+            "path": X,
+            "lines": "7",
+            "text": "shows the sha",
+            "why": "screen-untouched",
+        }
+    ]
+    changed = standard_row(1, path="src/a.py")
+    sc.unit([rnd(1, "pass", sc.reviewed, changed, screens=shots(sc.reviewed))])
+    gate = asks(sc, "gate", UNIT, "ship", "--json", gh=open_pr(sc.reviewed))
+    assert gate["ok"] is False
+    assert gate["passed"] == []
+
+
+def test_screen_passes_nothing_without_a_candidate_or_when_git_cannot_say(sc):
+    assert passes(sc, rnd(1, "pass", sc.reviewed, fixed(1, sc.reviewed))) == []
+    r = rnd(1, "changes-requested", sc.reviewed, standard_row(1), screens=shots(sc.reviewed))
+    git(sc.repo, "update-ref", "-d", "refs/remotes/origin/main")
+    git(sc.repo, "branch", "-m", "main", "trunk")
+    assert passes(sc, r) == []

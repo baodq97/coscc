@@ -28,7 +28,7 @@ from coscc.loop.model import (
 )
 from coscc.loop.paths import next_number
 from coscc.loop import SPIKE_ROUNDS
-from coscc.loop.model import fold_holds, non_blocking
+from coscc.loop.model import fold_holds, non_blocking, rounds_used, standard_findings
 from coscc.loop.rules import between_pr_and_ship, decide, gate_answer, next_answer
 from coscc.loop.run import ask
 from coscc.loop.model import review_from, review_rounds
@@ -1716,6 +1716,72 @@ def test_a_severity_lowered_between_rounds_closes_ship():
         "F1 is low in review round 2, but review round 1 rated it high — lowering a severity is "
         "not a fix: fix it on the branch, or keep it open"
     ) in g["need"]
+
+
+SHOTS = {
+    "taken": SHA,
+    "standard": ".claude/rules/ui-standard.md",
+    "by": "agent session s1",
+    "shots": [{"path": ".screens/a.png", "size": "1x1", "address": "/", "result": "ok"}],
+}
+
+
+def standard_finding(id_, path="ui/a.tsx", severity="high", label="open"):
+    return fr(id_, label, "x", severity, path=path, lines="3", rule="S3")
+
+
+def with_diff(*files):
+    """A probe whose branch diff against the trunk names `files`."""
+    return green_probe(None, {f"diff --name-only origin/main...{SHA}": ok("\n".join(files))})
+
+
+def test_a_finding_against_the_standard_is_read_for_where_it_points_and_what_it_says():
+    u = asked(round_(1, "pass", [standard_finding("F1"), fr("F2", rule="S3", path="")]))
+    assert standard_findings(u) == [
+        {
+            "id": "F1",
+            "criterion": "S3",
+            "path": "ui/a.tsx",
+            "lines": "3",
+            "text": "x",
+            "round": 1,
+        },
+        {"id": "F2", "criterion": "S3", "path": None, "lines": "", "text": "x", "round": 1},
+    ]
+
+
+def test_an_s_finding_on_a_file_the_patch_changes_blocks_even_when_low():
+    low_one = standard_finding("F1", severity="low")
+    u = ship(round_(1, "pass", [low_one], screens=SHOTS))
+    for files in (["ui/a.tsx"], ["ui/other.tsx"]):
+        g = check_gate(u, "ship", with_diff(*files))
+        assert g["ok"] is (files == ["ui/other.tsx"])
+        assert [p["why"] for p in u["screenPasses"]] == ([] if g["need"] else ["screen-untouched"])
+
+
+def test_rounds_used_and_severity_rule_share_what_lets_an_s_finding_through():
+    r1 = round_(1, "changes-requested", [standard_finding("F1")], screens=SHOTS)
+    u = asked(r1)
+    assert rounds_used(u) == 1
+    assert non_blocking(u) == []
+    u["screenPasses"] = [{"id": "F1", "why": "screen-untouched"}]
+    assert rounds_used(u) == 0
+    assert [f["id"] for f in non_blocking(u)] == ["F1"]
+    # One blocking finding beside it, and the round counts again.
+    mixed = asked(round_(1, "changes-requested", [standard_finding("F1"), fr("F2")]))
+    mixed["screenPasses"] = [{"id": "F1", "why": "screen-untouched"}]
+    assert rounds_used(mixed) == 1
+    assert [f["id"] for f in non_blocking(mixed)] == ["F1"]
+
+
+def test_a_gate_with_a_probe_sets_what_rounds_used_and_the_severity_rule_read():
+    u = asked(round_(1, "changes-requested", [standard_finding("F1")], screens=SHOTS))
+    check_gate(u, "review", with_diff("ui/other.tsx"))
+    assert [p["id"] for p in u["screenPasses"]] == ["F1"]
+    assert rounds_used(u) == 0
+    check_gate(u, "review", with_diff("ui/a.tsx"))
+    assert u["screenPasses"] == []
+    assert rounds_used(u) == 1
 
 
 def test_next_step_never_offers_a_closed_gate_in_the_person_states(tmp_path):
