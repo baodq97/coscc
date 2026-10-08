@@ -1751,3 +1751,52 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
         [record] = await self.s.suspend_all()
         self.assertEqual(record["unresumable"], "no session id yet")
         self.assertTrue(handle.closed and handle.suspended)
+
+
+class TheSessionLimitIsSaidAsSuch(unittest.IsolatedAsyncioTestCase):
+    """An `AssistantMessage` with `error == "rate_limit"` ends the session at the account's limit:
+    `terminal_reason` says `session-limit`, and `resets_at` is the last `rejected` event's, in UTC."""
+
+    async def _done(self, messages):
+        s = Sessions(Config(workspaces=("/tmp",)))
+        self.addAsyncCleanup(s.close_all)
+        _FakeClient.messages = messages
+        with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _FakeClient):
+            return dict([item async for item in s.stream("/tmp", "hi")])["done"]
+
+    def _limited(self):
+        return sdk.AssistantMessage(
+            content=[sdk.TextBlock(text="You've hit your session limit · resets 1:50am")],
+            model="m",
+            session_id="sid-l",
+            error="rate_limit",
+        )
+
+    def _event(self, status, resets_at=1791399000):
+        return sdk.RateLimitEvent(
+            rate_limit_info=sdk.RateLimitInfo(
+                status=status, resets_at=resets_at, rate_limit_type="five_hour"
+            ),
+            uuid="u",
+            session_id="sid-l",
+        )
+
+    async def test_the_limit_and_its_reset_are_in_done(self):
+        done = await self._done(
+            [self._event("allowed_warning", 1), self._event("rejected"), self._limited(),
+             _result("sid-l")]
+        )  # fmt: skip
+        self.assertEqual(done["terminal_reason"], "session-limit")
+        self.assertEqual(done["resets_at"], "2026-10-07T18:50:00+00:00")
+
+    async def test_with_no_rejected_event_the_reset_is_unknown(self):
+        done = await self._done([self._event("allowed"), self._limited(), _result("sid-l")])
+        self.assertEqual(done["terminal_reason"], "session-limit")
+        self.assertNotIn("resets_at", done)
+
+    async def test_a_rejected_event_without_the_error_is_no_limit(self):
+        done = await self._done(
+            [self._event("rejected"), _assistant("a", "sid-l"), _result("sid-l")]
+        )
+        self.assertEqual(done["terminal_reason"], "success")
+        self.assertNotIn("resets_at", done)

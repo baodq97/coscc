@@ -171,6 +171,16 @@ def _drop(path: Path | None) -> None:
     shutil.rmtree(p, ignore_errors=True)
 
 
+def _resets_at(event: Any) -> str:
+    """When a `rejected` `RateLimitEvent` says the limit resets, as ISO in UTC; `""` for any other.
+    The CLI gives Unix seconds; the words it prints have no date."""
+    info = getattr(event, "rate_limit_info", None)
+    when = getattr(info, "resets_at", None)
+    if getattr(info, "status", "") != "rejected" or not when:
+        return ""
+    return datetime.fromtimestamp(int(when), timezone.utc).isoformat()
+
+
 class Refused(Exception):
     """A request the config does not allow. Carries a reason the caller can show."""
 
@@ -1122,6 +1132,10 @@ class Sessions:
             turns = 0
             duration_ms = 0
             terminal = ""
+            # The account's session limit: the CLI says so on an `AssistantMessage` (`error`), and
+            # when it resets on a `RateLimitEvent` that is `rejected`.
+            limited = False
+            resets_at = ""
             # Which model ids the SDK billed this session to: the keys of `model_usage`, the
             # session's own record of the model it ran on.
             used: list[str] = []
@@ -1170,7 +1184,10 @@ class Sessions:
                         if not told_session:
                             told_session = True
                             yield ("session", resolved)
+                if isinstance(message, sdk.RateLimitEvent):
+                    resets_at = _resets_at(message) or resets_at
                 if isinstance(message, AssistantMessage):
+                    limited = limited or getattr(message, "error", None) == "rate_limit"
                     if first_call is None and isinstance(message.usage, dict):
                         first_call = {
                             "input_tokens": int(message.usage.get("input_tokens") or 0),
@@ -1213,6 +1230,9 @@ class Sessions:
                     terminal = getattr(message, "terminal_reason", None) or (
                         getattr(message, "subtype", "") or ""
                     )
+            if limited:
+                # Read by `run.session_limit_of`; the CLI's own reason does not say it.
+                terminal = "session-limit"
 
             if _paused(flow):
                 # The `ResultMessage` after `interrupt()` ends the loop above like any other; it is
@@ -1247,6 +1267,7 @@ class Sessions:
                     "terminal_reason": terminal,
                     "models_used": used,
                     "first_call": first_call,
+                    **({"resets_at": resets_at} if limited and resets_at else {}),
                 },
             )
         finally:

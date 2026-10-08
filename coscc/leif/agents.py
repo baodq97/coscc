@@ -310,13 +310,16 @@ class AgentPage(TypedDict):
 
 def chip_of(last: RunView | None, budget: float | None, runs_in_window: int) -> str:
     """What the last run came to: `failed`, `paused` (it stopped at a ceiling and kept its
-    session) or `stopped` (a person's Stop, or the app going down) when it did not end `done`;
-    `costly` when it spent `COSTLY_SHARE` of `budget` or more, `idle` with no run in the window,
+    session, or at the account's session limit) or `stopped` (a person's Stop, or the app going
+    down) when it did not end `done`; `costly` when it spent `COSTLY_SHARE` of `budget` or more, `idle` with no run in the window,
     else `ok`."""
     if last is not None and last["outcome"] != "done":
-        return {"paused-budget": "paused", "cancelled": "stopped", "stopped": "stopped"}.get(
-            last["outcome"], "failed"
-        )
+        return {
+            "paused-budget": "paused",
+            "session-limit": "paused",
+            "cancelled": "stopped",
+            "stopped": "stopped",
+        }.get(last["outcome"], "failed")
     cost = last["cost_usd"] if last is not None else None
     if budget and cost is not None and cost >= COSTLY_SHARE * budget:
         return "costly"

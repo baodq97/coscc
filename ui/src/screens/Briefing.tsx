@@ -7,6 +7,7 @@ import { unitState } from "../lib/model";
 import { Link } from "../lib/router";
 import { ago, failureWords, unitCode, unitTitle } from "../lib/format";
 import { Button, Empty, ErrorState, SkeletonRows } from "../components/ui";
+import { waitingWhy } from "./UnitPage";
 
 function greeting(now = new Date()): string {
   const h = now.getHours();
@@ -20,6 +21,8 @@ export function Briefing() {
   const proposals = live.proposals;
   const failed = live.failed;
   const { units: needs, total: waiting } = needsYou(allUnits(boards), proposals, failed);
+  const asking = new Set(needs.map((u) => u.workspace.name + u.name));
+  const held = allUnits(boards).filter((u) => u.waiting && !asking.has(u.workspace.name + u.name));
   const moving = boards.flatMap((b) => (b.board?.running ?? []).map((run) => ({ ...run, workspace: b.workspace.name, number: Number(run.unit.slice(0, 4)) })));
   const working = moving.length + live.running.length;
   const off = boards.filter((b) => b.board && !b.board.autopilot?.on).map((b) => b.workspace.name);
@@ -107,6 +110,23 @@ export function Briefing() {
           </Empty>
         )}
       </div>
+
+      {!loading && held.length > 0 && (
+        <>
+          <div className="sec-h">
+            Waiting <span className="faint">{held.length}</span>
+          </div>
+          <div className="card" style={{ overflow: "hidden" }}>
+            {held.map((u) => (
+              <Link key={u.workspace.name + u.name} to={`/unit/${u.workspace.name}/${u.number}`} className="lrow stack">
+                <span className="id">{unitCode(u.workspace.name, u.number)}</span>
+                <span className="t">{u.waiting && waitingWhy(u.waiting)}</span>
+                <span className="meta">{unitTitle(u.name)}</span>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="sec-h">
         Moving now <span className="faint">{working || ""}</span>

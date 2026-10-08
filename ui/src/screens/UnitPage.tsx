@@ -2,12 +2,12 @@
 // panel holds the facts; the timeline holds every run and answer, newest first.
 
 import { Fragment, useState, type ReactNode } from "react";
-import type { Answer, Decision, Detail, Outcome, OutputRecord, Paused, Round, RoundCriterion, StageView, UnitRun } from "../api.gen";
+import type { Answer, Decision, Detail, Outcome, OutputRecord, PackShown, Paused, Round, RoundCriterion, StageView, UnitRun, Waiting } from "../api.gen";
 import { api, useResource } from "../lib/api";
 import type { PlacedUnit } from "../lib/boards";
 import { allUnits, findUnit, useBoards } from "../lib/boards";
 import { FeatureSlots } from "../lib/feature";
-import { ago, modelName, money, pausedAt, unitCode, unitTitle } from "../lib/format";
+import { ago, modelName, money, pausedAt, unitCode, unitTitle, until } from "../lib/format";
 import { AgentAvatar, Icon, LeifMark } from "../lib/icons";
 import { consequence, liveQuestions, runnable, unitState } from "../lib/model";
 import { stageLabel, useIndex } from "../lib/pack";
@@ -617,7 +617,8 @@ function Timeline({ detail, names, live, cwd }: { detail: Detail; names: Record<
 function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: boolean; cwd: string }) {
   const [shown, setShown] = useState(live);
   const [part, setPart] = useState("");
-  const paused = run.outcome === "paused-budget";
+  // At a ceiling, or at the account's session limit: a wait, not a failure.
+  const paused = run.outcome === "paused-budget" || run.outcome === "session-limit";
   const stopped = run.ended && run.outcome !== "done";
   const verb = live ? "is working on" : paused ? "paused" : stopped ? run.outcome : "finished";
   // A row no state names (a grader, a scan) has no stage word: its run is "a run".
@@ -739,11 +740,36 @@ function AnswerItem({ group }: { group: AnswerGroup }) {
   );
 }
 
+/** Whether the app runs this state itself: the unit's process gives it an `action`, not an agent. */
+export function isEngineStage(packs: PackShown[], process: string, stage: string): boolean {
+  const own = packs.flatMap((p) => p.processes).find((p) => p.ref === process);
+  const states = own ? [own.states[stage]] : packs.flatMap((p) => p.processes.map((pr) => pr.states[stage]));
+  return states.some((st) => Boolean(st?.action));
+}
+
+/** The words of the run button: a session stage spends quota; a stage the app runs itself does not. */
+export function runWords(label: string, engine: boolean): { button: string; confirm: string; note: string } {
+  if (engine) {
+    const note = `Runs ${label} without an agent: the app does it itself.`;
+    return { button: `Run ${label}`, confirm: `Run ${label} now?`, note };
+  }
+  const note = "Runs a real Claude session and spends account quota.";
+  return { button: `Run ${label}`, confirm: `Spend quota on ${label}?`, note };
+}
+
+/** Why a unit waits, with the account's reset read relative when it has one. */
+export function waitingWhy(w: Waiting, now = Date.now()): string {
+  if (!w.until || Number.isNaN(Date.parse(w.until))) return w.why;
+  const when = until(w.until, now);
+  return `${w.why.replace(/\.$/, "")}; it resets ${when === "due" ? "now" : when}.`;
+}
+
 /**
  * What a person may do to the unit now. A paid or lasting action asks once more before it acts:
  * a step spends quota, a drop closes the pull request.
  */
 function Actions({ unit, running, stage, upNext, lines, moves, onDone }: { unit: PlacedUnit; running: boolean; stage: string; upNext: string; lines: Record<string, string>; moves: string[]; onDone: () => void }) {
+  const { packs } = useIndex();
   const [asking, setAsking] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -767,20 +793,28 @@ function Actions({ unit, running, stage, upNext, lines, moves, onDone }: { unit:
   };
   const dropped = unitState(unit).group === "Dropped";
   const line = (key: string) => lines[key] ?? consequence(undefined);
+  const engine = Boolean(stage) && isEngineStage(packs, unit.process, stage);
+  const words = runWords(stageLabel(stage), engine);
   const hold = (to: string) => api.post("/api/units/hold", { ...at, to, reason: reason.trim() });
 
   return (
     <div className="col gap6">
+      {unit.waiting && (
+        <div id="unit-waiting" style={{ fontSize: 12.5 }}>
+          <div>{waitingWhy(unit.waiting)}</div>
+          <div className="faint">{unit.waiting.moves_it}</div>
+        </div>
+      )}
       {running ? (
         <Button icon="x" disabled={busy} onClick={() => act("stop", () => api.post("/api/board/stop", { ...at, by: "owner" }))}>
           {asking === "stop" ? "Stop it? Nothing is pushed" : "Stop the run"}
         </Button>
       ) : stage ? (
-        <Button kind="primary" icon="arrow" disabled={busy} title="Runs a real Claude session and spends account quota." onClick={() => act("run", () => api.start("/api/board/run", { ...at, stage }))}>
-          {asking === "run" ? `Spend quota on ${stageLabel(stage)}?` : `Run ${stageLabel(stage)}`}
+        <Button kind="primary" icon="arrow" disabled={busy} title={words.note} onClick={() => act("run", () => api.start("/api/board/run", { ...at, stage }))}>
+          {asking === "run" ? words.confirm : words.button}
         </Button>
       ) : null}
-      {!running && stage && <div className="faint" style={{ fontSize: 12 }}>{line(stage)}</div>}
+      {!running && stage && <div className="faint" style={{ fontSize: 12 }}>{engine ? words.note : line(stage)}</div>}
       {moves.includes("active") && (
         <Button icon="refresh" disabled={busy} onClick={() => act("active", () => hold("active"))}>
           {asking === "active" ? "Resume it? Nothing starts by itself" : "Resume"}

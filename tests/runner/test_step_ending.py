@@ -191,6 +191,62 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
                 asyncio.run(go())
 
 
+class AStepAtTheSessionLimitWaits(unittest.TestCase):
+    """The account's session limit is a wait: `session-limit` with its reset, never `failed` and
+    never "the step did not write impl.md", and nothing of the reply is written."""
+
+    class Limited:
+        resets_at = "2026-10-07T18:50:00+00:00"
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+            await _submits(kw)
+            done = {"session_id": "s-l", "cost": {}, "terminal_reason": "session-limit"}
+            yield ("done", {**done, **({"resets_at": self.resets_at} if self.resets_at else {})})
+
+    def _run(self, stage, artifact, resets_at="2026-10-07T18:50:00+00:00"):
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            sessions = self.Limited()
+            sessions.resets_at = resets_at
+            r = Runner(sessions=sessions, journal=journal)
+
+            async def go():
+                return [
+                    item
+                    async for item in r.run(
+                        workspace=d,
+                        directory=Path(d) / ".cos" / UNIT,
+                        journal_key=d,
+                        unit=UNIT,
+                        stage=stage,
+                        artifact=artifact,
+                        mode="manual",
+                    )
+                ]
+
+            _, payload = asyncio.run(go())[-1]
+            [end] = [x for x in journal.records(d, UNIT) if x.get("kind") == "end"]
+            return payload, end, (directory / artifact).exists()
+
+    def test_a_reply_the_app_writes_is_not_written(self):
+        payload, end, written = self._run("spec", "spec.md")
+        self.assertEqual((payload["outcome"], end["outcome"]), ("session-limit", "session-limit"))
+        self.assertEqual(end["status"], "session-limit")
+        self.assertEqual(end["resets_at"], "2026-10-07T18:50:00+00:00")
+        self.assertIn("session limit", payload["error"])
+        self.assertFalse(written)
+
+    def test_a_step_that_writes_its_own_file_does_not_say_it_did_not(self):
+        payload, end, _ = self._run("impl", "impl.md", resets_at="")
+        self.assertEqual(end["outcome"], "session-limit")
+        self.assertNotIn("did not write", payload["error"])
+        self.assertNotIn("did not write", end.get("detail") or "")
+        self.assertIsNone(end["resets_at"])
+        self.assertNotIn("error", end)
+
+
 class AStepWithNoRulesDoesNotRun(unittest.TestCase):
     """Until 0012 every assertion in this class was false by design.
 

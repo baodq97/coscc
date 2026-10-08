@@ -58,7 +58,7 @@ export function runFacts(events: StepEvent[], page: Pick<EventsPage, "status" | 
   const config = events.find((e) => e.kind === "config");
   const result = [...events].reverse().find((e) => e.kind === "result");
   const end = [...events].reverse().find((e) => e.kind === "end");
-  const outcome = page.status === "running" && !end ? "running" : (page.outcome || end?.outcome || "").replace("paused-budget", "paused at its ceiling");
+  const outcome = page.status === "running" && !end ? "running" : (page.outcome || end?.outcome || "").replace("paused-budget", "paused at its ceiling").replace("session-limit", "paused at the session limit");
   const secs = result?.duration_ms != null ? Math.round(result.duration_ms / 1000) : null;
   const took = secs == null ? "" : secs >= 60 ? `${Math.floor(secs / 60)} min ${secs % 60} s` : `${secs} s`;
   const facts = [
@@ -453,8 +453,8 @@ function Line({ event: e, unit, whole }: { event: StepEvent; unit: string; whole
       );
     case "end":
       return (
-        <div className={`rl-l ${e.outcome === "done" ? "faint" : e.outcome === "paused-budget" ? "rl-warn" : "rl-bad"}`}>
-          ended: {e.outcome === "paused-budget" ? "paused at its ceiling" : e.outcome}
+        <div className={`rl-l ${e.outcome === "done" ? "faint" : e.outcome === "paused-budget" || e.outcome === "session-limit" ? "rl-warn" : "rl-bad"}`}>
+          ended: {e.outcome === "paused-budget" ? "paused at its ceiling" : e.outcome === "session-limit" ? "paused at the session limit" : e.outcome}
           {e.detail && !whole ? ` · ${failureWords(e.detail).plain}` : ""}
         </div>
       );

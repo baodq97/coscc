@@ -647,15 +647,25 @@ def _after_call(pieces: list[str], tool: str, after_submit: int | None) -> int |
 
 def _reply_done(
     payload: dict[str, Any], segment_done: dict[str, Any] | None, resume: dict[str, Any] | None
-) -> tuple[str, dict[str, Any], str, list[str], dict[str, Any] | None]:
-    """`(session_id, cost, terminal, models_used, segment_done)` once the main reply's `done` came."""
+) -> tuple[str, dict[str, Any], str, list[str], dict[str, Any] | None, str]:
+    """`(session_id, cost, terminal, models_used, segment_done, resets_at)` once the main reply's
+    `done` came."""
     return (
         payload.get("session_id", ""),
         payload.get("cost", {}) or {},
         str(payload.get("terminal_reason") or ""),
         list(payload.get("models_used") or []),
         payload if resume is not None and segment_done is None else segment_done,
+        str(payload.get("resets_at") or ""),
     )
+
+
+def _cut_short(terminal: str, resets_at: str) -> str:
+    """Why a reply that came back is not written: it stopped at a ceiling (the session is kept), or
+    at the account's session limit; `""` when it ended by itself."""
+    if run_mod.ceiling_of(terminal):
+        return f"stopped at the ceiling: {terminal}"
+    return run_mod.limit_detail(resets_at) if run_mod.session_limit_of(terminal) else ""
 
 
 def _rounds_before(
@@ -745,6 +755,10 @@ def _judged(
     if run_mod.ceiling_of(terminal):
         # Bounded, not failed: the session is kept and a raise goes on from it.
         return "paused-budget", f"stopped at the ceiling: {terminal}", None, None
+    if run_mod.session_limit_of(terminal) and isinstance(e, RunError):
+        # A wait, not a failure: never "the step did not write impl.md". The autopilot starts the
+        # stage again once the limit resets (`decide.after_session_limit`).
+        return "session-limit", str(e), None, None
     error = {"type": type(e).__name__, "message": str(e)}
     if isinstance(e, (RunError, Refused)):
         # "The step did not write impl.md" is a real reason to stop, so it goes into the attempt
@@ -1530,8 +1544,9 @@ class Runner:
         pieces, blocks, terminal, session_id, cost = _carried(resume, was, turn_kind)
         # `models_used` is what the session says it was billed to; the `start` record says what was
         # asked for. `shutting_down` is set when the task is cancelled with no Stop behind it.
-        outcome, detail, error, shutting_down, tree_changed, models_used = (
-            "failed", "", None, False, False, []
+        # `resets_at` is when the account's session limit resets, when the session stopped at it.
+        outcome, detail, error, shutting_down, tree_changed, models_used, resets_at = (
+            "failed", "", None, False, False, [], ""
         )  # fmt: skip
         # The index of the piece that began after the last `submit` call, `None` before one; the
         # rounds `review.md` held before this step's reply was written; the `done` of the first call on
@@ -1586,15 +1601,15 @@ class Runner:
                     # `done` row, so a third kind would arrive at the client as a malformed `done`.
                     after_submit = _after_call(pieces, payload, after_submit)
                 else:
-                    session_id, cost, terminal, models_used, segment_done = _reply_done(
+                    session_id, cost, terminal, models_used, segment_done, resets_at = _reply_done(
                         payload, segment_done, resume
                     )
             # What the main reply ended with, for an `opening` turn an update pauses: its
             # next start goes through this reply again without a session.
             owner.update(main_terminal=terminal, main_cost=dict(cost))
-            if run_mod.ceiling_of(terminal):
-                # Nothing is written of what it had not finished: the session is kept.
-                raise RunError(f"stopped at the ceiling: {terminal}")
+            if cut := _cut_short(terminal, resets_at):
+                # Nothing is written of what it had not finished.
+                raise RunError(cut)
 
             # Before anything is written: a spike that touched the branch it was meant only to read must
             # leave no `spike.md` saying it measured.
@@ -1666,6 +1681,7 @@ class Runner:
                 rounds_before=rounds_before,
                 trial_at=trial_at,
                 terminal=terminal,
+                resets_at=resets_at,
                 session_id=session_id,
                 models_used=models_used,
                 shutting_down=shutting_down,
@@ -1922,6 +1938,7 @@ class Runner:
         rounds_before: set[int] | None,
         trial_at: Any,
         terminal: str,
+        resets_at: str,
         session_id: str,
         models_used: list[str],
         shutting_down: bool,
@@ -2144,6 +2161,8 @@ class Runner:
                     if outcome == "paused-budget"
                     else {}
                 ),
+                # When the session limit resets (`journal.Outcome`); `None` when the CLI did not say.
+                **({"resets_at": resets_at or None} if outcome == "session-limit" else {}),
                 # Only a spike's `end` carries it.
                 **({"spike_md": spike_md} if watch else {}),
                 # Only a review's; `closing` only when that turn ran.

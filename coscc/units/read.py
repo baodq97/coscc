@@ -151,6 +151,17 @@ class Paused(TypedDict):
     max_turns: int | None
 
 
+class Waiting(TypedDict):
+    """Why the autopilot did not start a unit of its shortlist and what moves it on
+    (`guide.waiting_line`): `code` is a stop kind or a `decide.REASONS` code, `until` the moment
+    the account's session limit resets, else empty."""
+
+    code: str
+    why: str
+    moves_it: str
+    until: str
+
+
 class Card(TypedDict):
     """A unit as a list shows it: what it is, where it stands and what it cost. The whole unit
     is the board's (`Board.read`)."""
@@ -181,6 +192,8 @@ class Card(TypedDict):
     effort: str | None
     # Set while the stage the unit is at waits on a raised ceiling.
     paused: Paused | None
+    # Set while the autopilot is on and did not start the unit on its last pass.
+    waiting: Waiting | None
 
 
 class Cap(TypedDict):
@@ -303,6 +316,19 @@ def card(u: Mapping[str, Any]) -> Card:
         "rank": backlog_.get("rank"),
         "effort": backlog_.get("effort"),
         "paused": paused(u.get("paused")),
+        "waiting": waiting(u.get("waiting_line")),
+    }
+
+
+def waiting(w: Mapping[str, Any] | None) -> Waiting | None:
+    """`Autopilot.show`'s `waiting_line` as a card carries it."""
+    if not w:
+        return None
+    return {
+        "code": _text(w.get("code")),
+        "why": _text(w.get("why")),
+        "moves_it": _text(w.get("moves_it")),
+        "until": _text(w.get("until")),
     }
 
 

@@ -91,7 +91,7 @@ export function onHere(a: AgentRow, here: string): string {
   return a.on ? `On here${also}${held}` : `Off here${a.off_reason ? `: ${a.off_reason}` : ""}${also}`;
 }
 
-const RAN: Record<string, string> = { failed: "failed", cancelled: "stopped", stopped: "stopped", "paused-budget": "paused" };
+const RAN: Record<string, string> = { failed: "failed", cancelled: "stopped", stopped: "stopped", "paused-budget": "paused", "session-limit": "paused" };
 
 /** Where an agent stands, in a line: on or off here, its last run and what it made, its next run. */
 export function statusWords(a: AgentRow, here: string): string {

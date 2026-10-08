@@ -611,7 +611,7 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_round_the_app_keeps_without_its_commit#3": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"review round 1 names no reviewed commit — Reviewed: <sha>\",\"blocked\":true,\"reasons\":[\"missing\"],\"process\":\"coscc-sdlc/full\"}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"review round 1 names no reviewed commit — write-review again (0 of 3 rounds used); CI is green: write-review\",\"blocked\":true,\"reasons\":[\"review-incomplete\"],\"process\":\"coscc-sdlc/full\"}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_a_round_the_app_keeps_without_its_commit#4": [
@@ -1301,7 +1301,7 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[dropped]#3": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"review round 2 drops findings an earlier round raised: F1 — carry each one forward, fixed or open\",\"blocked\":true,\"reasons\":[\"missing\"],\"process\":\"coscc-sdlc/full\"}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"review round 2 left out findings an earlier round raised — write-review again (1 of 3 rounds used); CI is green: write-review\",\"blocked\":true,\"dropped\":[\"F1\"],\"reasons\":[\"review-incomplete\"],\"process\":\"coscc-sdlc/full\"}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[dropped]#4": [
@@ -1451,7 +1451,7 @@
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[renumbered]#3": [
   0,
-  "{\"unit\":\"0040_widget\",\"stage\":\"\",\"action\":\"review rounds are numbered 1, 3, not 1 to 2 — a round was removed or renumbered\",\"blocked\":true,\"reasons\":[\"missing\"],\"process\":\"coscc-sdlc/full\"}\n",
+  "{\"unit\":\"0040_widget\",\"stage\":\"review\",\"action\":\"review round 3 is not numbered after the rounds before it — write-review again (1 of 3 rounds used); CI is green: write-review\",\"blocked\":true,\"reasons\":[\"review-incomplete\"],\"process\":\"coscc-sdlc/full\"}\n",
   ""
  ],
  "tests/loop/test_repo_rules.py::test_ship_gate_reads_the_last_round[renumbered]#4": [

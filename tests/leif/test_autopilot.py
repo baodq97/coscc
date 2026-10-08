@@ -9,6 +9,7 @@ import asyncio
 import dataclasses
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -675,6 +676,96 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [])
         self.assertEqual(self.stops(), {"0001_a": "b", "0002_b": "d"})
+
+    def lines(self) -> dict[str, dict | None]:
+        """What each unit's card says it waits on, as `show` lays it on a board read."""
+        data = {"units": [dict(u) for u in self.units.values()]}
+        self.core.autopilot.show(self.key, data)
+        return {u["name"]: u["waiting_line"] for u in data["units"]}
+
+    async def test_every_unit_of_the_shortlist_not_started_says_why(self):
+        """One held back by `max_parallel` waits with `full`, a line on its card."""
+        self.core.autopilot.set_setting(self.ws, "max_parallel", 1)
+        self.core.autopilot.stop(self.key)
+        self.core.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
+        self.add("0001_a", "spec")
+        self.add("0002_b", "spec")
+        self.add("0003_c", "", action="answer F1")
+        self.nexts["0003_c"]["waiting"] = ["F1"]
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "spec", "autopilot")])
+        held = self.core.autopilot.held[self.key]
+        self.assertEqual((held["0002_b"], held["0003_c"][0]), (("full", ""), "stop"))
+        self.assertNotIn("0001_a", held)
+        waiting = self.lines()
+        self.assertIsNone(waiting["0001_a"])
+        for unit in ("0002_b", "0003_c"):
+            self.assertTrue(waiting[unit]["why"] and waiting[unit]["moves_it"], unit)
+        self.assertEqual(waiting["0003_c"]["code"], "b")
+
+    async def test_a_session_limit_waits_for_its_reset_then_runs_again(self):
+        """No stop `e`; the card says until when; the first pass after it queues again."""
+        journal = Journal(self.config.working_dir, self.config.data_dir)
+        self.add("0001_a", "impl")
+        later = (datetime.now().astimezone() + timedelta(hours=1)).isoformat()
+        journal.finished(self.key, "0001_a", "impl", "session-limit", resets_at=later)
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {}))
+        self.assertEqual(
+            self.lines()["0001_a"],
+            {
+                "code": "session-limit",
+                "why": "The account reached its session limit.",
+                "moves_it": "The autopilot runs it again once the limit resets.",
+                "until": later,
+            },
+        )
+        before = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat()
+        journal.finished(self.key, "0001_a", "impl", "session-limit", resets_at=before)
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([("0001_a", "impl", "autopilot")], {}))
+
+    async def test_the_third_session_limit_of_a_day_stops_e(self):
+        journal = Journal(self.config.working_dir, self.config.data_dir)
+        self.add("0001_a", "impl")
+        for _ in range(3):
+            journal.finished(self.key, "0001_a", "impl", "session-limit", resets_at="")
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
+
+    async def test_a_session_limit_queues_nothing_once_the_cap_is_spent(self):
+        """The reset is no way past the day's cap."""
+        journal = Journal(self.config.working_dir, self.config.data_dir)
+        self.add("0001_a", "impl")
+        journal.finished(self.key, "0001_a", "impl", "session-limit", resets_at="", cost_usd=999.0)
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "cap"}))
+
+    async def test_a_conflict_while_its_impl_runs_is_said_then_integrated_first(self):
+        self.add("0001_a", "impl", integration={"state": "conflicting"})
+        row = self.core.attempts.open("step", self.key, "0001_a", "impl", state="running")
+        await self.pass_()
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self.core.autopilot.held[self.key]["0001_a"], ("conflict-running", "impl"))
+        self.assertEqual(
+            self.lines()["0001_a"]["why"],
+            "PR conflicts with main; it is integrated once impl ends.",
+        )
+        self.core.attempts.move(row["id"], "ended", "done")
+        Journal(self.config.working_dir, self.config.data_dir).finished(
+            self.key, "0001_a", "impl", "done"
+        )
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "integrate", "autopilot")])
+
+    async def test_a_conflict_on_a_passed_round_it_may_not_ship_waits_for_a_person(self):
+        self.add(
+            "0001_a", "impl", integration={"state": "conflicting"}, rounds=[{"verdict": "pass"}]
+        )
+        self.core.attempts.open("step", self.key, "0001_a", "impl", state="running")
+        await self.pass_()
+        self.assertEqual(self.core.autopilot.held[self.key]["0001_a"], ("conflict-person", "impl"))
+        self.assertIn("a person", self.lines()["0001_a"]["moves_it"])
 
     async def _integrated_with_nothing_to_do(self, unit: str) -> None:
         """One pass that integrates `unit`, read `behind`, and the integration refused because the
@@ -2357,7 +2448,8 @@ class TheGuideBlock(_Base):
             (len(data["guide"]["needs_you"]), data["guide"]["shortlist_empty"]), (1, False)
         )
         self.assertEqual(
-            set(data["guide"]), {"on", "running", "needs_you", "held", "notes", "shortlist_empty"}
+            set(data["guide"]),
+            {"on", "running", "needs_you", "held", "notes", "waiting", "shortlist_empty"},
         )
 
 

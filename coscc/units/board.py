@@ -658,11 +658,9 @@ def unit_state(
         for c in (ci or {}).get("checks") or []
         if c.get("bucket") in ("fail", "cancel")
     ]
-    failed = (
-        last_end is not None
-        and last_end.get("outcome") == "failed"
-        and last_end.get("stage") == unit.get("at")
-    )
+    ended = last_end.get("outcome") if last_end and last_end.get("stage") == unit.get("at") else ""
+    # A `session-limit` end is a wait for the account's reset, never an error.
+    failed = ended == "failed"
     # `ship-merging` with no `ship` running is a merge nothing will record; `shown_state` lays
     # `Running` over it while one runs.
     if (
@@ -683,8 +681,12 @@ def unit_state(
         and unit.get("at")
         in states.states_where(kind="review") + states.states_where(action="merge")
     )
+    # Only a wait on CI, a merge or a dependency is `awaiting`: a ship gate shut for another reason
+    # (`review-incomplete`) has a stage to run.
     if unit.get("between_pr_and_ship") and due:
         return _state("awaiting")
+    if ended == "session-limit":
+        return _state("ready", "Paused at the session limit")
     return _state("ready")
 
 

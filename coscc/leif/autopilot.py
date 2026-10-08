@@ -497,8 +497,10 @@ class Autopilot:
             board = {u["name"]: u for u in data["units"]}
             found: dict[str, dict[str, str]] = {}
             candidates: list[dict[str, Any]] = []
-            # Why each unit that is no candidate waits, for the units ranked below it.
+            # Why each unit that is no candidate waits, for the units ranked below it; and those
+            # whose pull request conflicts while a step of theirs runs, said over `running`.
             reasons: dict[str, tuple[str, str]] = {}
+            conflicts: dict[str, tuple[str, str]] = {}
             # Every unit on the shortlist is asked, and no other.
             for rank, name in enumerate(names, 1):
                 u = board.get(name)
@@ -641,12 +643,29 @@ class Autopilot:
                     if why_not is not None:
                         reasons[name] = why_not
                         continue
+                # A step that stopped at the account's session limit runs again once it resets. An
+                # integration still goes first: it is not the stage that stopped.
+                if stop is None and stage and stage != "integrate" and name not in here:
+                    stop, why_not = decide.after_session_limit(last.get(name), records, at_pass)
+                    if why_not is not None:
+                        reasons[name] = why_not
+                        continue
                 if stop is not None and unfetched is not None and name in at_ship:
                     note = integrate.origin_note(str(info.get("origin_sha") or ""), unfetched)
                     stop = {**stop, "reason": f"{stop['reason']}; {note}"}
                 reason = (
                     ("running", here[name]) if name in here else decide.reason_for(nxt, stage, stop)
                 )
+                # Its pull request conflicts with `main` while a step of its code runs: integrated as
+                # above once that step ends, where it may be.
+                if (
+                    name in here
+                    and decide.is_coder(here[name])
+                    and info.get("state") in integrate.BUTTON_STATES
+                ):
+                    reason = conflicts[name] = decide.conflict_running(
+                        here[name], not passed or settings["autopilot_may_ship"]
+                    )
                 if reason is not None:
                     reasons[name] = reason
                 if stop is not None:
@@ -687,6 +706,7 @@ class Autopilot:
                 candidates, running, settings["max_parallel"] - elsewhere, room, prs
             )
             reasons.update(picked["held"])
+            reasons.update(conflicts)
             est = f" ({cap['estimated']:.2f} estimated)" if cap["estimated_count"] else ""
             for c in picked["capped"]:
                 found[c["unit"]] = {
@@ -698,11 +718,10 @@ class Autopilot:
                     ),
                 }
                 reasons[c["unit"]] = decide.stop_reason(found[c["unit"]])
-            # A run again that `max_parallel` alone held back says so. Any other candidate held back that
-            # way still says nothing.
-            left = {c["unit"] for c in picked["chosen"] + picked["capped"]} | set(picked["held"])
+            # A run again that `max_parallel` alone held back is a stop that says so; any other
+            # candidate held back that way waits with `full`.
             for c in candidates:
-                if c["rerun"] and c["unit"] not in left:
+                if c["rerun"] and picked["held"].get(c["unit"], ("",))[0] == "full":
                     found[c["unit"]] = {
                         "unit": c["unit"],
                         **decide.full_stop(c["stage"], settings["max_parallel"]),
@@ -716,7 +735,9 @@ class Autopilot:
             if not self._on(key) or not autopilot_values(self.config, key)["autopilot"]:
                 return
             self.set_stops(key, found)
-            self.held[key] = dict(picked["held"])
+            # Why each unit of the shortlist not started this pass waits, for its card.
+            chosen = {c["unit"] for c in picked["chosen"]}
+            self.held[key] = {u: r for u, r in reasons.items() if u not in chosen}
             run_id = uuid.uuid4().hex
             shortlist = {"n": n, "at": listed.get("at"), "units": names}
             for c, over in zip(picked["chosen"], passed):
@@ -808,11 +829,14 @@ class Autopilot:
             # detail (`overlap-pr #7`); display only, and nothing while the autopilot is off.
             held = (self.held.get(key) or {}).get(unit["name"])
             unit["held"] = " ".join(p for p in held if p) if held else ""
+            stop = (self.stops.get(key) or {}).get(unit["name"])
+            # Not `waiting`, which names the findings a person is awaited on.
+            unit["waiting_line"] = guide.waiting_line(held, stop) if self._on(key) else None
         data["autopilot"] = self._block(key)
         data["guide"] = self.guide_block(key, data["units"])
 
     def guide_block(self, key: str, units: Iterable[dict[str, Any]] = ()) -> dict[str, Any]:
-        """The board's guide: `{on, running, needs_you, held, notes, shortlist_empty}`, or
+        """The board's guide: `{on, running, needs_you, held, notes, waiting, shortlist_empty}`, or
         `{on: False}` alone while the autopilot is off. `units` are those of the board read:
         `needs_you` has one item per unit its card labels `Needs you`: its `state` with what
         runs laid over, as the card has it (`shown_state`). What runs is read from memory, and
@@ -836,6 +860,7 @@ class Autopilot:
             "needs_you": guide.needs_you(units, stops),
             "held": guide.held(units, stops),
             "notes": guide.notes(stops),
+            "waiting": guide.waiting(units),
             "shortlist_empty": self._shortlist_empty(key),
         }
 

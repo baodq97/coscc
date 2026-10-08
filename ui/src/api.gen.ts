@@ -162,6 +162,7 @@ export type Card = {
   "rank": number | null;
   "effort": string | null;
   "paused": Paused | null;
+  "waiting": Waiting | null;
 };
 
 export type CardState = {
@@ -987,6 +988,13 @@ export type Verdict = {
   "at": string;
   "judgement": string;
   "criteria": RoundCriterion[];
+};
+
+export type Waiting = {
+  "code": string;
+  "why": string;
+  "moves_it": string;
+  "until": string;
 };
 
 export type Waste = {

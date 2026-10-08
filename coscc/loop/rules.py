@@ -45,6 +45,7 @@ from coscc.loop.model import (
     read_all,
     read_unit,
     review_limit,
+    review_fault,
     rounds_used,
     route,
     settled,
@@ -71,6 +72,14 @@ from coscc.loop.repo_rules import (
 A = re.ASCII
 
 # --- one action per unit -----------------------------------------------------------------
+
+
+# What `review_fault` found, said of the round.
+FAULTS = {
+    "dropped": "left out findings an earlier round raised",
+    "numbering": "is not numbered after the rounds before it",
+    "reviewed": "names no reviewed commit",
+}
 
 
 def decide(unit, limit=REVIEW_ROUNDS):
@@ -177,7 +186,10 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                 "stage": s["name"],
                 "why": code("stale"),
             }
-        if name == p.review and incomplete_draft(unit):
+        # A round a new round mends, whatever review.md's status: the ship gate refuses it, so
+        # only another round moves the unit on.
+        fault = review_fault(unit) if name == p.review else ""
+        if name == p.review and (incomplete_draft(unit) or fault):
             used = rounds_used(unit)
             if used >= limit:
                 return {
@@ -186,13 +198,17 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                     "stage": "",
                     "why": code("needs-person"),
                 }
+            last = last_round(unit)
             return {
                 "blocked": True,
                 "action": (
-                    f"review round {js(last_round(unit)['n'])} is incomplete — "
-                    f"{_hint_word(s)} again"
+                    f"review round {js(last['n'])} {FAULTS[fault]} — {_hint_word(s)} again "
+                    f"({used} of {limit} rounds used)"
+                    if fault
+                    else f"review round {js(last['n'])} is incomplete — {_hint_word(s)} again"
                 ),
                 "stage": name,
+                **({"dropped": last["dropped"]} if fault == "dropped" else {}),
                 "why": code("review-incomplete"),
             }
         if status == "draft" and unit["artifacts"][s["file"]].get("leftLane"):
@@ -268,17 +284,6 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
                     "why": code("needs-person"),
                 }
             last = last_round(unit)
-            if last and last.get("unfinished"):
-                return {
-                    "blocked": True,
-                    "action": (
-                        f"review round {js(last['n'])} left out findings an earlier round raised"
-                        f" — write-review again ({used} of {limit} rounds used)"
-                    ),
-                    "stage": p.review,
-                    "dropped": last["dropped"],
-                    "why": code("review-incomplete"),
-                }
             person = person_findings(unit)
             if person is not None:
                 waiting = [p for p in person if not p["answered"]]
