@@ -23,6 +23,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from coscc import features
 from coscc.config import PROTECTED_DB_VAR
 from coscc.http import plugin
@@ -30,6 +32,8 @@ from coscc.store import db
 from coscc.store.db import SCHEMA_VERSION, Busy, Data, Incompatible, Protected
 
 REPO = Path(__file__).resolve().parent.parent
+# The schema and its creation are what this file tests: every database is made for real.
+pytestmark = pytest.mark.real_schema
 
 
 class TheDirectoryIsMadeForYou(unittest.TestCase):
@@ -574,26 +578,37 @@ class AV12DatabaseTakesOneStep(unittest.TestCase):
         "density": "compact",
     }
 
+    # The v12 file `_v12` builds, made once: every test migrates its own copy.
+    v12: bytes = b""
+
+    @classmethod
+    def _v12(cls, path: Path) -> bytes:
+        if not cls.v12:
+            with sqlite3.connect(path) as conn:
+                conn.executescript(V12.read_text(encoding="utf-8"))
+                cls._rows(conn)
+                conn.execute("PRAGMA user_version=12")
+            conn.close()
+            cls.v12 = path.read_bytes()
+        return cls.v12
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.data = Data(Path(tmp.name) / "data")
         self.data.ensure_dir()
-        with sqlite3.connect(self.data.db_path) as conn:
-            conn.executescript(V12.read_text(encoding="utf-8"))
-            self._rows(conn)
-            conn.execute("PRAGMA user_version=12")
-        conn.close()
+        self.data.db_path.write_bytes(self._v12(Path(tmp.name) / "v12.db"))
         self.assertEqual(self.data.version(), SCHEMA_VERSION)
 
-    def _rows(self, conn):
+    @classmethod
+    def _rows(cls, conn):
         for unit, kind in (("0001_a", "fix"), ("0002_b", "feat")):
             conn.execute(
                 "INSERT INTO unit_meta (root, workspace, unit, type, imported_at) "
                 "VALUES ('/w', 'p', ?, ?, 't')",
                 (unit, kind),
             )
-        for unit, agent, obj in self.OUTPUTS:
+        for unit, agent, obj in cls.OUTPUTS:
             conn.execute(
                 "INSERT INTO stage_results (at, root, workspace, unit, stage, run, revision, "
                 "judgement, object) VALUES ('t', '/w', 'p', ?, ?, 'r', 'h', 'ready', ?)",
@@ -622,7 +637,7 @@ class AV12DatabaseTakesOneStep(unittest.TestCase):
                 (frm, to),
             )
         conn.execute("INSERT INTO unit_questions VALUES ('/w', 'p', '0001_a', 'spec.md', 1, 'q')")
-        for n, (authority, name) in enumerate(self.ANSWERS, 1):
+        for n, (authority, name) in enumerate(cls.ANSWERS, 1):
             conn.execute(
                 "INSERT INTO unit_answers (root, workspace, unit, artifact, ref, text, "
                 "answered_by, authority, date, via) VALUES ('/w', 'p', '0001_a', 'spec.md', "
@@ -633,7 +648,7 @@ class AV12DatabaseTakesOneStep(unittest.TestCase):
             "INSERT INTO unit_decisions (workspace, unit, text, authority, recorded_by, date) "
             "VALUES ('p', '0001_a', 't', 'person', 'x', 'd')"
         )
-        for kind, stage, record in self.RUNS:
+        for kind, stage, record in cls.RUNS:
             conn.execute(
                 "INSERT INTO runs (at, root, workspace, stage, kind, record) "
                 "VALUES ('t', '/w', '/w', ?, ?, ?)",
@@ -658,7 +673,7 @@ class AV12DatabaseTakesOneStep(unittest.TestCase):
                 (state, unit, reason),
             )
         conn.execute("INSERT INTO scan_cursor VALUES ('/w', '2026-10-05T17:14:13+00:00', '[]')")
-        for key, value in self.PREFS.items():
+        for key, value in cls.PREFS.items():
             conn.execute("INSERT INTO prefs (key, value) VALUES (?, ?)", (key, json.dumps(value)))
         conn.execute(
             "INSERT INTO review_findings (round, finding, open, label, severity, rule, text) "

@@ -146,6 +146,8 @@ class Indexes:
         self._install_done = threading.Event()
         self._install_done.set()
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        # The `ensure`s a person's pick started (`on_set`), held so they are not collected mid-way.
+        self.picks: set[asyncio.Task[Any]] = set()
 
     async def _engine(self) -> Path | str:
         """The checked binary, asked once and then remembered. A failure is remembered only for
@@ -156,7 +158,7 @@ class Indexes:
             return "The code index engine is being installed."
         if self._broken:
             return self._broken
-        found = await asyncio.to_thread(self._installed, self.home)
+        found = await in_thread(self._installed, self.home)
         if isinstance(found, Path):
             self._binary = found
         elif self._present():
@@ -265,7 +267,7 @@ class Indexes:
                     self._put(key, path, "ready", root=root)
                 return
             self._put(key, path, "building", root=root)
-            await asyncio.to_thread(self._bridge, binary, "sync" if exists else "index", root)
+            await in_thread(self._bridge, binary, "sync" if exists else "index", root)
             self._put(key, path, "ready", root=root, sha=sha)
         except Exception as error:
             log.exception("codegraph index of %s failed", key)
@@ -322,11 +324,15 @@ class Indexes:
             return row.reason
         return "The code index is still being built." if row else "There is no code index yet."
 
-    async def settle(self) -> None:
-        """Wait for every install and refresh now running: for a test and for a clean stop."""
-        await asyncio.to_thread(self._install_done.wait)
-        if self._tasks:
-            await asyncio.gather(*self._tasks.values())
+    async def stop(self) -> None:
+        """Cancel every refresh and pick, and return once none still writes, nor an install: a
+        thread, waited for and never stopped, polled so no executor thread holds the exit."""
+        tasks = [*self._tasks.values(), *self.picks]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        while not self._install_done.is_set():
+            await asyncio.sleep(INSTALL_POLL_S)
 
 
 Arm = Literal["on", "off"]
@@ -499,8 +505,8 @@ TOOL_NAMES = ("find", "callers", "impact")
 # Seconds one query may take. State, not measured: the spike's queries took well under one.
 QUERY_S = 60.0
 NO_NPM = "npm is not installed, so codegraph cannot be turned on."
-# Tasks started from a synchronous hook, kept so they are not collected mid-way.
-_running: set[asyncio.Task[Any]] = set()
+# Seconds between two looks at an install a stop waits for.
+INSTALL_POLL_S = 0.1
 
 
 @functools.cache
@@ -730,8 +736,8 @@ def on_set(ctx: Ctx, workspace: str, state: State) -> None:
     except RuntimeError:
         idx.start_install()
         return
-    _running.add(task)
-    task.add_done_callback(_running.discard)
+    idx.picks.add(task)
+    task.add_done_callback(idx.picks.discard)
 
 
 def _rounds(
@@ -787,5 +793,6 @@ FEATURE = Feature(
     pilot=True,
     status=status,
     on_set=on_set,
+    stop=lambda ctx: _indexes(ctx).stop(),
     summary="Indexes the code of main so impl and review find where things are without reading files.",
 )

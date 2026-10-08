@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import sqlite3
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -151,6 +151,8 @@ class Core:
         )
         # Each feature's slow reads (`Ctx.asks`), by its name: `ctx_of` makes them.
         self.asks: dict[str, Asked] = {}
+        # Each feature's `Feature.stop`, bound to its `Ctx`, by its name: `ctx_of` makes them.
+        self.stops: dict[str, Callable[[], Awaitable[None]]] = {}
         self.autopilot = Autopilot(
             self.config,
             self.ws,
@@ -375,8 +377,12 @@ class Core:
         cancelled += steps
         for _label, t in cancelled:
             t.cancel()
+        # Each feature cancels and waits for its own work.
+        stopping = [
+            (f"{name} feature", asyncio.ensure_future(s())) for name, s in self.stops.items()
+        ]
         # Board reads are cancelled there, and tree removals left to end.
-        waited = cancelled + integrations + await self.boards.stop()
+        waited = cancelled + integrations + stopping + await self.boards.stop()
         while True:
             left = {t for _label, t in waited if not t.done()}
             if left:

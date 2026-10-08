@@ -414,6 +414,9 @@ class Feature:
     on_set: Callable[[Ctx, str, State], None] | None = None
     # One fixed sentence, 100 characters at most: what the feature does, shown under its name.
     summary: str = ""
+    # `(ctx)`: at shutdown, cancel what the feature started and return once none of it still
+    # writes; awaited within the app's shutdown deadline.
+    stop: Callable[[Ctx], Awaitable[None]] | None = None
 
 
 async def body(request: Request) -> dict[str, Any]:
