@@ -1544,6 +1544,8 @@ def _agent_refused(grant: Grant, tool_input: dict, agent_id: str | None) -> str:
         return f"{HELPERS}: only these helpers may be started: {', '.join(grant.helpers)}"
     if tool_input.get("run_in_background"):
         return f"{HELPERS}: a helper runs in the foreground: this session ends when its turn ends"
+    if tool_input.get("model") or tool_input.get("effort"):
+        return f"{HELPERS}: a helper runs at the model and effort its row sets; leave both out"
     return ""
 
 
