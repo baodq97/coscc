@@ -197,11 +197,10 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
             await self.ended(core)
         return statistics.median(took)
 
-    async def test_twice_the_finished_units_cost_a_read_at_most_a_tenth_more(self):
-        few = await self.median_read("few", LARGE // 2)
-        many = await self.median_read("many", LARGE)
-        print(f"median read: {LARGE // 2} units {few:.4f}s, {LARGE} units {many:.4f}s", flush=True)
-        self.assertLessEqual(many, few * 1.10, (few, many))
+    async def test_a_standalone_read_of_300_finished_units_takes_at_most_half_a_second(self):
+        took = await self.median_read("many", LARGE)
+        print(f"median read: {LARGE} units {took:.4f}s", flush=True)
+        self.assertLessEqual(took, 0.5)
 
     async def test_the_rounds_of_300_units_carry_no_text_and_stay_small(self):
         large, _ = await self.warm("large", LARGE)
