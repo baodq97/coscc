@@ -18,7 +18,7 @@ from coscc.git import fetches
 from coscc.github import integrate, prmachine
 from coscc.git.gitops import GitError
 from coscc.store.journal import BadRecord, Journal, is_step
-from coscc.store.db import Busy
+from coscc.store.db import Busy, in_thread
 from coscc.config import LOOPBACK, Config
 from coscc.store.db import Data
 from coscc.runner.queue import Refused
@@ -280,7 +280,7 @@ class Autopilot:
         except Exception as e:
             # Shown on the board, never swallowed.
             log.exception("the autopilot pass of %s failed", key)
-            self.set_stops(
+            await self.put_stops(
                 key, {"": {"unit": "", "kind": "f", "reason": f"the autopilot's pass failed: {e}"}}
             )
 
@@ -379,30 +379,50 @@ class Autopilot:
         change, `stop` empty once it cleared, which tells a person's press at a stop from one outside
         them. The workspace's own stop, unit `""`, is logged the same way, so a notice can say it.
         """
+        self._log_stops(self._change_stops(key, found, asked))
+
+    async def put_stops(
+        self,
+        key: str,
+        found: dict[str, dict[str, str]],
+        asked: set[str] | None = None,
+    ) -> None:
+        """`set_stops` for a coroutine: the stops change at once, the log is written off the loop."""
+        await in_thread(self._log_stops, self._change_stops(key, found, asked))
+
+    def _change_stops(
+        self,
+        key: str,
+        found: dict[str, dict[str, str]],
+        asked: set[str] | None,
+    ) -> list[dict[str, Any]]:
+        """Keep the stops, and return the `autopilot-stop` record of each unit's that changed."""
         before = self.stops.get(key, {})
         if asked is None:
             after = dict(found)
         else:
             after = {**{u: s for u, s in before.items() if u not in asked}, **found}
         self.stops[key] = after
+        return [
+            {
+                "kind": "autopilot-stop",
+                "workspace": key,
+                "unit": unit,
+                "stage": "",
+                "stop": (after.get(unit) or {}).get("kind", ""),
+                "reason": (after.get(unit) or {}).get("reason", ""),
+            }
+            for unit in sorted(set(before) | set(after))
+            if (before.get(unit) or {}).get("kind") != (after.get(unit) or {}).get("kind")
+        ]
+
+    def _log_stops(self, records: list[dict[str, Any]]) -> None:
         journal = self.ws.journal()
         if journal is None:
             return
-        for unit in sorted(set(before) | set(after)):
-            old, new = before.get(unit), after.get(unit)
-            if (old or {}).get("kind") == (new or {}).get("kind"):
-                continue
+        for record in records:
             try:
-                journal.append(
-                    {
-                        "kind": "autopilot-stop",
-                        "workspace": key,
-                        "unit": unit,
-                        "stage": "",
-                        "stop": (new or {}).get("kind", ""),
-                        "reason": (new or {}).get("reason", ""),
-                    }
-                )
+                journal.append(record)
             except BadRecord, Busy:
                 pass
 
@@ -416,20 +436,22 @@ class Autopilot:
             return
         lock = self.locks.setdefault(key, asyncio.Lock())
         async with lock:
-            settings = autopilot_values(self.config, key)
+            settings = await in_thread(autopilot_values, self.config, key)
             if not settings["autopilot"]:
                 return
             refused = off_loopback(self.config)
             if refused:
                 # `COS_HOST` can change after the switch was turned on.
-                self.set_stops(key, {"": {"unit": "", "kind": "f", "reason": refused}})
+                await self.put_stops(key, {"": {"unit": "", "kind": "f", "reason": refused}})
                 return
             journal = self.ws.journal()
             if journal is None:
                 return
-            data = await self.boards.read(cwd)
+            # The read running now, or the next one, shared with every other asker.
+            data = await asyncio.shield(self.boards.refresh(cwd, again=True))
             try:
-                records = journal.records(
+                records = await in_thread(
+                    journal.records,
                     kinds=(
                         "start",
                         "end",
@@ -442,15 +464,16 @@ class Autopilot:
                     ),
                 )
             except Busy as e:
-                self.set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
+                await self.put_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
                 return
             # The last well-formed shortlist, read again on every pass.
             listed, n = _shortlist(records, key)
             if listed is None or not listed["units"]:
                 # Nothing is asked and nothing starts.
-                if not self._on(key) or not autopilot_values(self.config, key)["autopilot"]:
+                live = (await in_thread(autopilot_values, self.config, key))["autopilot"]
+                if not self._on(key) or not live:
                     return
-                self.set_stops(
+                await self.put_stops(
                     key, {"": {"unit": "", "kind": "shortlist", "reason": decide.NO_SHORTLIST}}
                 )
                 return
@@ -475,7 +498,7 @@ class Autopilot:
                 except GitError as e:
                     unfetched = {"outcome": "failed", "detail": str(e)}
                 else:
-                    data = await self.boards.read(cwd)
+                    data = await asyncio.shield(self.boards.refresh(cwd, again=True))
             last: dict[str, dict[str, Any]] = {}
             integrations: dict[str, dict[str, Any]] = {}
             for r in records:
@@ -490,9 +513,9 @@ class Autopilot:
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r
 
-            running = self._running(key)
+            running = await in_thread(self._running, key)
             here = {r["unit"]: r["stage"] for r in running}
-            refusals = self._refusals(key)
+            refusals = await in_thread(self._refusals, key)
             at_pass = datetime.now().astimezone()
             board = {u["name"]: u for u in data["units"]}
             found: dict[str, dict[str, str]] = {}
@@ -526,8 +549,11 @@ class Autopilot:
                     continue
                 # `next` reads the checks of `gh` itself: its red waits like `ci-pending` until the
                 # PR machine, having rerun the head once, recorded `red` there.
-                if decide.is_ci_red(nxt) and not self._ci_recorded_red(
-                    key, name, str((u.get("integration") or {}).get("pr_head") or "")
+                if decide.is_ci_red(nxt) and not await in_thread(
+                    self._ci_recorded_red,
+                    key,
+                    name,
+                    str((u.get("integration") or {}).get("pr_head") or ""),
                 ):
                     reasons[name] = ("ci", "")
                     continue
@@ -616,7 +642,7 @@ class Autopilot:
                 app_note = ""
                 extra: dict[str, Any] = {}
                 if stop is None and not stage and decide.continues(nxt):
-                    head, _ = self._ci_read(key, name)
+                    head, _ = await in_thread(self._ci_read, key, name)
                     tries = decide.tries_on_head(records, key, name, head)
                     if tries >= decide.MAX_TRIES:
                         stop = decide.tries_stop(str(nxt["continue"]), tries)
@@ -627,7 +653,7 @@ class Autopilot:
                             {"continued": True},
                         )
                 elif stop is None and decide.is_coder(stage) and decide.is_ci_red(nxt):
-                    head, checks = self._ci_read(key, name)
+                    head, checks = await in_thread(self._ci_read, key, name)
                     tries = decide.tries_on_head(records, key, name, head)
                     if tries >= decide.MAX_TRIES:
                         stop = decide.tries_stop(stage, tries)
@@ -673,7 +699,7 @@ class Autopilot:
                     continue
                 if not stage:
                     continue
-                files = self._files(cwd, name) if decide.is_code(stage) else None
+                files = await in_thread(self._files, cwd, name) if decide.is_code(stage) else None
                 candidates.append(
                     {
                         "unit": name,
@@ -689,17 +715,19 @@ class Autopilot:
 
             for r in running:
                 if decide.is_code(r["stage"]):
-                    r["files"] = self._files(cwd, r["unit"])
+                    r["files"] = await in_thread(self._files, cwd, r["unit"])
             now = datetime.now().astimezone()
             # A `start` with no `end`, from a process before this one, counts against N for 24 hours.
             elsewhere = sum(
                 1 for (k, unit) in decide.open_starts(records, now) if k == key and unit not in here
             )
-            cap = self.cap(records, settings["daily_cap_usd"])
+            cap = await in_thread(self.cap, records, settings["daily_cap_usd"])
             room = cap["limit"] - cap["spent"] - cap["running"]
             # The pull requests the PR machine holds open, with the files it read.
             try:
-                prs = prmachine.open_prs(self.integration.pr_machine().history, key)
+                prs = await in_thread(
+                    lambda: prmachine.open_prs(self.integration.pr_machine().history, key)
+                )
             except sqlite3.Error, OSError, Busy:
                 prs = []
             picked = decide.pick(
@@ -730,21 +758,26 @@ class Autopilot:
             # Raises before anything is recorded or started when a unit above one chosen has no
             # reason; `_guarded` shows it as a stop line.
             passed = decide.passed_for(names, [c["unit"] for c in picked["chosen"]], reasons)
-            # The switch may have been turned off while this pass read the board and `next`. Nothing from
-            # here on awaits, so nothing starts once it is off.
-            if not self._on(key) or not autopilot_values(self.config, key)["autopilot"]:
+            # The switch may have been turned off while this pass read the board and `next`. Turning
+            # it off takes the pass's task off `tasks`, so `_on` says so after each await below, and
+            # nothing starts once it is off.
+            live = (await in_thread(autopilot_values, self.config, key))["autopilot"]
+            if not self._on(key) or not live:
                 return
-            self.set_stops(key, found)
             # Why each unit of the shortlist not started this pass waits, for its card.
             chosen = {c["unit"] for c in picked["chosen"]}
             self.held[key] = {u: r for u, r in reasons.items() if u not in chosen}
+            await self.put_stops(key, found)
+            if not self._on(key):
+                return
             run_id = uuid.uuid4().hex
             shortlist = {"n": n, "at": listed.get("at"), "units": names}
             for c, over in zip(picked["chosen"], passed):
                 # No record, no start, and nothing ranked below it either, since starting one would pass over
                 # a unit chosen with no record of it.
                 try:
-                    journal.append(
+                    await in_thread(
+                        journal.append,
                         {
                             "kind": "autopilot-pick",
                             "workspace": key,
@@ -757,10 +790,10 @@ class Autopilot:
                             **c["extra"],
                             # The transitions whose read scheduled this pass.
                             **({"woken_by": woken_by} if woken_by else {}),
-                        }
+                        },
                     )
                 except (BadRecord, Busy) as e:
-                    self.set_stops(
+                    await self.put_stops(
                         key,
                         {
                             **found,
@@ -771,6 +804,8 @@ class Autopilot:
                             },
                         },
                     )
+                    return
+                if not self._on(key):
                     return
                 self._queue(key, cwd, c)
 
@@ -822,8 +857,9 @@ class Autopilot:
         )
         return block
 
-    def show(self, key: str, data: dict[str, Any]) -> None:
-        """What the board shows of the autopilot, on a board `read` returned. Display only."""
+    async def show(self, key: str, data: dict[str, Any]) -> None:
+        """What the board shows of the autopilot, on a board `read` returned. Display only; what
+        reads the run log and the attempts does so off the loop."""
         for unit in data["units"]:
             # The code the last autopilot pass held the unit back with, and its
             # detail (`overlap-pr #7`); display only, and nothing while the autopilot is off.
@@ -832,8 +868,8 @@ class Autopilot:
             stop = (self.stops.get(key) or {}).get(unit["name"])
             # Not `waiting`, which names the findings a person is awaited on.
             unit["waiting_line"] = guide.waiting_line(held, stop) if self._on(key) else None
-        data["autopilot"] = self._block(key)
-        data["guide"] = self.guide_block(key, data["units"])
+        data["autopilot"] = await in_thread(self._block, key)
+        data["guide"] = await in_thread(self.guide_block, key, data["units"])
 
     def guide_block(self, key: str, units: Iterable[dict[str, Any]] = ()) -> dict[str, Any]:
         """The board's guide: `{on, running, needs_you, held, notes, waiting, shortlist_empty}`, or

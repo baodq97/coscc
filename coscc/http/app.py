@@ -280,7 +280,7 @@ class Core:
     ) -> dict[str, Any]:
         """The board of `cwd` (`Board.get`) with what the autopilot shows on it."""
         data = await self.boards.get(cwd, which)
-        self.autopilot.show(self.ws.key(cwd), data)
+        await self.autopilot.show(self.ws.key(cwd), data)
         return data
 
     async def unit(self, cwd: str, name: str) -> Detail:
