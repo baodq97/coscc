@@ -23,6 +23,8 @@ export const NOT_WAITED = [...NOT_BOARD, "board.read"];
 const reading = new Map<string, Promise<WorkspaceBoard>>();
 // The read each workspace waits to start once the one in flight ends, for a `board.read` that came after it began.
 const queued = new Map<string, Promise<WorkspaceBoard>>();
+// The last answer of each workspace. Reads of one workspace never overlap, so the last to end began last.
+const latest = new Map<string, WorkspaceBoard>();
 
 /** The board of `w`, read by one read shared with the page; `after` asks for a read that begins after the call. */
 export function readBoard(w: Workspace, after = false): Promise<WorkspaceBoard> {
@@ -45,9 +47,15 @@ function begin(w: Workspace): Promise<WorkspaceBoard> {
     .get("/api/units", { cwd: w.path })
     .then((board): WorkspaceBoard => ({ workspace: w, board }))
     .catch((error: Error): WorkspaceBoard => ({ workspace: w, error }))
+    .then((got) => (latest.set(w.path, got), got))
     .finally(() => reading.delete(w.path));
   reading.set(w.path, read);
   return read;
+}
+
+/** The last answer of each workspace in `list` that has one: a reader waiting on a slow board shows no older one. */
+export function boardsOf(list: Workspace[]): WorkspaceBoard[] {
+  return list.flatMap((w) => latest.get(w.path) ?? []);
 }
 
 /** Reads the board of the workspace each `board.read` names, with no wait, and hands it to `got`. */
@@ -78,8 +86,8 @@ export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading:
   useEffect(() => {
     if (!list.length) return;
     let live = true;
-    Promise.all(list.map((w) => readBoard(w))).then((got) => {
-      last = { key, boards: got };
+    Promise.all(list.map((w) => readBoard(w))).then(() => {
+      last = { key, boards: boardsOf(list) };
       if (live) setBoards(last);
     });
     return () => {
@@ -90,9 +98,9 @@ export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading:
 
   useEffect(() => {
     let live = true;
-    const stop = onBoardRead(list, (b) => {
+    const stop = onBoardRead(list, () => {
       if (!live || last.key !== key) return;
-      last = { key, boards: last.boards.map((x) => (x.workspace.path === b.workspace.path ? b : x)) };
+      last = { key, boards: boardsOf(list) };
       setBoards(last);
     });
     return () => {

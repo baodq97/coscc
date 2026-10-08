@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { failureWords, until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
 import { match } from "./router";
-import { findUnit, needsYou, failedLink, proposalLink, readBoard, onBoardRead, NOT_WAITED, type PlacedUnit } from "./boards";
+import { findUnit, needsYou, failedLink, proposalLink, readBoard, onBoardRead, boardsOf, NOT_WAITED, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { api, fill, readLines } from "./api";
@@ -998,6 +998,23 @@ describe("the boards in view", () => {
     expect(get).toHaveBeenCalledTimes(3);
     done[2]({ units: [] });
     await now;
+    get.mockRestore();
+  });
+
+  it("hands a reader waiting on a slow board the last answer of each, not the one it began with", async () => {
+    const done = new Map<string, ((v: { units: string[] }) => void)[]>();
+    const get = vi.spyOn(api, "get").mockImplementation(((_: string, q: { cwd: string }) =>
+      new Promise((r) => done.set(q.cwd, [...(done.get(q.cwd) ?? []), r]))) as never);
+    // A tick reads both boards; b is slow. A board.read of a reads a again once the tick's read of a ends.
+    const tick = Promise.all([readBoard(a), readBoard(b)]);
+    const ready = readBoard(a, true);
+    done.get("/w/a")![0]({ units: ["old"] });
+    await vi.waitFor(() => expect(done.get("/w/a")).toHaveLength(2));
+    done.get("/w/a")![1]({ units: ["new"] });
+    await ready;
+    done.get("/w/b")![0]({ units: [] });
+    await tick;
+    expect(boardsOf([a, b]).map((x) => x.board)).toEqual([{ units: ["new"] }, { units: [] }]);
     get.mockRestore();
   });
 });
