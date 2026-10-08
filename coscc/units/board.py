@@ -12,12 +12,16 @@ workspace's `.cos/` with `--root` (`coscc/loop/run.py` starts it). The board rep
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from coscc.agent import pack
 from coscc.loop import run
+from coscc.store.db import in_thread
 from coscc.units import guards, states
 
 # The stop `e`, and the board's reason, of a unit `next` reads as merging with no `ship` running.
@@ -142,33 +146,82 @@ def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+# The last text `status --json` printed for a root, with the key of what it was asked and what it
+# read: one entry per root, replaced by the next answer. A failed or unparsable answer is not held.
+_HELD: dict[str, tuple[str, str]] = {}
+
+
+def _tree(top: Path) -> list[tuple[str, int, int]]:
+    """Each directory (by name) and file (by `mtime_ns` and size) under `top`, in a fixed order; a
+    `top` that is not there is empty."""
+    out: list[tuple[str, int, int]] = []
+    for here, dirs, files in os.walk(top):
+        dirs.sort()
+        out.append((here, 0, -1))
+        for name in sorted(files):
+            full = os.path.join(here, name)
+            try:
+                st = os.stat(full)
+            except OSError:
+                out.append((full, -1, -1))
+                continue
+            out.append((full, st.st_mtime_ns, st.st_size))
+    return out
+
+
+def _read_key(path: Path, stdin: str | None) -> str:
+    """What the child's `status` answer is a function of: the snapshot on stdin, every file under
+    the root's `.cos/`, the built-in pack it reads (a new install under a running app changes it),
+    and the one environment variable `harness.child_env` passes down. Run off the event loop."""
+    seen = (
+        stdin,
+        os.environ.get("COS_REVIEW_ROUNDS"),
+        _tree(path / ".cos"),
+        _tree(pack.BUILTIN),
+    )
+    return hashlib.sha256(repr(seen).encode()).hexdigest()
+
+
 async def read(
-    units_root: str | Path, timeout: float = TIMEOUT, state: dict[str, Any] | None = None
+    units_root: str | Path,
+    timeout: float = TIMEOUT,
+    state: dict[str, Any] | None = None,
+    hold: bool = True,
 ) -> dict[str, Any]:
     """Every unit under `units_root`, each with its stages.
 
     `units_root` is the product's own store for the workspace, not the workspace itself.
     Raises `Unavailable` only when the answer is unknown (the loop cannot start, a child
     that failed or hung). A root with no `.cos/` is a known answer: no units.
+
+    The loop's last answer for the root is held and given again, with no child started, while
+    its key is the same (`_read_key`); every call parses the held text afresh, so what a caller
+    changes in its answer is not in the next. `hold=False` neither reads nor keeps one.
     """
     path = Path(units_root)
     source, stdin = _source(state)
-    try:
-        code, out_text, err_text = await _ask(
-            ["--root", str(path), *source, "status", "--json"], timeout, stdin
-        )
-    except TimeoutError:
-        raise Unavailable(f"reading the board timed out after {timeout:.0f}s") from None
-    except (OSError, ValueError) as e:
-        raise Unavailable(f"could not run coscc.loop: {e}") from e
+    key = await in_thread(_read_key, path, stdin) if hold else ""
+    held = _HELD.get(str(path)) if hold else None
+    out_text = held[1] if held and held[0] == key else None
+    if out_text is None:
+        try:
+            code, out_text, err_text = await _ask(
+                ["--root", str(path), *source, "status", "--json"], timeout, stdin
+            )
+        except TimeoutError:
+            raise Unavailable(f"reading the board timed out after {timeout:.0f}s") from None
+        except (OSError, ValueError) as e:
+            raise Unavailable(f"could not run coscc.loop: {e}") from e
 
-    if code != 0:
-        raise Unavailable((err_text or out_text).strip() or f"the loop exited {code}")
+        if code != 0:
+            raise Unavailable((err_text or out_text).strip() or f"the loop exited {code}")
 
     try:
         data = json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
         raise Unavailable(f"the loop did not return JSON: {e}") from e
+    if hold:
+        _HELD[str(path)] = (key, out_text)
 
     stages = data.get("stages") or []
     # The loop sends the stages of a process other than the default one under its ref.
@@ -254,7 +307,7 @@ async def stages(timeout: float = TIMEOUT) -> list[str]:
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="coscc-stages-") as empty:
-        data = await read(empty, timeout, state=EMPTY_STATE)
+        data = await read(empty, timeout, state=EMPTY_STATE, hold=False)
     return list(data["stages"])
 
 
