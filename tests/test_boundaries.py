@@ -662,3 +662,41 @@ class CoreNamesNoFeature(unittest.TestCase):
             if not any(v == key[1] and key[0] in ("*", p) for p, v in written)
         ]
         self.assertEqual(stale, [])
+
+
+# `asyncio.to_thread` returns at a cancel while its thread runs on, so a shutdown or a test's
+# removal of the data root races what that thread still writes: `db.in_thread` waits it out. Where
+# a thread may block for long (a build, a wait on another thread) it stays, listed with why.
+TO_THREAD = {
+    "coscc/store/db.py": "`in_thread` itself",
+    "coscc/update/updater.py": "a wheel download and a lock wait, which a cancel must not wait out",
+    "coscc/features/codegraph/__init__.py": "an install and an index run, minutes long",
+}
+
+
+def to_thread_uses(trees: dict[str, ast.AST]) -> set[str]:
+    """Each module that calls `asyncio.to_thread`."""
+    return {
+        path
+        for path, tree in trees.items()
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and node.attr == "to_thread"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "asyncio"
+    }
+
+
+class AThreadOutlivesNoCancel(unittest.TestCase):
+    def test_only_listed_modules_call_to_thread_and_each_listed_still_does(self):
+        found = to_thread_uses(_trees())
+        self.assertEqual(
+            sorted(found - set(TO_THREAD)),
+            [],
+            "await `in_thread` (coscc.store.db, or coscc.kernel in a feature) instead",
+        )
+        self.assertEqual(sorted(set(TO_THREAD) - found), [], "drop the stale TO_THREAD entry")
+
+    def test_a_planted_call_counts(self):
+        trees = _parse(m="import asyncio\nasync def f():\n    await asyncio.to_thread(print)\n")
+        self.assertEqual(to_thread_uses(trees), {"coscc/m.py"})

@@ -10,7 +10,6 @@ builds the `Board`.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -24,7 +23,7 @@ from coscc.bus import Bus, Event
 from coscc.config import Config
 from coscc.git import gitops
 from coscc.git.gitops import GitError
-from coscc.store.db import Busy, now
+from coscc.store.db import Busy, in_thread, now
 from coscc.store.journal import last_runs, paused_stage, timelines_of, totals_of
 from coscc.units import BadUnit, Invalid, backlog, contracts, scratch, worktrees
 from coscc.units import board as board_reader
@@ -703,23 +702,6 @@ def _brief_rounds(units_: list[dict[str, Any]]) -> None:
             rnd.pop("text", None)
 
 
-async def _in_thread[T](fn: Callable[..., T], *args: Any) -> T:
-    """`asyncio.to_thread`, except that a cancelled caller ends only once the thread returned: a
-    thread cannot be stopped, and one still writing `cos.db` after shutdown returned is what
-    this waits out."""
-    fut = asyncio.ensure_future(asyncio.to_thread(fn, *args))
-    try:
-        return await asyncio.shield(fut)
-    except asyncio.CancelledError:
-        # `wait` neither cancels `fut` nor raises what it raised; a second cancel waits on.
-        while not fut.done():
-            with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.wait({fut})
-        if not fut.cancelled():
-            fut.exception()  # retrieved: the caller is told it was cancelled, nothing else
-        raise
-
-
 class Board:
     """The board of every workspace, read once each and held.
 
@@ -920,7 +902,7 @@ class Board:
         def _snapshot() -> dict[str, Any]:
             return self.ws.snapshot(cwd, peers=self.ws.peer_table()[0])
 
-        state = await _in_thread(_snapshot)
+        state = await in_thread(_snapshot)
         lap("snapshot")
         try:
             data = await board_reader.read(self.ws.units_root(cwd), state=state)
@@ -938,7 +920,7 @@ class Board:
             try:
                 # One read for every unit's cost and the backlog's records. Asking `totals` per
                 # unit re-scanned the working folder N times for the rows this already has.
-                rows = await _in_thread(journal.records, key)
+                rows = await in_thread(journal.records, key)
             except Busy as e:
                 raise Invalid(str(e)) from e
             timelines = timelines_of(rows)

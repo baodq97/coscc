@@ -33,7 +33,7 @@ from coscc.runner import run as run_mod
 from coscc.runner.run import NO_SUBMISSION
 from coscc.runner.step import check_started_by, config_sources, with_ceilings
 from coscc.runner.steps import Steps
-from coscc.store.db import Busy, now as _now
+from coscc.store.db import Busy, in_thread, now as _now
 from coscc.store.journal import MERGE_RECORD, BadRecord, Journal
 from coscc.units import states, submit as submit_mod, worktrees
 from coscc.units import board as board_reader
@@ -1089,7 +1089,7 @@ class Integration:
             )
         work = Path(tree["path"])
         try:
-            expected = await asyncio.to_thread(
+            expected = await in_thread(
                 units.branch_name, cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit])
             )
             branch = await gitops.current_branch(work)

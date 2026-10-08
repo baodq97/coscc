@@ -8,6 +8,7 @@ read-modify-write rather than merely appearing to."""
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 import os
 import re
@@ -864,3 +865,25 @@ class AV19DatabaseGainsAProposalsChange(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ACancelledThreadIsWaitedOut(unittest.IsolatedAsyncioTestCase):
+    async def test_a_cancelled_caller_ends_only_once_its_thread_returned(self):
+        entered, release, wrote = threading.Event(), threading.Event(), []
+
+        def work():
+            entered.set()
+            release.wait()
+            wrote.append("x")
+
+        task = asyncio.ensure_future(db.in_thread(work))
+        await asyncio.to_thread(entered.wait)
+        task.cancel()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        # `asyncio.to_thread` would be done by now, its thread still running.
+        self.assertFalse(task.done())
+        release.set()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(wrote, ["x"])

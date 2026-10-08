@@ -12,7 +12,6 @@ shortlist, and the autopilot never reads this table.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 import re
@@ -20,7 +19,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, NotRequired, TypedDict, get_args
 
-from coscc.store.db import Data, now
+from coscc.store.db import Data, in_thread, now
 from coscc.units import Invalid
 from coscc.units.contracts import BranchType, ChangeKind, SignalKind
 
@@ -502,16 +501,16 @@ async def accept(
     """A unit made through `create(slug, brief)`, the app's own way of making one, its brief the
     proposal's; the slug may differ from the proposal's. Back to `pending` when it fails."""
     slug = check_slug(slug)
-    p = await asyncio.to_thread(claim, data, workspace, pid, "accepted")
+    p = await in_thread(claim, data, workspace, pid, "accepted")
     try:
         unit = await create(slug, brief_of(p))
     except BaseException:
-        await asyncio.to_thread(unclaim, data, workspace, pid)
+        await in_thread(unclaim, data, workspace, pid)
         raise
-    await asyncio.to_thread(set_made, data, workspace, pid, unit)
-    return await asyncio.to_thread(one, data, workspace, pid)
+    await in_thread(set_made, data, workspace, pid, unit)
+    return await in_thread(one, data, workspace, pid)
 
 
 async def dismiss(data: Data, workspace: str, pid: int, reason: str) -> Proposal:
     """Put aside with a reason of 1 to `REASON_MAX` characters, which the next run reads."""
-    return await asyncio.to_thread(claim, data, workspace, pid, "dismissed", check_reason(reason))
+    return await in_thread(claim, data, workspace, pid, "dismissed", check_reason(reason))

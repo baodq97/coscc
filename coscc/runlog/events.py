@@ -35,7 +35,7 @@ from claude_agent_sdk import (
 )
 
 from coscc.agent.sessions import cumulative
-from coscc.store.db import Data
+from coscc.store.db import Data, in_thread
 from coscc.store.db import now as iso_now
 from coscc.store.journal import TOKEN_FIELDS, Journal
 
@@ -330,7 +330,7 @@ class Recorder:
     async def _flush(self, timeout: float) -> bool:
         batch = list(self.pending)
         try:
-            await asyncio.to_thread(self._write, batch, timeout)
+            await in_thread(self._write, batch, timeout)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - `Busy` or anything else: kept for the next write
@@ -370,7 +370,7 @@ class Recorder:
             self.pending.clear()
         try:
             await asyncio.wait_for(
-                asyncio.to_thread(
+                in_thread(
                     self.data.step_run_close,
                     self.run,
                     now_ms(),
@@ -392,7 +392,7 @@ class Recorder:
         """
         try:
             n = await asyncio.wait_for(
-                asyncio.to_thread(
+                in_thread(
                     self.data.step_turns,
                     self.run,
                     timeout=CLOSE_WAIT,
@@ -432,9 +432,9 @@ async def purge(
     """
     at = now_ms() if now is None else int(now)
     older_than = at - keep_days * 24 * 3600 * 1000
-    runs, freed = await asyncio.to_thread(data.step_events_purge, older_than, keep_bytes, iso_now())
+    runs, freed = await in_thread(data.step_events_purge, older_than, keep_bytes, iso_now())
     if runs and journal is not None:
-        await asyncio.to_thread(
+        await in_thread(
             journal.append,
             {"kind": "events-purge", "workspace": "", "runs": runs, "bytes": freed},
         )

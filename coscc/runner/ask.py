@@ -31,7 +31,7 @@ from coscc.agent.policy import Row
 from coscc.runner import run as run_mod
 from coscc.runner import triggers
 from coscc.runner.queue import Refused
-from coscc.store.db import Busy, Data
+from coscc.store.db import Busy, Data, in_thread
 from coscc.units import Invalid, proposals, submit
 
 # The app's `Core` (`coscc/http/app.py`), a layer above: its parts are read by name.
@@ -270,7 +270,7 @@ async def _decide(
         plan.why = "the code it read moved since"
     elif (base.get("model") or None) != model:
         plan.why = "its model changed since"
-    elif not await asyncio.to_thread(sessions_mod.exists, session, plan.tree):
+    elif not await in_thread(sessions_mod.exists, session, plan.tree):
         plan.why = "its transcript is gone"
     else:
         plan.session = session
@@ -309,7 +309,7 @@ async def state(core: Core, cwd: str, run: str) -> Thread:
     journal = _journal(core)
     data = Data(core.config.data_dir)
     shown: list[Followup] = []
-    for s, e in await asyncio.to_thread(_thread, journal, root_run):
+    for s, e in await in_thread(_thread, journal, root_run):
         shown.append(
             Followup(
                 run=str(s.get("run") or ""),
@@ -463,14 +463,12 @@ async def _ask(
             if fresh:
                 prompt = ANSWERED + text
             else:
-                kept = await asyncio.to_thread(_numbered, core, start)
+                kept = await in_thread(_numbered, core, start)
                 prompt = RESUMED + (f"{kept}\n\n" if kept else "") + text
         else:
-            summary = await asyncio.to_thread(_summary, core, start, end, plan.tree)
+            summary = await in_thread(_summary, core, start, end, plan.tree)
             prompt = f"{summary}\n\n# The question\n\n{text}"
-        spent = (
-            await asyncio.to_thread(journal.session_cost, plan.session) if plan.session else None
-        )
+        spent = await in_thread(journal.session_cost, plan.session) if plan.session else None
         if not told.done():
             told.set_result(Asked(run=run_id, resumed=bool(plan.session), why=plan.why))
 

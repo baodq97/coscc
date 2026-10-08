@@ -55,6 +55,7 @@ from coscc.git.gitops import worktree_list as worktree_list
 from coscc.loop import run as run
 from coscc.store.db import Busy as Busy
 from coscc.store.db import Data
+from coscc.store.db import in_thread as in_thread
 from coscc.store.db import now as now
 from coscc.store.journal import BELL as BELL
 from coscc.store.journal import BadRecord as BadRecord

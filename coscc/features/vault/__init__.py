@@ -10,7 +10,6 @@ filter, scan and runner are `coscc/vault/`'s; what this is not is in `coscc/feat
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import json
 import uuid
@@ -34,6 +33,7 @@ from coscc.kernel import (
     Parts,
     Tool,
     body,
+    in_thread,
 )
 
 NAME = "vault"
@@ -152,7 +152,7 @@ class Handlers:
             return _no(uses if isinstance(uses, str) else "capture is a ws: name")
         timeout = _seconds(args.get("timeout"))
         try:
-            got = await asyncio.to_thread(self._run, command, uses, timeout, capture)
+            got = await in_thread(self._run, command, uses, timeout, capture)
         except vault.BadSecret as e:
             return _no(str(e))
         return _text(_shown(got, bool(capture)), bool(got.refusals or got.refused))
@@ -167,9 +167,7 @@ class Handlers:
             name = _agent_name(raw)
             if self.get().get(name, f.workspace_key) is not None:
                 raise vault.BadSecret(f"{name} already exists; it is not replaced")
-            made = await asyncio.to_thread(
-                vault.generate, self.get(), name, f.workspace_key, said, actor
-            )
+            made = await in_thread(vault.generate, self.get(), name, f.workspace_key, said, actor)
         except vault.BadSecret as e:
             return _no(str(e))
         vault.record(
@@ -413,7 +411,7 @@ def _pasted(text: str) -> bytes:
 
 
 class Door:
-    """What a route does to the store, each a blocking call for `asyncio.to_thread`. A change is
+    """What a route does to the store, each a blocking call for `in_thread`. A change is
     written to the run log as `human:owner`, with the names and never a value."""
 
     def __init__(self, ctx: Ctx, get: Callable[[], vault.Store]) -> None:
@@ -534,7 +532,7 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
     async def secrets(request: Request) -> Secrets:
         """Metadata only: never a value, a length or a hash."""
         key = door.key_of(request.query_params.get("cwd", ""))
-        mine, others = await asyncio.to_thread(door.rows, key)
+        mine, others = await in_thread(door.rows, key)
         return {
             "workspace": key,
             "age": door.get().can_encrypt(),
@@ -551,7 +549,7 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
         """The secrets the last scan of a unit found in its work; names only."""
         key = door.key_of(request.query_params.get("cwd", ""))
         unit = request.query_params.get("unit", "")
-        return {"unit": unit, "names": await asyncio.to_thread(door.leaks, key, unit)}
+        return {"unit": unit, "names": await in_thread(door.leaks, key, unit)}
 
     @router.post("/api/vault/secrets")
     async def put(request: Request) -> Saved:
@@ -567,7 +565,7 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
         if not value:
             raise Invalid("a secret needs a value")
         try:
-            name = await asyncio.to_thread(door.save, key, form, value)
+            name = await in_thread(door.save, key, form, value)
         except vault.BadSecret as e:
             raise Invalid(str(e)) from e
         return {"saved": name, "short": len(value) < SHORT_BYTES}
@@ -577,7 +575,7 @@ def routes(ctx: Ctx, store_of: StoreOf | None = None) -> Sequence[BaseRoute]:
     ) -> T:
         sent = await body(request)
         key = door.key_of(str(sent.get("cwd", "")), must_be_on=on)
-        return await asyncio.to_thread(do, key, sent)
+        return await in_thread(do, key, sent)
 
     @router.post("/api/vault/policy")
     async def policy_of(request: Request) -> Meta:
