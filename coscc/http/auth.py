@@ -31,7 +31,7 @@ import argon2
 from argon2.exceptions import InvalidHashError, VerificationError
 
 from coscc.config import COOKIE, LOOPBACK
-from coscc.store.db import Data
+from coscc.store.db import Data, in_thread
 
 log = logging.getLogger(__name__)
 
@@ -279,7 +279,7 @@ class Guard:
     # -- sessions ---------------------------------------------------------------
 
     async def _state(self, sha: str):
-        return await asyncio.to_thread(self.data.auth_state, sha)
+        return await in_thread(self.data.auth_state, sha)
 
     def _live(self, has_password: bool, row, now: float) -> bool:
         return bool(has_password and row is not None and row["expires_at"] > now)
@@ -291,12 +291,12 @@ class Guard:
         return (b"set-cookie", "; ".join(parts).encode())
 
     async def _touch(self, sha: str, now: float) -> None:
-        await asyncio.to_thread(self.data.auth_session_touch, sha, int(now), int(now) + SESSION_TTL)
+        await in_thread(self.data.auth_session_touch, sha, int(now), int(now) + SESSION_TTL)
 
     async def _new_session(self, scope: dict) -> tuple[bytes, bytes]:
         token = secrets.token_urlsafe(32)
         now = int(self.clock())
-        await asyncio.to_thread(self.data.auth_session_add, _sha(token), now, now + SESSION_TTL)
+        await in_thread(self.data.auth_session_add, _sha(token), now, now + SESSION_TTL)
         return self._cookie_header(scope, token, SESSION_TTL)
 
     # -- hashing ----------------------------------------------------------------
@@ -308,7 +308,7 @@ class Guard:
         except TimeoutError:
             return _BUSY
         try:
-            return await asyncio.to_thread(work)
+            return await in_thread(work)
         finally:
             self._slots.release()
 
@@ -359,7 +359,7 @@ class Guard:
                 await _redirect(send, "/")
                 return
         if (method, path) == ("POST", LOGOUT) and live:
-            await asyncio.to_thread(self.data.auth_session_delete, sha)
+            await in_thread(self.data.auth_session_delete, sha)
             await _redirect(send, LOGIN, [self._cookie_header(scope, "", 0)])
             return
 
@@ -423,7 +423,7 @@ class Guard:
         if isinstance(form, int):
             await _json(send, form, "form")
             return
-        stored = await asyncio.to_thread(self.data.auth_password_hash)
+        stored = await in_thread(self.data.auth_password_hash)
         if stored is None:
             await _redirect(send, SETUP)
             return
@@ -469,7 +469,7 @@ class Guard:
         if hashed is _BUSY:
             await self._page(send, 429, _setup_page(_BUSY_TEXT))
             return
-        stored = await asyncio.to_thread(self.data.auth_set_password, hashed, int(self.clock()))
+        stored = await in_thread(self.data.auth_set_password, hashed, int(self.clock()))
         if not stored:
             # Another request set one first. That is a refusal, not an overwrite.
             self._token = None

@@ -38,7 +38,7 @@ from coscc.kernel import Run
 from coscc.runner import run as run_mod
 from coscc.runner.interventions import interventions
 from coscc.runner.queue import Refused
-from coscc.store.db import Busy, Data, now
+from coscc.store.db import Busy, Data, in_thread, now
 from coscc.store.journal import BadRecord, Intervention
 from coscc.units import Invalid, contracts, proposals, submit, worktrees
 
@@ -206,10 +206,8 @@ async def begin(
 ) -> str:
     """`start` with `check`, which reads the run log and the spend, off the loop."""
     with pack.held():
-        ws = await asyncio.to_thread(
-            check, core, key, workspace, unit, by=by, reason=reason, text=text
-        )
-        leader = await asyncio.to_thread(_leader, core, ws, key)
+        ws = await in_thread(check, core, key, workspace, unit, by=by, reason=reason, text=text)
+        leader = await in_thread(_leader, core, ws, key)
     return _hold(core, key, workspace, ws, unit, by, reason, text, leader=leader)
 
 
@@ -330,16 +328,12 @@ async def compose(
     declared = contracts.input_of(key)
     data = Data(core.config.data_dir)
     made = (
-        await asyncio.to_thread(proposals.listed, data, ws, key)
-        if "proposals" in declared["data"]
-        else []
+        await in_thread(proposals.listed, data, ws, key) if "proposals" in declared["data"] else []
     )
     directory = core.ws.unit_dir(cwd, unit) if unit else None
     idea = core.ideas.idea_note(cwd, unit) if unit and "idea" in declared["data"] else ""
     catalog = (
-        await asyncio.to_thread(core.agents.catalog_block, cwd)
-        if "catalog" in declared["data"]
-        else ""
+        await in_thread(core.agents.catalog_block, cwd) if "catalog" in declared["data"] else ""
     )
     return prompt_of(
         declared,
@@ -453,10 +447,10 @@ async def preview(core: Core, key: str, cwd: str, ws: str, unit: str = "") -> st
     journal = core.ws.journal()
     found: list[Intervention] = []
     if journal is not None and "interventions" in contracts.input_of(key)["data"]:
-        since = await asyncio.to_thread(_data_until, journal, ws, key)
-        found = await asyncio.to_thread(_interventions, core, journal, ws, since)
+        since = await in_thread(_data_until, journal, ws, key)
+        found = await in_thread(_interventions, core, journal, ws, since)
     try:
-        leader = await asyncio.to_thread(_leader, core, ws, key)
+        leader = await in_thread(_leader, core, ws, key)
     except Invalid as e:
         leader = ("", str(e))
     return (await compose(core, key, cwd, ws, unit, "", found, leader))[0]
@@ -484,12 +478,12 @@ async def _run(
     trial = by == TRIAL
     declared = contracts.input_of(key)
     data = Data(core.config.data_dir)
-    since = "" if trial else await asyncio.to_thread(_data_until, journal, ws, key)
+    since = "" if trial else await in_thread(_data_until, journal, ws, key)
     found: list[Intervention] = []
     if "interventions" in declared["data"]:
-        found = await asyncio.to_thread(_interventions, core, journal, ws, since)
+        found = await in_thread(_interventions, core, journal, ws, since)
     if declared.get("skip_when_empty") and not found and not trial:
-        await asyncio.to_thread(_skipped, journal, ws, unit, key, by, since, run_id)
+        await in_thread(_skipped, journal, ws, unit, key, by, since, run_id)
         return "", "skipped"
     found_row = pack.row(key) or {}
     prompt, taken = await compose(core, key, cwd, ws, unit, text, found, leader)
@@ -502,7 +496,7 @@ async def _run(
         try:
             tree = str((await worktrees.main_tree(cwd, core.config.data_dir))[0])
         except (GitError, OSError) as e:
-            await asyncio.to_thread(
+            await in_thread(
                 _ended, journal, ws, unit, key, by, "failed", f"no trunk tree to read: {e}", run_id
             )
             return "", "failed"
@@ -524,18 +518,16 @@ async def _run(
             items = list((got.output or {}).get("proposals") or [])
             kinds = {i: s["kind"] for i, s in sources.items()} if found else None
             keep, rejected = proposals.kept(items, kinds, tree)
-            await asyncio.to_thread(
-                proposals.add, data, ws, key, unit, keep, run=got.run, sources=sources
-            )
+            await in_thread(proposals.add, data, ws, key, unit, keep, run=got.run, sources=sources)
             out.update(proposals=len(keep), rejected=rejected)
         if kind == "verdict" and got.output:
             meta = core.ws.unit_meta()
-            out["verdict"] = await asyncio.to_thread(
+            out["verdict"] = await in_thread(
                 meta.record_verdict, ws, unit, key, got.run, got.output
             )
             if output.get("then") == "proposal-if-no":
                 items = proposals.of_verdict(unit, got.output.get("criteria") or ())
-                await asyncio.to_thread(proposals.add, data, ws, key, unit, items, run=got.run)
+                await in_thread(proposals.add, data, ws, key, unit, items, run=got.run)
                 out["proposals"] = len(items)
         if kind == "draft" and got.output:
             out["draft"] = got.output
@@ -580,7 +572,7 @@ async def _run(
     finally:
         await stream.aclose()
     if got.status == "paused-budget" and not trial:
-        await asyncio.to_thread(_turn_off, core, journal, ws, key, got.detail)
+        await in_thread(_turn_off, core, journal, ws, key, got.detail)
     return got.run, run_mod.OUTCOME[got.status]
 
 
@@ -592,7 +584,7 @@ async def trial(core: Core, cwd: str, key: str, fields: Mapping[str, Any], body:
     (`pack.trying`), as `started_by` and `stage` `trial`, and keeps nothing it hands back. Refused
     before spend; else its run id."""
     with pack.held():
-        ws, checked = await asyncio.to_thread(_trial_check, core, cwd, key, fields, body)
+        ws, checked = await in_thread(_trial_check, core, cwd, key, fields, body)
     return _hold(core, key, cwd, ws, "", TRIAL, "", "", tried=checked)
 
 
@@ -1084,11 +1076,9 @@ async def leif_call(
             }
     try:
         with pack.held():
-            ws = await asyncio.to_thread(
-                check, core, key, cwd, unit, by="leif", reason=reason, text=text
-            )
-            leader = await asyncio.to_thread(_leader, core, ws, key)
-            place = await asyncio.to_thread(_leif_may, core, key, args, turn)
+            ws = await in_thread(check, core, key, cwd, unit, by="leif", reason=reason, text=text)
+            leader = await in_thread(_leader, core, ws, key)
+            place = await in_thread(_leif_may, core, key, args, turn)
             try:
                 run_id = _hold(
                     core,
@@ -1127,12 +1117,12 @@ async def _answer(core: Core, run_id: str, link: str, wait: float) -> str:
         if not task.done():
             return f"still running after {wait / 60:.0f} min; the app says when it ends; {link}"
     journal = core.ws.journal()
-    found = await asyncio.to_thread(journal.where, "run", run_id) if journal is not None else []
+    found = await in_thread(journal.where, "run", run_id) if journal is not None else []
     start = next((r for r in found if r.get("kind") == "start"), {})
     end = next((r for r in reversed(found) if r.get("kind") == "end"), None)
     if end is None:
         return f"run {run_id} left no end; {link}"
-    said = await asyncio.to_thread(result_of, Data(core.config.data_dir), start, end)
+    said = await in_thread(result_of, Data(core.config.data_dir), start, end)
     return f"{said}\n\n{link}"
 
 

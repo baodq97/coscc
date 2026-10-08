@@ -20,6 +20,7 @@ import pytest
 from coscc.config import Config
 from coscc.git import gh, gitops
 from coscc.http.app import Core
+from coscc.runner import triggers
 from coscc.units import board as board_reader
 from coscc.units import worktrees
 from coscc.units.read import Asked
@@ -241,6 +242,20 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         [line] = logs.output
         self.assertIn("shutdown returns with the board read of ", line)
         self.assertIn("still running after 0.3s", line)
+
+    async def test_a_triggered_run_is_cancelled_and_waited_for(self):
+        ended = []
+
+        async def run():
+            try:
+                await asyncio.Event().wait()
+            finally:
+                ended.append("end")
+
+        triggers.spawn(asyncio.get_running_loop(), run(), "r1", self.cwd)
+        await asyncio.sleep(0)
+        await asyncio.wait_for(self.core.shutdown(), 5)
+        self.assertEqual((ended, triggers._TASKS), (["end"], set()))
 
     async def test_nothing_writes_once_shutdown_returned(self):
         self.boards._remove_later(self.cwd, {"name": "0001_done", "why": "finished"})

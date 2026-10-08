@@ -24,7 +24,7 @@ from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
 from coscc.units.meta import By, UnitMeta
 from coscc.store.journal import BadRecord, Journal
-from coscc.store.db import Busy
+from coscc.store.db import Busy, in_thread
 from coscc.units import states, submit
 from coscc.units import transitions
 from coscc.runner.queue import Attempt, describe
@@ -280,7 +280,7 @@ class Answers:
             known = (snap.get("units") or {}).get(f"{snap.get('workspace')}/{unit}") or {}
             kind = states.kind_of(str(known.get("process") or ""), stage)
             apply = self._apply_round if kind == "review" else self._apply_result
-            await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
+            await in_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
             return {}
         except (BadTransition, Busy, sqlite3.Error) as e:
             # One fixed sentence on the card and the step, the error in the log: `Busy` carries
@@ -312,7 +312,7 @@ class Answers:
                 meta.link(conn, workspace, unit, idea, deps)
 
         try:
-            await asyncio.to_thread(self._write_opening, meta, workspace, unit, brief, opening)
+            await in_thread(self._write_opening, meta, workspace, unit, brief, opening)
             return {}
         except (BadTransition, Busy, sqlite3.Error, OSError) as e:
             log.warning("%s in %s could not be opened: %s", unit, workspace, e)

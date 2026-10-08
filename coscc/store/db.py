@@ -13,6 +13,8 @@ writer up front.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import os
 import sqlite3
@@ -29,6 +31,24 @@ from coscc import config
 if TYPE_CHECKING:
     from collections.abc import Callable
 from typing import Any, Iterator
+
+
+async def in_thread[T](fn: Callable[..., T], *args: Any, **kw: Any) -> T:
+    """`asyncio.to_thread`, except that a cancelled caller ends only once the thread returned: a
+    thread cannot be stopped, and one still writing under the data root after its task was
+    cancelled is what a shutdown, or a test removing that root, would race."""
+    fut = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kw))
+    try:
+        return await asyncio.shield(fut)
+    except asyncio.CancelledError:
+        # `wait` neither cancels `fut` nor raises what it raised; a second cancel waits on.
+        while not fut.done():
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.wait({fut})
+        if not fut.cancelled():
+            fut.exception()  # retrieved: the caller is told it was cancelled, nothing else
+        raise
+
 
 # The shape below. `_open` refuses a database numbered higher than this rather than guessing, and
 # **an older build answers `500` on a database a newer one has touched**, so rolling the app back

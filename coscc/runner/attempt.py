@@ -24,6 +24,7 @@ from coscc.runner.reply import (
     opening_reason,
 )
 from coscc.runner.review import merge_review
+from coscc.store.db import in_thread
 
 log = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ async def snapshot(cwd: str, session_id: str) -> tuple[dict[str, Any], BaseExcep
 
     try:
         if session_id:
-            excerpt, total = await asyncio.to_thread(
+            excerpt, total = await in_thread(
                 sessions_mod.transcript_excerpt, session_id, cwd, ATTEMPT_EXCERPT
             )
             fields["excerpt"], fields["excerpt_total_chars"] = excerpt, total

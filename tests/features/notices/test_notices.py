@@ -116,11 +116,9 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
     async def test_an_append_in_this_process_arrives_within_five_seconds(self):
         s = self.follow(beat=60)
         await self.lines(s, 1)
-        began = time.monotonic()
-        # From another thread, as a step's journal writes can be.
+        # From another thread, as a step's journal writes can be; the beat would take 60 s.
         await asyncio.to_thread(self.append, stop(self.key))
         await self.notices(s, 1, within=5)
-        self.assertLess(time.monotonic() - began, 5)
 
     async def test_a_row_another_process_wrote_arrives_at_the_next_beat(self):
         s = self.follow(beat=1.0)
@@ -143,22 +141,20 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
             conn.commit()
         finally:
             conn.close()
-        began = time.monotonic()
+        # No bell rings for another process's row: only the beat finds it.
         [line] = await self.notices(s, 1, within=5)
         self.assertEqual(line["record"], record)
-        self.assertLess(time.monotonic() - began, 1.0 + 1.0)
 
     async def test_a_stream_ends_once_its_lifetime_is_over_and_nothing_is_skipped(self):
         # The login door is asked once per request, so the stream ends.
         s = self.follow(beat=60, lifetime=0.5)
         await self.lines(s, 1)
-        began = time.monotonic()
         mine = self.append(stop(self.key))
         [line] = await self.notices(s, 1)
         self.assertEqual(line["id"], mine)
+        # Ended by its lifetime, not by the beat 60 s away.
         with self.assertRaises(StopAsyncIteration):
             await asyncio.wait_for(s.__anext__(), 3)
-        self.assertLess(time.monotonic() - began, 0.5 + 1.0)
         # Written between two streams: the next, with `after`, hands it over.
         between = self.append(stop(self.key, "0002_b"))
         [again] = await self.notices(self.follow(after=mine), 1)

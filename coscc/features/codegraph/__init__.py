@@ -44,6 +44,7 @@ from coscc.kernel import (
     State,
     Tool,
     cos_dir,
+    in_thread,
     now,
 )
 from coscc.units.turnstats import (
@@ -580,7 +581,7 @@ async def _render(ctx: Ctx, facts: Facts) -> str:
         facts.run, facts.workspace_key, facts.unit, facts.agent, arm, sha, len(text), wait_ms,
         error, now(),
     )  # fmt: skip
-    await asyncio.to_thread(_record, ctx, row)
+    await in_thread(_record, ctx, row)
     return text
 
 

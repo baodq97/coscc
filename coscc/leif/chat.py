@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -22,7 +21,7 @@ from coscc.runner import run as run_mod
 from coscc.runner import triggers
 from coscc.runner.queue import Refused
 from coscc.runner.triggers import Reply
-from coscc.store.db import Busy, Data
+from coscc.store.db import Busy, Data, in_thread
 from coscc.units.board import FOLDED_STATES, paused_label
 from coscc.units.read import Card, cards
 from coscc.units import proposals
@@ -554,7 +553,7 @@ def _spend(core: Core, key: str) -> dict[str, Any]:
 async def read_spend(core: Core, cwd: str, args: Mapping[str, Any]) -> str:
     name, here = where(core, cwd, args.get("workspace"))
     today = core.autopilot.today(here)
-    found = await asyncio.to_thread(_spend, core, core.ws.key(here))
+    found = await in_thread(_spend, core, core.ws.key(here))
     head = [
         f"today, every workspace: {_usd(today[0])} of the {_usd(today[1])} daily cap, "
         f"{_usd(max(0.0, today[1] - today[0]))} left"
@@ -615,7 +614,7 @@ def _is(key: str, asked: str) -> bool:
 
 async def read_proposals(core: Core, cwd: str, args: Mapping[str, Any]) -> str:
     name, here = where(core, cwd, args.get("workspace"))
-    got = await asyncio.to_thread(core.agents.proposals_view, here)
+    got = await in_thread(core.agents.proposals_view, here)
     asked = str(args.get("agent") or "")
     made = [p for p in got["proposals"] if _is(p["agent"], asked)]
     shown = made if args.get("include_decided") else [p for p in made if p["state"] == "pending"]
@@ -694,7 +693,7 @@ def _runs(core: Core, ws: str, asked: str) -> list[str]:
 async def read_runs(core: Core, cwd: str, args: Mapping[str, Any]) -> str:
     name, here = where(core, cwd, args.get("workspace"))
     asked = str(args.get("agent") or "")
-    lines = await asyncio.to_thread(_runs, core, core.ws.key(here), asked)
+    lines = await in_thread(_runs, core, core.ws.key(here), asked)
     head = [
         f"workspace {name}: the last {RUNS_SHOWN} runs of the agents a trigger starts"
         + (f", {asked}'s" if asked else "")

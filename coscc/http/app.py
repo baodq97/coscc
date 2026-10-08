@@ -45,7 +45,7 @@ from coscc.runner.resume import Resume
 from coscc.runner import triggers
 from coscc.runner.steps import Steps
 from coscc.runner.watch import Watch
-from coscc.store.db import Busy, Data
+from coscc.store.db import Busy, Data, in_thread
 from coscc.units.ideas import Ideas
 from coscc import units
 from coscc.units import proposals, read, states
@@ -289,21 +289,19 @@ class Core:
             raise Invalid(f"no unit {name} in {cwd}")
         key, meta = self.ws.key(cwd), self.ws.unit_meta()
         journal = self.ws.journal()
-        timeline = await asyncio.to_thread(journal.timeline, key, name) if journal else []
-        outputs = await asyncio.to_thread(meta.outputs, key, name)
-        decisions = await asyncio.to_thread(meta.decisions, key, name)
-        graded = await asyncio.to_thread(meta.graded, key, name)
+        timeline = await in_thread(journal.timeline, key, name) if journal else []
+        outputs = await in_thread(meta.outputs, key, name)
+        decisions = await in_thread(meta.decisions, key, name)
+        graded = await in_thread(meta.graded, key, name)
         found = read.grader()
         shown = None
         if found is not None:
-            verdict = await asyncio.to_thread(meta.verdict, key, name)
-            made = await asyncio.to_thread(
-                proposals.listed, Data(self.config.data_dir), key, found[0]
-            )
+            verdict = await in_thread(meta.verdict, key, name)
+            made = await in_thread(proposals.listed, Data(self.config.data_dir), key, found[0])
             shown = read.outcome(*found, verdict, [p for p in made if p["unit"] == name])
         idea = units.unit_dir(cwd, name, self.config.data_dir) / states.brief_file()
-        brief = await asyncio.to_thread(idea.read_text, "utf-8") if idea.is_file() else ""
-        made = await asyncio.to_thread(proposals.origin, Data(self.config.data_dir), key, name)
+        brief = await in_thread(idea.read_text, "utf-8") if idea.is_file() else ""
+        made = await in_thread(proposals.origin, Data(self.config.data_dir), key, name)
         origin = None
         if made is not None:
             row = pack.row(made["agent"]) or {}
@@ -329,9 +327,9 @@ class Core:
         ]
 
     async def shutdown(self) -> None:
-        """Cancel every autopilot pass, step, board read and background `gh` ask still running,
-        let every tree removal end as it would, and wait for all of them, `SHUTDOWN_WITHIN`
-        seconds at most from the call. An ask a request begins meanwhile is cancelled and
+        """Cancel every triggered agent run, autopilot pass, step, board read and background `gh`
+        ask still running, let every tree removal end as it would, and wait for all of them,
+        `SHUTDOWN_WITHIN` seconds at most from the call (a triggered run before the clock). An ask a request begins meanwhile is cancelled and
         waited for too. Once this returns nothing they started still writes, unless it
         outlived the deadline: each such one is logged by name.
 
@@ -339,6 +337,8 @@ class Core:
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + SHUTDOWN_WITHIN
+        # Every agent run a trigger started: each writes its `end` once cancelled.
+        await triggers.stop()
         # The queue first: an integration waited for below frees its slot, and what is queued
         # stays queued for the next start rather than begin in a process going down.
         self.attempts.closed = True
@@ -447,7 +447,6 @@ def build(config: Config | None = None, *, starting: bool = False) -> FastAPI:
         yield
         for task in tasks:
             task.cancel()
-        await triggers.stop()
         # Steps first: each is a task that would otherwise write its `end` after its client
         # was closed. `shutdown` writes none, on purpose.
         await core.shutdown()

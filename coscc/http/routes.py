@@ -36,7 +36,7 @@ from coscc import kernel
 from coscc.agent import pack, skills
 from coscc.agent.pack import PackShown
 from coscc.agent.skills import SkillsPage
-from coscc.store.db import Busy, Data
+from coscc.store.db import Busy, Data, in_thread
 from coscc.store.journal import BadRecord
 from coscc.bus import Event
 from coscc.http import plugin
@@ -244,7 +244,7 @@ async def get_agents(request: Request) -> AgentPage:
     or off for `cwd`; what was wrong. `agent` names the one agent whose runs come with it."""
     core, cwd = _core(request), _cwd(request)
     with pack.held():
-        return await asyncio.to_thread(
+        return await in_thread(
             core.agents.agent_page,
             core.ws.key(cwd) if cwd else None,
             cwd=cwd,
@@ -256,7 +256,7 @@ async def get_agents(request: Request) -> AgentPage:
 async def get_agents_live(request: Request) -> Live:
     """The agent runs in flight and the proposals waiting for a person, across every listed
     workspace: what the Briefing and Needs you show."""
-    return await asyncio.to_thread(_core(request).agents.live)
+    return await in_thread(_core(request).agents.live)
 
 
 class PromptPreview(TypedDict):
@@ -346,7 +346,7 @@ async def get_skills(request: Request) -> SkillsPage:
     the agents naming it and the runs whose `start` named it in the last 30 days."""
     core = _core(request)
     with pack.held():
-        return await asyncio.to_thread(skills.page, core.ws.journal())
+        return await in_thread(skills.page, core.ws.journal())
 
 
 @router.post("/api/skills/new")
@@ -387,7 +387,7 @@ async def new_skill(request: Request) -> SkillsPage:
         named = [*(found.get("skills") or []), name]
         core.agents.set_agent_field(agent, "skills", named, cwd=str(body.get("cwd") or ""))
     with pack.held():
-        return await asyncio.to_thread(skills.page, core.ws.journal())
+        return await in_thread(skills.page, core.ws.journal())
 
 
 class Started(TypedDict):
@@ -438,7 +438,7 @@ async def try_agent(request: Request) -> Started:
 async def get_proposals(request: Request) -> ProposalsView:
     """`?cwd=`: every agent's proposals in the workspace, newest first, and the rows that
     propose."""
-    return await asyncio.to_thread(_core(request).agents.proposals_view, _cwd(request))
+    return await in_thread(_core(request).agents.proposals_view, _cwd(request))
 
 
 @router.post("/api/proposals/{pid}")
@@ -477,7 +477,7 @@ async def propose_gap(request: Request) -> proposals.Proposal:
     cwd = core.ws.check(str(body.get("cwd") or ""))
     run, at = str(body.get("run") or ""), body.get("gap")
     ws, data, journal = core.ws.key(cwd), Data(core.config.data_dir), core.ws.journal()
-    ends = await asyncio.to_thread(journal.records, ws, "", kinds=("end",)) if journal else []
+    ends = await in_thread(journal.records, ws, "", kinds=("end",)) if journal else []
     end = next((r for r in reversed(ends) if r.get("run") == run), {})
     draft = end.get("draft")
     draft = draft if isinstance(draft, dict) else {}
@@ -486,11 +486,11 @@ async def propose_gap(request: Request) -> proposals.Proposal:
         raise Invalid(f"run {run} drafted no gap {at}")
     item = proposals.of_gap(str(draft.get("why") or ""), gaps[at], run)
     agent = str(end.get("agent") or "")
-    made = await asyncio.to_thread(proposals.listed, data, ws, agent)
+    made = await in_thread(proposals.listed, data, ws, agent)
     if any(p["run"] == run and p["slug"] == item["slug"] for p in made):
         raise Invalid("this capability is proposed already")
-    (pid,) = await asyncio.to_thread(proposals.add, data, ws, agent, "", [item], run=run)
-    return await asyncio.to_thread(proposals.one, data, ws, pid)
+    (pid,) = await in_thread(proposals.add, data, ws, agent, "", [item], run=run)
+    return await in_thread(proposals.one, data, ws, pid)
 
 
 @router.get("/api/insights")
@@ -501,7 +501,7 @@ async def get_insights(request: Request) -> Insights:
     core, cwd = _core(request), _cwd(request)
     board = await core.boards.get(cwd, "held")
     with pack.held():
-        return await asyncio.to_thread(core.activity.insights, cwd, board.get("units") or [])
+        return await in_thread(core.activity.insights, cwd, board.get("units") or [])
 
 
 @router.get("/api/chat/sessions", response_model=ChatSessions)

@@ -20,7 +20,17 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from starlette.routing import BaseRoute
 
-from coscc.kernel import BELL, STREAM_SECONDS, Busy, Ctx, Feature, Invalid, is_step, line
+from coscc.kernel import (
+    BELL,
+    STREAM_SECONDS,
+    Busy,
+    Ctx,
+    Feature,
+    Invalid,
+    in_thread,
+    is_step,
+    line,
+)
 
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
 SOURCE_KINDS = ("autopilot-stop", "questions", "end", "merge", "agent-state")
@@ -215,7 +225,7 @@ class Notices:
             raise Invalid("there is no working folder, so there is no run log to follow")
         loop = asyncio.get_running_loop()
         ends = loop.time() + (LIFETIME_SECONDS if lifetime is None else lifetime)
-        head = await asyncio.to_thread(journal.last_id)
+        head = await in_thread(journal.last_id)
         if after is None or after > head:
             # An `after` past every row is a cursor from a run log since replaced, whose ids start
             # again at 1: kept, it would hide every notice. The `head` line sets the listener's cursor.
@@ -229,7 +239,7 @@ class Notices:
             try:
                 while True:
                     try:
-                        rows = await asyncio.to_thread(
+                        rows = await in_thread(
                             journal.notice_rows,
                             last,
                             SOURCE_KINDS,
@@ -256,7 +266,7 @@ class Notices:
                 left = said + beat - loop.time()
                 if left <= 0:
                     try:
-                        head = await asyncio.to_thread(journal.last_id)
+                        head = await in_thread(journal.last_id)
                     except Busy:
                         head = last
                     yield {"type": "beat", "id": head}

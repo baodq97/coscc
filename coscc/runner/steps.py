@@ -29,7 +29,7 @@ from coscc.runner.reply import RunError
 from coscc.runner.run import LIVE
 from coscc.runner.step import Runner, check_started_by
 from coscc.git.gitops import GitError
-from coscc.store.db import Busy, Data, now as _now
+from coscc.store.db import Busy, Data, in_thread, now as _now
 from coscc.store.journal import NOT_STEPS, MERGE_RECORD, BadRecord, Journal, paused_stage
 from coscc.units import backlog, mentions, planmap, retake, states, worktrees
 from coscc.units import board as board_reader
@@ -477,7 +477,7 @@ class Steps:
         if not unit:
             raise Invalid("name a work unit")
         self.ws.unit_dir(cwd, unit)
-        state = await asyncio.to_thread(self.ws.snapshot, cwd, [unit])
+        state = await in_thread(self.ws.snapshot, cwd, [unit])
         own = state["units"].get(f"{state['workspace']}/{unit}") or {}
         # A unit with a hold row is asked first with no `--repo`, which reads files only: a held
         # unit is answered here, before `worktree` could reopen the tree a drop just removed.
@@ -681,7 +681,7 @@ class Steps:
             )
         await self._find_stage(cwd, unit, stage)  # refuses a held unit
         key = self.ws.key(cwd)
-        rows = await asyncio.to_thread(journal.records, key, unit, kinds=("start", "end", "raise"))
+        rows = await in_thread(journal.records, key, unit, kinds=("start", "end", "raise"))
         last = next((r for r in reversed(rows) if r.get("stage") == stage), None)
         if last is None or last.get("kind") != "end" or last.get("outcome") != "paused-budget":
             raise Invalid(
@@ -861,7 +861,7 @@ class Steps:
             agent_key = _agent_key(proc, stage)
             # A stage held at a ceiling runs from scratch only on a person's rerun; there is no
             # accepted artifact to make stale, so the loop is not asked.
-            paused = paused_stage(await asyncio.to_thread(journal.timeline, key, unit), stage)
+            paused = paused_stage(await in_thread(journal.timeline, key, unit), stage)
             if paused is not None and not rerun:
                 raise Refused(
                     f"{unit}'s {stage} paused at its ceiling: raise it to go on, or rerun it "
@@ -1385,7 +1385,7 @@ class Steps:
         """The unit's branch as the loop names it (`unit-branch`): the one push an impl's grant
         holds, whatever its worktree's `HEAD` says. `""` when the loop cannot name it: no push."""
         try:
-            name = await asyncio.to_thread(
+            name = await in_thread(
                 units.branch_name, cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit])
             )
         except CannotCreate, BadUnit:
