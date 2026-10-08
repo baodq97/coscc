@@ -102,12 +102,16 @@ function Project({ workspace }: { workspace: Workspace }) {
               </div>
             ))}
             <Slot>
-              <Button size="sm" kind="ghost" disabled={busy || i === 0} title="Move up" onClick={() => shortlist(moved(list, s.unit, -1), `${s.unit.slice(0, 4)} moved up`)}>
-                ↑
-              </Button>
-              <Button size="sm" kind="ghost" disabled={busy || i === list.length - 1} title="Move down" onClick={() => shortlist(moved(list, s.unit, 1), `${s.unit.slice(0, 4)} moved down`)}>
-                ↓
-              </Button>
+              <span style={{ visibility: i === 0 ? "hidden" : undefined }}>
+                <Button size="sm" kind="ghost" disabled={busy || i === 0} title="Move up" onClick={() => shortlist(moved(list, s.unit, -1), `${s.unit.slice(0, 4)} moved up`)}>
+                  ↑
+                </Button>
+              </span>
+              <span style={{ visibility: i === list.length - 1 ? "hidden" : undefined }}>
+                <Button size="sm" kind="ghost" disabled={busy || i === list.length - 1} title="Move down" onClick={() => shortlist(moved(list, s.unit, 1), `${s.unit.slice(0, 4)} moved down`)}>
+                  ↓
+                </Button>
+              </span>
               <Button size="sm" kind="ghost" icon="x" disabled={busy} title="Take off the shortlist" onClick={() => shortlist(list.filter((u) => u !== s.unit), `${s.unit.slice(0, 4)} taken off`)} />
             </Slot>
           </Row>
@@ -135,9 +139,13 @@ function Project({ workspace }: { workspace: Workspace }) {
             {o.estimate.basis && <div className="muted ellipsis" style={{ fontSize: 12.5 }} title={o.estimate.basis}>{o.estimate.basis}</div>}
             {o.agent_differs && <div className="prov">An agent estimated {brief(o.agent_differs)}</div>}
             <Slot>
-              <Button size="sm" icon="plus" disabled={busy || full} title={full ? `The shortlist holds ${v.max}` : "Add at the end of the shortlist"} onClick={() => shortlist([...list, o.unit], `${o.unit.slice(0, 4)} added`)}>
-                Add
-              </Button>
+              {full ? (
+                <span className="faint" style={{ fontSize: 12 }}>The shortlist holds {v.max}.</span>
+              ) : (
+                <Button size="sm" icon="plus" disabled={busy} title="Add at the end of the shortlist" onClick={() => shortlist([...list, o.unit], `${o.unit.slice(0, 4)} added`)}>
+                  Add
+                </Button>
+              )}
             </Slot>
           </Row>
         ))}
