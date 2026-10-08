@@ -684,7 +684,7 @@ class Scripted(_Base):
         return {u["name"]: u["waiting"] for u in data["units"]}
 
     async def test_every_unit_of_the_shortlist_not_started_says_why(self):
-        """0170 R1: one held back by `max_parallel` waits with `full`, a line on its card."""
+        """One held back by `max_parallel` waits with `full`, a line on its card."""
         self.core.autopilot.set_setting(self.ws, "max_parallel", 1)
         self.core.autopilot.stop(self.key)
         self.core.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
@@ -704,7 +704,7 @@ class Scripted(_Base):
         self.assertEqual(waiting["0003_c"]["code"], "b")
 
     async def test_a_session_limit_waits_for_its_reset_then_runs_again(self):
-        """0170 R5: no stop `e`; the card says until when; the first pass after it queues again."""
+        """No stop `e`; the card says until when; the first pass after it queues again."""
         journal = Journal(self.config.working_dir, self.config.data_dir)
         self.add("0001_a", "impl")
         later = (datetime.now().astimezone() + timedelta(hours=1)).isoformat()
@@ -734,7 +734,7 @@ class Scripted(_Base):
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
 
     async def test_a_session_limit_queues_nothing_once_the_cap_is_spent(self):
-        """0170 R8: the reset is no way past the day's cap."""
+        """The reset is no way past the day's cap."""
         journal = Journal(self.config.working_dir, self.config.data_dir)
         self.add("0001_a", "impl")
         journal.finished(self.key, "0001_a", "impl", "session-limit", resets_at="", cost_usd=999.0)
@@ -742,7 +742,6 @@ class Scripted(_Base):
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "cap"}))
 
     async def test_a_conflict_while_its_impl_runs_is_said_then_integrated_first(self):
-        """0170 R6."""
         self.add("0001_a", "impl", integration={"state": "conflicting"})
         row = self.core.attempts.open("step", self.key, "0001_a", "impl", state="running")
         await self.pass_()
@@ -766,7 +765,7 @@ class Scripted(_Base):
         self.core.attempts.open("step", self.key, "0001_a", "impl", state="running")
         await self.pass_()
         self.assertEqual(self.core.autopilot.held[self.key]["0001_a"], ("conflict-person", "impl"))
-        self.assertIn("A person", self.lines()["0001_a"]["moves_it"])
+        self.assertIn("a person", self.lines()["0001_a"]["moves_it"])
 
     async def _integrated_with_nothing_to_do(self, unit: str) -> None:
         """One pass that integrates `unit`, read `behind`, and the integration refused because the

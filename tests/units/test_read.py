@@ -321,7 +321,7 @@ class TheGuide(unittest.TestCase):
 
 
 class TheCardSaysWhatItWaitsOn(unittest.TestCase):
-    """0170 R2: `Autopilot.show`'s `waiting` reaches the card; `null` without one."""
+    """`Autopilot.show`'s `waiting` reaches the card; `null` without one."""
 
     UNIT = {
         "name": "0001_a",

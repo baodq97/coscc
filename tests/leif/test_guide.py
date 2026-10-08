@@ -122,7 +122,7 @@ class TheThreeLists(unittest.TestCase):
 
 
 class TheWaitingLine(unittest.TestCase):
-    """0170 R1: every way a unit of the shortlist is held back says why and what moves it."""
+    """Every way a unit of the shortlist is held back says why and what moves it."""
 
     def test_every_code_and_every_stop_says_why_and_what_moves_it(self):
         for code in decide.REASONS:

@@ -6,7 +6,7 @@ autopilot holds back. `Autopilot.guide_block` hands in what it already read.
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping, TypedDict
 
 # What one stop asks of a person: `(do, screen, tab)`.
 # Every stop kind of `decide.STOP_KINDS` but `full`, which only waits for a free place.
@@ -60,7 +60,7 @@ def _item(stop: dict[str, Any]) -> dict[str, str] | None:
     }
 
 
-def _labelled(units: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def _labelled(units: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """The units the board labels `Needs you`, by name. `state` is `unit_state`'s answer."""
     return sorted(
         (u for u in units if (u.get("state") or {}).get("state") == "needs-you"),
@@ -108,6 +108,20 @@ def notes(stops: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
     return [i for i in items if i is not None]
 
 
+class Line(TypedDict):
+    """What a unit waits on: `code` a stop kind or a `decide.REASONS` code, `until` the moment the
+    account's session limit resets, else `""`."""
+
+    code: str
+    why: str
+    moves_it: str
+    until: str
+
+
+class Waiting(Line):
+    unit: str
+
+
 # What a unit the autopilot did not start waits on, by the code it was held with
 # (`decide.REASONS`): `(why, moves_it)`, `{detail}` the code's detail.
 WAITS: dict[str, tuple[str, str]] = {
@@ -153,9 +167,7 @@ WAITS: dict[str, tuple[str, str]] = {
 NOT_WAITING = ("running", "finished", "closed")
 
 
-def waiting_line(
-    held: tuple[str, str] | None, stop: dict[str, Any] | None
-) -> dict[str, str] | None:
+def waiting_line(held: tuple[str, str] | None, stop: Mapping[str, Any] | None) -> Line | None:
     """What the card says a unit waits on, `{code, why, moves_it, until}`, or `None` when it does
     not wait. `held` is the `(code, detail)` the last pass held it with, `stop` its stop. A
     conflict while its step runs is said over a stop; a stop over its code. `until` is the moment
@@ -183,13 +195,19 @@ def waiting_line(
     }
 
 
-def waiting(units: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def waiting(units: Iterable[Mapping[str, Any]]) -> list[Waiting]:
     """Every unit with a waiting line that the board does not label `Needs you`, by name,
     `[{unit, code, why, moves_it, until}]`. `units` carry `Autopilot.show`'s `waiting`."""
     units = list(units)
     asking = {str(u.get("name") or "") for u in _labelled(units)}
     return [
-        {"unit": str(u.get("name") or ""), **u["waiting"]}
+        {
+            "unit": str(u.get("name") or ""),
+            "code": str(u["waiting"]["code"]),
+            "why": str(u["waiting"]["why"]),
+            "moves_it": str(u["waiting"]["moves_it"]),
+            "until": str(u["waiting"]["until"]),
+        }
         for u in sorted(units, key=lambda u: str(u.get("name") or ""))
         if u.get("waiting") and u.get("name") not in asking
     ]

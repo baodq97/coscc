@@ -1368,7 +1368,7 @@ if __name__ == "__main__":
 
 
 class AfterASessionLimit(unittest.TestCase):
-    """0170 R5: a step the account's session limit stopped waits for its reset, then runs again."""
+    """A step the account's session limit stopped waits for its reset, then runs again."""
 
     @staticmethod
     def end(resets_at="", minutes=0.0, outcome="session-limit"):
@@ -1415,7 +1415,7 @@ class AfterASessionLimit(unittest.TestCase):
         self.assertEqual(decide.after_session_limit(None, [], NOW), (None, None))
 
     def test_what_the_cap_holds_is_not_queued(self):
-        """0170 R8: a run again after the reset still goes through the cap."""
+        """A run again after the reset still goes through the cap."""
         got = decide.pick(
             [{"unit": "0001_a", "stage": "impl", "files": set(), "rank": 1, "need": 5.0}],
             [],

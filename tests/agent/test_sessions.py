@@ -1755,8 +1755,7 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
 
 class TheSessionLimitIsSaidAsSuch(unittest.IsolatedAsyncioTestCase):
     """An `AssistantMessage` with `error == "rate_limit"` ends the session at the account's limit:
-    `terminal_reason` says `session-limit`, and `resets_at` is the last `rejected` event's, in UTC
-    (spike.md, U1)."""
+    `terminal_reason` says `session-limit`, and `resets_at` is the last `rejected` event's, in UTC."""
 
     async def _done(self, messages):
         s = Sessions(Config(workspaces=("/tmp",)))

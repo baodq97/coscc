@@ -173,7 +173,7 @@ def _drop(path: Path | None) -> None:
 
 def _resets_at(event: Any) -> str:
     """When a `rejected` `RateLimitEvent` says the limit resets, as ISO in UTC; `""` for any other.
-    The CLI gives Unix seconds (spike.md, U1); the words it prints have no date."""
+    The CLI gives Unix seconds; the words it prints have no date."""
     info = getattr(event, "rate_limit_info", None)
     when = getattr(info, "resets_at", None)
     if getattr(info, "status", "") != "rejected" or not when:
@@ -1133,7 +1133,7 @@ class Sessions:
             duration_ms = 0
             terminal = ""
             # The account's session limit: the CLI says so on an `AssistantMessage` (`error`), and
-            # when it resets on a `RateLimitEvent` that is `rejected` (spike.md, U1).
+            # when it resets on a `RateLimitEvent` that is `rejected`.
             limited = False
             resets_at = ""
             # Which model ids the SDK billed this session to: the keys of `model_usage`, the
