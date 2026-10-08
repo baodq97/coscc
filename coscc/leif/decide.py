@@ -50,7 +50,11 @@ def is_merge(stage: object) -> bool:
 # one waiting for a free place.
 STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist", "reruns", "full")
 
-# Why a unit ranked higher on the shortlist was passed over, and nothing else.
+# Why a unit ranked higher on the shortlist was passed over, and nothing else. `full`: no free
+# place under `max_parallel`; `cap`: the day's money; `session-limit`: the account's session limit
+# has not reset; `conflict-running` and `conflict-person`: its pull request conflicts with `main`
+# while a step of its code runs, integrated once that step ends, or by a person where the
+# autopilot may not ship a passed round.
 REASONS = (
     "held",
     "finished",
@@ -63,6 +67,11 @@ REASONS = (
     "missing",
     "dependency",
     "overlap-pr",
+    "full",
+    "cap",
+    "session-limit",
+    "conflict-running",
+    "conflict-person",
 )
 # The stop `e` of a unit whose screenshots could not be taken again before `review`.
 SCREENS_FAILED = "the screenshots could not be taken again before review"
@@ -196,7 +205,8 @@ def stop_for(
         said = "; ".join(str(x) for x in seen.get("needs_person") or []) or "no reason given"
         return _stop("d", f"the last integration needs a person: {said}")
     # e. The unit's last step did not end `done`. A step that paused at a ceiling stops with its
-    # own code: only a person raises the ceiling or reruns it. The first time a prose stage ends
+    # own code: only a person raises the ceiling or reruns it. A step that stopped at the account's
+    # session limit is no stop: `after_session_limit` waits for the reset. The first time a prose stage ends
     # `failed` because its reply lacked its opening is no stop: it runs again once. Otherwise no
     # retry: `failed`, `cancelled`, `stopped`, an integration that failed or that the autopilot
     # started and was refused for anything but a state with nothing to integrate. An
@@ -207,7 +217,11 @@ def stop_for(
             **_stop("e", f"the last {seen.get('stage')} step paused at its ceiling"),
             "code": "budget-reached",
         }
-    if kind == "end" and outcome != "done" and not (_unopened(last) and unopened == 1):
+    if (
+        kind == "end"
+        and outcome not in ("done", "session-limit")
+        and not (_unopened(last) and unopened == 1)
+    ):
         return _stop(
             "e", f"the last {seen.get('stage')} step ended {outcome or 'without an outcome'}"
         )
@@ -447,7 +461,7 @@ def pick(
     carries `rank`, its place on the shortlist, and `need`, its reservation. `room` is the
     money left under the cap. Returns `{"chosen": [...], "capped": [...], "held": {...}}`:
     what to start, what the cap alone held back, and `(reason, detail)` for each candidate
-    another rule held back. What `max_parallel` held back is in none of them.
+    another rule held back, `full` for one `max_parallel` held back.
 
     `open_prs` is `{unit, number, files}` for each open, unmerged pull request of the
     workspace, `files` `None` when its diff could not be read. An `impl` of a unit with no
@@ -469,7 +483,8 @@ def pick(
             )
             continue
         if len(busy) >= max_parallel:
-            break
+            held[c["unit"]] = ("full", "")
+            continue
         shipping = next((t for t in taken if is_merge(c["stage"]) and is_merge(t["stage"])), None)
         if shipping is not None:
             held[c["unit"]] = ("ship-busy", shipping["unit"])
@@ -748,6 +763,54 @@ def after_refusal(
         return None, None
     stop = _stop("f", f"{stage} was refused: {code or 'no reason given'}")
     return ({**stop, "code": code} if code in GATE_REASONS else stop), None
+
+
+# How often one stage runs again in a machine's day after it stopped at the account's session
+# limit; the next stop is `e`. Chosen, not measured, like `MAX_TRIES`.
+SESSION_LIMIT_RERUNS = 2
+
+
+def after_session_limit(
+    last: Mapping[str, Any] | None, records: Iterable[Mapping[str, Any]], now: datetime
+) -> tuple[dict[str, str] | None, tuple[str, str] | None]:
+    """What the unit's last step, stopped at the account's session limit, makes of a pass:
+    `(stop, why_not)`. `last` is the unit's latest record (`stop_for`'s), `records` the run log.
+
+    Before its `resets_at` the unit waits, `("session-limit", resets_at)`; after it, or with no
+    `resets_at`, it runs again. The `SESSION_LIMIT_RERUNS + 1`th such end of the stage in the
+    machine's day is the stop `e`. Any other `last` is no part of it."""
+    last = last or {}
+    if last.get("kind") != "end" or last.get("outcome") != "session-limit":
+        return None, None
+    stage, day = last.get("stage"), today(now)
+    ends = sum(
+        1
+        for r in records
+        if r.get("kind") == "end"
+        and r.get("outcome") == "session-limit"
+        and r.get("workspace") == last.get("workspace")
+        and r.get("unit") == last.get("unit")
+        and r.get("stage") == stage
+        and spend.local_day(r.get("at")) == day
+    )
+    if ends > SESSION_LIMIT_RERUNS:
+        return _stop(
+            "e",
+            f"{stage} stopped at the account's session limit {ends} times today; a person"
+            " decides the next run.",
+        ), None
+    resets = str(last.get("resets_at") or "")
+    moment = _moment(resets) if resets else None
+    if moment is not None and now < moment:
+        return None, ("session-limit", resets)
+    return None, None
+
+
+def conflict_running(stage: str, integrable: bool) -> tuple[str, str]:
+    """Why a unit whose pull request conflicts with `main` waits while its `stage` runs: it is
+    integrated once the step ends, or, where the autopilot may not ship a passed round, a person
+    merges it."""
+    return ("conflict-running" if integrable else "conflict-person", stage)
 
 
 def full_stop(stage: str, max_parallel: int) -> dict[str, str]:

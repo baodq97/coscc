@@ -106,3 +106,96 @@ def notes(stops: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
     outside the lists."""
     items = (_item(s) for s in stops if not s.get("unit") and s.get("kind") != "shortlist")
     return [i for i in items if i is not None]
+
+
+# What a unit the autopilot did not start waits on, by the code it was held with
+# (`decide.REASONS`): `(why, moves_it)`, `{detail}` the code's detail.
+WAITS: dict[str, tuple[str, str]] = {
+    "held": (
+        "A person put it on hold ({detail}).",
+        "A person taking the hold off.",
+    ),
+    "stop": ("{detail}", "A person looking at the stop."),
+    "ci": ("CI is still running on its pull request.", "CI finishing; the next pass asks again."),
+    "overlap": (
+        "A step of {detail} changes the same files.",
+        "That step ending.",
+    ),
+    "ship-busy": ("{detail} is shipping, and one ship runs at a time.", "That ship ending."),
+    "missing": (
+        "It is on the shortlist but not on the board.",
+        "Its directory coming back, or a person taking it off the shortlist.",
+    ),
+    "dependency": (
+        "It waits on a unit it depends on: {detail}",
+        "That unit merging.",
+    ),
+    "overlap-pr": (
+        "Another unit's pull request {detail} changes files its plan names.",
+        "That pull request merging or closing.",
+    ),
+    "full": (
+        "The most steps this workspace allows are already running.",
+        "A running step ending, or a person raising Max parallel in Settings.",
+    ),
+    "cap": (
+        "The daily cap is spent.",
+        "Tomorrow, or a person raising the daily cap in Settings.",
+    ),
+    "session-limit": (
+        "The account reached its session limit.",
+        "The limit resetting; the autopilot runs it again then.",
+    ),
+    "conflict-running": (
+        "PR conflicts with main; it is integrated once {detail} ends.",
+        "The {detail} step ending; the autopilot then integrates it first.",
+    ),
+    "conflict-person": (
+        "PR conflicts with main while {detail} runs, and the autopilot may not ship here.",
+        "A person integrating it or merging once {detail} ends.",
+    ),
+}
+# The codes of a unit that is not waiting: a step of it runs, or it is over.
+NOT_WAITING = ("running", "finished", "closed")
+
+
+def waiting_line(
+    held: tuple[str, str] | None, stop: dict[str, Any] | None
+) -> dict[str, str] | None:
+    """What the card says a unit waits on, `{code, why, moves_it, until}`, or `None` when it does
+    not wait. `held` is the `(code, detail)` the last pass held it with, `stop` its stop. A
+    conflict while its step runs is said over a stop; a stop over its code. `until` is the moment
+    the session limit resets, else `""`."""
+    code, detail = held or ("", "")
+    if code in NOT_WAITING:
+        return None
+    if stop is not None and not code.startswith("conflict-"):
+        kind = str(stop.get("kind") or "")
+        moves = TODO[kind][0] if kind in TODO else "A running step ending, so a place frees."
+        return {
+            "code": kind,
+            "why": str(stop.get("reason") or ""),
+            "moves_it": moves,
+            "until": "",
+        }
+    if code not in WAITS:
+        return None
+    why, moves = WAITS[code]
+    return {
+        "code": code,
+        "why": why.format(detail=detail or "another unit"),
+        "moves_it": moves.format(detail=detail or "its step"),
+        "until": detail if code == "session-limit" else "",
+    }
+
+
+def waiting(units: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every unit with a waiting line that the board does not label `Needs you`, by name,
+    `[{unit, code, why, moves_it, until}]`. `units` carry `Autopilot.show`'s `waiting`."""
+    units = list(units)
+    asking = {str(u.get("name") or "") for u in _labelled(units)}
+    return [
+        {"unit": str(u.get("name") or ""), **u["waiting"]}
+        for u in sorted(units, key=lambda u: str(u.get("name") or ""))
+        if u.get("waiting") and u.get("name") not in asking
+    ]

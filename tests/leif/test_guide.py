@@ -119,3 +119,44 @@ class TheThreeLists(unittest.TestCase):
             (guide.needs_you([card("0002_b", "ready")], []), guide.held([], []), guide.notes([])),
             ([], [], []),
         )
+
+
+class TheWaitingLine(unittest.TestCase):
+    """0170 R1: every way a unit of the shortlist is held back says why and what moves it."""
+
+    def test_every_code_and_every_stop_says_why_and_what_moves_it(self):
+        for code in decide.REASONS:
+            if code in guide.NOT_WAITING:
+                continue
+            line = guide.waiting_line((code, "0002_b"), None)
+            self.assertTrue(line and line["why"] and line["moves_it"], code)
+        for kind in decide.STOP_KINDS:
+            line = guide.waiting_line(("stop", f"{kind}: why"), {"kind": kind, "reason": "why"})
+            self.assertTrue(line and line["why"] and line["moves_it"], kind)
+            self.assertEqual(line["code"], kind)
+
+    def test_a_running_or_finished_unit_does_not_wait(self):
+        for code in guide.NOT_WAITING:
+            self.assertIsNone(guide.waiting_line((code, "impl"), None))
+        self.assertIsNone(guide.waiting_line(None, None))
+
+    def test_the_session_limit_says_until_when(self):
+        line = guide.waiting_line(("session-limit", "2026-10-08T01:50:00+07:00"), None)
+        self.assertEqual(line["until"], "2026-10-08T01:50:00+07:00")
+
+    def test_a_conflict_while_its_step_runs_is_said_over_a_stop(self):
+        line = guide.waiting_line(
+            ("conflict-running", "impl"), {"kind": "e", "reason": "the last impl step ended failed"}
+        )
+        self.assertEqual(line["why"], "PR conflicts with main; it is integrated once impl ends.")
+
+    def test_the_list_leaves_out_what_needs_you(self):
+        w = {"code": "full", "why": "x", "moves_it": "y", "until": ""}
+        got = guide.waiting(
+            [
+                {"name": "0002_b", "waiting": w, "state": {"state": "ready"}},
+                {"name": "0001_a", "waiting": w, "state": {"state": "needs-you"}},
+                {"name": "0003_c", "waiting": None},
+            ]
+        )
+        self.assertEqual([g["unit"] for g in got], ["0002_b"])

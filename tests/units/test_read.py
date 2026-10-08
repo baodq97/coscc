@@ -15,7 +15,7 @@ from coscc.github import integrate
 from coscc.kernel import Invalid
 from coscc.http.app import Core
 from coscc.agent.sessions import Sessions
-from coscc.units import scratch
+from coscc.units import read, scratch
 from tests.leif.test_answers import REVIEW_ONE
 from tests.http.test_app import create_sync, seed_unit
 from tests.github.test_integration import PR, SLUG, StandIn, git
@@ -318,6 +318,39 @@ class TheGuide(unittest.TestCase):
         self.core.attempts.open("step", self.key, "0001_u", "impl", state="running")
         got = self.block([{"name": "0001_u", "state": {"state": "needs-you"}}])
         self.assertEqual((got["needs_you"], len(got["running"])), ([], 1))
+
+
+class TheCardSaysWhatItWaitsOn(unittest.TestCase):
+    """0170 R2: `Autopilot.show`'s `waiting` reaches the card; `null` without one."""
+
+    UNIT = {
+        "name": "0001_a",
+        "number": 1,
+        "slug": "a",
+        "state": {"state": "ready", "label": "Ready", "color": "g"},
+    }
+
+    def test_the_line_and_none(self):
+        w = {"code": "full", "why": "x", "moves_it": "y", "until": ""}
+        self.assertEqual(read.card({**self.UNIT, "waiting": w})["waiting"], w)
+        self.assertIsNone(read.card(self.UNIT)["waiting"])
+
+    def test_none_while_the_autopilot_is_off(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "work" / "proj").mkdir(parents=True)
+        config = Config(
+            workspaces=(str(root / "work" / "proj"),),
+            working_dir=str(root / "work"),
+            data_dir=str(root / "data"),
+        )
+        core = Core(config, Sessions(config))
+        key = core.ws.key(str(root / "work" / "proj"))
+        core.autopilot.held[key] = {"0001_a": ("full", "")}
+        data = {"units": [dict(self.UNIT)]}
+        core.autopilot.show(key, data)
+        self.assertIsNone(read.card(data["units"][0])["waiting"])
 
 
 class AUnitThatEndedLosesItsScratch(unittest.TestCase):

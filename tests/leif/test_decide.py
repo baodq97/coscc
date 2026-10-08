@@ -700,7 +700,8 @@ class Scheduling(unittest.TestCase):
             100.0,
         )
         self.assertEqual([c["unit"] for c in got["chosen"]], ["0012_c", "0011_b"])
-        self.assertEqual(got["held"], {})
+        # The one `max_parallel` held back says so.
+        self.assertEqual(got["held"], {"0010_a": ("full", "")})
 
     def test_running_steps_count_person_ones_included(self):
         got = decide.pick(
@@ -1364,3 +1365,67 @@ class AWorkspaceStopIsNoUnitsStop(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AfterASessionLimit(unittest.TestCase):
+    """0170 R5: a step the account's session limit stopped waits for its reset, then runs again."""
+
+    @staticmethod
+    def end(resets_at="", minutes=0.0, outcome="session-limit"):
+        return {
+            "kind": "end",
+            "workspace": "w",
+            "unit": "0001_a",
+            "stage": "impl",
+            "outcome": outcome,
+            "resets_at": resets_at,
+            "at": at(-timedelta(minutes=minutes)),
+        }
+
+    def test_it_is_no_stop_e(self):
+        self.assertIsNone(decide.stop_for(unit(), nxt("impl", "write-impl"), self.end(), False))
+
+    def test_it_waits_before_its_reset_and_runs_after(self):
+        later = (NOW + timedelta(minutes=30)).isoformat()
+        last = self.end(later)
+        self.assertEqual(
+            decide.after_session_limit(last, [last], NOW), (None, ("session-limit", later))
+        )
+        self.assertEqual(
+            decide.after_session_limit(last, [last], NOW + timedelta(minutes=31)), (None, None)
+        )
+
+    def test_with_no_reset_said_it_runs_on_the_next_pass(self):
+        last = self.end()
+        self.assertEqual(decide.after_session_limit(last, [last], NOW), (None, None))
+
+    def test_the_third_of_a_day_is_the_stop_e(self):
+        ends = [self.end(minutes=m) for m in (20, 10, 1)]
+        self.assertEqual(decide.after_session_limit(ends[1], ends[:2], NOW), (None, None))
+        stop, why = decide.after_session_limit(ends[2], ends, NOW)
+        self.assertEqual((stop["kind"], why), ("e", None))
+        # Another day's are not counted.
+        old = [self.end(minutes=60 * 24 * 2), self.end(minutes=60 * 24 * 2), ends[2]]
+        self.assertEqual(decide.after_session_limit(ends[2], old, NOW), (None, None))
+
+    def test_any_other_last_record_is_no_part_of_it(self):
+        self.assertEqual(
+            decide.after_session_limit(self.end(outcome="done"), [], NOW), (None, None)
+        )
+        self.assertEqual(decide.after_session_limit(None, [], NOW), (None, None))
+
+    def test_what_the_cap_holds_is_not_queued(self):
+        """0170 R8: a run again after the reset still goes through the cap."""
+        got = decide.pick(
+            [{"unit": "0001_a", "stage": "impl", "files": set(), "rank": 1, "need": 5.0}],
+            [],
+            4,
+            0.0,
+        )
+        self.assertEqual(([c["unit"] for c in got["capped"]], got["chosen"]), (["0001_a"], []))
+
+
+class AConflictWhileItsStepRuns(unittest.TestCase):
+    def test_integrated_after_or_by_a_person(self):
+        self.assertEqual(decide.conflict_running("impl", True), ("conflict-running", "impl"))
+        self.assertEqual(decide.conflict_running("impl", False), ("conflict-person", "impl"))
