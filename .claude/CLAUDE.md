@@ -20,8 +20,8 @@ on their words.
 
 ## Verifying your work
 
-Lint, `tests/test_*.py` and the tests of what you changed green before done; CI runs `npm test`,
-every test. Never skip a test or switch a check off: fix the code.
+Before done `npm run ci` (CI's list) exits 0 on the PR head; until then lint and the tests you
+changed suffice. Never skip a test or switch a check off.
 
 ## Conventions
 
