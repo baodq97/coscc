@@ -22,6 +22,15 @@ class TheTableIsTheOneTheSpecChose(unittest.TestCase):
         self.assertFalse(agents.shown("scout"))
 
 
+class EachRecordNamesTheAgentThatRanIt(unittest.TestCase):
+    def test_its_agent_then_its_stage_then_the_aliases(self):
+        self.assertEqual(agents.agent_of({"agent": "review", "stage": "impl"}), "review")
+        self.assertEqual(agents.agent_of({"stage": "pr"}), "pr")
+        self.assertEqual(agents.agent_of({"agent": "", "stage": "precedent"}), "leif")
+        self.assertEqual(agents.agent_of({"agent": "chat", "stage": "chat"}), "leif")
+        self.assertEqual(agents.agent_of({}), "")
+
+
 class OverridesComeFirst(unittest.TestCase):
     def test_an_owner_field_wins_and_the_rest_stay_the_builtins(self):
         pack.write("review", "name", "Judge")

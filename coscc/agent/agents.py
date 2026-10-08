@@ -103,6 +103,17 @@ def of_record(record: dict[str, Any]) -> str:
     return str(row["name"]) if row else ""
 
 
+# Keys a record names that are not the agent that ran it: a stage of an older version, and the engine
+# Leif's chat turns run under.
+_ALIASES = {"precedent": "leif", "chat": "leif"}
+
+
+def agent_of(record: dict[str, Any]) -> str:
+    """The key of the agent that ran a record: its `agent`, else its stage, through `_ALIASES`."""
+    key = str(record.get("agent") or record.get("stage") or "")
+    return _ALIASES.get(key, key)
+
+
 def author_of(text: str) -> str:
     """The value of the last `Author:` above `## Answers`, or `""`."""
     found = ""

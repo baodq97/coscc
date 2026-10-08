@@ -24,6 +24,10 @@ export function agentFace(key: string): AgentFace {
   return index.faces[key] ?? { name: capital(key), glyph: capital(key).slice(0, 1) };
 }
 
+/** Each agent's face by its key: every pack's rows, and the stages the app runs with no row. */
+export const facesOf = (packs: PackShown[]): Record<string, AgentFace> =>
+  Object.fromEntries(packs.flatMap((p) => [...p.agents, ...p.app_agents].map((a) => [a.key, { name: a.name, glyph: a.glyph }])));
+
 /** Read the agents and packs again, after the page added or removed one. */
 export const refreshPacks = () => index.reload();
 
@@ -38,7 +42,7 @@ export function PackProvider({ children }: { children: ReactNode }) {
   const settled = ws.state !== "loading" && (!cwd || packs.state !== "loading");
   if (!settled) return <div className="page"><SkeletonRows rows={4} /></div>;
 
-  const faces = Object.fromEntries((packs.data ?? []).flatMap((p) => p.agents.map((a) => [a.key, { name: a.name, glyph: a.glyph }])));
+  const faces = facesOf(packs.data ?? []);
   const states = (packs.data ?? []).flatMap((p) => p.processes.flatMap((pr) => Object.entries(pr.states)));
   const labels: Record<string, string> = {};
   const withAgent = new Set<string>();

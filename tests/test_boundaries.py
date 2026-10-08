@@ -90,6 +90,7 @@ FOREIGN_SQL: set[tuple[str, str]] = {
 
 DICT_ANY: set[str] = {
     "coscc.agent.agents:address",
+    "coscc.agent.agents:agent_of",
     "coscc.agent.agents:agent_for",
     "coscc.agent.agents:identity_section",
     "coscc.agent.agents:label",

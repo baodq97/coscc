@@ -76,9 +76,23 @@ NAME_MAX = 24
 GLYPH_MAX = 2
 LINE_MAX = 200
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
-# Names no row takes, in any case: the runes of the stages the app runs with no row of their own
-# (pull request, ship) and a name retired with its agent. A row's own name is taken already.
-RESERVED_NAMES = {"Ansuz": "the pull-request stage", "Othala": "the ship stage", "Jera": "retired"}
+
+
+class AgentFace(TypedDict):
+    key: str
+    name: str
+    glyph: str
+
+
+# The face of each action the app runs with no row of its own (the pull request, the merge), as
+# every screen names the state that runs it: name, glyph, what it is.
+APP_FACES = {
+    "open-pr": ("Ansuz", "ᚨ", "the pull-request stage"),
+    "merge": ("Othala", "ᛟ", "the ship stage"),
+}
+# Names no row takes, in any case: the runes of those actions and a name retired with its agent. A
+# row's own name is taken already.
+RESERVED_NAMES = {**{n: what for n, _, what in APP_FACES.values()}, "Jera": "retired"}
 
 POLICIES = ("allow", "ask", "off")
 # A row a trigger starts may hold Bash only inside Claude Code's OS sandbox:
@@ -1399,12 +1413,6 @@ class ProcessShown(Process):
     own: bool
 
 
-class AgentFace(TypedDict):
-    key: str
-    name: str
-    glyph: str
-
-
 class PackShown(TypedDict):
     name: str
     version: str
@@ -1414,6 +1422,8 @@ class PackShown(TypedDict):
     processes: list[ProcessShown]
     # Each of its agents as every screen names it: what the studio reads before any screen shows.
     agents: list[AgentFace]
+    # Each state of its processes the app runs itself (`APP_FACES`), named as its action is.
+    app_agents: list[AgentFace]
     # `local`, the owner's own pack; one they imported (which they may remove).
     own: bool
     imported: bool
@@ -1456,6 +1466,19 @@ def _local_manifest() -> dict[str, Any]:
     return {"name": LOCAL_NAME, "version": "1.0.0", **(found if isinstance(found, dict) else {})}
 
 
+def app_agents(name: str) -> list[AgentFace]:
+    """Pack `name`'s states whose action the app runs, each with its action's face."""
+    out: dict[str, AgentFace] = {}
+    for ref, found in processes().items():
+        if ref.partition("/")[0] != name:
+            continue
+        for state, step in found["states"].items():
+            face = APP_FACES.get(str(step.get("action") or ""))
+            if face:
+                out.setdefault(state, AgentFace(key=state, name=face[0], glyph=face[1]))
+    return list(out.values())
+
+
 def packs_shown(data: Any, key: str) -> list[PackShown]:
     """The packs for Settings: name, version, on, the default process, each process's states,
     whose it is and what does not load."""
@@ -1483,6 +1506,7 @@ def packs_shown(data: Any, key: str) -> list[PackShown]:
                     if ref.partition("/")[0] == name
                 ],
                 "agents": faces.get(name, []),
+                "app_agents": app_agents(name),
                 "own": name == LOCAL_NAME,
                 "imported": name not in (builtin_name, LOCAL_NAME),
                 "problems": list(info["problems"]),

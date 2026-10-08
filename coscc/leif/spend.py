@@ -11,6 +11,7 @@ import statistics
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Iterable
 
+from coscc.agent import agents
 from coscc.store import journal
 from coscc.store.journal import TOKEN_FIELDS
 from coscc.units import states
@@ -153,8 +154,7 @@ def model(  # noqa: PLR0915 - still to split
         _add(total, r)
         _add(by_unit.setdefault(unit, _zero()), r)
         _add(by_stage.setdefault(stage, _zero()), r)
-        # Who ran it: an older `end` names no agent, and its stage is its agent's key.
-        agent = str(r.get("agent") or stage)
+        agent = agents.agent_of(r)
         _add(by_agent.setdefault(agent, _zero()), r)
         if r.get("run"):
             agent_runs.setdefault(agent, []).append(

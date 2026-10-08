@@ -77,11 +77,12 @@ class InsightsMeasureTheShippedUnitsAgainstTheTargets(unittest.TestCase):
         )
         self.assertEqual(
             {r["agent"]: r["usd"] for r in got["by_agent"]},
-            {"review": 8.0, "impl": 6.0, "pr": 0.5, "chat": 0.25},
+            {"review": 8.0, "impl": 6.0, "pr": 0.5, "leif": 0.25},
         )
-        [chat] = [r for r in got["by_agent"] if r["agent"] == "chat"]
+        # A chat turn is Leif's: one row, under the agent that ran it.
+        [leif] = [r for r in got["by_agent"] if r["agent"] == "leif"]
         self.assertEqual(
-            chat["runs"],
+            leif["runs"],
             [
                 {
                     "run": "c1",

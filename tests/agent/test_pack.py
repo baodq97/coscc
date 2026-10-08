@@ -1044,6 +1044,14 @@ class ManyPacks(unittest.TestCase):
         impl = next(a for a in shown["coscc-sdlc"]["agents"] if a["key"] == "impl")
         self.assertEqual(impl["name"], pack.row("impl")["name"])
         self.assertNotIn("mine-row", [a["key"] for a in shown["coscc-sdlc"]["agents"]])
+        # The stages the app runs ride with the built-in pack alone.
+        self.assertEqual(
+            [(a["key"], a["name"], a["glyph"]) for a in shown["coscc-sdlc"]["app_agents"]],
+            [("pr", "Ansuz", "ᚨ"), ("ship", "Othala", "ᛟ")],
+        )
+        self.assertEqual((shown["mine"]["app_agents"], shown["local"]["app_agents"]), ([], []))
+        estimate = next(a for a in shown["coscc-sdlc"]["agents"] if a["key"] == "estimate")
+        self.assertEqual((estimate["name"], estimate["glyph"]), ("Berkanan", "ᛒ"))
 
     def test_an_off_packs_scheduled_row_does_not_run_on_its_schedule(self):
         data = Data(self.d.name)

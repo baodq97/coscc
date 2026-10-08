@@ -1,6 +1,7 @@
 ---
 # The backlog's Propose estimates button: one turn, no tools. Ceilings chosen, not measured.
-name: "Estimate"
+name: "Berkanan"
+glyph: "ᛒ"
 model: {"id": "claude-opus-5-5[1m]", "effort": "medium"}
 tools: {}
 output: {"kind": "session", "version": 1, "purpose": "Hand the app your estimate of every backlog unit, with the relations you propose.", "fields": {"units": {"list": {"unit": "text", "value": "number", "effort": "text", "similar": {"list": "text"}, "basis": "text", "relations": {"list": {"type": "text", "other": "text", "reason": "text"}}}}}}
