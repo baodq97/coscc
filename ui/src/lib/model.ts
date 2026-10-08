@@ -33,10 +33,14 @@ export function liveQuestions(u: Unit, open: number = u.open): number {
   return group === "Dropped" || group === "Shipped" ? 0 : open;
 }
 
-/** Whether the run button is offered: a stage that has not run yet is refused only for `missing` (its file), which is what running makes. */
+// The codes of a blocked `next` whose stage still runs: what it lacks is written by that stage,
+// or the last review round is faulty and a new round mends it.
+const RUN_ANYWAY = ["missing", "review-incomplete"];
+
+/** Whether the run button is offered: a stage `next` names is refused unless its only codes are `RUN_ANYWAY`'s. */
 export function runnable(next: NextStep | undefined): boolean {
   if (!next?.stage || next.gate) return false;
-  return !next.blocked || (next.reasons.length > 0 && next.reasons.every((r) => r === "missing"));
+  return !next.blocked || (next.reasons.length > 0 && next.reasons.every((r) => RUN_ANYWAY.includes(r)));
 }
 
 /** What running a stage costs a person to know: its agent, model, effort and ceilings, as its row configures them. */

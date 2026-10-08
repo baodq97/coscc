@@ -635,6 +635,7 @@ describe("work and needs you", () => {
     expect(runnable(next({}))).toBe(true);
     expect(runnable(next({ blocked: true, reasons: ["missing"] }))).toBe(true);
     expect(runnable(next({ blocked: true, reasons: ["missing", "waiting-on"] }))).toBe(false);
+    expect(runnable(next({ blocked: true, reasons: ["review-incomplete"] }))).toBe(true);
     expect(runnable(next({ blocked: true, reasons: [] }))).toBe(false);
     expect(runnable(next({ gate: "closed" }))).toBe(false);
     expect(runnable(next({ stage: null }))).toBe(false);
