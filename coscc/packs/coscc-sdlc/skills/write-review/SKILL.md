@@ -32,9 +32,10 @@ non-zero. Read the changed files, not the whole tree.
    earlier round, `[fixed <sha>]` or `[open]`, a `low` too; a round that drops one is not
    counted and runs again.
 4. Severity: `high` or `medium` only for broken behaviour, lost data, a security hole, or a UI
-   standard rule `S<n>`, and a finding naming `S<n>` always blocks. Wording, docstrings,
-   comments, citations and style are `low` nits: at most 5, the rest as a count, never
-   blocking. Lowering an earlier round's `high`/`medium` is not a fix.
+   standard rule `S<n>`; the loop decides whether an `S<n>` finding blocks, so write its location as
+   the source file that draws the violation, not the screenshot, and never label it non-blocking
+   yourself. Wording, docstrings, comments, citations and style are `low` nits: at most 5, the rest
+   as a count, never blocking. Lowering an earlier round's `high`/`medium` is not a fix.
 5. Verdict: any blocking finding not closed or a criterion `no`, `changes-requested`; otherwise
    `pass`, which opens `ship`. An `[open]` `low` does not block. If every blocking one is `[needs-person]`, `needs-person`.
 6. Never write `Verdict: incomplete` and never merge.
