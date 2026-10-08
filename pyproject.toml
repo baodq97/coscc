@@ -71,6 +71,8 @@ testpaths = ["tests"]
 addopts = "-p no:cacheprovider"
 # A test that hangs fails with its name instead of holding the run until a caller gives up.
 timeout = 60
+# A passed test's `tmp_path` is removed at its end; a failed one's is kept to look at.
+tmp_path_retention_policy = "failed"
 markers = [
     "real_loop: the loop runs as a real child, not in this process",
     "real_schema: a new database runs the schema, not a copy of one made before",

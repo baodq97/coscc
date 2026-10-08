@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import uuid
 from contextlib import contextmanager
 
@@ -33,6 +34,10 @@ os.environ["GIT_CONFIG_COUNT"] = "2"
 @pytest.fixture(autouse=True)
 def _own_data_root(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DEFAULT_DIR", str(tmp_path / "cos"))
+    # Every temporary folder a test makes lies in its `tmp_path`, removed once it passed
+    # (`tmp_path_retention_policy`), so one whose cleanup never ran is not left behind.
+    (tmp_path / "tmp").mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "tmp"))
     # The owner's layer of the agents' rows lives under the data root an app set; none here.
     monkeypatch.setattr(pack, "ROOT", None)
 
