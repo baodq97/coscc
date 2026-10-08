@@ -50,6 +50,7 @@ NO_SUBMISSION = "no-submission"
 OUTCOME: dict[Status, Outcome] = {
     "done": "done",
     "paused-budget": "paused-budget",
+    "session-limit": "session-limit",
     "failed": "failed",
     "refused": "failed",
     "cancelled": "cancelled",
@@ -210,15 +211,31 @@ def ceiling_of(terminal: str) -> str:
     return "usd" if "budget" in text else ""
 
 
+# What `coscc/agent/sessions.py` puts in `terminal_reason` when the account hit its session limit
+# (`AssistantMessage.error == "rate_limit"`): the CLI's own reason says nothing of it.
+SESSION_LIMIT = "session-limit"
+
+
+def session_limit_of(terminal: str) -> bool:
+    """Whether the session stopped at the account's session limit rather than at its end."""
+    return terminal == SESSION_LIMIT
+
+
+def limit_detail(resets_at: str) -> str:
+    """What a run stopped at the session limit says, with the reset when the CLI told it."""
+    return "hit the account's session limit" + (f"; it resets at {resets_at}" if resets_at else "")
+
+
 def status_of(outcome: str) -> Status:
     """The `Status` a board step's `outcome` is: a person's Stop is `cancelled`, any other that is
-    not `done` or `paused-budget` is `failed`."""
+    not `done`, `paused-budget` or `session-limit` is `failed`."""
     return _STATUS.get(outcome, "failed")
 
 
 _STATUS: dict[str, Status] = {
     "done": "done",
     "paused-budget": "paused-budget",
+    "session-limit": "session-limit",
     "stopped": "cancelled",
     "cancelled": "cancelled",
 }
@@ -423,7 +440,8 @@ async def run(
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """Yield `("chunk", text)` and `("tool", name)` as the reply arrives, then one `("done", Run)`.
 
-    A session at a ceiling is `paused-budget`; one refused before it opened `refused`; a channel
+    A session at a ceiling is `paused-budget`; one at the account's session limit `session-limit`,
+    its `end` carrying `resets_at`; one refused before it opened `refused`; a channel
     left empty `failed`. `finish` hears the run before its `end` (the estimate writes its records
     there, Gebo reads GitHub). An update that pauses the session raises `Suspended` and writes no
     `end`: its `suspend` row is the end, and `given.resume` takes it up under what is left of its
@@ -448,7 +466,7 @@ async def run(
         denials.listener = recorder.denied
         recorder.start()
         tell_config(recorder, agent.model, agent.effort, agent.sources, turns, budget, grant)
-    reply, terminal, models_used = "", used_up, []
+    reply, terminal, models_used, resets_at = "", used_up, [], ""
     channel = given.channel
     try:
         bad = pack.problems(agent.key) if given.resume is None and pack.row(agent.key) else []
@@ -471,7 +489,8 @@ async def run(
                     out.cost = dict(payload.get("cost") or {})
                     terminal = str(payload.get("terminal_reason") or "")
                     models_used = list(payload.get("models_used") or [])
-        _judge(out, agent.key, terminal, channel, reply)
+                    resets_at = str(payload.get("resets_at") or "")
+        _judge(out, agent.key, terminal, channel, reply, resets_at)
     except Suspended:
         # An update paused it and wrote its `suspend` row; the next start goes on from there.
         await _abandon(recorder)
@@ -495,7 +514,10 @@ async def run(
     closed = await _close(recorder, out)
     if channel is not None:
         closed.update(guard=submit_mod.RUN_SUBMITTED, submitted=submit_mod.submitted(channel))
-    _end(ctx, agent, given, stage, out, denials, models_used, terminal, {**closed, **extra})
+    limit = {"resets_at": resets_at or None} if out.status == "session-limit" else {}
+    _end(
+        ctx, agent, given, stage, out, denials, models_used, terminal, {**closed, **extra, **limit}
+    )
     yield ("done", out)
 
 
@@ -616,9 +638,14 @@ def _owner(agent: Agent, given: Input, stage: str, start_at: Any, run: str) -> d
     }
 
 
-def _judge(out: Run, key: str, terminal: str, channel: Any, reply: str) -> None:
-    """How a session that ended by itself ended: at a ceiling, with its channel empty, or done."""
-    if ceiling_of(terminal):
+def _judge(
+    out: Run, key: str, terminal: str, channel: Any, reply: str, resets_at: str = ""
+) -> None:
+    """How a session that ended by itself ended: at the session limit, at a ceiling, with its
+    channel empty, or done."""
+    if session_limit_of(terminal):
+        out.status, out.detail = "session-limit", limit_detail(resets_at)
+    elif ceiling_of(terminal):
         out.status, out.detail = "paused-budget", f"stopped at its ceiling: {terminal}"
     elif channel is not None and not submit_mod.submitted(channel):
         out.detail = f"{NO_SUBMISSION}: the session handed back no {key} through submit"

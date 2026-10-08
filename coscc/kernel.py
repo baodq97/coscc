@@ -84,8 +84,8 @@ OWNER = "owner"
 
 
 # How a run of an agent ended (`coscc/runner/run.py`). `paused-budget`: it stopped at one of its
-# two ceilings.
-Status = Literal["done", "paused-budget", "failed", "refused", "cancelled"]
+# two ceilings. `session-limit`: the account hit its session limit; it waits for the reset.
+Status = Literal["done", "paused-budget", "session-limit", "failed", "refused", "cancelled"]
 STATUSES: tuple[Status, ...] = get_args(Status)
 
 

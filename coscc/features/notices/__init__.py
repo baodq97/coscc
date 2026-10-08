@@ -79,6 +79,7 @@ TRIGGERS = ("event", "schedule", "manual", "leif")
 ENDED = {
     "failed": "failed",
     "paused-budget": "paused at its ceiling",
+    "session-limit": "waits for the account's session limit to reset",
     "stopped": "was stopped",
     "cancelled": "was cancelled",
 }
@@ -110,8 +111,9 @@ def _agent_end(record: dict[str, Any], outcome: str, where: str) -> tuple[str, s
     nothing."""
     if record.get("started_by") not in TRIGGERS or not record.get("agent"):
         return None
-    # A run the app cut short says nothing here: a restart, or a pause at its ceiling (`agent-off`).
-    if record.get("skipped") or outcome in ("cancelled", "paused-budget"):
+    # A run the app cut short says nothing here: a restart, a pause at its ceiling (`agent-off`), or
+    # at the account's session limit (its next run waits for the reset).
+    if record.get("skipped") or outcome in ("cancelled", "paused-budget", "session-limit"):
         return None
     # A follow-up question to a run (`ask`, `parent_run`) is no run of the agent's own.
     if record.get("stage") == "ask" or record.get("parent_run"):

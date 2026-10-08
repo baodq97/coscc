@@ -49,7 +49,9 @@ MODES = ("manual", "autonomous")
 # stopped while the step was still running. `stopped` is a person pressing Stop and carries
 # `stopped_by`, the name they typed. `paused-budget` is a run that hit one of its two ceilings and
 # kept its session: its `end` names the `ceiling`, and a `raise` record goes on from it.
-Outcome = Literal["done", "failed", "paused-budget", "cancelled", "stopped"]
+# `session-limit` is a run the account's session limit stopped: its `end` carries `resets_at` (ISO,
+# with its zone) when the CLI said when, and nothing goes on from it but a new run after then.
+Outcome = Literal["done", "failed", "paused-budget", "session-limit", "cancelled", "stopped"]
 OUTCOMES: tuple[Outcome, ...] = get_args(Outcome)
 
 # The fields a caller may report about what a turn cost. Anything else in a record is carried
