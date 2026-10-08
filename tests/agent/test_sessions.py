@@ -10,7 +10,6 @@ import shutil
 import sys
 import tempfile
 import unittest
-from contextlib import suppress
 from pathlib import Path
 from unittest import mock
 
@@ -1676,9 +1675,9 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((_CountingClient.made, self.s._steps, self.s._turns), ([], set(), {}))
 
     async def test_suspend_closes_every_session_in_parallel(self):
-        # A close is open from the client's `disconnect` to the SIGKILL that ends `_shut`. The first
-        # close stays open until the second has started (or the bound passes), so a sequential
-        # `suspend_all` records start, end, start whatever the speed of the machine.
+        # A close is open from the client's `disconnect` to the SIGKILL that ends `_shut`. Each
+        # close stays open until the other has started, or until its own `DISCONNECT_TIMEOUT`
+        # kills it, so a sequential `suspend_all` records start, end, start.
         events, started, both = [], [], asyncio.Event()
 
         class Process(_Process):
@@ -1696,8 +1695,7 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
                 started.append(sid)
                 if len(started) == 2:
                     both.set()
-                with suppress(TimeoutError):
-                    await asyncio.wait_for(both.wait(), 1)
+                await both.wait()
 
             return wait
 

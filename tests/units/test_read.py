@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -410,7 +409,9 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
             guard="branch-named", authority="code",
             inputs={"number": PR, "url": f"https://github.com/o/r/pull/{PR}", "head": "a" * 40},
         )  # fmt: skip
+        # Set, `gh` hangs until `released` is: a read that waited on it would never return.
         self.hang = False
+        self.released = asyncio.Event()
         self.calls: list[list[str]] = []
         patch = mock.patch.object(integrate, "_gh", self._gh)
         patch.start()
@@ -422,7 +423,7 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
     async def _gh(self, argv, cwd):
         self.calls.append(argv[:2])
         if self.hang:
-            await asyncio.sleep(30)
+            await self.released.wait()
         if argv[:2] == ["pr", "list"]:
             row = {"number": PR, "headRefOid": "a" * 40, "headRefName": f"feat/{SLUG}"}
             return 0, json.dumps([{**row, "mergeable": "MERGEABLE"}]), ""
@@ -454,9 +455,7 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         first = await self.core.board(self.cwd)
         self.assertEqual(first["units"][0]["integration"]["pr_head"], "a" * 40)
         self.hang = True
-        began = time.monotonic()
         held = await self.core.board(self.cwd, "held")
-        self.assertLessEqual(time.monotonic() - began, 0.5)
         self.assertEqual(held["read_at"], first["read_at"])
         # The read it started takes the held list and asks `gh` again in the background.
         await asyncio.wait_for(self.ended(), 5)

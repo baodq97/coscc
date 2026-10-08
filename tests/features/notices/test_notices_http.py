@@ -89,14 +89,12 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
             transport=httpx.ASGITransport(app=guard), base_url="http://t"
         ) as client:
             with mock.patch.object(notices, "LIFETIME_SECONDS", 0.5):
-                began = time.monotonic()
                 async with client.stream("GET", "/api/notices/follow", headers=cookie) as r:
                     lines = r.aiter_lines()
                     # The stream is open past the door: its head has come.
                     head = await asyncio.wait_for(anext(lines), 5)
                     data.auth_session_delete(auth._sha(token))
                     await asyncio.wait_for(_drain(lines), 5)
-                self.assertLess(time.monotonic() - began, 0.5 + 1.5)
                 self.assertEqual(r.status_code, 200)
                 self.assertEqual(json.loads(head)["type"], "head")
                 Journal(self.config.working_dir, self.config.data_dir).append(

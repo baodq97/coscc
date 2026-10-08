@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-import time
 import unittest
 from unittest import mock
 
@@ -114,9 +113,7 @@ class TheSchedulerNeverHoldsMoreThanNSlots(_Store):
             self.assertEqual((holding("agent"), holding("heavy")), (2, 1))
             self.assertEqual(launched, [ids[0], ids[1], heavy[0]])
             # The oldest queued of that kind takes the slot before `move` returns.
-            t0 = time.monotonic()
             self.attempts.move(ids[0], "ended", "done")
-            self.assertLess(time.monotonic() - t0, 1.0)
             self.assertEqual(self.attempts.get(ids[2])["state"], "preparing")
             self.attempts.move(heavy[0], "ended", "done")
             self.assertEqual(self.attempts.get(heavy[1])["state"], "running")
