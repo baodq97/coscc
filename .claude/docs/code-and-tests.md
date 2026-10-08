@@ -42,7 +42,7 @@ Copy `notices`. A need no extension point serves is a kernel change, planned fir
 
 - Extension points: `routes`, `tables`, `agent` giving `Parts` of `Tool`, `Guard`
   (`check(Facts)` returns words to deny, or `None`; asked before every step and integration) and `Block` (`render(Facts)` adds prompt
-  text). A paid session of its own is no feature's: it is a row of the pack with a `trigger`
+  text), and `stop`, which cancels the feature's own background work at shutdown and waits for it. A paid session of its own is no feature's: it is a row of the pack with a `trigger`
   (`coscc/runner/triggers.py`). The core never writes a feature's name (`CoreNamesNoFeature` in `tests/test_boundaries.py`).
 - `Ctx` is built for this feature alone: `units` (`key`, `create_unit`, `main_tree`, `units`,
   `open_prs`, `own_tree`), `runs` (`journal`), `store` (the database; only your own tables),

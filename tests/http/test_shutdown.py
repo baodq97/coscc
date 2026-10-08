@@ -18,7 +18,9 @@ from unittest import mock
 import pytest
 
 from coscc.config import Config
+from coscc.features import codegraph
 from coscc.git import gh, gitops
+from coscc.http import plugin
 from coscc.http.app import Core
 from coscc.runner import triggers
 from coscc.units import board as board_reader
@@ -184,6 +186,56 @@ class ShutdownWaits(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await asyncio.wait_for(read, 5)
         self.assertEqual(self.running, 0)
+
+    def code_index(self, install, installed) -> codegraph.Indexes:
+        """The codegraph feature's `Ctx` from the core, its engine `install`ed and `installed`."""
+        ctx = plugin.ctx_of(self.core, codegraph.FEATURE)
+        plugin.create_tables(ctx.store, codegraph.FEATURE.tables)
+        idx = codegraph.Indexes(ctx, self.data_dir / "codegraph", install, installed, mock.Mock())
+        patch = mock.patch.object(codegraph, "_indexes", return_value=idx)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return idx
+
+    async def test_a_code_index_refresh_is_cancelled_and_waited_for(self):
+        idx = self.code_index(mock.Mock(), lambda home: Path(sys.executable))
+        reached = asyncio.Event()
+
+        async def main_tree(*args):
+            reached.set()
+            await asyncio.Event().wait()
+
+        patch = mock.patch.object(plugin.worktrees, "main_tree", main_tree)
+        patch.start()
+        self.addCleanup(patch.stop)
+        before = asyncio.all_tasks()
+        codegraph.on_set(idx.ctx, self.cwd, "on")
+        await asyncio.wait_for(reached.wait(), 5)
+        # The pick's `ensure` and the refresh it waits on.
+        started = asyncio.all_tasks() - before
+        await asyncio.wait_for(self.core.shutdown(), 5)
+        self.assertEqual(len(started), 2)
+        self.assertTrue(all(t.cancelled() for t in started))
+
+    async def test_a_code_index_install_holds_shutdown_until_its_thread_returned(self):
+        go, entered = threading.Event(), threading.Event()
+
+        def install(home: Path) -> str:
+            entered.set()
+            go.wait(10)
+            (self.data_dir / "installed").write_text("x", encoding="utf-8")
+            return "no engine here"
+
+        idx = self.code_index(install, lambda home: "not installed")
+        self.addCleanup(go.set)
+        codegraph.on_set(idx.ctx, self.cwd, "on")
+        self.assertTrue(await asyncio.to_thread(entered.wait, 5))
+        down = asyncio.ensure_future(self.core.shutdown())
+        self.assertTrue(await self.still_running(down))
+        go.set()
+        await asyncio.wait_for(down, 5)
+        self.assertTrue((self.data_dir / "installed").exists())
+        self.assertEqual(idx.status("k").state, "failed")
 
     async def test_a_removal_ends_as_it_would_and_none_starts_once_shutdown_began(self):
         self.boards._remove_later(self.cwd, {"name": "0001_done", "why": "finished"})

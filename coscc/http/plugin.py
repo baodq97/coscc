@@ -10,6 +10,7 @@ next write for that pair moves it.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from collections.abc import Sequence
@@ -176,7 +177,7 @@ def ctx_of(core: Core, feature: Feature) -> Ctx:
     async def create_unit(workspace: str, slug: str, brief: str) -> str:
         return str((await core.answers.create_unit(workspace, slug, brief))["unit"])
 
-    return Ctx(
+    ctx = Ctx(
         Units(
             workspace_key,
             create_unit,
@@ -193,6 +194,9 @@ def ctx_of(core: Core, feature: Feature) -> Ctx:
         core.asks.setdefault(feature.name, Asked(core.boards.changed)),
         _required_checks,
     )
+    if feature.stop is not None:
+        core.stops[feature.name] = functools.partial(feature.stop, ctx)
+    return ctx
 
 
 async def _units(core: Core, workspace: str, fresh: bool) -> list[dict[str, Any]]:
