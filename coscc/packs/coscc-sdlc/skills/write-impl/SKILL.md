@@ -27,8 +27,8 @@ From the board the gate was asked (the prompt says so); at a terminal ask
 
 1. Write the code from the plan, starting from an existing example of the same kind and its
    shared helpers. Run the tests of the files you change while working, and the plan's
-   `## Verification` and `tests/test_*.py` (the repository's checks, ~25 s) at the end. The
-   whole suite is CI's: a red CI sends the work back.
+   `## Verification` and the whole suite once at the end. A test red that your change did not
+   cause goes under `## What is still open` with its name and error; never rerun it to green.
 2. For each rule you change, search again for every other path to the same outcome, plan or no
    plan: other writers of the same field or state, the automatic paths and the ones a person
    starts, every caller. Change one the plan missed to the new rule and note it under
