@@ -226,7 +226,7 @@ function Estimate({ disabled, onSave }: { disabled: boolean; onSave: (value: num
       <Button size="sm" kind="primary" disabled={disabled || missing} onClick={() => onSave(value, effort, basis.trim())}>
         Save
       </Button>
-      {missing && <div className="faint" style={{ fontSize: 12 }}>Pick a value, an effort and a reason.</div>}
+      {missing && <div className="faint" style={{ fontSize: 12, flexBasis: "100%" }}>Pick a value, an effort and a reason.</div>}
     </div>
   );
 }
