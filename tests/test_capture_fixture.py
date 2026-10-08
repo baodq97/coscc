@@ -1,4 +1,4 @@
-"""The screenshot fixture's `0013` is held by `0012`, so the app under the camera starts no step."""
+"""The screenshot fixture's overlapping unit is held by the running one, so the app under the camera starts no step."""
 
 import unittest
 
