@@ -1,7 +1,7 @@
 // What the pack says about its states and agents, read once for the whole studio: a state's plain
 // label, an agent's name and glyph. No screen names a state itself; it asks here.
 
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from "react";
 import type { PackShown } from "../api.gen";
 import { useResource } from "./api";
 import { SkeletonRows } from "../components/ui";
@@ -33,6 +33,14 @@ export const refreshPacks = () => index.reload();
 
 export const useIndex = () => useContext(Ctx);
 
+// A part drawn outside the provider (the top bar's crumbs) is drawn again once the packs are read.
+const readers = new Set<() => void>();
+export const usePacksRead = () =>
+  useSyncExternalStore(
+    (f) => (readers.add(f), () => void readers.delete(f)),
+    () => index,
+  );
+
 // Every screen waits on this one read, so it is the packs alone (a few KB, no run log): the agents'
 // names ride with them. Never the Agents page's read, which counts every run.
 export function PackProvider({ children }: { children: ReactNode }) {
@@ -40,6 +48,7 @@ export function PackProvider({ children }: { children: ReactNode }) {
   const cwd = ws.data?.workspaces[0]?.path;
   const packs = useResource(cwd ? "/api/packs" : null, cwd ? { cwd } : {});
   const settled = ws.state !== "loading" && (!cwd || packs.state !== "loading");
+  useEffect(() => readers.forEach((f) => f()), [packs.data]);
   if (!settled) return <div className="page"><SkeletonRows rows={4} /></div>;
 
   const faces = facesOf(packs.data ?? []);

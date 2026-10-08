@@ -12,13 +12,13 @@ function App() {
     const params = match(s.path, path);
     if (params)
       return (
-        <Shell title={s.title} crumbs={s.crumbs ? s.crumbs(params) : [s.title]}>
+        <Shell title={s.title} crumbs={() => (s.crumbs ? s.crumbs(params) : [s.title])}>
           {s.render(params)}
         </Shell>
       );
   }
   return (
-    <Shell title="Not found" crumbs={["Not found"]}>
+    <Shell title="Not found" crumbs={() => ["Not found"]}>
       <div className="page">
         <Empty icon="search" title="Nothing at this address">
           The link may be old. Ask Leif with <kbd>⌘K</kbd>, or go to the briefing.
