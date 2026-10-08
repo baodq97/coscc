@@ -252,7 +252,10 @@ class UnitStore:
             **override,
         }
         path = self.root / "state.json"
-        path.write_text(json.dumps(snap, ensure_ascii=False))
+        text = json.dumps(snap, ensure_ascii=False)
+        # Written only when it changed: a sweep asks hundreds of times with the same snapshot.
+        if not path.exists() or path.read_text() != text:
+            path.write_text(text)
         return path
 
     def argv(self, *words: str, state: bool = True) -> list[str]:

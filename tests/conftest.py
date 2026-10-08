@@ -52,13 +52,16 @@ def _empty_db(tmp_path_factory) -> bytes:
 
 @pytest.fixture(autouse=True)
 def _db_without_disk_waits(request, monkeypatch, _empty_db):
-    real = db.Data.connect
-    copy = not request.node.get_closest_marker("real_schema")
+    real_connect, real_prepare = db.Data.connect, db.Data._prepare
+
+    def prepare(self, conn, wait):
+        conn.execute("PRAGMA synchronous=OFF")
+        real_prepare(self, conn, wait)
 
     @contextmanager
     def connect(self, timeout=None):
         target = self.db_path
-        if copy and not target.exists() and target.resolve() not in config.protected_databases():
+        if not target.exists() and target.resolve() not in config.protected_databases():
             self.ensure_dir()
             part = target.with_name(f".{target.name}.{uuid.uuid4().hex}")
             part.write_bytes(_empty_db)
@@ -69,11 +72,12 @@ def _db_without_disk_waits(request, monkeypatch, _empty_db):
                 pass
             finally:
                 part.unlink()
-        with real(self, timeout) as conn:
-            conn.execute("PRAGMA synchronous=OFF")
+        with real_connect(self, timeout) as conn:
             yield conn
 
-    monkeypatch.setattr(db.Data, "connect", connect)
+    monkeypatch.setattr(db.Data, "_prepare", prepare)
+    if not request.node.get_closest_marker("real_schema"):
+        monkeypatch.setattr(db.Data, "connect", connect)
 
 
 @pytest.fixture(autouse=True)
