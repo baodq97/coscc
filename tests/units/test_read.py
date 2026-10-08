@@ -524,14 +524,15 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((reads, self.core.boards.reads), ([], {}))
 
     async def test_an_ask_of_a_board_older_than_the_limit_starts_one_read(self):
-        await self.core.board(self.cwd)
+        first = await self.core.board(self.cwd)
         await self.ended()
         self.stale()
         reads = self.counted()
         held = await self.core.board(self.cwd, "held")
         await self.ended()
         self.assertEqual(reads, [self.cwd])
-        self.assertEqual(held["read_at"], self.core.boards.held[self.key]["data"]["read_at"])
+        # It answers with the board it held, and does not wait for the read it started.
+        self.assertEqual(held["read_at"], first["read_at"])
         # The read it started left a board that is young again.
         for _ in range(3):
             await self.core.board(self.cwd, "held")
