@@ -21,10 +21,26 @@ export const NOT_WAITED = [...NOT_BOARD, "board.read"];
 // The board reads in flight by workspace: every part of the page asking for one while it is read shares
 // the answer, so a burst of events makes one read of each board, not one per reader.
 const reading = new Map<string, Promise<WorkspaceBoard>>();
+// The read each workspace waits to start once the one in flight ends, for a `board.read` that came after it began.
+const queued = new Map<string, Promise<WorkspaceBoard>>();
 
-export function readBoard(w: Workspace): Promise<WorkspaceBoard> {
+/** The board of `w`, read by one read shared with the page; `after` asks for a read that begins after the call. */
+export function readBoard(w: Workspace, after = false): Promise<WorkspaceBoard> {
   const going = reading.get(w.path);
-  if (going) return going;
+  if (!going) return begin(w);
+  if (!after) return going;
+  let next = queued.get(w.path);
+  if (!next) {
+    next = going.then(() => {
+      queued.delete(w.path);
+      return readBoard(w);
+    });
+    queued.set(w.path, next);
+  }
+  return next;
+}
+
+function begin(w: Workspace): Promise<WorkspaceBoard> {
   const read = api
     .get("/api/units", { cwd: w.path })
     .then((board): WorkspaceBoard => ({ workspace: w, board }))
@@ -41,7 +57,8 @@ export function onBoardRead(list: Workspace[], got: (board: WorkspaceBoard) => v
     // The event names the resolved path: a listed path the app resolves to another (a `~`, a link)
     // matches none, so every board is read, each a held answer.
     const named = list.filter((x) => x.path === c.workspace);
-    for (const w of named.length ? named : list) readBoard(w).then(got);
+    // A read in flight may have begun before the held read ended and bring the board held before it.
+    for (const w of named.length ? named : list) readBoard(w, true).then(got);
   });
 }
 
@@ -61,7 +78,7 @@ export function useBoards(every = 120_000): { boards: WorkspaceBoard[]; loading:
   useEffect(() => {
     if (!list.length) return;
     let live = true;
-    Promise.all(list.map(readBoard)).then((got) => {
+    Promise.all(list.map((w) => readBoard(w))).then((got) => {
       last = { key, boards: got };
       if (live) setBoards(last);
     });

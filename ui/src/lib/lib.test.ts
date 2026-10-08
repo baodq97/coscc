@@ -979,6 +979,27 @@ describe("the boards in view", () => {
     expect(matches({ subject: "step.ended", workspace: "/w/b", unit: "0001_x" }, [""], "", NOT_WAITED)).toBe(true);
     expect(matches({ subject: "", workspace: "" }, [""], "", NOT_WAITED)).toBe(true);
   });
+
+  it("reads once more after a read in flight when a board.read comes, and shares that read", async () => {
+    const done: ((v: { units: string[] }) => void)[] = [];
+    const get = vi.spyOn(api, "get").mockImplementation((() => new Promise((r) => done.push(r))) as never);
+    // The 400 ms read after a step ended is in flight while the held read it started ends.
+    const before = readBoard(a);
+    const [ready, also] = [readBoard(a, true), readBoard(a, true)];
+    expect(also).toBe(ready);
+    expect(get).toHaveBeenCalledTimes(1);
+    done[0]({ units: ["held before"] });
+    expect((await before).board).toEqual({ units: ["held before"] });
+    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    done[1]({ units: ["read after"] });
+    expect((await ready).board).toEqual({ units: ["read after"] });
+    // With none in flight, a board.read reads at once.
+    const now = readBoard(a, true);
+    expect(get).toHaveBeenCalledTimes(3);
+    done[2]({ units: [] });
+    await now;
+    get.mockRestore();
+  });
 });
 
 describe("a name another agent has", () => {
