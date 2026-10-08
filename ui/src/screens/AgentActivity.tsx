@@ -9,7 +9,7 @@ import { Chip, Empty } from "../components/ui";
 import { onHere } from "./Agents";
 
 const VERDICT: Record<string, string> = { met: "met", "not-met": "not met", unclear: "unclear" };
-export const OUTCOME: Record<string, string> = { failed: "failed", "paused-budget": "paused at its ceiling", cancelled: "stopped", stopped: "stopped" };
+export const OUTCOME: Record<string, string> = { failed: "failed", "paused-budget": "paused at its ceiling", "session-limit": "paused at the session limit", cancelled: "stopped", stopped: "stopped" };
 
 /** What a run made, in words: "proposed 2", "verdict: met"; `""` for a run that makes nothing. */
 /** "12 runs, 3 skipped": a skipped run is counted apart, as the tile counts it. */

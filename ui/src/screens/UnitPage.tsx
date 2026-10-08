@@ -617,7 +617,8 @@ function Timeline({ detail, names, live, cwd }: { detail: Detail; names: Record<
 function RunItem({ run, name, live, cwd }: { run: UnitRun; name: string; live: boolean; cwd: string }) {
   const [shown, setShown] = useState(live);
   const [part, setPart] = useState("");
-  const paused = run.outcome === "paused-budget";
+  // At a ceiling, or at the account's session limit: a wait, not a failure.
+  const paused = run.outcome === "paused-budget" || run.outcome === "session-limit";
   const stopped = run.ended && run.outcome !== "done";
   const verb = live ? "is working on" : paused ? "paused" : stopped ? run.outcome : "finished";
   // A row no state names (a grader, a scan) has no stage word: its run is "a run".
