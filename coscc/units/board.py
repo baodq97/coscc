@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -169,14 +170,24 @@ def _tree(top: Path) -> list[tuple[str, int, int]]:
     return out
 
 
-def _read_key(path: Path, stdin: str | None) -> str:
+# A file written this recently may be written again within the same tick of its clock, keeping
+# its `mtime_ns` and size: no answer that read it is held (git's "racily clean").
+_SETTLED_NS = 2_000_000_000
+
+
+def _read_key(path: Path, stdin: str | None) -> str | None:
     """What the child's `status` answer is a function of: the snapshot on stdin, every file under
     the root's `.cos/`, the built-in pack it reads (a new install under a running app changes it),
-    and the one environment variable `harness.child_env` passes down. Run off the event loop."""
+    and the one environment variable `harness.child_env` passes down; None while a file under
+    `.cos/` changed within `_SETTLED_NS`. Run off the event loop."""
+    cos = _tree(path / ".cos")
+    since = time.time_ns() - _SETTLED_NS
+    if any(mtime > since for _, mtime, _ in cos):
+        return None
     seen = (
         stdin,
         os.environ.get("COS_REVIEW_ROUNDS"),
-        _tree(path / ".cos"),
+        cos,
         _tree(pack.BUILTIN),
     )
     return hashlib.sha256(repr(seen).encode()).hexdigest()
@@ -196,12 +207,13 @@ async def read(
 
     The loop's last answer for the root is held and given again, with no child started, while
     its key is the same (`_read_key`); every call parses the held text afresh, so what a caller
-    changes in its answer is not in the next. `hold=False` neither reads nor keeps one.
+    changes in its answer is not in the next. `hold=False`, or a file just written, neither reads
+    nor keeps one.
     """
     path = Path(units_root)
     source, stdin = _source(state)
-    key = await in_thread(_read_key, path, stdin) if hold else ""
-    held = _HELD.get(str(path)) if hold else None
+    key = await in_thread(_read_key, path, stdin) if hold else None
+    held = _HELD.get(str(path)) if key is not None else None
     out_text = held[1] if held and held[0] == key else None
     if out_text is None:
         try:
@@ -220,7 +232,7 @@ async def read(
         data = json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
         raise Unavailable(f"the loop did not return JSON: {e}") from e
-    if hold:
+    if key is not None:
         _HELD[str(path)] = (key, out_text)
 
     stages = data.get("stages") or []

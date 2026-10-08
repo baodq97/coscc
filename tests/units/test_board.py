@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -288,7 +289,11 @@ class TheLoopsAnswerIsHeldWhileWhatItReadsIsUnchanged(unittest.TestCase):
         self.root = Path(tmp.name)
         self.unit = self.root / ".cos" / "0001_held"
         self.unit.mkdir(parents=True)
-        (self.unit / "idea.md").write_text("# Idea: held\nAuthor: x. Status: accepted.\n")
+        idea = self.unit / "idea.md"
+        idea.write_text("# Idea: held\nAuthor: x. Status: accepted.\n")
+        # Written a minute ago: a file younger than the settling time is never held.
+        settled = idea.stat().st_mtime_ns - 60_000_000_000
+        os.utime(idea, ns=(settled, settled))
         self.state = snap(self.root, {"0001_held": dict(statuses={"idea.md": "accepted"})})
         self.starts = 0
         original = board._run
@@ -342,6 +347,20 @@ class TheLoopsAnswerIsHeldWhileWhatItReadsIsUnchanged(unittest.TestCase):
         (self.unit / "spec.md").write_text("Status: draft.\n")
         self._read()
         self.assertEqual(self.starts, 2)
+
+    def test_a_file_just_written_is_read_every_time_until_it_settles(self):
+        self._read()
+        # Written now, so a rewrite in the same tick with the same size would keep its key.
+        (self.unit / "spec.md").write_text("Status: draft.\n")
+        self._read()
+        self._read()
+        self.assertEqual(self.starts, 3)
+        spec = self.unit / "spec.md"
+        settled = time.time_ns() - 60_000_000_000
+        os.utime(spec, ns=(settled, settled))
+        self._read()
+        self._read()
+        self.assertEqual(self.starts, 4)
 
     def test_a_new_directory_starts_one_child(self):
         self._read()
