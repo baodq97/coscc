@@ -240,6 +240,14 @@ class OnlyImplStartsHelpers(unittest.TestCase):
                     "only these helpers", says(IMPL, policy.AGENT_TOOL, {"subagent_type": other})
                 )
 
+    def test_a_helper_runs_at_its_rows_model_and_effort(self):
+        for key, value in (("model", "opus"), ("effort", "max")):
+            with self.subTest(key=key):
+                self.assertIn(
+                    "model and effort",
+                    says(IMPL, policy.AGENT_TOOL, {"subagent_type": "scout", key: value}),
+                )
+
 
 # What the app bounds a unit's ram directory to (`coscc.units.scratch.RAM_CAP`).
 CAP = 64 * 2**20
