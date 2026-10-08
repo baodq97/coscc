@@ -28,7 +28,8 @@ from coscc.loop.model import (
 )
 from coscc.loop.paths import next_number
 from coscc.loop import SPIKE_ROUNDS
-from coscc.loop.model import fold_holds, non_blocking
+from coscc.loop.model import fold_holds, non_blocking, rounds_used, screens_spared
+from coscc.loop.model import standard_findings
 from coscc.loop.rules import between_pr_and_ship, decide, gate_answer, next_answer
 from coscc.loop.run import ask
 from coscc.loop.model import review_from, review_rounds
@@ -1716,6 +1717,96 @@ def test_a_severity_lowered_between_rounds_closes_ship():
         "F1 is low in review round 2, but review round 1 rated it high — lowering a severity is "
         "not a fix: fix it on the branch, or keep it open"
     ) in g["need"]
+
+
+SHOTS = {
+    "taken": SHA,
+    "standard": ".claude/rules/ui-standard.md",
+    "by": "agent session s1",
+    "shots": [{"path": ".screens/a.png", "size": "1x1", "address": "/", "result": "ok"}],
+}
+
+
+def standard_finding(id_, path="ui/a.tsx", severity="high", label="open"):
+    return fr(id_, label, "x", severity, path=path, lines="3", rule="S3")
+
+
+def with_diff(*files):
+    """A probe whose branch diff against the trunk names `files`."""
+    return green_probe(None, {f"diff --name-only origin/main...{SHA}": ok("\n".join(files))})
+
+
+def test_a_finding_against_the_standard_is_read_for_where_it_points_and_what_it_says():
+    u = asked(round_(1, "pass", [standard_finding("F1"), fr("F2", rule="S3", path="")]))
+    assert standard_findings(u) == [
+        {
+            "id": "F1",
+            "criterion": "S3",
+            "path": "ui/a.tsx",
+            "lines": "3",
+            "text": "x",
+            "round": 1,
+        },
+        {"id": "F2", "criterion": "S3", "path": None, "lines": "", "text": "x", "round": 1},
+    ]
+
+
+def test_an_s_finding_on_a_file_the_patch_changes_blocks_even_when_low():
+    low_one = standard_finding("F1", severity="low")
+    u = ship(round_(1, "pass", [low_one], screens=SHOTS))
+    for files in (["ui/a.tsx"], ["ui/other.tsx"]):
+        g = check_gate(u, "ship", with_diff(*files))
+        assert g["ok"] is (files == ["ui/other.tsx"])
+        assert [p["why"] for p in u["screenPasses"]] == ([] if g["need"] else ["screen-untouched"])
+
+
+def test_severity_rule_lets_through_what_the_screens_rule_does_and_the_round_still_counts():
+    r1 = round_(1, "changes-requested", [standard_finding("F1")], screens=SHOTS)
+    u = asked(r1)
+    assert non_blocking(u) == []
+    assert screens_spared(u) is False
+    u["screenPasses"] = [{"id": "F1", "why": "screen-untouched"}]
+    assert [f["id"] for f in non_blocking(u)] == ["F1"]
+    assert screens_spared(u) is True
+    # A round that asked for changes counts, let through or not: it bounds the rounds.
+    assert rounds_used(u) == 1
+    # One blocking finding beside it, and a fix is still owed.
+    mixed = asked(round_(1, "changes-requested", [standard_finding("F1"), fr("F2")]))
+    mixed["screenPasses"] = [{"id": "F1", "why": "screen-untouched"}]
+    assert screens_spared(mixed) is False
+    assert [f["id"] for f in non_blocking(mixed)] == ["F1"]
+
+
+def test_a_gate_with_a_probe_sets_what_the_severity_rule_reads():
+    u = asked(round_(1, "changes-requested", [standard_finding("F1")], screens=SHOTS))
+    check_gate(u, "review", with_diff("ui/other.tsx"))
+    assert [p["id"] for p in u["screenPasses"]] == ["F1"]
+    assert screens_spared(u) is True
+    check_gate(u, "review", with_diff("ui/a.tsx"))
+    assert u["screenPasses"] == []
+    assert screens_spared(u) is False
+
+
+def test_changes_asked_only_for_what_the_screens_rule_lets_through_is_review_not_impl():
+    u = asked(round_(1, "changes-requested", [standard_finding("F1")], screens=SHOTS))
+    n = next_answer(u, with_diff("ui/other.tsx"))
+    assert n["stage"] == "review"
+    assert (
+        "every open finding of review round 1 is one the screens rule lets through (F1)"
+        in (n["action"])
+    )
+    assert n["reasons"] == ["changes-requested"]
+    # On a file the patch changes it blocks, and a fix is owed first.
+    assert next_step(u, with_diff("ui/a.tsx"))["stage"] == "impl"
+
+
+def test_a_review_that_keeps_asking_for_what_the_screens_rule_lets_through_stops_at_the_limit():
+    finding = standard_finding("F1")
+    rounds = [round_(n, "changes-requested", [finding], screens=SHOTS) for n in (1, 2, 3)]
+    n = next_answer(asked(*rounds), with_diff("ui/other.tsx"))
+    assert n["stage"] == ""
+    assert n["reasons"] == ["needs-person"]
+    assert "review used 3 of 3 rounds" in n["action"]
 
 
 def test_next_step_never_offers_a_closed_gate_in_the_person_states(tmp_path):

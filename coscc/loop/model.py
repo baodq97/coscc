@@ -618,7 +618,9 @@ def review_fault(unit):
 
 def rounds_used(unit):
     """The review rounds spent: each that asked for changes. A faulty round (`round_fault`) is not
-    counted, as an `unfinished` one is not: the round after it does the work it left."""
+    counted, as an `unfinished` one is not: the round after it does the work it left. One that
+    asked for changes the screens rule lets through counts too (`screens_spared`): it is what
+    bounds the rounds a review that should have passed can spend."""
     rounds = review_of(unit)
     faulty = [bool(round_fault(rounds, i)) for i in range(len(rounds))]
     asked = len(
@@ -661,11 +663,73 @@ def against_standard(text):
     return bool(re.match(r"S\d+\b", text[len(m[0]) if m else len(text) :], A))
 
 
+def standard_findings(unit):
+    """The open findings of the last round that name a UI-standard criterion `S<n>`: `{ id,
+    criterion, path, lines, text, round }`, `path` `None` when the finding points nowhere, `round`
+    the first round that listed its id. The candidates of the one rule on an `S<n>` finding:
+
+    it blocks unless the unit's patch does not touch its file, or the screens of the round that
+    first raised it were no news (`repo_rules.screen_passes` asks git, `unit["screenPasses"]`
+    holds the answer). `severity_rule`, `screens_spared` and the ship gate all read that list, so
+    whether such a finding blocks is decided here and nowhere else. Its severity is no part of
+    it: a `low` one on a changed file blocks."""
+    rounds = review_of(unit)
+    if not rounds:
+        return []
+    first = {}
+    for r in rounds:
+        for f in r["findings"]:
+            first.setdefault(f["id"], r["n"])
+    found = []
+    for f in rounds[-1]["findings"]:
+        if f["label"] != "open" or not against_standard(f["text"]):
+            continue
+        m = SEVERITY.match(f["text"])
+        where = f["text"].split(None, 1)[0] if m else "(none)"
+        said = re.match(r"S\d+\b", f["text"][len(m[0]) :] if m else "", A)
+        at = re.fullmatch(r"(.+?):(\d[\d,\-–]*)", where)
+        path, lines = (at[1], at[2]) if at else (where, "")
+        found.append(
+            {
+                "id": f["id"],
+                "criterion": said[0] if said else "",
+                "path": None if path == "(none)" else path.removeprefix("./"),
+                "lines": lines,
+                "text": f["text"][len(m[0]) + len(said[0]) :].strip() if m and said else "",
+                "round": first[f["id"]],
+            }
+        )
+    return found
+
+
+def screen_pass_ids(unit):
+    """The ids the one rule on an `S<n>` finding lets through; none while `screenPasses` is unset."""
+    return {p["id"] for p in unit.get("screenPasses") or ()}
+
+
+def screens_spared(unit):
+    """Whether the last round asked for changes and every finding it left unresolved is an
+    `[open]` one the screens rule lets through: nothing is left for a fix to do, and the review
+    that runs again, told which, may pass."""
+    last = last_round(unit)
+    if not last or last["verdict"] != "changes-requested":
+        return False
+    let = screen_pass_ids(unit)
+    answers = person_answers(unit)
+    left = [
+        f
+        for f in last["findings"]
+        if f["label"] != "fixed" and not (f["label"] == "answered" and f["id"] in answers)
+    ]
+    return bool(left) and all(f["label"] == "open" and f["id"] in let for f in left)
+
+
 def severity_rule(unit):
     rounds = review_of(unit)
     if not rounds:
         return {"nonBlocking": [], "demoted": []}
     last = rounds[-1]
+    let = screen_pass_ids(unit)
     higher = {}
     for r in rounds[:-1]:
         for f in r["findings"]:
@@ -674,10 +738,19 @@ def severity_rule(unit):
     low = [
         f
         for f in last["findings"]
-        if f["label"] == "open" and f.get("severity") == "low" and not against_standard(f["text"])
+        if f["label"] == "open"
+        and f.get("severity") == "low"
+        and f["id"] not in let
+        and not against_standard(f["text"])
     ]
+    kept = [f for f in low if f["id"] not in higher]
+    through = [f for f in last["findings"] if f["label"] == "open" and f["id"] in let]
     return {
-        "nonBlocking": [{"id": f["id"], "text": f["text"]} for f in low if f["id"] not in higher],
+        "nonBlocking": [
+            {"id": f["id"], "text": f["text"]}
+            for f in last["findings"]
+            if f in kept or f in through
+        ],
         "demoted": [{"id": f["id"], **higher[f["id"]]} for f in low if f["id"] in higher],
     }
 

@@ -23,6 +23,7 @@ from coscc.loop.model import (
     review_of,
     rounds_used,
     severity_rule,
+    standard_findings,
 )
 from coscc.units import pr_title
 from coscc.loop.probe import (
@@ -36,6 +37,7 @@ from coscc.loop.probe import (
 
 __all__ = [
     "branch_checks",
+    "branch_files",
     "changed_since",
     "ci_needs",
     "make_probe",
@@ -51,6 +53,7 @@ __all__ = [
     "red_needs",
     "review_needs",
     "run",
+    "screen_passes",
     "screens_answer",
     "screens_needs",
     "screens_problems",
@@ -167,6 +170,15 @@ def ui_changed(unit, probe, head):
     standard = nullish(ui() if ui else None)
     if not standard or not standard["globs"]:
         return {"changed": [], "standard": standard}
+    found = branch_files(unit, probe, head)
+    if "error" in found:
+        return found
+    return {"changed": ui_files(found["files"], standard["globs"]), "standard": standard}
+
+
+def branch_files(unit, probe, head):
+    """The files `head` changes since it left the trunk, less the unit's own `.cos/<unit>/`:
+    `{ files }`, or `{ error }` when git could not say."""
     # Three dots: from the merge-base, in one command. The gate does not fetch.
     diff = probe.git("diff", "--name-only", f"origin/main...{js(head)}")
     if diff["code"] != 0:
@@ -178,8 +190,63 @@ def ui_changed(unit, probe, head):
                 f"({trim(local['err'])}) — the gate does not fetch"
             }
         diff = local
-    own = f".cos/{unit['name']}/"
-    return {"changed": ui_files(_lines(diff["out"], own), standard["globs"]), "standard": standard}
+    return {"files": _lines(diff["out"], f".cos/{unit['name']}/")}
+
+
+def screen_passes(unit, probe):
+    """The open `S<n>` findings of the last round that the one rule lets through
+    (`model.standard_findings`), each as `{ id, criterion, path, lines, text, why }`, `why` being
+    `screen-untouched` (the unit's patch does not change its file) or `screen-late` (its round had
+    no `### Screens`, or an earlier round's screens already showed that file as it is). One that
+    points nowhere or only at a `.png` is never let through, and when git cannot say the
+    finding stays blocking."""
+    found = standard_findings(unit)
+    rounds = review_of(unit)
+    if not probe or not found or not rounds[-1]["reviewed"]:
+        return []
+    files = {}
+
+    def patch(head):
+        if head not in files:
+            got = branch_files(unit, probe, head) if head else {"error": ""}
+            files[head] = None if "error" in got else got["files"]
+        return files[head]
+
+    def late(f, first):
+        """Whether the screens of the round that first raised `f` were no news: `None` when git
+        cannot say."""
+        if not first["screens"]:
+            return True
+        for e in rounds[: rounds.index(first)]:
+            if not e["screens"]:
+                continue
+            if not (e["reviewed"] and first["reviewed"]):
+                return None
+            diff = probe.git("diff", "--name-only", f"{e['reviewed']}..{first['reviewed']}")
+            if diff["code"] != 0:
+                return None
+            if f["path"] not in _lines(diff["out"]):
+                return True
+        return False
+
+    out = []
+    for f in found:
+        if not f["path"] or f["path"].lower().endswith(".png"):
+            continue
+        first = next(r for r in rounds if r["n"] == f["round"])
+        here, there = patch(rounds[-1]["reviewed"]), patch(first["reviewed"])
+        # Once in the patch at any round, it stays: a finding that blocked keeps blocking.
+        if (here is not None and f["path"] in here) or (there is not None and f["path"] in there):
+            why = "screen-late" if late(f, first) else ""
+        elif here is not None and (there is not None or first is rounds[-1]):
+            why = "screen-untouched"
+        else:
+            why = ""
+        if why:
+            out.append(
+                {k: f[k] for k in ("id", "criterion", "path", "lines", "text")} | {"why": why}
+            )
+    return out
 
 
 def screens_answer(unit, probe):
@@ -395,6 +462,9 @@ def ship_needs(unit, probe, said=None):  # noqa: C901, PLR0915 - `shipNeeds` kep
     answered = person_answers(unit)
     # a finding that does not block is left open on purpose; `ship.md` lists it.
     # A lowered one still blocks, but is named only on its own line below.
+    # an `S<n>` finding the screens rule lets through is listed with them (`screen_passes`).
+    if "screenPasses" not in unit:
+        unit["screenPasses"] = screen_passes(unit, probe)
     rule = severity_rule(unit)
     passes = {f["id"] for f in [*rule["nonBlocking"], *rule["demoted"]]}
     open_ = [

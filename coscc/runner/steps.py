@@ -160,6 +160,17 @@ def _gate_reasons(answer: board_reader.Gate) -> tuple[str, ...]:
     return tuple(getattr(answer, "reasons", ()))
 
 
+def _gate_said(answer: board_reader.Gate) -> str:
+    """The gate's words, then each `S<n>` finding it let through on its own line, indented as the
+    prompt sets the words: a review told which does not ask for changes they do not need."""
+    let = [
+        f"let through by the screens rule, not blocking: {f['id']} {f['criterion']} "
+        f"{f['path']}{':' + f['lines'] if f['lines'] else ''} ({f['why']})"
+        for f in getattr(answer, "passed", ())
+    ]
+    return "\n    ".join([answer[1], *let])
+
+
 def _rounds_before(
     found: dict[str, Any], stage: str, process: str | None = None
 ) -> set[Any] | None:
@@ -1207,6 +1218,7 @@ class Steps:
             again=rerun,
             rebased=getattr(answer, "rebased", None),
             process=process,
+            passed=getattr(answer, "passed", ()),
         )
 
     async def _ready_tree(
@@ -1426,7 +1438,7 @@ class Steps:
             unit=unit,
             stage=stage,
             artifact=artifact,
-            gate_said=answer[1],
+            gate_said=_gate_said(answer),
             gate_reasons=_gate_reasons(answer),
             lane=getattr(answer, "lane", "full"),
             cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None, process),

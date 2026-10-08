@@ -1,17 +1,28 @@
 ---
 paths:
-  - "ui/src/**"
+  - "ui/src/**/*.tsx"
+  - "ui/src/styles.css"
+  - "ui/src/lib/build.ts"
+  - "ui/src/lib/format.ts"
+  - "ui/src/lib/model.ts"
   - "ui/index.html"
   - "coscc/http/auth.py"
-  - "coscc/features/*/ui/**"
+  - "coscc/features/*/ui/**/*.tsx"
 ---
 
 # The UI standard
 
-What a screen may show. The `paths:` globs above are the files that count as screens (the
-studio in `ui/`, the login page, a feature's `ui/`): the loop reads them to tell a UI
-unit from any other.
-A feature's screens live in `coscc/features/<name>/ui/index.tsx`.
+What a screen may show. The `paths:` globs above are the files that draw a screen or the words
+and times on it (the studio in `ui/`, the login page, a feature's `ui/`), never a test: the loop
+reads them to tell a UI unit from any other. A feature's screens live in
+`coscc/features/<name>/ui/index.tsx`.
+
+**Not a screen**, each `.ts` under `ui/src/` outside `paths:`; a new one is matched or listed here:
+
+- `ui/src/api.gen.ts`: types generated from the app's schema.
+- `ui/src/lib/api.ts`: the calls to the app's routes.
+- `ui/src/lib/boards.ts`: reads and shares the boards, shows nothing.
+- `ui/src/lib/stream.ts`: the live channel that says something changed.
 
 ## What a good screen looks like
 
@@ -57,9 +68,13 @@ are how it answers them; a screen that needs the documentation to answer one fai
 A screen is judged from its screenshots, opened states included, never inferred from code or
 tests.
 
-The gate reads the words of the review's `### Screens` section, never the images. A finding
-whose first word is an `S<n>` always blocks, even rated `low`. The app retakes screenshots
-before `review` when the head was rewritten after them.
+The gate reads the words of the review's `### Screens` section, never the images. An `S<n>`
+finding blocks when its location is a source file the unit's patch changes, the first round with
+`### Screens` that saw that file as it is raised it, and it is not fixed or answered. A `.png` or
+no location blocks as before. Once blocking it stays blocking until fixed; lowering it is not a
+fix. A finding let through stays in review.md and ship.md as non-blocking, and the app turns each
+into one pending `fix` proposal in Up next for a person. The app retakes screenshots before
+`review` when the head was rewritten after them.
 
 ## What each agent does on a UI unit
 
@@ -78,7 +93,10 @@ A UI unit changes a file under `paths:`.
   <agent session>, from screenshots.`, then `- <path>.png — <W>×<H> — <address> — <what you
   saw>` per image; `<what you saw>` answers S9's three questions in a few words, and a missing
   answer is an `S9` finding. A violation is a finding whose first word after its severity is the
-  rule id.
+  rule id; its location is the source file that draws the violation, not the screenshot, and
+  it is never labelled non-blocking by review: the loop decides. One the gate lets through, or
+  one on a file the patch does not change, stays `[open]` and does not make a round
+  `changes-requested`: the loop sends such a round back to review, and it counts.
   `high` and `changes-requested`: no manifest or image, a `head` older than the last UI commit,
   `dirty: true`, an unexplained `hits` entry. When the prompt says the app took the screenshots
   again, a hit counts as explained if `impl.md ## Screens` explains one with the same address,

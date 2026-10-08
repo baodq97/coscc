@@ -48,6 +48,7 @@ from coscc.loop.model import (
     review_fault,
     rounds_used,
     route,
+    screens_spared,
     settled,
     walk,
     skipped_by,
@@ -65,6 +66,7 @@ from coscc.loop.repo_rules import (
     rebase_clean,
     rebase_why,
     review_needs,
+    screen_passes,
     ship_needs,
     unit_patch,
 )
@@ -325,7 +327,9 @@ def decide_files(unit, limit):  # noqa: C901 - a port of `decideFiles` kept whol
 
 
 def gate_answer(unit, stage, probe=None, limit=REVIEW_ROUNDS):
-    """`checkGate`, plus `reasons`, the codes `gate --json` hands out."""
+    """`checkGate`, plus `reasons`, the codes `gate --json` hands out. With a probe, the `S<n>`
+    findings the screens rule lets through are worked out first and left in `unit["screenPasses"]`."""
+    unit["screenPasses"] = screen_passes(unit, probe)
     r = evaluate(unit, stage, probe, limit)
     ok, need, said = r["ok"], r["need"], r["said"]
     p = proc(unit)
@@ -522,6 +526,7 @@ def _none(action):
 def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepOf`
     p = proc(unit)
     review, merge, fixer = p.review, p.merge, p.fixer
+    unit["screenPasses"] = screen_passes(unit, probe)
     base = decide(unit, limit)
     why = base["why"]
     next_ = {k: v for k, v in base.items() if k != "why"}
@@ -648,6 +653,15 @@ def step_of(unit, probe, limit, seen):  # noqa: C901, PLR0915 - a port of `stepO
                 [
                     f"every open finding of review round {js(last_round(unit)['n'])} is claimed "
                     "as needing a person — review confirms or rejects each"
+                ]
+            )
+        if screens_spared(unit):
+            # Nothing is left for impl to fix: the review that runs again is told which these are.
+            let = ", ".join(p["id"] for p in unit["screenPasses"])
+            return on_review(
+                [
+                    f"every open finding of review round {js(last_round(unit)['n'])} is one the "
+                    f"screens rule lets through ({let}) — they do not block a pass"
                 ]
             )
         if not probe:
@@ -900,7 +914,7 @@ def cmd_gate(unit_name, stage, cos_dir, repo_dir, limit, state, json, out, err):
     else:
         lines = [f"blocked: {stage} cannot proceed for {unit_name}", *(f"  - {n}" for n in need)]
     if json:
-        body = {"ok": ok, "lines": lines, "reasons": reasons}
+        body = {"ok": ok, "lines": lines, "reasons": reasons, "passed": unit["screenPasses"]}
         if rebased:
             body["rebased"] = rebased
         via = walk(unit)[1]

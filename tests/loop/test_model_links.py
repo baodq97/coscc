@@ -748,6 +748,7 @@ def test_a_fix_in_the_fast_lane_goes_from_its_accepted_intent_to_impl(tmp_path):
         "ok": True,
         "lines": ["open: impl may proceed for 0001_x"],
         "reasons": [],
+        "passed": [],
         "via": ["fast-lane"],
     }
     for stage in ["spec", "spike", "plan"]:

@@ -13,7 +13,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
 from coscc import units
 from coscc.agent import agents, pack, skills
@@ -1078,11 +1078,13 @@ class Integration:
         again: bool = False,
         rebased: dict[str, str] | None = None,
         process: str | None = None,
+        passed: Sequence[Mapping[str, str]] = (),
     ) -> dict[str, Any]:
         """One `open-pr` or `merge` state, with no session, no `start` and no `end` row;
         what it did is its transitions and, for `ship`, the `ship` row notices read.
         Returns the `done` item a session's step would have ended with. `rebased` is the
-        `ship` gate's clean-rebase read, which guard `ship-ready` takes."""
+        `ship` gate's clean-rebase read, which guard `ship-ready` takes; `passed` its findings
+        that did not block, which `ship` turns into proposals."""
         if tree is None:
             raise Invalid(
                 f"{stage} needs the unit's git worktree, and this workspace is not a git repository"
@@ -1109,7 +1111,10 @@ class Integration:
             out = await machine.open_pr(u, again=again)
         else:
             out = await machine.ship(
-                u, authority="code" if started_by == "autopilot" else "person", rebased=rebased
+                u,
+                authority="code" if started_by == "autopilot" else "person",
+                rebased=rebased,
+                passed=passed,
             )
         artifact = f"{stage}.md"
         done: dict[str, Any] = {

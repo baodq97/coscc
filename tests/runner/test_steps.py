@@ -1380,13 +1380,13 @@ class TheGatesLaneReachesThePrompt(unittest.TestCase):
             async for item in super().stream(cwd, text, session_id, max_turns, **kw):
                 yield item
 
-    def _run(self, lane):
+    def _run(self, lane, passed=()):
         from coscc.units import board as board_reader
 
         self.prompts = []
 
         async def gate(units_root, unit, stage, repo=None, **kw):
-            return board_reader.Gate(True, "open: impl may proceed", (), None, lane)
+            return board_reader.Gate(True, "open: impl may proceed", (), None, lane, passed)
 
         async def go():
             return [
@@ -1407,6 +1407,15 @@ class TheGatesLaneReachesThePrompt(unittest.TestCase):
         start = self._run("full")
         self.assertNotIn("# The fast lane", self.prompts[-1])
         self.assertNotIn("fast-lane", start["envelope"])
+
+    def test_the_findings_the_gate_let_through_are_named_under_its_words(self):
+        let = {"id": "F3", "criterion": "S8", "path": "ui/src/screens/UpNext.tsx", "lines": "12"}
+        self._run("full", [{**let, "text": "x", "why": "screen-untouched"}])
+        self.assertIn(
+            "    open: impl may proceed\n    let through by the screens rule, not blocking: F3 S8 "
+            "ui/src/screens/UpNext.tsx:12 (screen-untouched)\n",
+            self.prompts[-1],
+        )
 
 
 class AnImplStepUnderTheModelTrial(unittest.TestCase):
@@ -2601,7 +2610,7 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
                     detail="" if outcome == "done" else "gh down",
                 )
 
-            async def ship(self, u, authority="person", rebased=None):
+            async def ship(self, u, authority="person", rebased=None, passed=()):
                 shipped_with.append(rebased)
                 return prmachine.Outcome(
                     "merged" if outcome == "done" else "failed",
