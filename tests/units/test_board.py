@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -241,6 +242,10 @@ class TheWorkspaceCopyOfTheLoopIsNeverRun(unittest.TestCase):
 
 
 class AnUnreadableBoardRaisesRatherThanReturningEmpty(unittest.TestCase):
+    def setUp(self):
+        # An answer held for the repository by an earlier test would be given without a child.
+        board._HELD.clear()
+
     def test_a_loop_that_cannot_start_is_not_reported_as_an_empty_board(self):
         # "No units" and "I could not look" are different answers, and a page that shows
         # the first when it means the second is the failure this test names.
@@ -270,6 +275,152 @@ class AnUnreadableBoardRaisesRatherThanReturningEmpty(unittest.TestCase):
             env = harness.child_env()
         self.assertEqual(env["COS_REVIEW_ROUNDS"], "5")
         self.assertEqual(set(env), {"PATH", "HOME", "LC_ALL", "NO_COLOR", "COS_REVIEW_ROUNDS"})
+
+
+class TheLoopsAnswerIsHeldWhileWhatItReadsIsUnchanged(unittest.TestCase):
+    """A second read of the same root, snapshot and files starts no child; a change in any of
+    them starts exactly one."""
+
+    def setUp(self):
+        board._HELD.clear()
+        self.addCleanup(board._HELD.clear)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.unit = self.root / ".cos" / "0001_held"
+        self.unit.mkdir(parents=True)
+        idea = self.unit / "idea.md"
+        idea.write_text("# Idea: held\nAuthor: x. Status: accepted.\n")
+        # Written a minute ago: a file younger than the settling time is never held.
+        settled = idea.stat().st_mtime_ns - 60_000_000_000
+        os.utime(idea, ns=(settled, settled))
+        self.state = snap(self.root, {"0001_held": dict(statuses={"idea.md": "accepted"})})
+        self.starts = 0
+        original = board._run
+
+        async def spy(argv, timeout, stdin=None):
+            self.starts += 1
+            return await original(argv, timeout, stdin)
+
+        patch = mock.patch.object(board, "_run", spy)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def _read(self, state=None):
+        return run(board.read(self.root, state=state or self.state))
+
+    def test_the_same_inputs_start_the_child_once(self):
+        first = self._read()
+        second = self._read()
+        self.assertEqual(self.starts, 1)
+        self.assertEqual(first, second)
+        self.assertEqual([u["name"] for u in second["units"]], ["0001_held"])
+
+    def test_a_held_answer_reads_the_same_as_a_fresh_one(self):
+        self._read()
+        held = self._read()
+        board._HELD.clear()
+        self.assertEqual(held, self._read())
+        self.assertEqual(self.starts, 2)
+
+    def test_a_changed_mtime_starts_one_child(self):
+        self._read()
+        idea = self.unit / "idea.md"
+        stat = idea.stat()
+        os.utime(idea, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+        self._read()
+        self.assertEqual(self.starts, 2)
+        self._read()
+        self.assertEqual(self.starts, 2)
+
+    def test_a_changed_size_starts_one_child(self):
+        self._read()
+        idea = self.unit / "idea.md"
+        stat = idea.stat()
+        idea.write_text(idea.read_text() + "more\n")
+        os.utime(idea, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        self._read()
+        self.assertEqual(self.starts, 2)
+
+    def test_a_new_file_starts_one_child(self):
+        self._read()
+        (self.unit / "spec.md").write_text("Status: draft.\n")
+        self._read()
+        self.assertEqual(self.starts, 2)
+
+    def test_a_file_just_written_is_read_every_time_until_it_settles(self):
+        self._read()
+        # Written now, so a rewrite in the same tick with the same size would keep its key.
+        (self.unit / "spec.md").write_text("Status: draft.\n")
+        self._read()
+        self._read()
+        self.assertEqual(self.starts, 3)
+        spec = self.unit / "spec.md"
+        settled = time.time_ns() - 60_000_000_000
+        os.utime(spec, ns=(settled, settled))
+        self._read()
+        self._read()
+        self.assertEqual(self.starts, 4)
+
+    def test_a_new_directory_starts_one_child(self):
+        self._read()
+        (self.root / ".cos" / "0002_other").mkdir()
+        self._read()
+        self.assertEqual(self.starts, 2)
+
+    def test_a_changed_snapshot_starts_one_child(self):
+        self._read()
+        other = snap(self.root, {"0001_held": dict(statuses={"idea.md": "accepted"}, type="fix")})
+        self.assertNotEqual(other, self.state)
+        self._read(other)
+        self.assertEqual(self.starts, 2)
+
+    def test_the_review_round_limit_is_part_of_the_key(self):
+        self._read()
+        with mock.patch.dict(os.environ, {"COS_REVIEW_ROUNDS": "7"}):
+            self._read()
+        self.assertEqual(self.starts, 2)
+
+    def test_the_answer_is_not_shared_between_callers(self):
+        first = self._read()
+        first["units"][0]["name"] = "changed"
+        first["units"][0]["stages"].clear()
+        first["read_at"] = "now"
+        first["units"].append({"name": "extra"})
+        second = self._read()
+        self.assertEqual(self.starts, 1)
+        self.assertEqual(second["units"][0]["name"], "0001_held")
+        self.assertEqual(len(second["units"]), 1)
+        self.assertEqual([r["stage"] for r in second["units"][0]["stages"]], STAGES)
+        self.assertNotIn("read_at", second)
+
+    def test_a_directory_that_appears_is_named_afresh_not_held(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "later"
+            first = run(board.read(root, state=_board.EMPTY_STATE))
+            root.mkdir()
+            second = run(board.read(root, state=_board.EMPTY_STATE))
+            (root / ".cos").mkdir()
+            third = run(board.read(root, state=_board.EMPTY_STATE))
+        self.assertIn("no such directory", first["empty_because"])
+        self.assertIn("no .cos/", second["empty_because"])
+        self.assertIn("holds no work units", third["empty_because"])
+
+    def test_a_failure_is_not_held(self):
+        with mock.patch.object(loop_run, "argv", return_value=["/nonexistent/python", "-m", "x"]):
+            with self.assertRaises(Unavailable):
+                self._read()
+        self.assertEqual(board._HELD, {})
+        self.assertEqual(self._read()["count"], 1)
+
+    def test_the_stage_list_holds_nothing(self):
+        run(board.stages())
+        self.assertEqual(board._HELD, {})
+
+    def test_one_answer_is_held_per_root(self):
+        self._read()
+        self._read(_board.EMPTY_STATE)
+        self.assertEqual(list(board._HELD), [str(self.root)])
 
 
 if __name__ == "__main__":

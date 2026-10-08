@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import statistics
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -82,7 +84,8 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
         return 0, "[]", ""
 
     async def store(self, name: str, units: int) -> tuple[Core, str]:
-        """A workspace of `units` units the loop reads as `finished`, each with a long review."""
+        """A workspace of `units` units the loop reads as `finished`, each with a long review and two
+        runs in the run log."""
         workspace = self.root / name / "proj"
         workspace.mkdir(parents=True)
         git(workspace, "init", "-q", "-b", "main")
@@ -138,6 +141,12 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
                     for unit in names
                 ],
             )
+        log = core.ws.journal()
+        assert log is not None
+        for unit in names:
+            for stage in ("impl", "review"):
+                log.started(key, unit, stage, "autonomous")
+                log.finished(key, unit, stage, "done")
         return core, cwd
 
     async def ended(self, core: Core) -> None:
@@ -173,6 +182,25 @@ class TheBoardOfALargeWorkspaceIsHeld(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((len(small["units"]), len(large["units"])), (SMALL, LARGE))
         # It reads nothing, so no size of workspace can make it slower.
         self.assertEqual((small_reads, large_reads), (0, 0))
+
+    async def median_read(self, name: str, units: int) -> float:
+        """Seconds the median of 10 standalone `Board.read`s takes on `units` finished units, after
+        one read to warm the files and the caches."""
+        core, cwd = await self.store(name, units)
+        await core.boards.read(cwd)
+        await self.ended(core)
+        took = []
+        for _ in range(10):
+            began = time.perf_counter()
+            await core.boards.read(cwd)
+            took.append(time.perf_counter() - began)
+            await self.ended(core)
+        return statistics.median(took)
+
+    async def test_a_standalone_read_of_300_finished_units_takes_at_most_half_a_second(self):
+        took = await self.median_read("many", LARGE)
+        print(f"median read: {LARGE} units {took:.4f}s", flush=True)
+        self.assertLessEqual(took, 0.5)
 
     async def test_the_rounds_of_300_units_carry_no_text_and_stay_small(self):
         large, _ = await self.warm("large", LARGE)

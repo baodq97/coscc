@@ -54,6 +54,8 @@ Name = Literal[
     "hold.moved",
     "mode.set",
     "unit.shipped",
+    # A held board read ended (`coscc/units/read.py`): the page reads the board it holds now.
+    "board.read",
     # An agent run (`coscc/runner/triggers.py`): held from `started` to `ended`, its `end` already written.
     "agent-run.started",
     "agent-run.ended",
@@ -121,6 +123,7 @@ SCHEMAS: dict[str, type] = {
     "hold.moved": OfUnit,
     "mode.set": OfUnit,
     "unit.shipped": Shipped,
+    "board.read": OfWorkspace,
     "agent-run.started": OfAgent,
     "agent-run.ended": AgentEnded,
 }

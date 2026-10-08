@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 from coscc.agent import agents, pack
 from coscc.agent.policy import row_for
@@ -24,8 +25,8 @@ from coscc.config import Config
 from coscc.git import gitops
 from coscc.git.gitops import GitError
 from coscc.store.db import Busy, in_thread, now
-from coscc.store.journal import last_runs, paused_stage, timelines_of, totals_of
-from coscc.units import BadUnit, Invalid, backlog, contracts, scratch, worktrees
+from coscc.store.journal import Journal, last_runs, paused_stage, timelines_of, totals_of
+from coscc.units import BadUnit, Invalid, backlog, contracts, scratch, slot, worktrees
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable, attention_reason, unit_state
 from coscc.units.meta import (
@@ -728,6 +729,12 @@ def _brief_rounds(units_: list[dict[str, Any]]) -> None:
             rnd.pop("text", None)
 
 
+# Seconds a held board is answered without a new read. What the app does reads it at once (the
+# bus); this catches what never passes the bus (a hand edit, git), as often as the studio's slow
+# refresh (`ui/src/lib/boards.ts`).
+HELD_FOR = 120
+
+
 class Board:
     """The board of every workspace, read once each and held.
 
@@ -748,10 +755,12 @@ class Board:
     ) -> None:
         self.config = config
         self.ws = ws
+        self.bus = bus
         self.unfinished = unfinished
         self.open_prs = open_prs
         self.attach = attach
-        # By journal key: the last board read, `{cwd, data, read_at}`; the one read running;
+        # By journal key: the last board read, `{cwd, data, read_at, monotonic}` (`monotonic`
+        # when it ended, by `time.monotonic`); the one read running;
         # the keys a change came to while it ran, so it reads once more; and what waits for
         # the next read to end. This process only.
         self.held: dict[str, dict[str, Any]] = {}
@@ -775,6 +784,9 @@ class Board:
             "hold.moved",
             "mode.set",
             "unit.shipped",
+            "shortlist.saved",
+            "retake.ended",
+            "integration.escalated",
         ):
             bus.subscribe(name, self._on_event)
 
@@ -792,8 +804,9 @@ class Board:
         """The board of `cwd`.
 
         `new` waits for a read begun after this call, which asks `gh` anew. `held` answers with the
-        last read and starts the next, so it waits only while nothing was read yet: what the page
-        asks. `next` waits for the next read to end and starts none: what a tab
+        last read and starts no read while that is younger than `HELD_FOR`; an older one it answers
+        and starts the next, so it waits only while nothing was read yet: what the page asks.
+        `next` waits for the next read to end and starts none: what a tab
         that shows the board waits on. Every workspace has one read running at most.
         """
         self.ws.check(cwd)
@@ -802,6 +815,8 @@ class Board:
             await self.next_read(cwd)
             return self.held[key]["data"]
         kept = self.held.get(key) if which == "held" else None
+        if kept is not None and time.monotonic() - kept["monotonic"] <= HELD_FOR:
+            return kept["data"]
         task = self.refresh(cwd, again=which == "new", fresh=which == "new")
         return kept["data"] if kept is not None else await asyncio.shield(task)
 
@@ -860,7 +875,13 @@ class Board:
     async def _read_held(self, cwd: str, key: str, fresh: bool) -> dict[str, Any]:
         while True:
             data = await self.read(cwd, fresh)
-            self.held[key] = {"cwd": cwd, "data": data, "read_at": data["read_at"]}
+            self.held[key] = {
+                "cwd": cwd,
+                "data": data,
+                "read_at": data["read_at"],
+                "monotonic": time.monotonic(),
+            }
+            self.bus.publish("board.read", {"workspace": key})
             waiting = self._ended.pop(key, None)
             if waiting is not None and not waiting.done():
                 waiting.set_result(None)
@@ -915,6 +936,43 @@ class Board:
         with pack.held():
             return await self._read(cwd, fresh)
 
+    async def _loop_and_run_log(
+        self,
+        cwd: str,
+        state: dict[str, Any],
+        journal: Journal | None,
+        key: str,
+        took: dict[str, float],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """The loop's board of `cwd` and the run log's rows, read together: neither needs the
+        other's answer. Each part is timed on its own, into `took`."""
+
+        async def _loop() -> dict[str, Any]:
+            began = time.monotonic()
+            try:
+                return await board_reader.read(self.ws.units_root(cwd), state=state)
+            except Unavailable as e:
+                raise Invalid(str(e)) from e
+            finally:
+                took["loop"] = time.monotonic() - began
+
+        async def _run_log() -> list[dict[str, Any]]:
+            began = time.monotonic()
+            try:
+                # One read for every unit's cost and the backlog's records. Asking `totals` per
+                # unit re-scanned the working folder N times for the rows this already has.
+                return await in_thread(journal.records, key) if journal is not None else []
+            except Busy as e:
+                raise Invalid(str(e)) from e
+            finally:
+                took["run log"] = time.monotonic() - began
+
+        got = await asyncio.gather(_loop(), _run_log(), return_exceptions=True)
+        for one in got:
+            if isinstance(one, BaseException):
+                raise one
+        return cast("tuple[dict[str, Any], list[dict[str, Any]]]", tuple(got))
+
     async def _read(self, cwd: str, fresh: bool) -> dict[str, Any]:
         self.ws.check(cwd)
         read_at = now()
@@ -930,28 +988,19 @@ class Board:
 
         state = await in_thread(_snapshot)
         lap("snapshot")
-        try:
-            data = await board_reader.read(self.ws.units_root(cwd), state=state)
-        except Unavailable as e:
-            raise Invalid(str(e)) from e
-        lap("loop")
+        journal = self.ws.journal()
+        key = self.ws.key(cwd)
+
+        data, rows = await self._loop_and_run_log(cwd, state, journal, key, took)
+        last = time.monotonic()
         _brief_rounds(data["units"])
         data["read_at"] = read_at
 
-        journal = self.ws.journal()
-        key = self.ws.key(cwd)
         timelines: dict[str, list[dict[str, Any]]] = {}
         ranking: list[dict[str, Any]] = []
         if journal is not None:
-            try:
-                # One read for every unit's cost and the backlog's records. Asking `totals` per
-                # unit re-scanned the working folder N times for the rows this already has.
-                rows = await in_thread(journal.records, key)
-            except Busy as e:
-                raise Invalid(str(e)) from e
             timelines = timelines_of(rows)
             ranking = [r for r in rows if r.get("kind") in backlog.KINDS]
-        lap("run log")
         # Display only: nothing below reads it, and `next`/`blocked` are untouched.
         folded = backlog.fold(
             data["units"],
@@ -1110,6 +1159,9 @@ class Board:
         refusal (`gh` failing, the pull request not merged, the local branch off the merged
         head), so a transient `gh` error is retried rather than believed. A dirty tree is
         refused before `gh` is asked.
+
+        Only a unit with a listed tree or a scratch directory is looked at on disk, off the
+        event loop, so the read does not grow with the units that have neither.
         """
         root = Path(cwd).expanduser().resolve()
         try:
@@ -1120,24 +1172,44 @@ class Board:
             )
         except GitError:
             listed = {}
+        named = {Path(p).name for p in listed}
+        data_dir = self.config.data_dir
+
+        def attach() -> set[str]:
+            mine = slot(cwd)
+            made: set[str] = set()
+            for top in (scratch.ram_root(), scratch.disk_root(data_dir)):
+                try:
+                    made.update(os.listdir(top / mine))
+                except OSError:
+                    pass
+            ended: set[str] = set()
+            for u in units_:
+                u["worktree"] = None
+                if u["name"] not in named and u["name"] not in made:
+                    continue
+                try:
+                    where = worktrees.path(cwd, u["name"], data_dir)
+                except BadUnit:
+                    continue
+                if u.get("why") in ("finished", "rejected"):
+                    scratch.remove(cwd, u["name"], data_dir)
+                found = listed.get(str(where))
+                if found is None:
+                    continue
+                if u.get("why") == "finished":
+                    ended.add(u["name"])
+                u["worktree"] = {
+                    "path": str(where),
+                    "branch": found.get("branch") or "",
+                    "prepare": worktrees.read_prepare(where),
+                }
+            return ended
+
+        ended = await in_thread(attach)
         for u in units_:
-            u["worktree"] = None
-            try:
-                where = worktrees.path(cwd, u["name"], self.config.data_dir)
-            except BadUnit:
-                continue
-            if u.get("why") in ("finished", "rejected"):
-                scratch.remove(cwd, u["name"], self.config.data_dir)
-            found = listed.get(str(where))
-            if found is None:
-                continue
-            if u.get("why") == "finished":
-                self._remove_later(cwd, dict(u))
-            u["worktree"] = {
-                "path": str(where),
-                "branch": found.get("branch") or "",
-                "prepare": worktrees.read_prepare(where),
-            }
+            if u["name"] in ended:
+                self._remove_later(cwd, {**u, "worktree": None})
 
     def _remove_later(self, cwd: str, unit: dict[str, Any]) -> None:
         slot = (cwd, unit["name"])

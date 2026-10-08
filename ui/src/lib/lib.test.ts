@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { failureWords, until, startedBy, ago, mdBlocks, mdSpans, modelName, money, toolName, unitCode, unitTitle } from "./format";
 import { match } from "./router";
-import { findUnit, needsYou, failedLink, proposalLink, type PlacedUnit } from "./boards";
+import { findUnit, needsYou, failedLink, proposalLink, readBoard, onBoardRead, boardsOf, NOT_WAITED, type PlacedUnit } from "./boards";
 import { consequence, liveQuestions, runnable, unitState, type Unit } from "./model";
 import { matches } from "./stream";
 import { api, fill, readLines } from "./api";
@@ -918,6 +918,104 @@ describe("api.get", () => {
     await api.get("/api/units", { cwd: "/w" });
     expect(fetched).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("the boards in view", () => {
+  const ws = (path: string) => ({ name: path.slice(1), path, label: path.slice(1), source: "store" as const, missing: false });
+  const [a, b] = [ws("/w/a"), ws("/w/b")];
+
+  it("share one read of each board between the parts of the page asking at once", async () => {
+    const done: ((v: { units: [] }) => void)[] = [];
+    const get = vi.spyOn(api, "get").mockImplementation((() => new Promise((r) => done.push(r))) as never);
+    // The sidebar and the open screen each read every board after the same burst of events.
+    const readers = [a, b].flatMap((w) => [readBoard(w), readBoard(w)]);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get.mock.calls.map((c) => c[1])).toEqual([{ cwd: "/w/a" }, { cwd: "/w/b" }]);
+    done.forEach((r) => r({ units: [] }));
+    const got = await Promise.all(readers);
+    expect(got[0]).toBe(got[1]);
+    // A settled read is dropped: the next burst reads again.
+    const again = readBoard(a);
+    expect(get).toHaveBeenCalledTimes(3);
+    done[2]({ units: [] });
+    await again;
+    get.mockRestore();
+  });
+
+  it("reads the board a board.read names at once, and leaves it out of the 400 ms wait", async () => {
+    vi.useFakeTimers();
+    let emit: (data: string) => void = () => {};
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        constructor() {
+          emit = (data) => (this as unknown as { onmessage: (m: { data: string }) => void }).onmessage({ data });
+        }
+        addEventListener() {}
+        close() {}
+      },
+    );
+    const get = vi.spyOn(api, "get").mockResolvedValue({ units: [] } as never);
+    const got = vi.fn();
+    const stop = onBoardRead([a, b], got);
+    emit(JSON.stringify({ subject: "board.read", workspace: "/w/b" }));
+    emit(JSON.stringify({ subject: "step.ended", workspace: "/w/a", unit: "0001_x" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith("/api/units", { cwd: "/w/b" });
+    expect(got).toHaveBeenCalledWith({ workspace: b, board: { units: [] } });
+    // A path listed otherwise than the app resolved it names no board: each is read.
+    emit(JSON.stringify({ subject: "board.read", workspace: "/real/b" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(get).toHaveBeenCalledTimes(3);
+    stop();
+    get.mockRestore();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+
+    const read = { subject: "board.read", workspace: "/w/b" };
+    expect(matches(read, [""], "", NOT_WAITED)).toBe(false);
+    expect(matches({ subject: "step.ended", workspace: "/w/b", unit: "0001_x" }, [""], "", NOT_WAITED)).toBe(true);
+    expect(matches({ subject: "", workspace: "" }, [""], "", NOT_WAITED)).toBe(true);
+  });
+
+  it("reads once more after a read in flight when a board.read comes, and shares that read", async () => {
+    const done: ((v: { units: string[] }) => void)[] = [];
+    const get = vi.spyOn(api, "get").mockImplementation((() => new Promise((r) => done.push(r))) as never);
+    // The 400 ms read after a step ended is in flight while the held read it started ends.
+    const before = readBoard(a);
+    const [ready, also] = [readBoard(a, true), readBoard(a, true)];
+    expect(also).toBe(ready);
+    expect(get).toHaveBeenCalledTimes(1);
+    done[0]({ units: ["held before"] });
+    expect((await before).board).toEqual({ units: ["held before"] });
+    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    done[1]({ units: ["read after"] });
+    expect((await ready).board).toEqual({ units: ["read after"] });
+    // With none in flight, a board.read reads at once.
+    const now = readBoard(a, true);
+    expect(get).toHaveBeenCalledTimes(3);
+    done[2]({ units: [] });
+    await now;
+    get.mockRestore();
+  });
+
+  it("hands a reader waiting on a slow board the last answer of each, not the one it began with", async () => {
+    const done = new Map<string, ((v: { units: string[] }) => void)[]>();
+    const get = vi.spyOn(api, "get").mockImplementation(((_: string, q: { cwd: string }) =>
+      new Promise((r) => done.set(q.cwd, [...(done.get(q.cwd) ?? []), r]))) as never);
+    // A tick reads both boards; b is slow. A board.read of a reads a again once the tick's read of a ends.
+    const tick = Promise.all([readBoard(a), readBoard(b)]);
+    const ready = readBoard(a, true);
+    done.get("/w/a")![0]({ units: ["old"] });
+    await vi.waitFor(() => expect(done.get("/w/a")).toHaveLength(2));
+    done.get("/w/a")![1]({ units: ["new"] });
+    await ready;
+    done.get("/w/b")![0]({ units: [] });
+    await tick;
+    expect(boardsOf([a, b]).map((x) => x.board)).toEqual([{ units: ["new"] }, { units: [] }]);
+    get.mockRestore();
   });
 });
 

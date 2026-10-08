@@ -20,6 +20,7 @@ from tests.github import test_prmachine
 from coscc.store.journal import Journal, is_step
 from coscc.store.db import Busy
 from coscc.http.app import Core
+from coscc.units.read import Board
 from coscc.kernel import Invalid
 from coscc.runner.queue import Refused
 from coscc.agent.sessions import Sessions
@@ -487,8 +488,8 @@ class Scripted(_Base):
         self.shortlisted = False
         self.release = asyncio.Event()
 
-        async def board(cwd):
-            return {"units": list(self.units.values())}
+        async def board(cwd, fresh=False):
+            return {"units": list(self.units.values()), "read_at": ""}
 
         async def next_step(cwd, unit):
             self.asked.append(unit)
@@ -620,10 +621,10 @@ class Scripted(_Base):
         read = self.core.boards.read
         reading, go_on = asyncio.Event(), asyncio.Event()
 
-        async def slow_board(cwd):
+        async def slow_board(cwd, fresh=False):
             reading.set()
             await go_on.wait()
-            return await read(cwd)
+            return await read(cwd, fresh)
 
         self.core.boards.read = slow_board
         self.add("0001_a", "spec")
@@ -677,10 +678,10 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [])
         self.assertEqual(self.stops(), {"0001_a": "b", "0002_b": "d"})
 
-    def lines(self) -> dict[str, dict | None]:
+    async def lines(self) -> dict[str, dict | None]:
         """What each unit's card says it waits on, as `show` lays it on a board read."""
         data = {"units": [dict(u) for u in self.units.values()]}
-        self.core.autopilot.show(self.key, data)
+        await self.core.autopilot.show(self.key, data)
         return {u["name"]: u["waiting_line"] for u in data["units"]}
 
     async def test_every_unit_of_the_shortlist_not_started_says_why(self):
@@ -697,7 +698,7 @@ class Scripted(_Base):
         held = self.core.autopilot.held[self.key]
         self.assertEqual((held["0002_b"], held["0003_c"][0]), (("full", ""), "stop"))
         self.assertNotIn("0001_a", held)
-        waiting = self.lines()
+        waiting = await self.lines()
         self.assertIsNone(waiting["0001_a"])
         for unit in ("0002_b", "0003_c"):
             self.assertTrue(waiting[unit]["why"] and waiting[unit]["moves_it"], unit)
@@ -712,7 +713,7 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {}))
         self.assertEqual(
-            self.lines()["0001_a"],
+            (await self.lines())["0001_a"],
             {
                 "code": "session-limit",
                 "why": "The account reached its session limit.",
@@ -748,7 +749,7 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [])
         self.assertEqual(self.core.autopilot.held[self.key]["0001_a"], ("conflict-running", "impl"))
         self.assertEqual(
-            self.lines()["0001_a"]["why"],
+            (await self.lines())["0001_a"]["why"],
             "PR conflicts with main; it is integrated once impl ends.",
         )
         self.core.attempts.move(row["id"], "ended", "done")
@@ -765,7 +766,7 @@ class Scripted(_Base):
         self.core.attempts.open("step", self.key, "0001_a", "impl", state="running")
         await self.pass_()
         self.assertEqual(self.core.autopilot.held[self.key]["0001_a"], ("conflict-person", "impl"))
-        self.assertIn("a person", self.lines()["0001_a"]["moves_it"])
+        self.assertIn("a person", (await self.lines())["0001_a"]["moves_it"])
 
     async def _integrated_with_nothing_to_do(self, unit: str) -> None:
         """One pass that integrates `unit`, read `behind`, and the integration refused because the
@@ -1226,7 +1227,7 @@ class Scripted(_Base):
             Journal, "records", autospec=True, side_effect=Journal.records
         ) as read:
             spent, _ = self.core.autopilot.today(self.ws)
-            self.core.autopilot.show(self.key, {"units": []})
+            await self.core.autopilot.show(self.key, {"units": []})
         self.assertEqual(spent, 1.0)
         capped = [c for c in read.call_args_list if "start" in c.kwargs.get("kinds", ())]
         self.assertEqual(len(capped), 2)
@@ -1361,10 +1362,10 @@ class Scripted(_Base):
         go_on = asyncio.Event()
         self.addCleanup(go_on.set)
 
-        async def board(cwd):
+        async def board(cwd, fresh=False):
             reads.append(1)
             await go_on.wait()
-            return {"units": []}
+            return {"units": [], "read_at": ""}
 
         self.core.boards.read = board
         self.add("0001_a", "spec")
@@ -2443,7 +2444,7 @@ class TheGuideBlock(_Base):
         units = [self.card("0001_a", "needs-you")]
         data = {"units": units}
         with mock.patch("coscc.leif.autopilot.autopilot_values", return_value=self.VALUES):
-            self.core.autopilot.show(self.key, data)
+            await self.core.autopilot.show(self.key, data)
         self.assertEqual(
             (len(data["guide"]["needs_you"]), data["guide"]["shortlist_empty"]), (1, False)
         )
@@ -2451,6 +2452,52 @@ class TheGuideBlock(_Base):
             set(data["guide"]),
             {"on", "running", "needs_you", "held", "notes", "waiting", "shortlist_empty"},
         )
+
+
+class OneBoardRead(_Base):
+    """The autopilot's pass shares the board read of its workspace and keeps the loop free."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        use_sessions(self.core, _Replies(accepted=5))
+        # An open question: the pass finds a stop and queues nothing.
+        self.named = await self.unit("asks", questions=("Which one?",))
+        self.listed(self.named)
+        autopilot = self.core.autopilot
+        autopilot.set_setting(self.ws, "autopilot", True)
+        autopilot.stop(self.key)
+        # A loop that never passes on its own: each test asks for its pass.
+        autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
+        autopilot.cwds[self.key] = self.ws
+        self.assertNotIn(self.key, self.core.boards.held)
+
+    async def test_a_pass_and_a_page_asking_while_it_reads_are_one_read(self):
+        reads: list[bool] = []
+        read = Board._read
+
+        async def counted(board, cwd, fresh):
+            reads.append(fresh)
+            return await read(board, cwd, fresh)
+
+        loop = asyncio.get_running_loop()
+        with mock.patch.object(Board, "_read", counted):
+            passing = loop.create_task(self.core.autopilot.run_pass(self.key))
+            await self.until(lambda: self.key in self.core.boards.reads, "the pass's read")
+            # Nothing is held yet, so the page needs a read too: the one running.
+            page = await self.core.board(self.ws, "held")
+            await passing
+        self.assertEqual(reads, [False])
+        self.assertEqual([u["name"] for u in page["units"]], [self.named])
+        self.assertEqual(self.core.autopilot.stops[self.key][self.named]["kind"], "a")
+
+    async def test_a_pass_and_a_board_read_hold_the_loop_for_less_than_50_ms(self):
+        loop = asyncio.get_running_loop()
+        loop.set_debug(True)
+        loop.slow_callback_duration = 0.05
+        with self.assertNoLogs("asyncio", level="WARNING"):
+            await self.core.autopilot.run_pass(self.key)
+            await self.core.board(self.ws, "new")
+            await self.core.board(self.ws, "held")
 
 
 class ResumedAtStartUp(unittest.IsolatedAsyncioTestCase):

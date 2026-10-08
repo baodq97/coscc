@@ -349,7 +349,7 @@ class TheCardSaysWhatItWaitsOn(unittest.TestCase):
         key = core.ws.key(str(root / "work" / "proj"))
         core.autopilot.held[key] = {"0001_a": ("full", "")}
         data = {"units": [dict(self.UNIT)]}
-        core.autopilot.show(key, data)
+        asyncio.run(core.autopilot.show(key, data))
         self.assertIsNone(read.card(data["units"][0])["waiting"])
 
 
@@ -484,12 +484,19 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
             for _ in range(5):
                 await asyncio.sleep(0)
 
+    def stale(self) -> None:
+        """The held board as old as one the next `held` ask reads again."""
+        self.core.boards.held[self.key]["monotonic"] -= read.HELD_FOR + 1
+
     async def test_a_gh_that_hangs_holds_neither_the_held_board_nor_a_read(self):
         first = await self.core.board(self.cwd)
         self.assertEqual(first["units"][0]["integration"]["pr_head"], "a" * 40)
+        await self.ended()
+        read_at = self.core.boards.held[self.key]["data"]["read_at"]
         self.hang = True
+        self.stale()
         held = await self.core.board(self.cwd, "held")
-        self.assertEqual(held["read_at"], first["read_at"])
+        self.assertEqual(held["read_at"], read_at)
         # The read it started takes the held list and asks `gh` again in the background.
         await asyncio.wait_for(self.ended(), 5)
         self.assertEqual(
@@ -501,14 +508,70 @@ class TheBoardIsHeld(unittest.IsolatedAsyncioTestCase):
     async def test_two_asks_while_a_read_runs_start_one_read(self):
         await self.core.board(self.cwd)
         await self.ended()
+        self.stale()
         reads = self.counted()
         await asyncio.gather(self.core.board(self.cwd, "held"), self.core.board(self.cwd, "held"))
         await self.ended()
         self.assertEqual(reads, [self.cwd])
 
+    async def test_a_hundred_asks_of_a_board_just_read_start_no_read(self):
+        await self.core.board(self.cwd)
+        await self.ended()
+        reads = self.counted()
+        for _ in range(100):
+            await self.core.board(self.cwd, "held")
+        await self.ended()
+        self.assertEqual((reads, self.core.boards.reads), ([], {}))
+
+    async def test_an_ask_of_a_board_older_than_the_limit_starts_one_read(self):
+        first = await self.core.board(self.cwd)
+        await self.ended()
+        self.stale()
+        reads = self.counted()
+        held = await self.core.board(self.cwd, "held")
+        await self.ended()
+        self.assertEqual(reads, [self.cwd])
+        # It answers with the board it held, and does not wait for the read it started.
+        self.assertEqual(held["read_at"], first["read_at"])
+        # The read it started left a board that is young again.
+        for _ in range(3):
+            await self.core.board(self.cwd, "held")
+        self.assertEqual(reads, [self.cwd])
+
+    async def test_each_change_the_app_makes_reads_once_and_says_the_board_was_read(self):
+        moved = {"workspace": self.key, "unit": self.unit, "going_down": False}
+        of_unit = {"workspace": self.key, "unit": self.unit}
+        shipped = {**of_unit, "sha": "a" * 40, "at": "t"}
+        subjects = {
+            "step.ended": moved,
+            "step.refused": moved,
+            "integration.ended": moved,
+            "integration.refused": moved,
+            "answer.written": of_unit,
+            "hold.moved": of_unit,
+            "mode.set": of_unit,
+            "unit.shipped": shipped,
+            "shortlist.saved": {"workspace": self.key},
+            "retake.ended": of_unit,
+            "integration.escalated": of_unit,
+        }
+        await self.core.board(self.cwd)
+        await self.ended()
+        heard: list[str] = []
+        self.core.bus.subscribe(
+            "board.read", lambda event: heard.append(event.payload["workspace"])
+        )
+        for name, payload in subjects.items():
+            with self.subTest(name):
+                reads, heard[:] = self.counted(), []
+                self.core.bus.publish(name, payload)
+                await self.ended()
+                self.assertEqual((reads, heard), ([self.cwd], [self.key]))
+
     async def test_a_new_ask_while_a_read_runs_reads_once_more_after_it(self):
         await self.core.board(self.cwd)
         await self.ended()
+        self.stale()
         reads = self.counted()
         await self.core.board(self.cwd, "held")
         await self.core.board(self.cwd)

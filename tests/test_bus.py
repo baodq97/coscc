@@ -73,6 +73,7 @@ class APayloadOutsideItsSchemaIsRefused(unittest.TestCase):
             ("step.ended", UNIT, "carries"),
             ("step.ended", {**MOVED, "going_down": "no"}, "going_down is a bool"),
             ("unit.shipped", {**UNIT, "sha": "abc", "at": 1}, "at is a str"),
+            ("board.read", UNIT, "carries"),
             ("nothing.happened", {}, "no bus subject"),
         ):
             with self.subTest(name=name, payload=payload):
@@ -89,3 +90,9 @@ class APayloadOutsideItsSchemaIsRefused(unittest.TestCase):
         bus.watch(seen.append)
         bus.publish("unit.shipped", {**UNIT, "sha": "abc", "at": "2026-10-06T00:00:00+00:00"})
         self.assertEqual(seen[0].payload["sha"], "abc")
+
+    def test_a_board_read_carries_only_its_workspace(self):
+        bus, seen = Bus(), []
+        bus.watch(seen.append)
+        bus.publish("board.read", {"workspace": "k"})
+        self.assertEqual([(e.name, e.payload) for e in seen], [("board.read", {"workspace": "k"})])
