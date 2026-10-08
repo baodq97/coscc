@@ -24,16 +24,16 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypedDict
 
 from coscc.bus import Bus
-from coscc.store.db import now as _now
+from coscc.store.db import Busy, in_thread, now as _now
 from coscc.git import gh, gitops
 from coscc.store.journal import Journal
-from coscc.units import pr_title, states, transitions
+from coscc.units import pr_title, proposals, states, transitions
 from coscc.units.history import History
 
 # The artifacts of the process's two engine actions: the state that opens the pull request and
@@ -41,6 +41,10 @@ from coscc.units.history import History
 PR_FILE = states.files_where(action="open-pr")[0]
 SHIP_FILE = states.files_where(action="merge")[0]
 MACHINE = "pr"
+# The `agent` of a proposal the merging state makes of a finding the gate let through (the state
+# itself, read from the process), and the heading of the list of those findings in `ship.md`.
+PROPOSER = states.states_where(action="merge")[0]
+NON_BLOCKING = "## Findings that did not block"
 # The run-log record a `pr` or `ship` the PR machine ran leaves in place of an `end`: `outcome`
 # `done` or `failed`, and the machine's `result`, `reasons` and `detail`.
 RECORD_KIND = "prmachine"
@@ -144,8 +148,12 @@ def render_ship(
     head: str,
     merge_commit: str = "",
     refused: str = "",
+    passed: Sequence[Mapping[str, Any]] = (),
+    unproposed: Sequence[str] = (),
 ) -> str:
-    """Prose for a person: nothing reads it back. The round and a refusal are the rows'."""
+    """Prose for a person: nothing reads it back. The round and a refusal are the rows'. `passed`
+    are the findings the gate let through, each with the proposal it became in Up next;
+    `unproposed` why a proposal was refused, so the finding is only here."""
     lines = [
         f"# Ship: {u.name}",
         "Author: coscc (code, ship)." + (f" Round: {round_n}." if round_n is not None else ""),
@@ -159,6 +167,19 @@ def render_ship(
         lines.append(f"Refused: {refused}")
     else:
         lines.append(f"The merge of #{number} at head `{head}` was requested.")
+    if passed:
+        lines += ["", NON_BLOCKING, ""]
+        for f in passed:
+            where = f"{f.get('path')}:{f['lines']}" if f.get("lines") else str(f.get("path"))
+            why = proposals.SCREEN_WHY.get(str(f.get("why")), str(f.get("why") or ""))
+            lines.append(
+                f"- {f.get('criterion')} `{where}`: {' '.join(str(f.get('text')).split())} "
+                f"({f.get('why')}: {why})"
+            )
+        lines += ["", "Each is a proposal in Up next, for a person to take up or drop."]
+        if unproposed:
+            lines += ["", "Refused as a proposal, so only listed here:"]
+            lines += [f"- {said}" for said in unproposed]
     return "\n".join(lines) + "\n"
 
 
@@ -744,8 +765,50 @@ class Machine:
         found = await self.open_of(u.tree, u.branch) if u.branch else None
         return int(found["number"]) if found else None
 
+    async def _propose(self, u: Unit, passed: Sequence[Mapping[str, Any]]) -> list[str]:
+        """The findings the gate let through as `pending` proposals, which no agent decides. What
+        comes back is why each was refused, or why none could be recorded."""
+        if not passed:
+            return []
+        data = self.history.data
+        try:
+            made = await in_thread(proposals.listed, data, u.workspace)
+            fresh, refused = proposals.of_screens(u.name, passed, made)
+            await in_thread(proposals.add, data, u.workspace, PROPOSER, u.name, fresh)
+        except Busy as e:
+            return [f"none could be recorded as a proposal: {e}"]
+        return refused
+
+    def _write_ship(
+        self,
+        u: Unit,
+        passed: Sequence[Mapping[str, Any]] = (),
+        unproposed: Sequence[str] = (),
+        **moved: Any,
+    ) -> None:
+        """`ship.md` from `render_ship`. A write that knows no findings (a merge made elsewhere, a
+        restart) keeps the list the file already holds."""
+        path = u.directory / SHIP_FILE
+        text = render_ship(u, passed=passed, unproposed=unproposed, **moved)
+        if not passed:
+            try:
+                old = path.read_text(encoding="utf-8")
+            except OSError:
+                old = ""
+            at = old.find(f"\n{NON_BLOCKING}\n")
+            if at != -1:
+                text = text.rstrip("\n") + "\n" + old[at:]
+        path.write_text(text, encoding="utf-8")
+
     async def _record_merged(
-        self, u: Unit, number: int, view: dict[str, Any], round_n: int | None, result: str
+        self,
+        u: Unit,
+        number: int,
+        view: dict[str, Any],
+        round_n: int | None,
+        result: str,
+        passed: Sequence[Mapping[str, Any]] = (),
+        unproposed: Sequence[str] = (),
     ) -> Outcome:
         commit = str((view.get("mergeCommit") or {}).get("oid") or "")
         head = str(view.get("headRefOid") or "")
@@ -773,9 +836,14 @@ class Machine:
                 guard=applied.guard,
                 detail="the merge commit could not be read",
             )
-        (u.directory / SHIP_FILE).write_text(
-            render_ship(u, round_n=round_n, number=number, head=head, merge_commit=commit),
-            encoding="utf-8",
+        self._write_ship(
+            u,
+            passed,
+            unproposed,
+            round_n=round_n,
+            number=number,
+            head=head,
+            merge_commit=commit,
         )
         if self.bus is not None:
             self.bus.publish(
@@ -793,13 +861,19 @@ class Machine:
         )
 
     async def ship(
-        self, u: Unit, authority: str = "person", rebased: dict[str, str] | None = None
+        self,
+        u: Unit,
+        authority: str = "person",
+        rebased: dict[str, str] | None = None,
+        passed: Sequence[Mapping[str, Any]] = (),
     ) -> Outcome:
         """Reconcile first; a merge made anywhere else is only recorded. Otherwise guard `ship-ready`
         reads CI at the head this read found, and the last round the app holds; open, it records
         `merge-requested`, merges pinned to that head, and records `merged`. `rebased` is the `ship`
         gate's read that the head is a clean rebase of a reviewed commit; the guard takes it only when
-        both commits match its own inputs.
+        both commits match its own inputs. `passed` are the findings the gate let through: once the
+        guard is open (or the merge was made elsewhere) each becomes a `pending` proposal unless its
+        rule and file already hold one, and `ship.md` lists them.
         """
         now = state(self.history, u.workspace, u.name)
         if now["state"] == "merged":
@@ -814,7 +888,9 @@ class Machine:
                 return Outcome("failed", detail="the unit has no open pull request to merge")
             view = await self.view(u.tree, number)
             if view.get("state") == "MERGED":
-                return await self._record_merged(u, number, view, round_n, "recorded")
+                return await self._record_merged(
+                    u, number, view, round_n, "recorded", passed, await self._propose(u, passed)
+                )
             if view.get("state") != "OPEN":
                 return Outcome(
                     "failed",
@@ -840,11 +916,9 @@ class Machine:
             return Outcome(
                 "refused", number, head=head, reasons=applied.reasons, guard=applied.guard
             )
-        (u.directory / SHIP_FILE).write_text(
-            render_ship(u, round_n=round_n, number=number, head=head),
-            encoding="utf-8",
-        )
-        return await self._merge(u, number, head, round_n)
+        unproposed = await self._propose(u, passed)
+        self._write_ship(u, passed, unproposed, round_n=round_n, number=number, head=head)
+        return await self._merge(u, number, head, round_n, passed, unproposed)
 
     async def _checks(self, tree: str, n: int) -> list[dict]:
         code, out, err = await self.gh(
@@ -859,7 +933,15 @@ class Machine:
             raise PrError(gh.said(code, out, err) if code else "gh pr checks returned no list")
         return [r for r in rows if isinstance(r, dict)]
 
-    async def _merge(self, u: Unit, number: int, head: str, round_n: int | None) -> Outcome:
+    async def _merge(
+        self,
+        u: Unit,
+        number: int,
+        head: str,
+        round_n: int | None,
+        passed: Sequence[Mapping[str, Any]] = (),
+        unproposed: Sequence[str] = (),
+    ) -> Outcome:
         """Merge and record. A non-zero exit is read again before it counts: `--delete-branch` in a
         worktree merges and then fails.
         """
@@ -881,7 +963,7 @@ class Machine:
         except PrError as e:
             return Outcome("failed", number, head=head, detail=str(e))
         if view.get("state") == "MERGED":
-            return await self._record_merged(u, number, view, round_n, "merged")
+            return await self._record_merged(u, number, view, round_n, "merged", passed, unproposed)
         refused = said or f"#{number} is {view.get('state') or 'unread'} after the merge"
         self._apply(
             u,
@@ -891,9 +973,8 @@ class Machine:
             {"number": number, "head": head, "round": round_n, "refused": refused},
             "code",
         )
-        (u.directory / SHIP_FILE).write_text(
-            render_ship(u, round_n=round_n, number=number, head=head, refused=refused),
-            encoding="utf-8",
+        self._write_ship(
+            u, passed, unproposed, round_n=round_n, number=number, head=head, refused=refused
         )
         return Outcome("failed", number, head=head, detail=refused)
 

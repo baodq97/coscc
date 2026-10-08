@@ -12,6 +12,7 @@ from coscc.bus import Bus
 from coscc.store.db import Data
 from coscc.github import prmachine
 from coscc.store.journal import Journal
+from coscc.units import proposals
 from coscc.units.history import History
 
 WS = "repo"
@@ -359,6 +360,99 @@ class ShipIsMechanical(Fixture):
         out = run(self.machine(gh).ship(self.unit()))
         self.assertEqual(out.number, 3)
         self.assertEqual(gh.count("pr", "merge"), 1)
+
+
+class ShipListsWhatDidNotBlock(Fixture):
+    """A finding the gate let through stays in `ship.md` and waits in Up next as a proposal."""
+
+    FOUND = {
+        "id": "F2",
+        "criterion": "S3",
+        "path": "ui/src/Board.tsx",
+        "lines": "12-14",
+        "text": "The card gutter is 6px where the standard says 8px.",
+        "why": "screen-untouched",
+    }
+
+    def proposed(self):
+        return proposals.listed(self.data, WS)
+
+    def test_it_is_listed_in_ship_md_and_waits_pending_in_up_next(self):
+        gh = FakeGh()
+        m = self.opened(gh)
+        self.a_round()
+        out = run(m.ship(self.unit(), passed=[self.FOUND]))
+        self.assertEqual(out.result, "merged")
+        text = (self.directory / "ship.md").read_text(encoding="utf-8")
+        self.assertIn("## Findings that did not block", text)
+        self.assertIn("- S3 `ui/src/Board.tsx:12-14`: The card gutter is 6px", text)
+        self.assertIn("screen-untouched", text)
+        (p,) = self.proposed()
+        self.assertEqual(
+            (p["state"], p["type"], p["slug"]), ("pending", "fix", "s3-ui-src-board-tsx")
+        )
+        self.assertEqual((p["unit"], p["by"]), (NAME, ""))
+        self.assertIn("ui/src/Board.tsx:12-14", p["problem"])
+        self.assertIn(NAME, p["problem"])
+
+    def test_a_ship_again_after_a_refused_merge_adds_no_second_proposal(self):
+        gh = FakeGh(merge_code=1)
+        m = self.opened(gh)
+        self.a_round()
+        run(m.ship(self.unit(), passed=[self.FOUND]))
+        self.assertIn("Refused:", (self.directory / "ship.md").read_text(encoding="utf-8"))
+        gh.merge_code = 0
+        run(m.ship(self.unit(), passed=[self.FOUND]))
+        self.assertEqual(len(self.proposed()), 1)
+        self.assertIn(
+            "ui/src/Board.tsx:12-14", (self.directory / "ship.md").read_text(encoding="utf-8")
+        )
+
+    def test_a_pair_another_unit_proposed_is_not_proposed_again(self):
+        gh = FakeGh()
+        m = self.opened(gh)
+        self.a_round()
+        elsewhere = proposals.of_screens("0001_other", [self.FOUND], [])[0]
+        proposals.add(self.data, WS, "ship", "0001_other", elsewhere)
+        run(m.ship(self.unit(), passed=[self.FOUND]))
+        self.assertEqual([p["unit"] for p in self.proposed()], ["0001_other"])
+        self.assertIn("ui/src/Board.tsx:12-14", (self.directory / "ship.md").read_text("utf-8"))
+
+    def test_a_proposal_that_is_refused_leaves_the_finding_and_the_refusal_in_ship_md(self):
+        gh = FakeGh()
+        m = self.opened(gh)
+        self.a_round()
+        bad = {**self.FOUND, "criterion": "", "path": ""}
+        run(m.ship(self.unit(), passed=[bad, self.FOUND]))
+        self.assertEqual([p["slug"] for p in self.proposed()], ["s3-ui-src-board-tsx"])
+        text = (self.directory / "ship.md").read_text(encoding="utf-8")
+        self.assertIn("Refused as a proposal", text)
+        self.assertIn("was not proposed: slug '' is not a slug", text)
+
+    def test_a_ship_with_nothing_let_through_writes_no_list_and_proposes_nothing(self):
+        m = self.opened(FakeGh())
+        self.a_round()
+        run(m.ship(self.unit()))
+        self.assertNotIn("did not block", (self.directory / "ship.md").read_text(encoding="utf-8"))
+        self.assertEqual(self.proposed(), [])
+
+    def test_a_closed_guard_proposes_nothing(self):
+        m = self.opened(FakeGh(buckets=("pending",)))
+        self.a_round()
+        out = run(m.ship(self.unit(), passed=[self.FOUND]))
+        self.assertEqual(out.result, "refused")
+        self.assertEqual(self.proposed(), [])
+
+    def test_the_list_survives_the_merge_a_restart_records(self):
+        gh = FakeGh(crash_after_merge=True)
+        m = self.opened(gh)
+        self.a_round()
+        with self.assertRaises(Crash):
+            run(m.ship(self.unit(), passed=[self.FOUND]))
+        run(self.machine(gh).reconcile([self.unit()]))
+        text = (self.directory / "ship.md").read_text(encoding="utf-8")
+        self.assertIn("was merged as", text)
+        self.assertIn("ui/src/Board.tsx:12-14", text)
 
 
 class TheReaderRecordsWhatChanged(Fixture):

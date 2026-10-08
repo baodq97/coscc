@@ -16,7 +16,7 @@ import hashlib
 import json
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -47,11 +47,13 @@ class Unavailable(Exception):
 class Gate(tuple):
     """`gate`'s answer: `(open, what it said)`, and `reasons`, the codes beside the words,
     which the app branches on. `rebased`, `{reviewed, head}`, only when `ship` opened on a clean rebase;
-    `lane`, `fast` only when the loop says the unit is in the fast lane, else `full`."""
+    `lane`, `fast` only when the loop says the unit is in the fast lane, else `full`; `passed`, the
+    findings naming a UI-standard criterion that the loop let through, `[]` when none."""
 
     reasons: tuple[str, ...]
     rebased: dict[str, str] | None
     lane: str
+    passed: list[dict[str, str]]
 
     def __new__(
         cls,
@@ -60,16 +62,35 @@ class Gate(tuple):
         reasons: tuple[str, ...] = (),
         rebased: dict[str, str] | None = None,
         lane: str = "full",
+        passed: Sequence[Mapping[str, str]] = (),
     ) -> "Gate":
         answer = super().__new__(cls, (opened, said))
         answer.reasons = tuple(reasons)
         answer.rebased = rebased
         answer.lane = lane
+        answer.passed = [dict(f) for f in passed]
         return answer
 
 
 def _lane(data: dict[str, Any]) -> str:
     return "fast" if "fast-lane" in (data.get("via") or ()) else "full"
+
+
+# What a finding the gate let through carries: the one the loop names it by, the criterion it was
+# raised under, where it points, its sentence, and the reason code for letting it through.
+PASSED_KEYS = ("id", "criterion", "path", "lines", "text", "why")
+
+
+def _passed(data: dict[str, Any]) -> list[dict[str, str]]:
+    """`passed` of the gate's JSON as text fields; `[]` when absent (an older loop) or malformed."""
+    got = data.get("passed")
+    if not isinstance(got, list):
+        return []
+    return [
+        {k: str(f.get(k) if f.get(k) is not None else "") for k in PASSED_KEYS}
+        for f in got
+        if isinstance(f, dict)
+    ]
 
 
 def _rebased(data: dict[str, Any]) -> dict[str, str] | None:
@@ -369,6 +390,7 @@ async def gate(
             _codes(data),
             _rebased(data),
             _lane(data),
+            _passed(data),
         )
     said = (out_text + err_text).strip()
     return Gate(False, said or f"the gate exited {code} and said nothing")

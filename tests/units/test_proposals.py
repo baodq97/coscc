@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
 
 from coscc.store.db import Data
-from coscc.units import Invalid, proposals
+from coscc.units import Invalid, board, proposals
 
 WS = "/ws"
 PROBLEM = "Steps stop and a person runs them again by hand. " * 6
@@ -336,6 +337,110 @@ class AChangeIsKeptWithItsProposal(_Table):
         said = proposals.lists_of(proposals.listed(self.data, WS))
         self.assertIn("- [fix] Steps stop (changes skills/spec.md)", said)
         self.assertIn("- [fix] Steps stop\n", said)
+
+
+def screen(criterion="S3", path="ui/src/Board.tsx", lines="12-14", **over) -> dict:
+    return {
+        "id": "F1",
+        "criterion": criterion,
+        "path": path,
+        "lines": lines,
+        "text": "The card gutter is 6px where the standard says 8px.",
+        "why": "screen-untouched",
+        **over,
+    }
+
+
+class AFindingThatDidNotBlockBecomesOneProposal(_Table):
+    UNIT = "0173_the-screens-rule"
+
+    def made(self):
+        return proposals.listed(self.data, WS)
+
+    def test_one_fix_per_rule_and_file_carrying_where_the_sentence_and_the_unit(self):
+        found = [screen(), screen("S5", lines="3"), screen(path="ui/src/Card.tsx")]
+        fresh, refused = proposals.of_screens(self.UNIT, found, [])
+        self.assertEqual(refused, [])
+        self.assertEqual(
+            [(p["type"], p["slug"]) for p in fresh],
+            [
+                ("fix", "s3-ui-src-board-tsx"),
+                ("fix", "s5-ui-src-board-tsx"),
+                ("fix", "s3-ui-src-card-tsx"),
+            ],
+        )
+        first = fresh[0]
+        self.assertIn("S3 ui/src/Board.tsx:12-14", first["title"])
+        for word in (
+            "S3",
+            "ui/src/Board.tsx:12-14",
+            "The card gutter is 6px",
+            self.UNIT,
+            "not one this unit's patch changes",
+        ):
+            self.assertIn(word, first["problem"] + first["sources"][0])
+        self.assertEqual(proposals.problems_of(first, None), [])
+
+    def test_added_it_waits_pending_for_a_person_under_the_unit(self):
+        fresh, _ = proposals.of_screens(self.UNIT, [screen()], [])
+        proposals.add(self.data, WS, "ship", self.UNIT, fresh)
+        new = self.made()[0]
+        self.assertEqual((new["state"], new["agent"], new["unit"]), ("pending", "ship", self.UNIT))
+        self.assertEqual(new["by"], "")
+
+    def test_a_second_call_gives_none_whether_the_first_is_pending_or_accepted(self):
+        found = [screen(), screen("S5")]
+        fresh, _ = proposals.of_screens(self.UNIT, found, [])
+        ids = proposals.add(self.data, WS, "ship", self.UNIT, fresh)
+        again, refused = proposals.of_screens("0180_other", found, self.made())
+        self.assertEqual((again, refused), ([], []))
+        # the other unit's later round names the same pair again, once accepted too
+        run = asyncio.run
+        run(proposals.accept(self.data, WS, ids[0], "s3-board", self.create))
+        again, _ = proposals.of_screens("0180_other", found, self.made())
+        self.assertEqual(again, [])
+        self.assertEqual(len([p for p in self.made() if p["agent"] == "ship"]), 2)
+
+    def test_a_dismissed_one_does_not_hold_the_pair(self):
+        fresh, _ = proposals.of_screens(self.UNIT, [screen()], [])
+        (pid,) = proposals.add(self.data, WS, "ship", self.UNIT, fresh)
+        asyncio.run(proposals.dismiss(self.data, WS, pid, "not worth a unit"))
+        again, _ = proposals.of_screens("0180_other", [screen()], self.made())
+        self.assertEqual(len(again), 1)
+
+    def test_one_pair_twice_in_a_batch_is_one(self):
+        fresh, _ = proposals.of_screens(self.UNIT, [screen(), screen(lines="40")], [])
+        self.assertEqual(len(fresh), 1)
+
+    def test_one_that_breaks_a_rule_comes_back_with_its_reason_and_is_not_proposed(self):
+        short = screen(criterion="", path="")
+        fresh, refused = proposals.of_screens(self.UNIT, [short, screen()], [])
+        self.assertEqual(len(fresh), 1)
+        (said,) = refused
+        self.assertIn("was not proposed", said)
+        self.assertIn("is not a slug", said)
+
+    def test_a_reason_the_app_does_not_know_is_said_as_given(self):
+        fresh, _ = proposals.of_screens(self.UNIT, [screen(why="screen-new")], [])
+        self.assertIn("because screen-new.", fresh[0]["problem"])
+
+
+class TheGateHandsOnWhatItLetThrough(unittest.TestCase):
+    def test_passed_is_read_as_text_and_absent_is_none(self):
+        got = {
+            "id": "F1",
+            "criterion": "S3",
+            "path": "a.tsx",
+            "lines": None,
+            "text": "t",
+            "why": "w",
+        }
+        (read,) = board._passed({"passed": [got, "junk", 4]})
+        self.assertEqual(read, {**got, "lines": ""})
+        for bad in ({}, {"passed": None}, {"passed": "S3"}, {"passed": {}}):
+            self.assertEqual(board._passed(bad), [], bad)
+        self.assertEqual(board.Gate(True, "open", passed=[read]).passed, [read])
+        self.assertEqual(board.Gate(True, "open").passed, [])
 
 
 if __name__ == "__main__":

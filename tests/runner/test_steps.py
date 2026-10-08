@@ -2601,7 +2601,7 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
                     detail="" if outcome == "done" else "gh down",
                 )
 
-            async def ship(self, u, authority="person", rebased=None):
+            async def ship(self, u, authority="person", rebased=None, passed=()):
                 shipped_with.append(rebased)
                 return prmachine.Outcome(
                     "merged" if outcome == "done" else "failed",

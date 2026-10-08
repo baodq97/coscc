@@ -253,6 +253,59 @@ def of_verdict(unit: str, criteria: Sequence[Mapping[str, Any]]) -> list[Item]:
     return out
 
 
+# Why the loop lets a finding naming a UI-standard criterion through, in words (`guards.REASONS`).
+SCREEN_WHY = {
+    "screen-untouched": "the file is not one this unit's patch changes",
+    "screen-late": "an earlier round with screenshots saw the file as it is now",
+}
+
+
+def screen_slug(rule: str, path: str) -> str:
+    """`<rule>-<file>` as a slug, the tail of it when over `SLUG_MAX`: the file is what tells two
+    findings of one rule apart."""
+    words = re.sub(r"[^a-z0-9]+", "-", f"{rule}-{path}".lower()).strip("-")
+    return words[-SLUG_MAX:].strip("-")
+
+
+def of_screens(
+    unit: str, passed: Sequence[Mapping[str, Any]], made: Sequence[Proposal]
+) -> tuple[list[Item], list[str]]:
+    """The gate's `passed` findings as `fix` proposals, one per (rule, file), and the sentence of
+    each `problems_of` refuses. A pair `made` holds as `pending` or `accepted`, or an earlier
+    finding of this batch, adds none: a `dismissed` one does not count."""
+    held = {p["slug"] for p in made if p["state"] in ("pending", "accepted")}
+    out: list[Item] = []
+    refused: list[str] = []
+    for f in passed:
+        rule, path = str(f.get("criterion") or ""), str(f.get("path") or "")
+        where = f"{path}:{f['lines']}" if f.get("lines") else path
+        said = " ".join(str(f.get("text") or "").split())
+        slug = screen_slug(rule, path)
+        if slug in held:
+            continue
+        held.add(slug)
+        why = SCREEN_WHY.get(str(f.get("why") or ""), str(f.get("why") or "no reason given"))
+        title = f"{rule} {where}: {said}"
+        item: Item = {
+            "type": "fix",
+            "slug": slug,
+            "title": title if len(title) <= TITLE_MAX else title[: TITLE_MAX - 1] + "…",
+            "problem": (
+                f"A review of {unit} found a break of {rule}, a criterion of the UI standard, at "
+                f"{where}: {said}\n\nIt did not stop the unit from shipping, because {why}. The "
+                "finding stays in the unit's review.md and ship.md; this proposal is the only "
+                "place a person can take it up as a unit of its own, or put it aside."
+            )[:PROBLEM_MAX],
+            "sources": [unit],
+        }
+        problems = problems_of(item, None)
+        if problems:
+            refused.append(f"{rule} {where} was not proposed: {'; '.join(problems)}")
+        else:
+            out.append(item)
+    return out, refused
+
+
 def _proposal(row: Any) -> Proposal:
     return Proposal(
         id=int(row["id"]),

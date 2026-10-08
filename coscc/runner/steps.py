@@ -1207,6 +1207,7 @@ class Steps:
             again=rerun,
             rebased=getattr(answer, "rebased", None),
             process=process,
+            passed=getattr(answer, "passed", ()),
         )
 
     async def _ready_tree(
