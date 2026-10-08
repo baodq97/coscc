@@ -145,6 +145,9 @@ class _Core(unittest.IsolatedAsyncioTestCase):
 
     async def settle(self) -> None:
         await asyncio.gather(*triggers._TASKS)
+        # `gather` of tasks already done returns without yielding, so their done callbacks, which
+        # leave `_TASKS`, would never run and a loop on `_TASKS` would spin.
+        await asyncio.sleep(0)
 
 
 class APressRunsTheRow(_Core):

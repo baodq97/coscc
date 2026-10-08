@@ -1592,6 +1592,8 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.aclose()
+        # The board reads it started write under the temporary directory; end them first.
+        await self.app.state.core.shutdown()
 
     async def test_a_unit_is_created_and_then_visible_on_the_board(self):
         made = await self.client.post(
