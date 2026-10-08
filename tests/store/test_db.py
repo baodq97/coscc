@@ -23,6 +23,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from coscc import features
 from coscc.config import PROTECTED_DB_VAR
 from coscc.http import plugin
@@ -30,6 +32,8 @@ from coscc.store import db
 from coscc.store.db import SCHEMA_VERSION, Busy, Data, Incompatible, Protected
 
 REPO = Path(__file__).resolve().parent.parent
+# The schema and its creation are what this file tests: every database is made for real.
+pytestmark = pytest.mark.real_schema
 
 
 class TheDirectoryIsMadeForYou(unittest.TestCase):
