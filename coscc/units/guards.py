@@ -37,6 +37,10 @@ REASONS = (
     "awaits-person",
     "person-answered",
     "changes-requested",
+    # Why a finding naming an `S<n>` does not block (`gate --json`'s `passed`): its file is not
+    # one the unit's patch changes, or an earlier round with screens saw that file as it is.
+    "screen-untouched",
+    "screen-late",
     # `gate-closed`: a gate closed for a reason with no code of its own; its words say which.
     "ci-pending",
     "ci-red",
